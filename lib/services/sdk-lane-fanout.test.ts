@@ -160,6 +160,28 @@ describe('installLaneFanout, flag off', () => {
     expect(calls.filter((call) => call.dataContractId === SOCIAL)).toHaveLength(6)
     expect(calls.every((call) => call.limit === (call.dataContractId === BLOG ? 3 : 4))).toBe(true)
 
+    // A page on another contract (a profile) binding a social count: the count fans out by its own contract.
+    spies.composite.mockReset()
+    spies.count.mockClear()
+    view.setModeratorViewContracts(['social'])
+    spies.composite.mockImplementation(async () => ({
+      pageDocuments: [{ $id: identifier(50), $ownerId: identifier(90) }],
+      subResults: [{ kind: 'counts', counts: new Map([[identifier(90), 2n]]) }],
+    }))
+    spies.count.mockImplementation(async (request: { where?: Where[] }) => {
+      const lane = laneOf(request.where)
+      return lane.live === 1 && lane.mod === 1 ? new Map([[hexOf(identifier(90)), 3n]]) : new Map<string, bigint>()
+    })
+    const profileRooted = await sdk.documents.composite({
+      dataContractId: identifier(77), documentType: 'profile', where: [['$ownerId', '==', identifier(90)]], limit: 1,
+      subQueries: [{ dataContractId: SOCIAL, documentType: 'post', kind: 'counts', where: [['live', '==', 1], ['mod', '==', null]], bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
+    } as never)
+    expect(spies.composite).toHaveBeenCalledTimes(1)
+    expect(spies.count).toHaveBeenCalledTimes(5)
+    expect(spies.count.mock.calls.every(([request]) => (request as { dataContractId: string }).dataContractId === SOCIAL)).toBe(true)
+    expect((profileRooted.subResults[0] as { counts: Map<string, bigint> }).counts.get(identifier(90))).toBe(5n)
+    spies.composite.mockReset()
+
     // A bundle where no member fans out goes to the SDK's composite, untouched.
     view.setModeratorViewContracts([])
     const bundle = {

@@ -247,10 +247,16 @@ async function siblingLanes(originals: Originals, request: CompositeQuery): Prom
   } as unknown as CompositeResult
 }
 
+/** A sub-query as a read of its own contract: the page's when it names none. */
+function memberOf(query: CompositeQuery, sub: CompositeQuery['subQueries'][number]): CompositeQuery['subQueries'][number] {
+  return { ...sub, dataContractId: sub.dataContractId ?? query.dataContractId }
+}
+
 async function compositeLanes(originals: Originals, query: CompositeQuery): Promise<CompositeResult> {
   let request = query
   let order: string[] | null = null
-  const pageVariants = laneVariants(query.where)
+  // Each member fans out by its own contract: a page on one contract may bind a count on another.
+  const pageVariants = lanesOf(query)
   if (pageVariants.length > 1) {
     const page = await queryLanes(originals.query, {
       dataContractId: query.dataContractId,
@@ -276,7 +282,7 @@ async function compositeLanes(originals: Originals, query: CompositeQuery): Prom
     result.pageDocuments.sort((a, b) => (position.get(idString(a, '')) ?? 0) - (position.get(idString(b, '')) ?? 0))
   }
   await Promise.all(query.subQueries.map(async (sub, index) => {
-    const variants = laneVariants(sub.where)
+    const variants = lanesOf(memberOf(query, sub))
     const target = result.subResults[index]
     if (variants.length < 2 || sub.kind !== 'counts' || !sub.bind || target?.kind !== 'counts') return
     const values = boundValues(result, sub.bind.source, sub.bind.sourceProperty)
@@ -362,15 +368,10 @@ export function installLaneFanout(sdk: EvoSDK): void {
   }) as DocumentsFacade['ranked'])
 
   shadow('composite', ((request: CompositeQuery) => {
-    if (isSiblingBundle(request)) {
-      const members = [request, ...request.subQueries.map((sub) => ({ ...sub, dataContractId: sub.dataContractId ?? request.dataContractId }))]
-      return members.some((member) => lanesOf(member).length > 1)
-        ? siblingLanes(originals, request)
-        : originals.composite(request)
-    }
-    const laned = fansOut(request.dataContractId)
-      && (laneVariants(request.where).length > 1 || request.subQueries.some((sub) => laneVariants(sub.where).length > 1))
-    return laned ? compositeLanes(originals, request) : originals.composite(request)
+    // Fans out when any member does, each judged by its own (or inherited) contract.
+    const laned = lanesOf(request).length > 1 || request.subQueries.some((sub) => lanesOf(memberOf(request, sub)).length > 1)
+    if (!laned) return originals.composite(request)
+    return isSiblingBundle(request) ? siblingLanes(originals, request) : compositeLanes(originals, request)
   }) as DocumentsFacade['composite'])
 }
 
