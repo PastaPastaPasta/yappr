@@ -93,7 +93,8 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
     if (!phraseAllowed) return { ok: false, error: 'Paste your private key instead.' }
     const { openRecoveryPhrase, PhraseSignInError } = await import('@/lib/auth/recovery-phrase-sign-in')
     try {
-      return criticalKeyFromPhrase(await openRecoveryPhrase(typed), identity.publicKeys, network)
+      const wallet = await openRecoveryPhrase(typed)
+      return await criticalKeyFromPhrase(wallet, identity.publicKeys, network, (hash) => identityService.getIdentityIdByPublicKeyHash(hash))
     } catch (failure) {
       if (failure instanceof PhraseSignInError) return { ok: false, error: failure.message }
       throw failure

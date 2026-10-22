@@ -21,6 +21,8 @@ vi.mock('./evo-sdk-service', () => ({
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>]) => signedWrite(...args) }))
 vi.mock('./signer-service', () => ({ signerService: { createSignerFromWasmKey: () => ({ signer: true, identityKey: true }) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: {} }) }))
+// Signed in as the identity that signs (lib/auth/critical-key.ts checks it).
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => 'Clm111111111111111111111111111111111111111' }))
 // A session signed in with its CRITICAL key (every key matches here): it signs without asking.
 vi.mock('../secure-storage', () => ({ getPrivateKeyRecord: () => ({ wif: 'wif', fromPasskey: false }) }))
 vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100), yappIsLocked: () => topology.locked }))

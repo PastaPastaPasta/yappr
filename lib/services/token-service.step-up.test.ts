@@ -12,7 +12,7 @@ import { privateKeyToWif } from '@/lib/crypto/wif'
 const { claim, signedWith, session } = vi.hoisted(() => ({
   claim: vi.fn(),
   signedWith: [] as string[],
-  session: { record: null as { wif: string; fromPasskey: boolean } | null, wallet: false },
+  session: { record: null as { wif: string; fromPasskey: boolean } | null, wallet: false, signedIn: true as boolean, signOutDuringFetch: false },
 }))
 
 const priv = (seed: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * 11 + seed) % 251 + 1)
@@ -20,7 +20,7 @@ const CRITICAL = privateKeyToWif(priv(1), 'testnet', true)
 const HIGH = privateKeyToWif(priv(2), 'testnet', true)
 const KEYS = vi.hoisted(() => [] as unknown[])
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ tokens: { claim }, identities: { fetch: async () => ({ publicKeys: KEYS }) } }) }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ tokens: { claim }, identities: { fetch: async () => { if (session.signOutDuringFetch) session.signedIn = false; return { publicKeys: KEYS } } } }) }))
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (_owner: string, _contract: string, write: () => Promise<unknown>) => write() }))
 vi.mock('./signer-service', () => ({
   signerService: { createSignerFromWasmKey: (wif: string) => { signedWith.push(wif); return { signer: true, identityKey: true } } },
@@ -66,7 +66,9 @@ beforeEach(() => {
   session.wallet = false
   asked = 0
   reply = 'critical'
-  unbind = bindCurrentIdentity(() => ME)
+  session.signedIn = true
+  session.signOutDuringFetch = false
+  unbind = bindCurrentIdentity(() => (session.signedIn ? ME : null))
   stopSheet = subscribeCriticalKeyRequests(() => {
     const request = currentCriticalKeyRequest()
     if (!request) return
@@ -124,6 +126,14 @@ describe('the starter claim', () => {
     await tokenService.claimStarterGrant(ME)
     expect(asked).toBe(1)
     stop()
+  })
+
+  it('a sign-out while the identity is read stops the claim, even for a session signed in with the CRITICAL key', async () => {
+    session.record = { wif: CRITICAL, fromPasskey: false }
+    session.signOutDuringFetch = true
+    expect(await tokenService.claimStarterGrant(ME)).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(claim).not.toHaveBeenCalled()
+    expect(signedWith).toEqual([])
   })
 
   it('canSignTokenTransitions counts a held key, and not a HIGH session alone', async () => {

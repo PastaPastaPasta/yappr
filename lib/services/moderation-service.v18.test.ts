@@ -39,6 +39,8 @@ const restrictions = vi.hoisted(() => ({ read: vi.fn(), refresh: vi.fn() }))
 const built = vi.hoisted(() => ({ buildDocumentForCreate: vi.fn(), buildSignedCreateTransition: vi.fn() }))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+// Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => sdk.identities.fetch.mock.lastCall?.[0] ?? null }))
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (_who: string, _contract: string, write: () => Promise<unknown>) => write() }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))

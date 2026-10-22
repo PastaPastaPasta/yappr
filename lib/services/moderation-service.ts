@@ -8,7 +8,7 @@ import { authorDeletesLeaveHoles, moderatorsCannotDelete, settledDeletionFor, ty
 import { registeredDeleteWindow, registeredOr, registeredOwnerProtected, registeredSettledRule, rememberRegisteredContract } from '@/lib/registered-contracts';
 import { documentNoun, moderatedContract, type ModeratedContract, type ModeratedContractKey } from '@/lib/moderated-contracts';
 import { storedTags } from '@/lib/post-helpers';
-import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, criticalKeyFor } from '@/lib/auth/critical-key';
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
@@ -1840,11 +1840,13 @@ class ModerationService {
     // A wallet (App Connect) session must not reach past its grant to a raw key left in storage.
     const { hasAppConnectSession } = await import('@/lib/auth/signing-keys');
     const { getPrivateKey } = await import('../secure-storage');
+    // The session the key is read in: a sign-out or switch while the identity is fetched stops the action.
+    const session = criticalKeySession();
     const sessionKey = hasAppConnectSession(identityId) ? null : getPrivateKey(identityId)?.trim() || null;
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.fetch(identityId);
     if (!identity) throw new Error('Identity not found');
-    const { wif, key } = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', sessionKey);
+    const { wif, key } = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', sessionKey, session);
     const signer = await signerService.createSigner(wif);
     return { identity, signer, identityKey: key, wif };
   }

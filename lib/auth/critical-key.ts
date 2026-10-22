@@ -175,6 +175,11 @@ function matchCritical<K extends IdentityKeyLike>(wif: string, publicKeys: reado
   })
 }
 
+/** The session a write starts in: read it before the session key, and pass both to {@link criticalKeyFor}. */
+export function criticalKeySession(): number {
+  return sessionEpoch()
+}
+
 /** Steps 1 and 2 of {@link criticalKeyFor}, without asking: the key that would sign now, or null. */
 export function availableCriticalKey<K extends IdentityKeyLike>(
   identityId: string,
@@ -211,6 +216,11 @@ export function availableCriticalKey<K extends IdentityKeyLike>(
  *    disabled since is dropped);
  * 3. otherwise the sheet asks.
  *
+ * `session` is {@link criticalKeySession} as the caller read `sessionKey`:
+ * only that session, still signed in as `identityId`, gets a key on any path,
+ * so a sign-out or a switch of account while the identity was read, or while
+ * the sheet was open, stops the action (CriticalKeyCancelledError).
+ *
  * Throws {@link CriticalKeyCancelledError} when the sheet is closed, and the
  * {@link CRITICAL_KEY_REQUIRED} marker where no sheet is mounted (the mobile
  * engine) or the answer does not match.
@@ -220,15 +230,13 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
   publicKeys: readonly K[],
   use: CriticalKeyUse,
   sessionKey: string | null,
+  session: number,
 ): Promise<{ wif: string; key: K }> {
+  const stillSignedIn = () => currentIdentityId() === identityId && sessionEpoch() === session
+  if (!stillSignedIn()) throw new CriticalKeyCancelledError()
   const available = availableCriticalKey(identityId, publicKeys, use, sessionKey)
   if (available) return available
   if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
-  // Only for the identity signed in here, before the sheet opens and once it answers: a sign-out or a
-  // switch of account while the identity was read, or while the sheet was open, stops the action.
-  const session = sessionEpoch()
-  const stillSignedIn = () => currentIdentityId() === identityId && sessionEpoch() === session
-  if (!stillSignedIn()) throw new CriticalKeyCancelledError()
   const answer = await ask(identityId, use)
   if (!answer || !stillSignedIn()) throw new CriticalKeyCancelledError()
   const result = usableFor(answer.source, use) ? matchCritical(answer.wif, publicKeys) : null

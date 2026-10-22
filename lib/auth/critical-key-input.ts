@@ -8,13 +8,11 @@
  */
 import { checkCriticalKey } from './login-key'
 import { criticalKey, phraseKeys } from './recovery-phrase'
-import { identityAuthKeyPath, normalizeRecoveryPhrase, type Dip13Wallet } from '@/lib/crypto/dip13'
+import { IDENTITY_GAP_LIMIT, MASTER_KEY_INDEX, identityAuthKeyPath, normalizeRecoveryPhrase, type Dip13Wallet } from '@/lib/crypto/dip13'
+import { hash160 } from '@/lib/crypto/hash'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { toKeyInfo, type IdentityKeyLike } from '@/lib/crypto/keys'
 import { hexToBytes, isLikelyHex, privateKeyToWif } from '@/lib/crypto/wif'
-
-/** How many of a phrase's identities (identity index 0, 1, ...) are searched for the account's key. */
-const PHRASE_IDENTITY_INDEXES = 32
 
 /** Twelve words or more is a recovery phrase; anything shorter is read as a private key. */
 export function looksLikeRecoveryPhrase(input: string): boolean {
@@ -42,16 +40,25 @@ export function criticalKeyFromPrivateKey(input: string, publicKeys: readonly Id
 
 /**
  * The identity's enabled CRITICAL authentication key as `wallet` derives it
- * (key index = key id, as wallets register them), searching the phrase's
- * first identities. Null when the phrase holds none. Derived bytes are wiped.
+ * (key index = key id, as wallets register them). The phrase's identities are
+ * walked as sign-in discovers them (lib/auth/recovery-phrase-sign-in.ts): each
+ * identity index is first checked locally, and only when it holds no match is
+ * its MASTER key looked up (`identityByMasterKeyHash`), stopping after
+ * IDENTITY_GAP_LIMIT unused indexes in a row. A failed lookup throws: an
+ * unanswered read never reads as "not this phrase". Derived bytes are wiped.
  */
-export function criticalKeyFromPhrase(wallet: Dip13Wallet, publicKeys: readonly IdentityKeyLike[], network: 'testnet' | 'mainnet'): CriticalKeyInput {
+export async function criticalKeyFromPhrase(
+  wallet: Dip13Wallet,
+  publicKeys: readonly IdentityKeyLike[],
+  network: 'testnet' | 'mainnet',
+  identityByMasterKeyHash: (hash: Uint8Array) => Promise<string | null>,
+): Promise<CriticalKeyInput> {
   const candidates = publicKeys.filter((key) => {
     const info = toKeyInfo(key)
     return !key.disabledAt && info?.purpose === KeyPurpose.AUTHENTICATION && info.securityLevel === SecurityLevel.CRITICAL
   })
   if (candidates.length === 0) return { ok: false, error: PHRASE_HOLDS_NO_CRITICAL_KEY }
-  for (let identityIndex = 0; identityIndex < PHRASE_IDENTITY_INDEXES; identityIndex++) {
+  for (let identityIndex = 0, misses = 0; misses < IDENTITY_GAP_LIMIT; identityIndex++) {
     const held = phraseKeys(candidates, (keyIndex) => wallet.derive(identityAuthKeyPath(network, identityIndex, keyIndex)))
     try {
       const found = criticalKey(held)
@@ -59,6 +66,9 @@ export function criticalKeyFromPhrase(wallet: Dip13Wallet, publicKeys: readonly 
     } finally {
       for (const key of held) key.privateKey.fill(0)
     }
+    const master = wallet.derive(identityAuthKeyPath(network, identityIndex, MASTER_KEY_INDEX))
+    master.privateKey.fill(0)
+    misses = (await identityByMasterKeyHash(hash160(master.publicKey))) ? 0 : misses + 1
   }
   return { ok: false, error: PHRASE_HOLDS_NO_CRITICAL_KEY }
 }

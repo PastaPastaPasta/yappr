@@ -11,7 +11,7 @@ import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlread
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
-import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor } from '@/lib/auth/critical-key';
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key';
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 
@@ -389,12 +389,14 @@ class TokenService {
     }
     if (opts?.requireCritical) {
       // The session's own key when it is CRITICAL, else the key held for the tab, else the sheet asks
-      // for it now (lib/auth/critical-key.ts).
+      // for it now (lib/auth/critical-key.ts). Taken before the key is read: a sign-out or switch while
+      // the identity is fetched stops the action.
+      const session = criticalKeySession();
       const sessionKey = await this.sessionCriticalCandidate(identityId);
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) throw new Error('Identity not found');
-      const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey);
+      const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey, session);
       await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
       return signerService.createSignerFromWasmKey(critical.wif, critical.key);
     }

@@ -10,6 +10,7 @@ import {
   answerCriticalKeyRequest,
   availableCriticalKey,
   bindCriticalKeySession,
+  criticalKeySession,
   cancelCriticalKeyRequest,
   criticalKeyFor,
   currentCriticalKeyRequest,
@@ -84,7 +85,7 @@ function mount(answer: Parameters<typeof sheet>[0]) {
 describe('criticalKeyFor', () => {
   it('signs with a session that already holds the CRITICAL key, without asking', async () => {
     const { asked } = mount(() => null)
-    const { wif, key: matched } = await criticalKeyFor(A, KEYS, 'moderation', CRITICAL)
+    const { wif, key: matched } = await criticalKeyFor(A, KEYS, 'moderation', CRITICAL, 0)
     expect(wif).toBe(CRITICAL)
     expect(matched.id).toBe(1)
     expect(asked).toEqual([])
@@ -92,41 +93,41 @@ describe('criticalKeyFor', () => {
 
   it('asks when the session signs with a HIGH key, and signs with the key given', async () => {
     const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: false }))
-    const { wif } = await criticalKeyFor(A, KEYS, 'moderation', HIGH)
+    const { wif } = await criticalKeyFor(A, KEYS, 'moderation', HIGH, 0)
     expect(wif).toBe(CRITICAL)
     expect(asked).toEqual([{ identityId: A, use: 'moderation' }])
   })
 
   it('kept for the tab, the key signs the next action without asking again', async () => {
     const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: true }))
-    await criticalKeyFor(A, KEYS, 'moderation', null)
-    await criticalKeyFor(A, KEYS, 'moderation', null)
+    await criticalKeyFor(A, KEYS, 'moderation', null, 0)
+    await criticalKeyFor(A, KEYS, 'moderation', null, 0)
     expect(asked).toHaveLength(1)
   })
 
   it('not kept, the key signs that one action and the next one asks again', async () => {
     const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: false }))
-    await criticalKeyFor(A, KEYS, 'moderation', null)
-    await criticalKeyFor(A, KEYS, 'moderation', null)
+    await criticalKeyFor(A, KEYS, 'moderation', null, 0)
+    await criticalKeyFor(A, KEYS, 'moderation', null, 0)
     expect(asked).toHaveLength(2)
     expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
   })
 
   it('closing the sheet stops the action', async () => {
     mount(() => null)
-    await expect(criticalKeyFor(A, KEYS, 'moderation', null)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    await expect(criticalKeyFor(A, KEYS, 'moderation', null, 0)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
   })
 
   it('answers the marker where no sheet is mounted (the mobile engine), asking nobody', async () => {
-    await expect(criticalKeyFor(A, KEYS, 'token', HIGH)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    await expect(criticalKeyFor(A, KEYS, 'token', HIGH, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
     expect(currentCriticalKeyRequest()).toBeNull()
   })
 
   it('never signs with a key that is not this identity\'s CRITICAL key, and never keeps it', async () => {
     mount(() => ({ wif: OTHER_CRITICAL, source: 'typed', keep: true }))
-    await expect(criticalKeyFor(A, KEYS, 'moderation', null)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    await expect(criticalKeyFor(A, KEYS, 'moderation', null, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
     mount(() => ({ wif: HIGH, source: 'typed', keep: true }))
-    await expect(criticalKeyFor(A, KEYS, 'moderation', null)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    await expect(criticalKeyFor(A, KEYS, 'moderation', null, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
     expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
   })
 
@@ -140,7 +141,7 @@ describe('criticalKeyFor', () => {
     holdCriticalKey(A, CRITICAL, 'typed')
     const disabled = [key(1, 1, SecurityLevel.CRITICAL, { disabledAt: 5 }), key(4, 3, SecurityLevel.CRITICAL)]
     const { asked } = mount(() => ({ wif: OTHER_CRITICAL, source: 'typed', keep: false }))
-    const { wif } = await criticalKeyFor(A, disabled, 'moderation', null)
+    const { wif } = await criticalKeyFor(A, disabled, 'moderation', null, 0)
     expect(wif).toBe(OTHER_CRITICAL)
     expect(asked).toHaveLength(1)
     expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
@@ -151,19 +152,19 @@ describe('criticalKeyFor', () => {
     expect(availableCriticalKey(A, KEYS, 'moderation', null)?.wif).toBe(CRITICAL)
     expect(availableCriticalKey(A, KEYS, 'token', null)).toBeNull()
     mount(() => ({ wif: CRITICAL, source: 'passkey', keep: true }))
-    await expect(criticalKeyFor(A, KEYS, 'token', null)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    await expect(criticalKeyFor(A, KEYS, 'token', null, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
   })
 
   it('a recovery phrase\'s CRITICAL key, held at sign-in, signs a claim without asking', async () => {
     holdCriticalKey(A, CRITICAL, 'phrase')
     const { asked } = mount(() => null)
-    expect((await criticalKeyFor(A, KEYS, 'token', HIGH)).wif).toBe(CRITICAL)
+    expect((await criticalKeyFor(A, KEYS, 'token', HIGH, 0)).wif).toBe(CRITICAL)
     expect(asked).toEqual([])
   })
 
   it('two actions waiting at once share one sheet', async () => {
     const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: false }))
-    const [first, second] = await Promise.all([criticalKeyFor(A, KEYS, 'moderation', null), criticalKeyFor(A, KEYS, 'moderation', null)])
+    const [first, second] = await Promise.all([criticalKeyFor(A, KEYS, 'moderation', null, 0), criticalKeyFor(A, KEYS, 'moderation', null, 0)])
     expect(first.wif).toBe(CRITICAL)
     expect(second.wif).toBe(CRITICAL)
     expect(asked).toHaveLength(1)
@@ -174,14 +175,30 @@ describe('criticalKeyFor', () => {
       signedIn = null
       return { wif: CRITICAL, source: 'typed', keep: true }
     })
-    await expect(criticalKeyFor(A, KEYS, 'moderation', null)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    await expect(criticalKeyFor(A, KEYS, 'moderation', null, 0)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
     expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
+  })
+
+  it('never returns the session key, nor a held one, once that session ended while the identity was read', async () => {
+    let epoch = 1
+    const unbindSession = bindCriticalKeySession(() => epoch)
+    holdCriticalKey(A, CRITICAL, 'typed')
+    const session = criticalKeySession()
+    // Signed out (or switched) while the caller fetched the identity: its captured session key still matches.
+    signedIn = null
+    await expect(criticalKeyFor(A, KEYS, 'moderation', CRITICAL, session)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    // Signed back in as the same identity: a new session, so the old one's key does not sign either.
+    signedIn = A
+    epoch = 2
+    await expect(criticalKeyFor(A, KEYS, 'moderation', CRITICAL, session)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    expect((await criticalKeyFor(A, KEYS, 'moderation', CRITICAL, criticalKeySession())).wif).toBe(CRITICAL)
+    unbindSession()
   })
 
   it('never opens a sheet for an identity that is no longer the one signed in', async () => {
     signedIn = B
     const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: true }))
-    await expect(criticalKeyFor(A, KEYS, 'moderation', null)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    await expect(criticalKeyFor(A, KEYS, 'moderation', null, 0)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
     expect(asked).toEqual([])
   })
 
@@ -199,10 +216,10 @@ describe('criticalKeyFor', () => {
 
   it('a late answer from a sheet that was replaced never settles the request opened since', async () => {
     const stop = subscribeCriticalKeyRequests(() => {})
-    const first = criticalKeyFor(A, KEYS, 'moderation', null)
+    const first = criticalKeyFor(A, KEYS, 'moderation', null, 0)
     const shown = currentCriticalKeyRequest()
     // A token action replaces it while the first sheet is still checking its key.
-    const second = criticalKeyFor(A, KEYS, 'token', null)
+    const second = criticalKeyFor(A, KEYS, 'token', null, 0)
     await expect(first).rejects.toBeInstanceOf(CriticalKeyCancelledError)
     if (shown) answerCriticalKeyRequest(shown, { wif: CRITICAL, source: 'typed', keep: true })
     expect(currentCriticalKeyRequest()).toMatchObject({ identityId: A, use: 'token' })
@@ -214,11 +231,11 @@ describe('criticalKeyFor', () => {
   })
 
   it('unmounting the sheet closes the request it had open', async () => {
-    const pending = criticalKeyFor(A, KEYS, 'moderation', null)
+    const pending = criticalKeyFor(A, KEYS, 'moderation', null, 0)
     // No sheet: refused at once. With one, then unmounted mid-request: cancelled.
     await expect(pending).rejects.toThrow(CRITICAL_KEY_REQUIRED)
     const stop = subscribeCriticalKeyRequests(() => {})
-    const waiting = criticalKeyFor(A, KEYS, 'moderation', null)
+    const waiting = criticalKeyFor(A, KEYS, 'moderation', null, 0)
     stop()
     await expect(waiting).rejects.toBeInstanceOf(CriticalKeyCancelledError)
   })
@@ -263,7 +280,7 @@ describe('forgetCriticalKeysOnIdentityChange', () => {
   it('closes a sheet open for the identity that signed out', async () => {
     const { emit } = harness({ user: { identityId: A } })
     const stop = subscribeCriticalKeyRequests(() => {})
-    const waiting = criticalKeyFor(A, KEYS, 'moderation', null)
+    const waiting = criticalKeyFor(A, KEYS, 'moderation', null, 0)
     expect(currentCriticalKeyRequest()).toMatchObject({ identityId: A, use: 'moderation' })
     emit({ user: null })
     await expect(waiting).rejects.toBeInstanceOf(CriticalKeyCancelledError)
@@ -276,7 +293,7 @@ describe('forgetCriticalKeysOnIdentityChange', () => {
     forgetCriticalKey(A)
     expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
     const stop = subscribeCriticalKeyRequests(() => {})
-    const waiting = criticalKeyFor(A, KEYS, 'moderation', null)
+    const waiting = criticalKeyFor(A, KEYS, 'moderation', null, 0)
     forgetCriticalKey(A)
     await expect(waiting).rejects.toBeInstanceOf(CriticalKeyCancelledError)
     stop()

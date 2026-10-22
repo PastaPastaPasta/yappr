@@ -4,7 +4,7 @@
  * them off contracts that do not declare the capability. Moutai has no
  * contracts to write to, so the SDK is mocked; the live check is PR C's.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   contracts: {
@@ -47,6 +47,8 @@ const SETTLED_RULE = { windowSeconds: 604800, leaderRequired: true, approvals: 3
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+// Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => sdk.identities.fetch.mock.lastCall?.[0] ?? null }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
 const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
 vi.mock('./identity-nonce', () => ({
@@ -103,7 +105,6 @@ import {
   moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { answerCriticalKeyRequest, cancelCriticalKeyRequest, currentCriticalKeyRequest, subscribeCriticalKeyRequests } from '@/lib/auth/critical-key'
-import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -136,10 +137,6 @@ describe('moderation signs only with a raw key', () => {
 })
 
 describe('step-up: a wallet session asks for the CRITICAL key when the action is confirmed', () => {
-  let unbind: () => void
-  beforeEach(() => { unbind = bindCurrentIdentity(() => MODERATOR) })
-  afterEach(() => unbind())
-
   function sheet(reply: 'key' | 'cancel') {
     const asked: string[] = []
     const stop = subscribeCriticalKeyRequests(() => {
