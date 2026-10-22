@@ -3,7 +3,7 @@
  * code and by what they were doing. Pure (unit-tested). Nothing raw ever
  * reaches the page: an unknown refusal reads as "That didn't go through".
  */
-import { PENDING_WRITE_ERROR, consensusCodeOf, extractErrorMessage, isOutcomeUnknownError } from '@/lib/error-utils'
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, consensusCodeOf, extractErrorMessage, isOutcomeUnknownError } from '@/lib/error-utils'
 import { KeyStepUpCancelledError, KeyStepUpUnavailableError } from '@/lib/auth/key-step-up'
 
 /** What was being written. */
@@ -84,8 +84,9 @@ export function charterActionError(action: CharterAction, error: unknown): Chart
   if (error instanceof CharterActionError) return error
   if (error instanceof KeyStepUpCancelledError) return new CharterActionError('Nothing was sent.', 'cancelled')
   if (error instanceof KeyStepUpUnavailableError) return new CharterActionError('Open the Moderation teams page to do this.', 'refused')
-  // Another write by this account may still land on the same nonce sequence: nothing was sent.
-  if (extractErrorMessage(error) === PENDING_WRITE_ERROR) return new CharterActionError(PENDING_WRITE_ERROR, 'refused')
+  // Nothing was sent: another write may still land on this nonce sequence, or this browser's storage refused the nonce.
+  const plain = extractErrorMessage(error)
+  if (plain === PENDING_WRITE_ERROR || plain === NONCE_STORE_ERROR) return new CharterActionError(plain, 'refused')
   const code = consensusCodeOf(error) ?? codeInMessage(error)
   if (code !== null) {
     const message = BY_ACTION[action]?.[code] ?? ANY_ACTION[code]

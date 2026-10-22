@@ -108,6 +108,9 @@ interface PendingCreate {
 const PENDING_PREFIX = `yappr:charter-pending:${CHARTERS_CONTRACT_ID}:`
 
 const MAY_STILL_LAND = 'Your last try may still go through. Check again in a minute before changing anything.'
+const APPLICATION_MAY_STILL_LAND = 'Your application may still go through. Check the election on this page before applying again.'
+const EARLIER_VERSION_FILED = 'An earlier version of this was filed, not the one you just sent. Refresh to see it.'
+const STILL_SENDING = 'Your last try is still being sent. Wait for it before changing anything.'
 
 /** Whether the entry was stored: when it was not, nothing may be broadcast. */
 function savePendingCreate(key: string, entry: PendingCreate): boolean {
@@ -186,7 +189,7 @@ class CharterService {
   /** Signing keys typed in, by identity: this tab's memory only. */
   private signingWifs = new Map<string, string>()
   /** The write each slot has under way, so a second click joins it instead of signing again. */
-  private inFlight = new Map<string, Promise<string>>()
+  private inFlight = new Map<string, { fingerprint: string; work: Promise<string> }>()
   /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
   private generation = 0
 
@@ -526,16 +529,19 @@ class CharterService {
    *   height or later); a read that fails or lags proves nothing;
    * - an application (with its 0.5 DASH deposit) lives in the contest, not in
    *   document storage, and is NEVER declared dead here: it stays uncertain
-   *   until it shows in the contest or the seat, and the leader is told to
-   *   check the election before trying again;
+   *   until it shows in the contest or the seat. Only the leader's deliberate
+   *   "Clear and start over" ({@link abandonApplication}) frees its slot;
    * - a try with different contents while one may still land is refused,
-   *   so an edit after a timeout can never file a second proposal or pay a
-   *   second deposit.
+   *   and one landed with different contents is reported as such, so an edit
+   *   after a timeout can never file a second proposal or pay a second deposit,
+   *   nor be reported filed when the earlier version was.
    *
-   * Every look at the slot, and every signature, happens under the identity's
-   * write lock on the charters contract; nonces come from the shared
-   * coordinator (`identity-nonce.ts`), like every other write this browser
-   * signs. Only the prompts (a charter key, a signing key) come before the lock.
+   * Every look at the slot, every signature and every broadcast happens under
+   * the identity's write lock on the charters contract (Web Locks: shared by
+   * every tab; where the browser has none, a queue in this tab only), and
+   * nonces come from the shared coordinator (`identity-nonce.ts`) like every
+   * other write this browser signs. Only the prompts (a charter key, a signing
+   * key) come before the lock, and only when a new create must be signed.
    */
   private file(action: CharterAction, input: {
     ownerId: string
@@ -551,11 +557,14 @@ class CharterService {
   }): Promise<string> {
     const key = `${input.ownerId}:${input.type}:${input.slot}`
     const running = this.inFlight.get(key)
-    if (running) return running
+    if (running) {
+      if (running.fingerprint !== input.fingerprint) return Promise.reject(charterActionError(action, new CharterActionError(STILL_SENDING, 'uncertain')))
+      return running.work
+    }
     const work = this.fileOnce(key, input).catch((error: unknown) => {
       throw charterActionError(action, error)
     }).finally(() => this.inFlight.delete(key))
-    this.inFlight.set(key, work)
+    this.inFlight.set(key, { fingerprint: input.fingerprint, work })
     return work
   }
 
@@ -575,98 +584,151 @@ class CharterService {
       })
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
-    const uncertain = () => new CharterActionError(type === 'electedCharter'
-      ? 'Your application may still go through. Check the election on this page before applying again.'
-      : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
+    const uncertain = () => new CharterActionError(type === 'electedCharter' ? APPLICATION_MAY_STILL_LAND : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
 
     /**
-     * Under the lock: settles whatever the slot holds now. Resolves to the
-     * proved document id, to the entry still pending (same contents), or to
-     * null when the slot is free. Each settled entry is the one read from
-     * storage, so another tab's newer entry is never dropped for an older one.
+     * Under the lock: settles what the slot holds now (always read from
+     * storage, so another tab's newer entry is never dropped for an older one).
+     * A landed entry resolves to its id when it says what this write says;
+     * one that says something else is reported as filed in its earlier version.
      */
-    const resolveSlot = async (): Promise<string | PendingCreate | null> => {
+    type Slot = { kind: 'landed'; id: string } | { kind: 'dead'; entry: PendingCreate } | { kind: 'empty' } | { kind: 'pending'; entry: PendingCreate }
+    const resolveSlot = async (): Promise<Slot> => {
       const stored = loadPendingCreate(key)
-      if (!stored) return null
+      if (!stored) return { kind: 'empty' }
       const outcome = await settle(stored.signed)
-      if (outcome === 'landed') return this.proved(key, stored)
-      if (outcome === 'dead') {
-        this.release(key, stored, true)
-        return null
+      if (outcome === 'landed') {
+        const id = this.proved(ownerId, key, stored)
+        if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
+        return { kind: 'landed', id }
       }
-      if (stored.fingerprint !== fingerprint) throw new CharterActionError(MAY_STILL_LAND, 'uncertain')
-      return stored
+      if (outcome === 'dead') {
+        this.release(ownerId, key, stored, true)
+        return { kind: 'dead', entry: stored }
+      }
+      if (stored.fingerprint !== fingerprint) throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
+      return { kind: 'pending', entry: stored }
     }
 
-    const first = await lock(resolveSlot)
-    if (typeof first === 'string') return first
-    // The data (which may ask for a charter key) and the signing key come before the lock,
-    // so a prompt never holds other writes back; nothing is built for a resend.
-    const fresh = first ? null : { data: await input.data(), signing: await this.signingKey(ownerId) }
-
-    const sending = await lock(async () => {
-      // Storage again: another tab may have signed, proved or dropped this slot meanwhile.
-      const now = await resolveSlot()
-      if (typeof now === 'string') return now
-      let current = now
-      if (!current) {
-        if (!fresh) {
-          // What this tab saw pending was settled by another tab: say so rather than sign again.
-          throw new CharterActionError('Your last try may have gone through. Check again before trying again.', 'uncertain')
-        }
-        const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
-        const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
-        try {
-          const signed = await signCharterCreate(w, sdk, { type, ownerId, data: fresh.data, nonce, privateKey, identityKey: fresh.signing.identityKey, fund })
-          current = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
-        } finally {
-          privateKey.free()
-        }
-        // Stored before the broadcast, or not sent at all: a reload or another tab must find these bytes.
-        if (!savePendingCreate(key, current)) {
-          releaseNonce(ownerId, CHARTERS_CONTRACT_ID, current.reservation)
-          throw new CharterActionError(NONCE_STORE_ERROR, 'refused')
-        }
-      }
+    /** Under the lock: broadcasts the entry's signed bytes; a definite refusal drops it. */
+    const send = async (entry: PendingCreate): Promise<PendingCreate> => {
       try {
-        await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(current.signed.bytes))
+        await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(entry.signed.bytes))
       } catch (error) {
         // A verdict on these bytes drops them. "Already in the mempool or chain",
         // a nonce clash (these bytes may have executed on an earlier try) and a
         // lost connection are not verdicts: prove the document instead.
         if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
           // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
-          this.release(key, current, await charterNonceConsumed(sdk, ownerId, current.signed.nonce).catch(() => false))
+          this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false))
           throw error
         }
-        logger.warn(`charters: ${type} ${current.signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
+        logger.warn(`charters: ${type} ${entry.signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
       }
-      return current
-    })
-    if (typeof sending === 'string') return sending
+      return entry
+    }
 
+    // One lock for a resend; a new create first leaves it for its prompts, then takes it again.
+    const first = await lock(async () => {
+      const slot = await resolveSlot()
+      if (slot.kind === 'landed') return slot.id
+      return slot.kind === 'pending' ? send(slot.entry) : null
+    })
+    if (typeof first === 'string') return first
+
+    let sending = first
+    if (!sending) {
+      const fresh = { data: await input.data(), signing: await this.signingKey(ownerId) }
+      const second = await lock(async () => {
+        // Storage again: another tab may have signed, proved or dropped this slot meanwhile.
+        const slot = await resolveSlot()
+        if (slot.kind === 'landed') return slot.id
+        if (slot.kind === 'pending') return send(slot.entry)
+        const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
+        const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
+        let created: PendingCreate
+        try {
+          const signed = await signCharterCreate(w, sdk, { type, ownerId, data: fresh.data, nonce, privateKey, identityKey: fresh.signing.identityKey, fund })
+          created = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
+        } finally {
+          privateKey.free()
+        }
+        // Stored before the broadcast, or not sent at all: a reload or another tab must find these bytes.
+        if (!savePendingCreate(key, created)) {
+          releaseNonce(ownerId, CHARTERS_CONTRACT_ID, created.reservation)
+          throw new CharterActionError(NONCE_STORE_ERROR, 'refused')
+        }
+        return send(created)
+      })
+      if (typeof second === 'string') return second
+      sending = second
+    }
+
+    const proving = sending
     for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
-      if (await exists(sending.signed) === true) return lock(async () => this.proved(key, sending))
+      if (await exists(proving.signed) === true) return lock(async () => this.proved(ownerId, key, proving))
       await sleep(PROOF_PAUSE_MS)
     }
-    const outcome = await lock(resolveSlot)
-    if (typeof outcome === 'string') return outcome
-    if (outcome === null) {
-      // Freed: proved dead here, or settled by another tab (then it may have landed).
-      if (await exists(sending.signed) === true) return sending.signed.id
+    const last = await lock(resolveSlot)
+    if (last.kind === 'landed') return last.id
+    // "Wasn't recorded" only when this very call proved this very create dead.
+    if (last.kind === 'dead' && last.entry.reservation.id === proving.reservation.id) {
       throw new CharterActionError("This wasn't recorded. Check, then try again.", 'refused')
+    }
+    if (last.kind !== 'pending') {
+      // Freed by another tab (which may have proved it landed), or replaced: only a proof answers.
+      if (await exists(proving.signed) === true) return proving.signed.id
     }
     throw uncertain()
   }
 
-  /** Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its nonce is spent. */
-  private release(key: string, entry: PendingCreate, spent: boolean): void {
-    forgetPendingCreate(key, entry)
-    releaseNonce(entry.signed.owner, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
+  /**
+   * Whether an application for `targetContractId` signed in this browser may
+   * still go through (stored, not yet proved): the page then offers "Check the
+   * election" and the deliberate {@link abandonApplication}.
+   */
+  hasPendingApplication(ownerId: string, targetContractId: string): boolean {
+    try {
+      return loadPendingCreate(`${ownerId}:electedCharter:${targetContractId}`) !== null
+    } catch {
+      // Unreadable: it may still go through, which is what this asks.
+      return true
+    }
   }
 
-  private proved(key: string, entry: PendingCreate): string {
-    this.release(key, entry, true)
+  /**
+   * The leader's deliberate way out of an application stuck uncertain: frees
+   * its slot so a new one can be signed. The earlier one may still execute, so
+   * the page asks for confirmation that a second application and deposit may
+   * follow. Nothing else ever clears an application's slot.
+   */
+  async abandonApplication(ownerId: string, targetContractId: string): Promise<void> {
+    const key = `${ownerId}:electedCharter:${targetContractId}`
+    await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
+      let stored: PendingCreate | null = null
+      try {
+        stored = loadPendingCreate(key)
+      } catch {
+        // Unreadable: drop the raw value below all the same.
+      }
+      try {
+        localStorage.removeItem(PENDING_PREFIX + key)
+      } catch {
+        // Storage blocked: nothing was stored there.
+      }
+      // Its nonce may still execute: kept as spent so no new create takes it.
+      if (stored) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
+    })
+  }
+
+  /** Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its nonce is spent. */
+  private release(ownerId: string, key: string, entry: PendingCreate, spent: boolean): void {
+    forgetPendingCreate(key, entry)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
+  }
+
+  private proved(ownerId: string, key: string, entry: PendingCreate): string {
+    this.release(ownerId, key, entry, true)
     return entry.signed.id
   }
 

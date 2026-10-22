@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowLeftIcon, ArrowTopRightOnSquareIcon, CheckCircleIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { useAuth } from '@/contexts/auth-context'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { logger } from '@/lib/logger'
@@ -125,6 +126,13 @@ export function ProposalView({ contract, proposalId, election }: {
   }, [proposalId, loadRequests])
 
   const requested = useMemo(() => new Set((requests ?? []).map((r) => r.ownerId)), [requests])
+  // An application sent from this browser whose outcome is still unknown (read again after each try or clear).
+  const [pendingCheck, setPendingCheck] = useState(0)
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
+  const pendingApplication = useMemo(
+    () => (me && declared.contractId && pendingCheck >= 0 ? charterService.hasPendingApplication(me, declared.contractId) : false),
+    [me, declared.contractId, pendingCheck],
+  )
 
   if (proposal === undefined) return <Section><p className="text-gray-500">Loading the proposal…</p></Section>
   if (proposal === null || (status && proposal.targetContractId !== null && proposal.targetContractId !== status.targetContractId)) {
@@ -176,10 +184,21 @@ export function ProposalView({ contract, proposalId, election }: {
     const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
     const blocker = applyBlocker({ stage: freshStage, proposal, viewerId: me, status: fresh, members, requested, balance: freshBalance, minimumBalance: LEADER_MINIMUM_CREDITS })
     if (blocker) throw new CharterActionError(applyBlockerText(blocker, freshStage), 'refused')
-    await charterService.fileApplication(me, proposal, target, members)
+    try {
+      await charterService.fileApplication(me, proposal, target, members)
+    } finally {
+      setPendingCheck((n) => n + 1)
+    }
     await refresh()
     return 'Your application is filed.'
   })
+
+  const abandonApplication = () => {
+    if (!me || !declared.contractId) return
+    charterService.abandonApplication(me, declared.contractId)
+      .then(() => setPendingCheck((n) => n + 1))
+      .catch((abandonError: unknown) => logger.warn('Moderation teams: the application could not be cleared', abandonError))
+  }
 
   const link = typeof window === 'undefined' ? '' : inviteUrl(contract, proposal.id, window.location.origin)
   const messageBytes = utf8Bytes(message)
@@ -297,6 +316,27 @@ export function ProposalView({ contract, proposalId, election }: {
                 otherwise masternodes vote for {formatWindow(status.declaration.voteWindowSeconds)}.
               </p>
               <CostPreview lines={fees ? applyCostLines(fees) : null} balance={balance} loading={fees === null} />
+              {pendingApplication && (
+                <Notice tone="warn" testId="application-uncertain">
+                  <p>
+                    An application you sent from this browser may still go through. Check the election before applying again: refresh,
+                    and look for your team under Applications.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => { refresh().catch(() => { /* reported inside */ }); setPendingCheck((n) => n + 1) }}>Check the election</Button>
+                    <Button size="sm" variant="outline" onClick={() => setConfirmAbandon(true)} data-testid="abandon-application">Clear and start over</Button>
+                  </div>
+                </Notice>
+              )}
+              <ConfirmDialog
+                isOpen={confirmAbandon}
+                onClose={() => setConfirmAbandon(false)}
+                onConfirm={() => { setConfirmAbandon(false); abandonApplication() }}
+                title="Clear and start over?"
+                message={`Your earlier application may still go through. If you apply again and it does, you may file a second application and pay a second ${DEPOSIT_TEXT} deposit. Only do this once the election shows no application from you.`}
+                confirmText="Clear and start over"
+                variant="danger"
+              />
               {apply ? (
                 <Notice tone={apply === 'not-open' ? 'info' : 'warn'} testId="apply-blocker">
                   {apply === 'already-applied' ? 'You have applied for this contract with another of your proposals.' : applyBlockerText(apply, stage)}

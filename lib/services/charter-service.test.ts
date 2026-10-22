@@ -26,6 +26,7 @@ const storage = vi.hoisted(() => {
 })
 const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
+const locks = vi.hoisted(() => vi.fn())
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 vi.mock('@dashevo/wasm-sdk', () => ({
@@ -41,7 +42,7 @@ vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
   charterKeyInCreation: () => ({}),
 }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleCreate: settle } }))
-vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: (_o: string, _c: string, write: () => Promise<unknown>) => write() }))
+vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: (_o: string, _c: string, write: () => Promise<unknown>) => { locks(); return write() } }))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => ({ current: 0n, value: nonces.next++ }),
   allocateNonce: () => 1n,
@@ -251,5 +252,87 @@ describe('a join request', () => {
     } finally {
       charterKey.mockRestore()
     }
+  })
+})
+
+describe('the outcome a try reports', () => {
+  it("never reports \"wasn't recorded\" for a create another tab settled: only a proof of its own death does", async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    let reads = 0
+    builders.exists.mockImplementation(async () => {
+      // While this tab polls, another tab proves the create landed and clears the slot; this tab's reads lag.
+      if (++reads === 6) storage.removeItem(slotKey('submittedCharter', TERMS.targetContractId))
+      return null
+    })
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(settle).not.toHaveBeenCalled()
+  })
+
+  it("reports \"wasn't recorded\" when this try proved its own create dead", async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(false)
+    settle.mockResolvedValue('not-recorded')
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toThrow("wasn't recorded")
+  })
+
+  it('reports an earlier version as filed, not the edited one, when the stored create landed with other contents', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    settle.mockResolvedValue('landed')
+    await expect(charterService.submitProposal(OWNER, { ...TERMS, description: 'Edited.' })).rejects.toThrow('An earlier version of this was filed')
+    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a changed write while the same slot is still being sent in this tab', async () => {
+    let finish: () => void = () => undefined
+    sdk.stateTransitions.broadcastAndWait.mockImplementation(() => new Promise<void>((done) => { finish = done }))
+    builders.exists.mockResolvedValue(true)
+    const first = charterService.submitProposal(OWNER, TERMS)
+    await expect(charterService.submitProposal(OWNER, { ...TERMS, description: 'Edited.' })).rejects.toThrow('still being sent')
+    await vi.waitFor(() => expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalled())
+    finish()
+    await expect(first).resolves.toBe('doc-1')
+  })
+
+  it('resends a pending create inside one lock, asking for no key', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    locks.mockClear()
+    sdk.identities.fetch.mockClear()
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    // The resend's lock and the final settle's: never a second round of prompts and locks.
+    expect(locks).toHaveBeenCalledTimes(2)
+    expect(sdk.identities.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe("the leader's way out of an application stuck uncertain", () => {
+  const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-stuck', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
+
+  it('clears the slot only when asked, keeping the old nonce counted as spent, so a new application can be signed', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(false)
+    builders.consumed.mockResolvedValue(true)
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-stuck', ['m1'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(true)
+    // A different member list stays refused until the leader clears it.
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-stuck', ['m1', 'm2'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    await charterService.abandonApplication(OWNER, 'target-stuck')
+    expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(false)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-stuck', ['m1', 'm2'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+  })
+
+  it('treats an unreadable stored application as pending, and clears it when asked', async () => {
+    storage.setItem(slotKey('electedCharter', 'target-stuck'), 'not json')
+    expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(true)
+    await charterService.abandonApplication(OWNER, 'target-stuck')
+    expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(false)
   })
 })
