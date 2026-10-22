@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dropsHidden, isHidden, isHiddenItem, moderationLogEnabled, moderationMarksOf, moderationViewAll, withoutHiddenItems } from './moderation-view'
+import { dropsHidden, isHidden, isHiddenItem, moderationLogEnabled, moderationMarksOf, moderationViewAll, shownMarks, withoutHiddenItems } from './moderation-view'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -77,5 +77,38 @@ describe('moderationMarksOf', () => {
 
   it('ignores a moderator that is not an identifier string', () => {
     expect(moderationMarksOf({ mod: 1, $moderatedBy: new Uint8Array(32) }).moderatedBy).toBeUndefined()
+  })
+})
+
+describe('shownMarks', () => {
+  const hidden = { mod: 1, modLabel: 3, moderatedAt: 2_000 }
+  const proved = { marks: hidden, at: 2_000, proved: true }
+
+  it('shows the read when nothing was recorded', () => {
+    expect(shownMarks({ mod: 2 }, undefined, false)).toEqual({ mod: 2 })
+  })
+
+  it('shows a proved change over a read from before it', () => {
+    expect(shownMarks(undefined, proved, true)).toEqual(hidden)
+    expect(shownMarks({ moderatedAt: 1_000 }, proved, true)).toEqual(hidden)
+    expect(shownMarks({ moderatedAt: 2_000 }, proved, true)).toEqual(hidden)
+    expect(shownMarks({ mod: 1, moderatedAt: 1_000 }, { marks: null, at: 2_000, proved: true }, true)).toBeUndefined()
+  })
+
+  it('gives way to a read that carries a later moderator change', () => {
+    expect(shownMarks({ mod: 2, moderatedAt: 3_000 }, proved, false)).toEqual({ mod: 2, moderatedAt: 3_000 })
+  })
+
+  it('shows an unproved change only until a new read arrives', () => {
+    const unproved = { marks: null, at: 2_000, proved: false }
+    const stale = { mod: 1, moderatedAt: 1_000 }
+    expect(shownMarks(stale, unproved, false)).toBeUndefined()
+    // The unhide never landed: the next read, still hidden, is the truth.
+    expect(shownMarks(stale, unproved, true)).toEqual(stale)
+  })
+
+  it('keeps the read\'s restriction flag, which no hide or unhide changes', () => {
+    expect(shownMarks({ restricted: true }, proved, false)).toEqual({ ...hidden, restricted: true })
+    expect(shownMarks({ mod: 1, restricted: true }, { marks: null, at: 2_000, proved: true }, false)).toEqual({ restricted: true })
   })
 })

@@ -8,7 +8,8 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { useBulkHideModal, useBulkModeratedMarks } from '@/hooks/use-bulk-hide-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
 import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
@@ -67,7 +68,7 @@ function bulkStatusLine(mode: BulkMode, state: BulkProgress | BulkSummary): stri
 export function BulkHideModal() {
   const { user, controller } = useAuth()
   const { isOpen, target, close } = useBulkHideModal()
-  const recordMarks = useBulkModeratedMarks((state) => state.record)
+  const recordMarks = useRecentModeration((state) => state.record)
   const canAuthorize = useModerationAuthorization(isOpen)
   const seatedReasons = useSeatedReasons(isOpen, 'social')
   const [mode, setMode] = useState<BulkMode>('hide')

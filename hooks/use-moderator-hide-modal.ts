@@ -26,6 +26,8 @@ export interface ModeratorHideTarget {
 export interface ModeratorHideOutcome {
   moderation?: ModerationMarks | null
   restricted?: boolean
+  /** The network did not confirm it in time: it may not have landed, so the next read is the truth. */
+  unconfirmed?: boolean
 }
 
 interface ModeratorHidePayload {

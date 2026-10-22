@@ -167,7 +167,7 @@ export function ModeratorHideModal() {
       // done, drop the reads that could contradict it, and say to look again.
       toast(`${copy.done}. The network hasn't confirmed it yet, so check back in a moment.`, { duration: 8000 })
       forgetModeratedReads(contract)
-      onDone?.(outcome)
+      onDone?.({ ...outcome, unconfirmed: true })
       finish()
       return
     }

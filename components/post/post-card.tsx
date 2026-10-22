@@ -7,10 +7,11 @@ import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, Exclamat
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
-import type { Post, PostModeration } from '@/lib/types'
+import type { Post } from '@/lib/types'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
-import { useBulkHideModal, useBulkModeratedMarks } from '@/hooks/use-bulk-hide-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { useRecentModeration, useShownModeration } from '@/hooks/use-recent-moderation'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
 import { isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
@@ -296,11 +297,10 @@ function PostCardView({
   // v10: the author deleted it from this card, and the document is gone too.
   const [locallyDeleted, setLocallyDeleted] = useState(false)
   // v18: a moderator hid or unhid it from this card; undefined until then.
-  const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
-  // A bulk hide or unhide of this post since its read (components/moderation/bulk-hide-modal.tsx); this card's own change wins.
-  const bulkModeration = useBulkModeratedMarks((state) => state.marks[post.id])
-  const changedModeration = localModeration !== undefined ? localModeration : bulkModeration
-  const moderation = changedModeration === undefined ? post.moderation : changedModeration ?? undefined
+  // Recorded for every card on screen, from this card's menu or a bulk run (hooks/use-recent-moderation.ts):
+  // the last change wins, until a read carries a later one.
+  const recordModeration = useRecentModeration((state) => state.record)
+  const moderation = useShownModeration(post.id, post.moderation)
   const hiddenByModerators = isHidden(moderation)
   // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
   const hiddenOnThisBuild = hiddenByModerators && !moderationViewAll()
@@ -425,11 +425,6 @@ function PostCardView({
   const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuPrimed && moderationService.canRestrict())
   const [authorRestrictedHere, setAuthorRestrictedHere] = useState<boolean | null>(null)
   const authorRestricted = authorRestrictedHere ?? authorRestrictedRead
-  // What this card set locally belongs to the post it was set on: a new post,
-  // or new marks from a re-read, replace it.
-  useEffect(() => {
-    setLocalModeration(undefined)
-  }, [post.id, post.moderation])
   useEffect(() => {
     setAuthorRestrictedHere(null)
   }, [post.id, post.author.id])
@@ -438,11 +433,8 @@ function PostCardView({
   const openHideAction = (action: ModeratorHideAction) => {
     openModeratorHideModal(postHideTarget(post, action), (outcome) => {
       if (outcome.restricted !== undefined) setAuthorRestrictedHere(outcome.restricted)
-      if (outcome.moderation !== undefined) {
-        setLocalModeration(outcome.moderation
-          ? { ...outcome.moderation, ...(moderation?.restricted ? { restricted: true } : {}) }
-          : moderation?.restricted ? { restricted: true } : null)
-      }
+      // The shown marks keep the post's restriction flag from its read (useShownModeration).
+      if (outcome.moderation !== undefined) recordModeration(post.id, outcome.moderation, !outcome.unconfirmed)
     })
   }
   const { open: openReportModal } = useReportPostModal()

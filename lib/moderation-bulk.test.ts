@@ -156,8 +156,8 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['c'])
     expect(summary.done).toBe(3)
-    // Every document counted done is announced, for the cards on screen.
-    expect(d.onDone.mock.calls.map(([i]) => i.id).sort()).toEqual(['a', 'b', 'c'])
+    // Only what this run changed is announced to the cards on screen; a and b were done before.
+    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['c'])
   })
 
   it('never counts a document that changed some other way as done', async () => {
@@ -169,11 +169,15 @@ describe('runBulk', () => {
     expect(d.onDone.mock.calls.map(([i]) => i.id)).not.toContain('b')
   })
 
-  it('sends everything when the first read fails, and counts "already that way" as done', async () => {
-    const d = deps({
-      pending: vi.fn(async () => { throw new Error('offline') }),
-      apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)),
-    })
+  it('sends nothing when the first read fails', async () => {
+    const d = deps({ pending: vi.fn(async () => { throw new Error('offline') }) })
+    const summary = await runBulk(items, d)
+    expect(d.apply).not.toHaveBeenCalled()
+    expect(summary).toMatchObject({ done: 0, stopped: 'fatal', failures: [] })
+  })
+
+  it('counts "already that way" as done', async () => {
+    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)) })
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(3)
     expect(summary.done).toBe(3)
