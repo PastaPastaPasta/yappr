@@ -45,7 +45,7 @@ export const moderationElectionService = { async getStatus(): Promise<ElectionSt
     seated: { leaderId: fullId, members: [fullId], electedCharterId: fullId, submittedCharterId: fullId },
     contest: { contenders: [{ identityId: fullId, votes: 123456 }], abstainVotes: 0, lockVotes: 0, endsAtMs: 1700000000000,
       winner: { kind: 'identity', identityId: fullId, decidedAtMs: 1700000000000 } },
-    proposals: [{ id: fullId, leaderId: fullId, description: 'Fixture proposal', reasonIds: [], moderatorsShare: 80, rewardSplit: null, createdAt: 1700000000000 }],
+    proposals: [{ id: fullId, leaderId: fullId, targetContractId: fullId, description: 'Fixture proposal', reasonIds: [], moderatorsShare: 80, rewardSplit: null, createdAt: 1700000000000 }],
   }
 } }
 export function useBlogFollow() { return { isFollowing: false, isLoading: false, toggleFollow: async () => undefined } }
