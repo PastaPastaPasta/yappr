@@ -26,7 +26,9 @@ const entries = (block: string) =>
 const section = (name: string) => {
   const start = source.indexOf(`export const ${name}`);
   expect(start).toBeGreaterThanOrEqual(0);
-  return source.slice(start, source.indexOf('])', start));
+  // The array ends at its own `]` (`])`, or `].map(` where its entries are frozen): not at a later array's.
+  const ends = ['])', '].map('].map((marker) => source.indexOf(marker, start)).filter((index) => index >= 0);
+  return source.slice(start, Math.min(...ends));
 };
 
 describe('report reasons', () => {
@@ -60,5 +62,13 @@ describe('report reasons', () => {
     expect(reportReasonLabel(99)).toBe('Reason 99');
     expect(reportStatusLabel(2)).toBe('Content removed');
     expect(reportStatusLabel(9)).toBe('Status 9');
+  });
+
+  it('says "hidden", not "removed", where the moderators hide and never delete (social v18)', () => {
+    expect(reportStatusLabel(2, true)).toBe('Content hidden');
+    // The other codes read the same on both cuts, and lib\'s HIDE_REPORT_STATUSES spells the same labels.
+    expect(reportStatusLabel(1, true)).toBe('No action taken');
+    expect(reportStatusLabel(3, true)).toBe('Author actioned');
+    expect(source).toContain("label: 'Content hidden'");
   });
 });

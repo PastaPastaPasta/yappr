@@ -1,4 +1,4 @@
-import type { AuthorDTO, AvatarDTO, MediaDTO, PostDTO, PostStatsDTO, ViewerStateDTO } from '@engine/api/dto';
+import type { AuthorDTO, AvatarDTO, MediaDTO, ModerationDTO, PostDTO, PostStatsDTO, ViewerStateDTO } from '@engine/api/dto';
 
 /**
  * What a PostCard renders: the engine's DTOs (mobile/engine/src/api/dto.ts),
@@ -14,6 +14,8 @@ export type CardMedia = MediaDTO;
 export type CardStats = PostStatsDTO;
 export type CardViewer = ViewerStateDTO;
 export type CardPost = PostDTO;
+/** What the moderators did to the post (social v18): withheld on the official apps, labelled on archival builds. */
+export type CardModeration = ModerationDTO;
 
 /** Link-preview metadata (web `LinkPreviewData`, lib/link-preview/types). */
 export interface CardLinkPreview {

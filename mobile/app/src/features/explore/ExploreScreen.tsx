@@ -9,6 +9,7 @@ import { queryKeys } from '~/data/keys';
 import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { BlogsLink } from '~/features/blog/BlogsLink';
+import { PostingOpensBanner } from '~/features/moderation/PostingOpensBanner';
 import { openHashtag } from '~/features/post/post-navigation';
 import { refetchPolls } from '~/features/post/poll-vote';
 import { PostItem } from '~/features/post/PostItem';
@@ -244,6 +245,7 @@ export function ExploreScreen() {
         ListHeaderComponent={
           <>
             {offline ? <OfflineBanner /> : null}
+            <PostingOpensBanner />
             {header}
           </>
         }

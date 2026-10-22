@@ -5,6 +5,7 @@ import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
 import { forgetQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
 import { blockService } from '@/lib/services/block-service'
+import { charterReasonText } from '@/lib/services/charter-reasons'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
 import { loadIdentityBatch } from '@/lib/services/identity-batch'
@@ -93,7 +94,33 @@ export async function avatarOf(id: string): Promise<AvatarDTO> {
 export async function toPostDTOs(posts: Post[]): Promise<PostDTO[]> {
   const ids = posts.flatMap(post => [post.author.id, post.quotedPost?.author.id ?? ''])
   const options = { signedIn: viewerId() !== null, avatars: await avatarsOf(ids) }
-  return posts.map(post => toPostDTO(post, options))
+  const dtos = posts.map(post => toPostDTO(post, options))
+  await withModerationReasons(dtos)
+  return dtos
+}
+
+/**
+ * The text of each moderated post's `label` (the seated charter's reason,
+ * read once per session; `charterReasonText` never rejects), set as
+ * `moderation.reason`, quoted posts included. Only an archival build carries
+ * a label, so an official one reads nothing. A label the charter does not
+ * resolve gets no reason: the host says "Hidden by moderators", never a number.
+ */
+async function withModerationReasons(dtos: PostDTO[]): Promise<void> {
+  const labelled: NonNullable<PostDTO['moderation']>[] = []
+  const collect = (dto: PostDTO | undefined) => {
+    if (!dto) return
+    if (dto.moderation?.label !== undefined) labelled.push(dto.moderation)
+    collect(dto.quoted)
+  }
+  dtos.forEach(collect)
+  if (labelled.length === 0) return
+  const labels = Array.from(new Set(labelled.flatMap(moderation => moderation.label ?? [])))
+  const texts = new Map(await Promise.all(labels.map(async label => [label, await charterReasonText('social', label)] as const)))
+  for (const moderation of labelled) {
+    const text = moderation.label === undefined ? null : texts.get(moderation.label)
+    if (text) moderation.reason = text
+  }
 }
 
 /** The quote target ids a page of raw posts references, deduped. */
@@ -142,14 +169,16 @@ async function dropBlocked(posts: Post[]): Promise<Post[]> {
  * (`withoutHiddenTombstones`, as `use-feed-data.ts` and
  * `use-profile-replies.ts` do), then blocked authors, then the NSFW `hide`
  * preference (`filterHiddenSensitive`; threads and single posts render the
- * gate instead). Then DTOs.
+ * gate instead). Then DTOs, without hidden posts (withheld ones; an archival
+ * build keeps and labels them).
  */
 export async function visibleDTOs(posts: Post[], options: { dropBlocked?: boolean } = {}): Promise<PostDTO[]> {
   // A profile's own tabs keep a blocked author's posts: the page shows the block instead.
   const live = withoutHiddenTombstones(posts)
   const unblocked = options.dropBlocked === false ? live : await dropBlocked(live)
   const visible = filterHiddenSensitive(unblocked, useSettingsStore.getState().sensitiveContentMode, viewerId())
-  return toPostDTOs(visible)
+  // A hidden post that reached a list anyway (a ranked or cached read) is not listed on an official build.
+  return (await toPostDTOs(visible)).filter(dto => dto.moderation?.withheld !== true)
 }
 
 /** A browsing list from lib documents: batch enrichment, then {@link visibleDTOs}. */

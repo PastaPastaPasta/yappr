@@ -18,6 +18,7 @@ import { lastIdentity, useCapabilities, useSession, type SessionStatus } from '~
 import { EngineBanner } from '~/engine/EngineBanner';
 import { useEngineStatus } from '~/engine/hooks';
 import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
+import { PostingOpensBanner } from '~/features/moderation/PostingOpensBanner';
 import { queryClient } from '~/state/query-client';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { Screen } from '~/ui/Screen';
@@ -166,6 +167,7 @@ export function HomeScreen() {
       <Stack.Screen options={{ title: 'Home', headerShown: false }} />
       <HomeHeader />
       {offline ? <OfflineBanner /> : null}
+      <PostingOpensBanner />
       <EngineBanner />
       <FeedControls
         tab={tab}

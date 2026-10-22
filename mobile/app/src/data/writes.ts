@@ -330,6 +330,8 @@ const FAILURE_COPY: Partial<Record<EngineErrorData['code'], string>> = {
   INSUFFICIENT_YAPP: 'You need YAPP for this.',
   NOT_OWNER: "You can't do this from this account.",
   MODERATION_BARRED: "You can't do this from this account.",
+  MODERATOR_ONLY: "You can't do this from this account.",
+  STANDING_CHANGED: "Your account's status changed while this was sending. Try again.",
   TARGET_GONE: 'This post no longer exists.',
   APP_OUTDATED: 'Update Yappr and try again.',
   STALE: 'Update Yappr and try again.',

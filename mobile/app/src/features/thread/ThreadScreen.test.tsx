@@ -324,6 +324,26 @@ describe('ThreadScreen', () => {
     expect(screen.getByText('This reply was deleted by its author.')).toBeTruthy();
   });
 
+  it('holds a hidden reply\'s place with the hidden stub, keeping the reply nested under it', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(
+      threadOf([
+        reply('hid', '', {
+          hiddenStub: true,
+          author: { ...AUTHORS.carol, id: '' },
+          moderation: { hidden: true, restricted: false, withheld: true },
+        }),
+        reply('kid', 'Still here', { depth: 1, parentId: 'hid' }),
+      ]),
+    );
+    renderThread();
+    await act(async () => {});
+
+    expect(screen.getByTestId('reply-stub-hid')).toBeTruthy();
+    expect(screen.getByText('This reply is hidden by moderators.')).toBeTruthy();
+    expect(screen.getByText('Still here')).toBeTruthy();
+    expect(screen.queryByText(/deleted|removed/i)).toBeNull();
+  });
+
   it('pages replies cumulatively: the next page replaces the list', async () => {
     fakeEngine
       .method('posts.thread')

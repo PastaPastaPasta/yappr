@@ -359,10 +359,11 @@ function ExistingReport({
   withdrawing: boolean;
   onWithdraw: (report: OwnReportDTO) => void;
 }) {
+  const moderatorsHide = useCapabilities()?.moderatorsHide === true;
   const summary = copy.report.existing(
     shortDate(report.createdAt),
     midSentence(reportReasonLabel(report.reason)),
-    report.status === null ? null : reportStatusLabel(report.status),
+    report.status === null ? null : reportStatusLabel(report.status, moderatorsHide),
   );
   return (
     <SheetBody testID="report-existing">

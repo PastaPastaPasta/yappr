@@ -155,6 +155,26 @@ describe('buildThreadRows', () => {
     expect(rows[2]).toMatchObject({ replyId: 'r1', count: 3 });
   });
 
+  it('treats a hidden-reply stub like a deleted one: no "Continue thread", no "Replying to" it, its own pool', () => {
+    const rows = buildThreadRows({
+      thread: thread({}, [
+        reply('hid', { depth: 0, hiddenReplyCount: 2, hiddenStub: true }),
+        reply('kid', { depth: 1, parentId: 'other' }),
+      ]),
+    });
+    expect(types(rows)).toEqual(['focus', 'reply', 'reply']);
+    expect(rows.map(threadRowType)).toEqual(['focus', 'replyStub', 'reply1']);
+    const stubbed = buildThreadRows({
+      thread: thread({}, [reply('hid', { depth: 0, hiddenStub: true }), reply('other', { depth: 0 }), reply('kid', { depth: 1, parentId: 'hid' })]),
+    });
+    expect(replyRow(stubbed, 'kid')?.replyingTo).toBeUndefined();
+    // The same shape under a live parent names it.
+    const live = buildThreadRows({
+      thread: thread({}, [reply('par', { depth: 0 }), reply('other', { depth: 0 }), reply('kid', { depth: 1, parentId: 'par' })]),
+    });
+    expect(replyRow(live, 'kid')?.replyingTo).toBe('carol');
+  });
+
   it('marks the ?reply= target', () => {
     const rows = buildThreadRows({ thread: thread({}, [reply('r1'), reply('r2')]), highlightId: 'r2' });
     expect(replyRow(rows, 'r1')?.highlighted).toBe(false);

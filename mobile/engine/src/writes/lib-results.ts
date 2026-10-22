@@ -1,5 +1,6 @@
 import { isNotFoundAnswer } from '@/lib/error-utils'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
+import { documentToPlainObject } from '@/lib/services/sdk-helpers'
 import type { StateTransitionResult } from '@/lib/services/state-transition-service'
 import { LIB_REFUSED_MESSAGE } from './classify'
 import type { ProbeResult, WriteResult } from './tickets'
@@ -80,6 +81,22 @@ export async function documentExists(document: Pick<TicketDocument, 'contractId'
     return Boolean(await sdk.documents.get(document.contractId, document.type, document.id))
   } catch (error) {
     if (isNotFoundAnswer(error)) return false
+    throw error
+  }
+}
+
+/**
+ * One proved `documents.get` as a plain object (`documentToPlainObject`), or
+ * `null` for a "not found" answer; any other failure throws, as
+ * {@link documentExists} does.
+ */
+export async function documentFields(document: Pick<TicketDocument, 'contractId' | 'type' | 'id'>): Promise<Record<string, unknown> | null> {
+  const sdk = await getEvoSdk()
+  try {
+    const found = await sdk.documents.get(document.contractId, document.type, document.id)
+    return found ? documentToPlainObject(found) : null
+  } catch (error) {
+    if (isNotFoundAnswer(error)) return null
     throw error
   }
 }

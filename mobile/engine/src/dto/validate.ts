@@ -89,7 +89,12 @@ const postRequired = {
   quotedRemoved: bool,
   bareRepost: bool,
 }
+const moderationMarks = object(
+  { hidden: bool, restricted: bool },
+  { label: count, reason: nonEmpty, by: id, at: date, withheld: isTrue },
+)
 const postOptional = {
+  moderation: moderationMarks,
   viewer: object({ ...viewerMarks, authorBlocked: bool, followsAuthor: bool }),
   parentId: id,
   rootPostId: id,
@@ -100,7 +105,17 @@ const postOptional = {
   embed: object({ contractId: id, documentType: nonEmpty, id }),
   poll: object({ id }, { linkUrl: nonEmpty }),
 }
-export const postDTO: Check = object(postRequired, postOptional)
+const blankAuthor = object({ id: literal(''), username: isNull, displayName: literal(''), avatar: object({ uri: isNull, dicebear: isNull }), resolved: bool })
+/** A hidden post on an official build: its place and id, and none of its content or author. */
+const withheldFields = {
+  author: blankAuthor,
+  content: literal(''),
+  moderation: object({ hidden: isTrue, restricted: bool, withheld: isTrue }),
+}
+const withheldPost = object({ ...postRequired, ...withheldFields })
+const isWithheld = (value: unknown) => isPlainObject(value) && isPlainObject(value.moderation) && value.moderation.withheld === true
+export const postDTO: Check = (value, path, errors) =>
+  (isWithheld(value) ? withheldPost : object(postRequired, postOptional))(value, path, errors)
 
 const threadFields = { depth: primitive('0 | 1', value => value === 0 || value === 1), isAuthorThread: bool, hiddenReplyCount: count }
 const liveReply = object({ ...postRequired, ...threadFields }, postOptional)
@@ -112,8 +127,10 @@ const stubReply = object({
   deleted: isTrue,
   deletedStub: isTrue,
 }, postOptional)
+const withheldReply = object({ ...postRequired, ...threadFields, ...withheldFields }, { hiddenStub: isTrue })
 const isStub = (value: unknown) => isPlainObject(value) && 'deletedStub' in value
-const threadReply: Check = (value, path, errors) => (isStub(value) ? stubReply : liveReply)(value, path, errors)
+const threadReply: Check = (value, path, errors) =>
+  (isStub(value) ? stubReply : isWithheld(value) ? withheldReply : liveReply)(value, path, errors)
 
 export const page = (item: Check): Check =>
   object({ items: array(item), cursor: nullable(nonEmpty), hasMore: bool })

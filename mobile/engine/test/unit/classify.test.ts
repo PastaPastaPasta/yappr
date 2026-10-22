@@ -90,6 +90,42 @@ describe('classify() for engine errors', () => {
   })
 })
 
+describe('classify() for the v18 moderation refusals', () => {
+  const laneRefusal = 'A document of type "post" breaks its propertyConstraints rule "restrictedLane": live must be 2 while the author is restricted'
+
+  it('reads the restricted-lane refusal (10422) as a retryable change of standing, not a rule violation', () => {
+    for (const error of [new Error(laneRefusal), { name: 'Protocol', message: laneRefusal, code: 10422, kind: 0, isRetriable: false }]) {
+      const data = classify(error, 'post.publish')
+      expect(data).toMatchObject({ code: 'STANDING_CHANGED', outcome: 'refused', retryable: true })
+      expect(ticketStateFor(data)).toBe('failed')
+    }
+  })
+
+  it('keeps every other 10422 rule a rule violation', () => {
+    expect(classify(new Error('A document of type "post" breaks its propertyConstraints rule "notEmpty": x'))).toMatchObject({ code: 'RULE_VIOLATION', retryable: false })
+    expect(classify({ name: 'Protocol', message: 'refused', code: 10422, kind: 0, isRetriable: false }).code).toBe('RULE_VIOLATION')
+  })
+
+  it.each([
+    ['a moderator delete (41115)', 41115],
+    ['a non-moderator\'s moderator action (41101)', 41101],
+    ['a field moderators cannot change (41123)', 41123],
+  ])('reads %s as moderator-only, refused, not retryable', (_name, code) => {
+    const data = classify({ name: 'Protocol', message: 'refused', code, kind: 0, isRetriable: false })
+    expect(data).toMatchObject({ code: 'MODERATOR_ONLY', consensusCode: code, outcome: 'refused', retryable: false })
+    expect(ticketStateFor(data)).toBe('failed')
+  })
+
+  it('reads a replace that dropped a moderator field (41124) as a client defect', () => {
+    expect(classify({ name: 'Protocol', message: 'refused', code: 41124, kind: 0, isRetriable: false }))
+      .toMatchObject({ code: 'BUILD_DEFECT', outcome: 'refused', retryable: false })
+  })
+
+  it('still reads a ban or suspension as the barred account, though v18 issues neither', () => {
+    expect(classify({ name: 'Protocol', message: 'refused', code: 41107, kind: 0, isRetriable: false }).code).toBe('MODERATION_BARRED')
+  })
+})
+
 describe('classify() names what failed', () => {
   const stalled = new Error('wait_for_state_transition_result timed out')
 

@@ -33,6 +33,7 @@ import { PollCard } from './PollCard';
 import { pickOption, pollBallot, pollSpokenLabel, usePollClock, usePollSelection } from './poll-ballot';
 import { PostActionBar, plural, repostSplitParts, splitPartLabel } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
+import { ModerationLabel, moderationLabelText } from './ModerationLabel';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
@@ -371,12 +372,16 @@ function postAccessibilityLabel(
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
+  const moderated = post.moderation ? moderationLabelText(post.moderation) : null;
+  if (moderated) parts.push(`${moderated}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
   else if (post.encrypted) parts.push(extras.privateText ? `Private post: ${extras.privateText}.` : 'Private post.');
   else if (extras.content) parts.push(`${extras.content}.`);
   const { quoted } = post;
   if (quoted?.viewer?.authorBlocked) {
     parts.push(`${stubText('blocked', 'post')}.`);
+  } else if (quoted?.moderation?.withheld) {
+    parts.push(`Quote: ${stubText('hidden', quoted.kind)}`);
   } else if (quoted) {
     const hidden = extras.quoteCovered || quoted.encrypted || quoted.deleted;
     parts.push(`Quote: ${quoted.author.displayName}${hidden ? '' : `, ${quoted.content}`}.`);
@@ -473,6 +478,11 @@ export const PostCard = memo(function PostCard({
     );
   }
 
+  if (post.moderation?.withheld) {
+    // A post the moderators hid, reached by id or in a thread: its place, none of its content (never "removed").
+    return <PostStub state="hidden" kind={post.kind} testID={`stub-hidden-${post.id}`} />;
+  }
+
   const gated = (nsfwGated ?? post.sensitive) && !post.deleted;
   const covered = gated && !revealed;
   const detail = variant === 'detail';
@@ -497,6 +507,8 @@ export const PostCard = memo(function PostCard({
     let quoteSlot: ReactNode = null;
     if (post.quoted?.viewer?.authorBlocked) {
       quoteSlot = <PostStub state="blocked" variant="embed" />;
+    } else if (post.quoted?.moderation?.withheld) {
+      quoteSlot = <PostStub state="hidden" kind={post.quoted.kind} variant="embed" />;
     } else if (post.quoted) {
       quoteSlot = (
         <QuoteEmbed
@@ -514,6 +526,7 @@ export const PostCard = memo(function PostCard({
     }
     body = (
       <>
+        <ModerationLabel moderation={post.moderation} />
         {content ? (
           <View className="mt-0.5">
             <RichText

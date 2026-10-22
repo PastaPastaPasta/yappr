@@ -62,6 +62,8 @@ const READS = new Set([
   'privateFeed.followers',
   'privateFeed.renewal',
   'privateFeed.replySource',
+  // "Posting opens on <date>": a proved election read, the same whichever engine does it.
+  'moderation.postingOpening',
   'dpns.registration',
   'dpns.check',
   // Blogs: reads only; every blog write is a ticket (`blogs.create`, `blogs.publish`, ...).

@@ -78,7 +78,9 @@ function replyRows(replies: ThreadReplyDTO[], highlightId: string | undefined): 
     const parent = reply.parentId ? byId.get(reply.parentId) : undefined;
     // Indented replies name their parent when it isn't the row right above (PRD POST-02).
     const replyingTo =
-      reply.depth === 1 && parent && previous?.id !== parent.id && !parent.deletedStub ? handleOf(parent) : undefined;
+      reply.depth === 1 && parent && previous?.id !== parent.id && !parent.deletedStub && !parent.hiddenStub
+        ? handleOf(parent)
+        : undefined;
     const inAuthorThread = authorThread(reply);
     rows.push({
       type: 'reply',
@@ -91,7 +93,7 @@ function replyRows(replies: ThreadReplyDTO[], highlightId: string | undefined): 
       highlighted: reply.id === highlightId,
     });
     if (inAuthorThread) seenAuthorThread = true;
-    if (reply.hiddenReplyCount > 0 && !reply.deletedStub) {
+    if (reply.hiddenReplyCount > 0 && !reply.deletedStub && !reply.hiddenStub) {
       rows.push({ type: 'continue', key: `continue:${reply.id}`, replyId: reply.id, count: reply.hiddenReplyCount });
     }
   });
@@ -182,6 +184,8 @@ export function buildThreadRows({
 
 /** FlashList recycling pools: one per row shape. */
 export function threadRowType(row: ThreadRow): string {
-  if (row.type === 'reply') return row.reply.deletedStub || row.reply.deleted ? 'replyStub' : `reply${row.reply.depth}`;
+  if (row.type === 'reply') {
+    return row.reply.deletedStub || row.reply.hiddenStub || row.reply.deleted ? 'replyStub' : `reply${row.reply.depth}`;
+  }
   return row.type;
 }

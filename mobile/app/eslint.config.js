@@ -21,6 +21,8 @@ const LIB_ALLOWLIST = [
   'lib/media/remote-media',
   // Storefront prices, order ids and dates. No imports at all.
   'lib/utils/format',
+  // The "Posting opens on <date>" sentence. No imports at all.
+  'lib/posting-opens',
 ];
 /** Allowed for `import type` / `export type` only (erased at build time). */
 const LIB_TYPE_ALLOWLIST = ['lib/types'];

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Post, User } from '@/lib/types'
 import { avatarFromField, toPostDTO, toProfileDTO, toUserSummaryDTO, type AvatarDTO, type PostMappingOptions } from '../../src/api/dto'
 import { authorDTO, postDTO, profileDTO, userSummaryDTO, validate } from '../../src/dto/validate'
@@ -112,6 +112,60 @@ describe('toPostDTO', () => {
     expect(toPostDTO(post({ repostedBy: { id: ID('R'), username: 'rita.dash', displayName: '' } }), signedOut).repostedBy)
       .toEqual({ id: ID('R'), username: 'rita' })
     expect(validate(postDTO, dto)).toEqual([])
+  })
+})
+
+describe('toPostDTO moderation marks (social v18)', () => {
+  const hiddenMarks = { mod: 1, modLabel: 7, moderatedBy: ID('M'), moderatedAt: 5000 }
+
+  afterEach(() => { vi.unstubAllEnvs() })
+
+  it('carries no moderation field for an ordinary post', () => {
+    expect('moderation' in toPostDTO(post(), signedOut)).toBe(false)
+  })
+
+  it('withholds a hidden post on an official build: its place and id, none of its content', () => {
+    const dto = toPostDTO(post({ content: 'secret', media: [{ id: 'm', type: 'image', url: 'ipfs://x' }], moderation: hiddenMarks }), signedIn)
+    expect(dto).toEqual({
+      id: ID('P'), kind: 'post', author: { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false },
+      content: '', createdAt: new Date(1000), stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 }, media: [],
+      sensitive: false, deleted: false, encrypted: false, quotedRemoved: false, bareRepost: false,
+      moderation: { hidden: true, restricted: false, withheld: true },
+    })
+    expect(validate(postDTO, dto)).toEqual([])
+  })
+
+  it('withholds a hidden post quoted by an ordinary one, and keeps the quoting post', () => {
+    const dto = toPostDTO(post({ quotedPost: post({ id: ID('Q'), content: 'secret', moderation: hiddenMarks }) }), signedOut)
+    expect(dto).toMatchObject({ content: 'hello', quoted: { id: ID('Q'), content: '', moderation: { withheld: true } } })
+    expect(validate(postDTO, dto)).toEqual([])
+  })
+
+  it('labels a hidden post on an archival build: reason, who and when, content kept', () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    const dto = toPostDTO(post({ content: 'archived', moderation: hiddenMarks }), signedOut)
+    expect(dto).toMatchObject({ content: 'archived', author: { id: ID('A') } })
+    expect(dto.moderation).toEqual({ hidden: true, restricted: false, label: 7, by: ID('M'), at: new Date(5000) })
+    expect(validate(postDTO, dto)).toEqual([])
+  })
+
+  it('labels a post written while restricted on an archival build only', () => {
+    const restricted = post({ moderation: { restricted: true } })
+    expect('moderation' in toPostDTO(restricted, signedOut)).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    const dto = toPostDTO(restricted, signedOut)
+    expect(dto.moderation).toEqual({ hidden: false, restricted: true })
+    expect(validate(postDTO, dto)).toEqual([])
+  })
+
+  it('labels a post that is both hidden and written while restricted on an archival build', () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect(toPostDTO(post({ moderation: { ...hiddenMarks, restricted: true } }), signedOut).moderation)
+      .toMatchObject({ hidden: true, restricted: true, label: 7 })
+  })
+
+  it('keeps a label-only mark (a listed post carrying modLabel alone) invisible', () => {
+    expect('moderation' in toPostDTO(post({ moderation: { modLabel: 3 } }), signedOut)).toBe(false)
   })
 })
 

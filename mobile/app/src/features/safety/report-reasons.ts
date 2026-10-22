@@ -52,7 +52,15 @@ export function reportReasonLabel(code: number): string {
   return REPORT_REASONS.find((reason) => reason.code === code)?.label ?? `Reason ${code}`;
 }
 
-export function reportStatusLabel(code: number): string {
+const HIDDEN_RESOLUTION = { code: 2, label: 'Content hidden' } as const;
+
+/**
+ * A resolution's label. Where the moderators hide and never delete
+ * (`capabilities.moderatorsHide`, social v18), code 2 reads "Content hidden",
+ * as lib's `HIDE_REPORT_STATUSES` says.
+ */
+export function reportStatusLabel(code: number, moderatorsHide = false): string {
+  if (moderatorsHide && code === HIDDEN_RESOLUTION.code) return HIDDEN_RESOLUTION.label;
   return REPORT_STATUSES.find((status) => status.code === code)?.label ?? `Status ${code}`;
 }
 
