@@ -270,7 +270,7 @@ export function BulkHideModal() {
   const failures = list.status === 'ready' ? (summary?.failures ?? []).filter((failure) => listed.has(failure.item.id)) : []
 
   return (
-    <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw]">
+    <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto">
       <ModalTitle>
         {mode === 'hide' ? <EyeSlashIcon className="h-6 w-6 text-amber-600" /> : <EyeIcon className="h-6 w-6 text-amber-600" />}
         {mode === 'hide' ? `Hide posts by ${name}` : `Unhide posts by ${name}`}
