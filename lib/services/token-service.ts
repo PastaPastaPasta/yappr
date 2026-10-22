@@ -11,7 +11,7 @@ import { UNCONFIRMED_WRITE_MESSAGE, extractErrorMessage, isOncePerIdentityAlread
 import { withSdkSignedWrite } from './identity-nonce';
 import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
-import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key';
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor, criticalKeySession, liveSessionCheck } from '@/lib/auth/critical-key';
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 
@@ -293,7 +293,8 @@ class TokenService {
       reportSigningSuccess(identityId);
       return { success: true };
     } catch (error) {
-      if (signingKey && !(error instanceof UnconfirmedTokenWriteError)) await reportSigningFailure(identityId, signingKey, error);
+      // A cancelled claim was never sent: the key ring has nothing to answer for.
+      if (signingKey && !(error instanceof UnconfirmedTokenWriteError) && !(error instanceof CriticalKeyCancelledError)) await reportSigningFailure(identityId, signingKey, error);
       return this.toResult(error, 'Claim failed');
     }
   }
@@ -383,11 +384,17 @@ class TokenService {
   ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; assertLive?: () => void }> {
     const appConnect = hasAppConnectSession(identityId);
     if (appConnect && opts?.keyRing) {
+      // The wallet session this signs for must still be the one signed in when the claim goes out.
+      const assertLive = liveSessionCheck(identityId, criticalKeySession());
       const sdk = await getEvoSdk();
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) throw new Error('Identity not found');
       const signingKey = await resolveSigningKey(identityId, identity.publicKeys, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
-      return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey };
+      const live = () => {
+        assertLive();
+        if (!hasAppConnectSession(identityId)) throw new CriticalKeyCancelledError();
+      };
+      return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey, assertLive: live };
     }
     if (opts?.requireCritical) {
       // The session's own key when it is CRITICAL, else the key held for the tab, else the sheet asks

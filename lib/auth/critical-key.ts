@@ -180,6 +180,18 @@ export function criticalKeySession(): number {
   return sessionEpoch()
 }
 
+/**
+ * A check that throws CriticalKeyCancelledError once `session` (from
+ * {@link criticalKeySession}) is over or `identityId` is no longer the one
+ * signed in. Run it right before a write goes out (after the signer is built
+ * and the write lock is held), so a sign-out meanwhile still stops it.
+ */
+export function liveSessionCheck(identityId: string, session: number): () => void {
+  return () => {
+    if (currentIdentityId() !== identityId || sessionEpoch() !== session) throw new CriticalKeyCancelledError()
+  }
+}
+
 /** Steps 1 and 2 of {@link criticalKeyFor}, without asking: the key that would sign now, or null. */
 export function availableCriticalKey<K extends IdentityKeyLike>(
   identityId: string,
@@ -232,16 +244,14 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
   sessionKey: string | null,
   session: number,
 ): Promise<{ wif: string; key: K; assertLive: () => void }> {
-  const stillSignedIn = () => currentIdentityId() === identityId && sessionEpoch() === session
-  // For the caller to run once more right before the write goes out (after the signer is built and the
-  // write lock is held), so a sign-out meanwhile still stops it.
-  const assertLive = () => { if (!stillSignedIn()) throw new CriticalKeyCancelledError() }
+  const assertLive = liveSessionCheck(identityId, session)
   assertLive()
   const available = availableCriticalKey(identityId, publicKeys, use, sessionKey)
   if (available) return { ...available, assertLive }
   if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
   const answer = await ask(identityId, use)
-  if (!answer || !stillSignedIn()) throw new CriticalKeyCancelledError()
+  if (!answer) throw new CriticalKeyCancelledError()
+  assertLive()
   const result = usableFor(answer.source, use) ? matchCritical(answer.wif, publicKeys) : null
   if (!result?.ok) throw new Error(CRITICAL_KEY_REQUIRED)
   if (answer.keep) holdCriticalKey(identityId, answer.wif, answer.source)

@@ -32,7 +32,7 @@ vi.mock('@/lib/auth/signing-keys', () => ({
   hasAppConnectSession: () => session.wallet,
   reportSigningFailure: async () => {},
   reportSigningSuccess: () => {},
-  resolveSigningKey: async () => { throw new Error('the key ring is not under test') },
+  resolveSigningKey: async () => ({ wif: 'ring-wif', identityKey: {} }),
 }))
 vi.mock('../contract-topology', () => ({ starterGrantAmount: () => BigInt(100), yappIsLocked: () => false }))
 vi.mock('@dashevo/wasm-sdk', () => ({ Identifier: class { constructor(readonly value: string) {} } }))
@@ -139,6 +139,17 @@ describe('the starter claim', () => {
 
   it('a sign-out after the signer is built, before the write goes out, sends nothing', async () => {
     session.record = { wif: CRITICAL, fromPasskey: false }
+    session.signOutAtSigner = true
+    expect(await tokenService.claimStarterGrant(ME)).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(claim).not.toHaveBeenCalled()
+  })
+
+  it('a wallet session claims with its key ring, and a sign-out before the claim goes out sends nothing', async () => {
+    session.wallet = true
+    expect(await tokenService.claimStarterGrant(ME)).toEqual({ success: true })
+    expect(signedWith).toEqual(['ring-wif'])
+    expect(asked).toBe(0)
+    claim.mockClear()
     session.signOutAtSigner = true
     expect(await tokenService.claimStarterGrant(ME)).toEqual({ success: false, errorCode: 'CANCELLED' })
     expect(claim).not.toHaveBeenCalled()
