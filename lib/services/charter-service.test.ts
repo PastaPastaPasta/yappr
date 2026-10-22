@@ -55,12 +55,24 @@ vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => false })
 vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
 
 const { charterService } = await import('./charter-service')
+const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
+
+/** A fresh page (a reload, or another tab) sharing this browser's storage. */
+async function anotherTab() {
+  vi.resetModules()
+  return (await import('./charter-service')).charterService
+}
 
 const OWNER = 'owner1'
-// The service is one per page, so each test files for its own target (its own slot).
+// Each test files for its own target (its own slot).
 let TERMS = { targetContractId: 'target0', description: 'We hide spam.', reasonIds: ['r1'], moderatorsShare: 60, rewardSplit: { leader: 40, equal: 30, actions: 30 } }
 let targets = 0
 const timeout = () => Object.assign(new Error('Request timed out'), { name: 'TimeoutError' })
+const slotKey = (type: string, slot: string) => `yappr:charter-pending:${CHARTERS_CONTRACT_ID}:${OWNER}:${type}:${slot}`
+const stored = (type: string, slot: string) => {
+  const raw = storage.getItem(slotKey(type, slot))
+  return raw === null ? null : JSON.parse(raw) as { signed: { nonce: string }; reservation: { id: string } }
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -69,8 +81,8 @@ beforeEach(() => {
   nonces.next = 1n
   sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
-    { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: 'h' }))
-  nonces.reserve.mockImplementation((_o: string, _c: string, nonce: bigint) => ({ id: `r${nonce}`, nonce }))
+    { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: `h${nonce}` }))
+  nonces.reserve.mockImplementation((_o: string, _c: string, nonce: bigint) => ({ id: `r${nonce}`, nonce, expiresAt: null }))
   charterService.forgetKeys()
   TERMS = { ...TERMS, targetContractId: `target${++targets}` }
 })
@@ -88,20 +100,21 @@ describe('an uncertain proposal', () => {
     expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(2)
   })
 
-  it('reports the proposal filed once it is proved, without signing again', async () => {
+  it('reports the proposal filed once it is proved, without signing again, and forgets it', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
     settle.mockResolvedValueOnce(null).mockResolvedValueOnce('landed')
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
     expect(builders.sign).toHaveBeenCalledTimes(1)
-    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), { id: 'r1', nonce: 1n }, 1n)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
   })
 
   it('signs anew only once Platform proves the first one dead (nonce spent, document absent)', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout()).mockResolvedValue(undefined)
-    builders.exists.mockResolvedValueOnce(false).mockResolvedValue(false)
-    settle.mockResolvedValueOnce('not-recorded')
+    builders.exists.mockResolvedValue(false)
+    settle.mockResolvedValue('not-recorded')
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused' })
     builders.exists.mockResolvedValue(true)
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-2')
@@ -116,51 +129,127 @@ describe('an uncertain proposal', () => {
     await expect(charterService.submitProposal(OWNER, { ...TERMS, description: 'Edited.' })).rejects.toThrow('may still go through')
     expect(builders.sign).toHaveBeenCalledTimes(1)
   })
+})
 
-  it('drops the bytes on a definite refusal, freeing the nonce reservation unspent', async () => {
+describe('a refusal', () => {
+  it('drops the bytes on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
-    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), { id: 'r1', nonce: 1n }, undefined)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), undefined)
+    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
+  })
+
+  it('counts the nonce spent when Platform refused it at execution (paid)', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('duplicate'), { code: 40105 }))
+    builders.consumed.mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40105 })
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
   })
 })
 
-describe('across a reload or another tab', () => {
-  it('resends the stored signed bytes instead of signing a second proposal under a new nonce', async () => {
+describe('storage, the one source of truth', () => {
+  it('after a reload, resends the stored bytes instead of signing a second proposal under a new nonce', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
     settle.mockResolvedValue(null)
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
-    // A reload: a new page with nothing in memory.
-    vi.resetModules()
-    const { charterService: reloaded } = await import('./charter-service')
+    const reloaded = await anotherTab()
     await expect(reloaded.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(builders.sign).toHaveBeenCalledTimes(1)
     expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(2)
-    // Proved on the next try, the stored entry is forgotten.
     settle.mockResolvedValue('landed')
     await expect(reloaded.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
-    expect(storage.getItem(`yappr:charter-pending:${OWNER}:submittedCharter:${TERMS.targetContractId}`)).toBeNull()
+    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
+  })
+
+  it("never drops another tab's newer create for its own older one (two tabs, one slot)", async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    const tabB = charterService
+    const tabA = await anotherTab()
+    // B signs nonce 1: uncertain.
+    settle.mockResolvedValue(null)
+    await expect(tabB.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    // A proves nonce 1 dead, signs nonce 2: uncertain.
+    settle.mockResolvedValueOnce('not-recorded')
+    await expect(tabA.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(stored('submittedCharter', TERMS.targetContractId)?.signed.nonce).toBe('2')
+    // B tries again: it settles what storage holds (A's nonce 2), resends it, and signs nothing.
+    await expect(tabB.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+    expect(stored('submittedCharter', TERMS.targetContractId)?.reservation.id).toBe('r2')
+  })
+
+  it('sends nothing when the signed create cannot be stored, and frees its nonce unspent', async () => {
+    const save = vi.spyOn(storage, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError') })
+    try {
+      await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused' })
+      expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+      expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }))
+    } finally {
+      save.mockRestore()
+    }
+  })
+
+  it('treats a stored entry it cannot read as one that may still land, and signs nothing', async () => {
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), '{"signed":')
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ old: 'shape' }))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).not.toHaveBeenCalled()
   })
 })
 
-describe('a refusal', () => {
-  it('counts the nonce spent when Platform refused it at execution (paid), and unspent at broadcast', async () => {
-    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('duplicate'), { code: 40105 }))
-    builders.consumed.mockResolvedValue(true)
-    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40105 })
-    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), { id: 'r1', nonce: 1n }, 1n)
-  })
-})
+describe('an uncertain application (0.5 DASH deposit)', () => {
+  const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-app', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
 
-describe('an uncertain application', () => {
-  it('is never declared dead: it lives in the contest, so its bytes are kept and settleCreate is not asked', async () => {
+  it('is never declared dead, even with its nonce spent and the contest read empty, so it is never re-signed', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(false)
-    const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target1', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
-    await expect(charterService.fileApplication(OWNER, proposal, 'target1', ['m1'])).rejects.toMatchObject({ outcome: 'uncertain' })
-    await expect(charterService.fileApplication(OWNER, proposal, 'target1', ['m1'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    builders.consumed.mockResolvedValue(true)
+    const first = charterService.fileApplication(OWNER, proposal, 'target-app', ['m1'])
+    await expect(first).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(first).rejects.toThrow('Check the election')
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-app', ['m1'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    // Another tab, a changed member list: still the first application, never a second deposit.
+    const other = await anotherTab()
+    await expect(other.fileApplication(OWNER, proposal, 'target-app', ['m1', 'm2'])).rejects.toThrow('may still go through')
     expect(settle).not.toHaveBeenCalled()
     expect(builders.sign).toHaveBeenCalledTimes(1)
     expect(builders.sign.mock.calls[0][2]).toMatchObject({ fund: true })
+    expect(nonces.release).not.toHaveBeenCalled()
+  })
+
+  it('is reported filed once the contest shows it', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValueOnce(null).mockResolvedValue(true)
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-app', ['m1'])).resolves.toBe('doc-1')
+    expect(stored('electedCharter', 'target-app')).toBeNull()
+  })
+})
+
+describe('a join request', () => {
+  it('builds its encrypted message only when a request is signed, never for a resend', async () => {
+    const charterKey = vi.spyOn(charterService, 'charterKey').mockImplementation(async () => new Uint8Array(32).fill(1))
+    const build = vi.fn(async () => ({ toObject: () => ({ $id: 'x', encryptedMessage: new Uint8Array([7]) }), free: () => undefined }))
+    Object.assign(sdk, { moderationCharters: { buildJoinRequest: build } })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    try {
+      await expect(charterService.requestToJoin(OWNER, 'p1', 'hello')).rejects.toMatchObject({ outcome: 'uncertain' })
+      await expect(charterService.requestToJoin(OWNER, 'p1', 'hello')).rejects.toMatchObject({ outcome: 'uncertain' })
+      expect(build).toHaveBeenCalledTimes(1)
+      expect(builders.sign).toHaveBeenCalledTimes(1)
+      // Proved dead: re-signed with its message built again, never with no data.
+      settle.mockResolvedValueOnce('not-recorded')
+      await expect(charterService.requestToJoin(OWNER, 'p1', 'hello')).rejects.toMatchObject({ outcome: 'uncertain' })
+      expect(build).toHaveBeenCalledTimes(2)
+      expect(builders.sign).toHaveBeenCalledTimes(2)
+      expect(builders.sign.mock.calls[1][2]).toMatchObject({ type: 'joinRequest', data: { encryptedMessage: new Uint8Array([7]) } })
+      expect(charterKey).toHaveBeenCalledTimes(2)
+    } finally {
+      charterKey.mockRestore()
+    }
   })
 })
