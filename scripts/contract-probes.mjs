@@ -707,6 +707,9 @@ const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
 const SOCIAL_V15 = 'contracts/yappr-social-contract-v15.json';
 const SOCIAL_V16 = 'contracts/yappr-social-contract-v16.json';
 const SOCIAL_V17 = 'contracts/yappr-social-contract-v17.json';
+const SOCIAL_V18 = 'contracts/yappr-social-contract-v18.json';
+const BLOG_V10 = 'contracts/yappr-blog-contract-v10.json';
+const STOREFRONT_V11 = 'contracts/yappr-storefront-contract-v11.json';
 const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
@@ -1464,6 +1467,52 @@ const PROBES = [
   } },
   { label: 'pollr v8: an index on poll again (byCreatedAt): legal, so its absence is the cut\'s choice', file: POLLR, expect: 'accepted', mutate: (s) => { types(s).poll.indices = [{ name: 'byCreatedAt', properties: [{ $createdAt: 'asc' }] }]; } },
   { label: 'pollr v8: an index on a poll property that does not exist', file: POLLR, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).poll.indices = [{ name: 'probe', properties: [{ nope: 'asc' }] }]; } },
+
+  // "Hide, don't delete" (docs/SOCIAL_V18.md): social v18, blog v10 and storefront v11. No moderator
+  // delete anywhere, a moderator-only `mod` lane in every listing, warnings as the only list, the
+  // moderator-only `restriction` and the `live` 1/2 lane, likes laned by `postLive`, interim notYetUsable.
+  ...[[SOCIAL_V18, 'social v18'], [BLOG_V10, 'blog v10'], [STOREFRONT_V11, 'storefront v11']].flatMap(([file, name]) => [
+    { label: `control: ${name} as testnet registers it (interim notYetUsable, 1209600 s cool-down)`, file, network: 'testnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' && elected(s).challengeCoolDown === 1_209_600 },
+    { label: `control: ${name} as mainnet registers it`, file, network: 'mainnet', mutate: () => {}, expect: 'accepted' },
+    { label: `${name}: no type lets moderators delete, the elected set grants no deleteDocuments, ban or suspend, and warnings are the only list`, file, mutate: () => {}, expect: 'accepted', holds: (s) => {
+      const abilities = Object.values(elected(s).moderatedDocumentTypes).flat();
+      return Object.values(types(s)).every((schema) => schema.moderatorAbilities?.delete === undefined)
+        && !abilities.some((a) => ['deleteDocuments', 'ban', 'suspend'].includes(a))
+        && s.config.moderation.warnings === true && !s.config.moderation.banlist && !s.config.moderation.suspensions;
+    } },
+    { label: `${name}: a ban ability with no banlist`, file, expect: 'audit', node: '10900', why: /banlist/i, mutate: (s) => { Object.values(elected(s).moderatedDocumentTypes)[0].push('ban'); } },
+    { label: `${name}: deleteDocuments on a type with no moderator delete`, file, expect: 'audit', node: '10900', why: /has no delete/i, mutate: (s) => { Object.values(elected(s).moderatedDocumentTypes)[0].push('deleteDocuments'); } },
+  ]),
+  { label: 'social v18: every listing is laned [live, mod, …] (mentions [mentionedUserIds, mod, …]) with skipIfAbsent ["live"], mod before the ranked-at property, and each moderated type keeps a moderated [mod, $moderatedAt] log', file: SOCIAL_V18, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const keys = (type, name) => JSON.stringify(namedIndex(s, type, name)?.properties.map((p) => Object.keys(p)[0]));
+    return keys('post', 'timeline') === '["live","mod","$createdAt"]' && keys('post', 'tagAndTime') === '["live","mod","tags","$createdAt"]'
+      && keys('post', 'ownerAndTime') === '["live","mod","$ownerId","$createdAt"]' && keys('reply', 'repliesOf') === '["live","mod","rootPostId","replyToReplyId","$createdAt"]'
+      && ['post', 'reply'].every((t) => keys(t, 'mentionedUserAndTime') === '["mentionedUserIds","mod","$createdAt"]')
+      && ['post', 'reply', 'yapprProfile'].every((t) => keys(t, 'moderated') === '["mod","$moderatedAt"]' && JSON.stringify(namedIndex(s, t, 'moderated').skipIfAbsent) === '["mod"]');
+  } },
+  { label: 'social v18: `skipIfAbsent: true` on the timeline (it would skip on mod too, dropping every unmoderated post): legal, so ["live"] is the cut\'s choice', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { namedIndex(s, 'post', 'timeline').skipIfAbsent = true; } },
+  { label: 'social v18: retractedWhen kept with no banlist and no suspension list (nobody is ever barred)', file: SOCIAL_V18, expect: 'wasm', node: '10231', why: /retractedWhen/i, mutate: (s) => { types(s).post.retractedWhen = { present: 'deleted' }; } },
+  { label: 'social v18: a moderatedDocument reference at the now-permanent post', file: SOCIAL_V18, expect: 'audit', node: '40144', mutate: (s) => { types(s).like.properties.postId.refersTo.type = 'moderatedDocument'; } },
+  { label: 'social v18: a bookmark binding its post\'s moderator-only mod in the reference where: parses (only a type\'s own changeFields may not be read by its references), so leaving hidden posts likeable and bookmarkable is the owner\'s choice (DECISIONS-FINAL), not a Platform limit; unproved on a node', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { types(s).bookmark.properties.postMod = { type: 'integer', minimum: 1, maximum: 2, position: 1 }; types(s).bookmark.properties.postId.refersTo.where = { mod: 'postMod' }; } },
+  { label: 'social v18: postLive in byPost (its summable-off-count twins would have to carry it, so it lives in the trend windows)', file: SOCIAL_V18, expect: 'wasm', node: '10231', why: /summableOffCountIndex/, mutate: (s) => { namedIndex(s, 'like', 'byPost').properties.push({ postLive: 'asc' }); } },
+  { label: 'social v18: the restriction count read off a unique index (no plain countable [target, state] index answers it)', file: SOCIAL_V18, expect: 'wasm', mutate: (s) => { namedIndex(s, 'restriction', 'standing').unique = true; } },
+  { label: 'social v18: the restricted lane without its $revision guard (legal; the guard is the cut\'s choice, proved on sakura)', file: SOCIAL_V18, expect: 'accepted', mutate: (s) => { types(s).post.propertyConstraints.restrictedLane = types(s).post.propertyConstraints.restrictedLane.ifThen[1]; } },
+  { label: 'social v18: mod in a changeFields list and also immutable', file: SOCIAL_V18, expect: 'wasm', why: /mod/, mutate: (s) => { types(s).post.immutable.push('mod'); } },
+  { label: 'social v18: restriction without changeDocumentFields in the elected set', file: SOCIAL_V18, expect: 'audit', node: '10900', why: /restriction/, mutate: (s) => { delete elected(s).moderatedDocumentTypes.restriction; } },
+  { label: 'social v18 update: moderator delete added to post later (every permanentDocument reference at post refuses it first)', file: SOCIAL_V18, expect: 'audit', node: '40122', why: /permanentDocument/, update: (s) => { types(s).post.moderatorAbilities = { ...types(s).post.moderatorAbilities, delete: true, deleteKeepsRecord: false }; } },
+  { label: 'social v18 update: a ban list turned on later (the lists are fixed)', file: SOCIAL_V18, expect: 'update', update: (s) => { s.config.moderation.banlist = true; } },
+  { label: 'blog v10: the blog post listings are laned [live, mod, …], comments [blogPostId, mod, $createdAt], blogs [mod, $createdAt], and a comment\'s post is a permanentDocument', file: BLOG_V10, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const keys = (type, name) => JSON.stringify(namedIndex(s, type, name)?.properties.map((p) => Object.keys(p)[0]));
+    return keys('blogPost', 'timeline') === '["live","mod","$createdAt"]' && keys('blogPost', 'blogAndTime') === '["live","mod","blogId","$createdAt"]'
+      && keys('blogComment', 'postAndTime') === '["blogPostId","mod","$createdAt"]' && keys('blog', 'timeline') === '["mod","$createdAt"]'
+      && types(s).blogComment.properties.blogPostId.refersTo.type === 'permanentDocument' && types(s).restriction !== undefined;
+  } },
+  { label: 'storefront v11: listings and rating trees carry mod, and every reference at a store or item is a permanentDocument', file: STOREFRONT_V11, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const keys = (type, name) => JSON.stringify(namedIndex(s, type, name)?.properties.map((p) => Object.keys(p)[0]));
+    return keys('store', 'byCategory') === '["status","mod","category","$createdAt"]' && keys('storeReview', 'storeRating') === '["mod","storeId"]'
+      && keys('itemReview', 'storeItemRating') === '["mod","storeId","itemId"]' && keys('storeReview', 'storeRatingDistribution') === '["storeId","mod","rating"]'
+      && [types(s).storeItem.properties.storeId, types(s).storeOrder.properties.storeId, types(s).itemReview.properties.itemId, types(s).report.properties.storeId].every((p) => p.refersTo.type === 'permanentDocument');
+  } },
 ];
 
 /**
@@ -1533,6 +1582,12 @@ const WHERE_CASES = [
   ['v17: a rekey revoking an in-range leaf into the last generation', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 63, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, null],
   ['v17: a rekey revoking a leaf outside the feed (leaf 64 of 64)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 64, keyGeneration: 2 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
   ['v17: a rekey past the feed\'s last generation (3 of at most 2)', SOCIAL_V17, 'privateFeedRekey', '$ownerId', { revokedLeaf: 0, keyGeneration: 3 }, { treeCapacity: 64, maxKeyGeneration: 2 }, '40127'],
+  // Social v18: a like copies its post's lane (`live` 1 listed, 2 restricted) as postLive, so the
+  // trend windows lane it; a tombstone has no live, so it takes no new like.
+  ['v18: a like of a listed post (postLive 1)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'], live: 1 }, null],
+  ['v18: a like of a restricted author\'s post (postLive 2)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 2 }, { $ownerId: 'alice', tags: ['dash'], live: 2 }, null],
+  ['v18: a like claiming the listed lane for a restricted post', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'], live: 2 }, '40127'],
+  ['v18: a like of a tombstone (no live to copy)', SOCIAL_V18, 'like', 'postId', { tags: ['dash'], postAuthor: 'alice', postLive: 1 }, { $ownerId: 'alice', tags: ['dash'] }, '40127'],
 ];
 
 /**

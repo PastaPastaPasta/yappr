@@ -639,6 +639,79 @@ CONSTRAINT_CASES['yappr-social-contract-v17.json'] = [
   ['reply: only the sensitive flag and a mention', 'reply', { ...drop(v17Reply(), 'content'), sensitive: true, mentionedUserIds: [id()] }, 'notEmpty'],
 ];
 
+// "Hide, don't delete" (docs/SOCIAL_V18.md): social v18, blog v10 and storefront v11 keep every
+// earlier rule and add two:
+//   - `modReason` on every hideable type: `mod` (1 hidden, 2 legal hold; the schema bounds it) only
+//     with a `modLabel`, the reason; `modLabel` alone labels a listed document;
+//   - `restrictedLane` on post, reply and blogPost: on a create (`$revision == 1`) `live` is
+//     1 + min(countOf(restriction {target: $ownerId, state: 1}), 1). It reads a total, which a client
+//     does not hold, so the SDK skips it here and only the node judges it (the live battery,
+//     scripts/prove-v18-moderation.mjs, proves both lanes and the guard);
+// and the moderator-only `restriction` type's `moderatorsOnly` (state and reason present).
+// `live` is the integer lane 1 or 2, so the v17 cases are carried over with `live: 1`.
+const MOD_REASON = 'modReason';
+const withLiveLane = (entry) => {
+  const [label, docType, data, ...rest] = entry;
+  return data.live === true ? [label, docType, { ...data, live: 1 }, ...rest] : entry;
+};
+/** The modReason cases of one hideable type, over a valid listed document of it. */
+const modReasonCases = (docType, listed) => [
+  [`${docType}: hidden with a reason (mod 1, modLabel)`, docType, { ...listed, mod: 1, modLabel: 2 }, null],
+  [`${docType}: under legal hold with a reason (mod 2, modLabel)`, docType, { ...listed, mod: 2, modLabel: 7 }, null],
+  [`${docType}: labelled and still listed (modLabel alone)`, docType, { ...listed, modLabel: 5 }, null],
+  [`${docType}: hidden with no reason (mod alone)`, docType, { ...listed, mod: 1 }, MOD_REASON],
+];
+const restrictionCases = () => [
+  ['restriction: in force with a reason', 'restriction', { target: id(), state: 1, reason: 3 }, null],
+  ['restriction: lifted', 'restriction', { target: id(), state: 2, reason: 3 }, null],
+  ['restriction: no state (what a non-moderator could write)', 'restriction', { target: id(), reason: 3 }, 'moderatorsOnly'],
+  ['restriction: no reason', 'restriction', { target: id(), state: 1 }, 'moderatorsOnly'],
+];
+DECLARED_RULES['yappr-social-contract-v18.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v17.json'],
+  post: [...DECLARED_RULES['yappr-social-contract-v17.json'].post, 'restrictedLane', MOD_REASON],
+  reply: [...DECLARED_RULES['yappr-social-contract-v17.json'].reply, 'restrictedLane', MOD_REASON],
+  yapprProfile: [MOD_REASON],
+  restriction: ['moderatorsOnly'],
+};
+CONSTRAINT_CASES['yappr-social-contract-v18.json'] = [
+  ...CONSTRAINT_CASES['yappr-social-contract-v17.json'].map(withLiveLane),
+  ...modReasonCases('post', { ...v13Post(), live: 1 }),
+  ...modReasonCases('reply', { ...v17Reply(), live: 1 }),
+  ...modReasonCases('yapprProfile', { location: 'constraint probe' }),
+  ['post: a tombstone carrying the moderator\'s mod and modLabel through', 'post', { deleted: true, mod: 1, modLabel: 2 }, null],
+  ['post: the restricted lane on a create, judged only by the node (it reads a total)', 'post', { ...v13Post(), live: 2 }, null],
+  ...restrictionCases(),
+];
+DECLARED_RULES['yappr-blog-contract-v10.json'] = {
+  ...DECLARED_RULES['yappr-blog-contract.json'],
+  blog: [MOD_REASON],
+  blogPost: [...DECLARED_RULES['yappr-blog-contract.json'].blogPost, 'restrictedLane', MOD_REASON],
+  blogComment: [MOD_REASON],
+  restriction: ['moderatorsOnly'],
+};
+CONSTRAINT_CASES['yappr-blog-contract-v10.json'] = [
+  ...CONSTRAINT_CASES['yappr-blog-contract.json'].map(withLiveLane),
+  ...modReasonCases('blog', { name: 'constraint probe' }),
+  ...modReasonCases('blogPost', { ...baseBlogPost(), live: 1 }),
+  ...modReasonCases('blogComment', { blogPostId: id(), content: 'constraint probe' }),
+  ...restrictionCases(),
+];
+DECLARED_RULES['yappr-storefront-contract-v11.json'] = {
+  ...DECLARED_RULES['yappr-storefront-contract.json'],
+  store: [MOD_REASON],
+  storeItem: [...DECLARED_RULES['yappr-storefront-contract.json'].storeItem, MOD_REASON],
+  storeReview: [MOD_REASON],
+  itemReview: [MOD_REASON],
+};
+CONSTRAINT_CASES['yappr-storefront-contract-v11.json'] = [
+  ...CONSTRAINT_CASES['yappr-storefront-contract.json'],
+  ...modReasonCases('store', { name: 'constraint probe', status: 'active', category: 'other' }),
+  ...modReasonCases('storeItem', baseItem()),
+  ...modReasonCases('storeReview', { storeId: id(), orderId: id(), sellerId: id(), rating: 4 }),
+  ...modReasonCases('itemReview', { storeId: id(), itemId: id(), orderId: id(), rating: 4 }),
+];
+
 /**
  * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
  * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
@@ -683,6 +756,13 @@ DELETE_CASES['yappr-blog-contract.json'] = [
   ...featureDeleteCases('blogReport', baseBlogReport),
 ];
 DELETE_CASES['yappr-storefront-contract.json'] = featureDeleteCases('storeReport', baseStoreReport);
+// The v18 set keeps every report's withdrawal rule (docs/SOCIAL_V18.md).
+DECLARED_DELETE_RULES['yappr-social-contract-v18.json'] = DECLARED_DELETE_RULES['yappr-social-contract-v17.json'];
+DECLARED_DELETE_RULES['yappr-blog-contract-v10.json'] = DECLARED_DELETE_RULES['yappr-blog-contract.json'];
+DECLARED_DELETE_RULES['yappr-storefront-contract-v11.json'] = DECLARED_DELETE_RULES['yappr-storefront-contract.json'];
+DELETE_CASES['yappr-social-contract-v18.json'] = DELETE_CASES['yappr-social-contract-v17.json'];
+DELETE_CASES['yappr-blog-contract-v10.json'] = DELETE_CASES['yappr-blog-contract.json'];
+DELETE_CASES['yappr-storefront-contract-v11.json'] = DELETE_CASES['yappr-storefront-contract.json'];
 
 /**
  * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule
