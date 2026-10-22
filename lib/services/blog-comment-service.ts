@@ -216,7 +216,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       limit,
     })
     // `postOwnerAndTime` is not laned: a hidden comment is read too, and dropped here.
-    return withoutHiddenItems(result.documents).filter((comment) => comment.ownerId !== ownerId)
+    return withoutHiddenItems(result.documents, 'blog').filter((comment) => comment.ownerId !== ownerId)
   }
 }
 

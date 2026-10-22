@@ -20,7 +20,7 @@ import { quoteFieldsAreSplit, quoteFieldFor, targetKindOf } from '@/lib/contract
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants';
 import type { PostEmbed } from '@/lib/poll-embed';
 import { BLOG_POST_EMBED_DOC_TYPE, bumpGeneration, generationOf, quoteTargetOf } from './quote-targets';
-import { isHiddenItem } from '@/lib/moderation-view';
+import { isHiddenItem, onModeratorViewChange } from '@/lib/moderation-view';
 import { isQuoteHidden, markQuoteHidden } from './post-moderation';
 
 /** The write-side counterpart of `quoteTargetOf`: where a new quote's reference goes. */
@@ -87,6 +87,10 @@ function attachTarget(post: Post, target: Post): void {
 // lookup in flight — batch or single — is joinable by target id.
 const resolvedQuoteCache = new Map<string, Post>();
 const pendingQuoteResolutions = new Map<string, Promise<Post | null>>();
+// A target cached under the moderator view may be one it shows hidden: read them all again.
+onModeratorViewChange(() => {
+  forgetQuotedPosts([...resolvedQuoteCache.keys(), ...pendingQuoteResolutions.keys()]);
+});
 
 /** One network pass over the given posts' targets, per topology. */
 function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {

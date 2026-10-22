@@ -42,6 +42,8 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
+import { ProfileModerationPanel } from '@/components/profile/profile-moderation-panel'
+import { useIsSeatedModerator } from '@/hooks/use-moderator-view'
 import { EditProfileModal } from '@/components/profile/edit-profile-modal'
 import type { ProfileDraft } from '@/components/profile/profile-edit-form'
 import { ListLimitError } from '@/lib/typed-array-codecs'
@@ -144,6 +146,8 @@ function UserProfileContent() {
   const hidesProfiles = moderationService.hidesInsteadOfDeleting() && moderationService.canHide('yapprProfile')
   const { isModerator } = useModerationRole()
   const seesHidden = moderationViewAll() || isModerator
+  // The Moderation tab: the account's hidden and restricted posts, for the social contract's seated team.
+  const seatedSocialModerator = useIsSeatedModerator('social')
   const [profileModeration, setProfileModeration] = useState<{ documentId: string; moderation: ModerationMarks } | null>(null)
   /**
    * Where that read stands. The header waits for it (the skeleton stays), so
@@ -717,6 +721,9 @@ function UserProfileContent() {
               top={tabs.top}
               mentions={tabs.mentions}
               blogs={{ blogs, loading: blogsLoading }}
+              moderation={seatedSocialModerator && userId ? (
+                <ProfileModerationPanel userId={userId} enrichProgressively={enrichProgressively} getPostEnrichment={getPostEnrichment} />
+              ) : undefined}
               pagination={{
                 hasMore: hasMorePosts,
                 isLoading: isLoadingMore,

@@ -16,7 +16,7 @@ import { PostCard } from '@/components/post/post-card'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 
-export type ProfileTab = 'posts' | 'replies' | 'top' | 'mentions' | 'blog'
+export type ProfileTab = 'posts' | 'replies' | 'top' | 'mentions' | 'blog' | 'moderation'
 
 export interface ProfileBlog {
   id: string
@@ -58,6 +58,8 @@ interface ProfileTabsProps {
     onLoadMore: () => void
   }
   blogs: { blogs: ProfileBlog[]; loading: boolean }
+  /** The Moderation tab's content, for the contract's seated moderators only; no tab without it. */
+  moderation?: React.ReactNode
   pagination: {
     hasMore: boolean
     isLoading: boolean
@@ -77,7 +79,7 @@ function Loading({ text }: { text: string }) {
 }
 
 /** The tab strip under a profile card and whichever list it selects. */
-export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichment, posts, replies, top, mentions, blogs, pagination }: ProfileTabsProps) {
+export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichment, posts, replies, top, mentions, blogs, moderation, pagination }: ProfileTabsProps) {
   const router = useRouter()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
@@ -88,6 +90,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
     ...(likesAreIndexOnly() ? [{ key: 'top' as const, label: 'Top', testId: 'profile-top-filter' }] : []),
     { key: 'mentions', label: 'Mentions' },
     ...(blogs.blogs.length > 0 ? [{ key: 'blog' as const, label: 'Blog' }] : []),
+    ...(moderation ? [{ key: 'moderation' as const, label: 'Moderation', testId: 'profile-moderation-tab' }] : []),
   ]
 
   const renderPostList = (tab: 'posts' | 'replies' | 'top') => {
@@ -223,7 +226,10 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
       </div>
 
       {activeTab === 'top' && <RankingWindowToggle axis="creators" value={top.window} onChange={top.onWindowChange} testIdPrefix="profile-top" />}
-      {activeTab === 'mentions' ? renderMentions() : activeTab === 'blog' ? renderBlogs() : renderPostList(activeTab)}
+      {activeTab === 'mentions' ? renderMentions()
+        : activeTab === 'blog' ? renderBlogs()
+        : activeTab === 'moderation' ? moderation ?? renderPostList('posts')
+        : renderPostList(activeTab)}
     </div>
   )
 }

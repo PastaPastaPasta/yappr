@@ -11,7 +11,7 @@ import type { Post, PostModeration } from '@/lib/types'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
-import { isHidden, moderationViewAll } from '@/lib/moderation-view'
+import { archivalBuild, isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
 import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
@@ -298,7 +298,7 @@ function PostCardView({
   const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
   const hiddenByModerators = isHidden(moderation)
   // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
-  const hiddenOnThisBuild = hiddenByModerators && !moderationViewAll()
+  const hiddenOnThisBuild = hiddenByModerators && !archivalBuild()
   const hiddenActionReason = `This ${isReply ? 'reply' : 'post'} is hidden, so it can’t be replied to, reposted or quoted.`
   // v18: the moderator menu reads the author's restriction once the viewer
   // reaches for it (hover, focus or press of its trigger), so the answer is

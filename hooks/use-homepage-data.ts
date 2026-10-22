@@ -6,6 +6,7 @@ import { Post } from '@/lib/types'
 import { useSdk } from '@/contexts/sdk-context'
 import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
+import { onModeratorViewChange } from '@/lib/moderation-view'
 
 export type TopUser = HomepageTopUser
 
@@ -41,6 +42,10 @@ export interface HomepageData {
 // their authors and the top contributors together (see lib/home/load-homepage).
 let cache: { data: HomepageSnapshot; timestamp: number } | null = null
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
+// The featured posts were proved with or without the moderator view's hidden ones.
+onModeratorViewChange(() => {
+  cache = null
+})
 
 /**
  * `skipSignedIn`: a page that sends signed-in viewers elsewhere (`/` bounces

@@ -1,5 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dropsHidden, isHidden, isHiddenItem, moderationLogEnabled, moderationMarksOf, moderationViewAll, withoutHiddenItems } from './moderation-view'
+import {
+  actionsBlockedByHide,
+  archivalBuild,
+  dropsHidden,
+  isHidden,
+  isHiddenItem,
+  moderationLogEnabled,
+  moderationMarksOf,
+  moderationViewAll,
+  moderatorViewScope,
+  onModeratorViewChange,
+  setModeratorViewContracts,
+  withoutHiddenItems,
+} from './moderation-view'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -77,5 +90,79 @@ describe('moderationMarksOf', () => {
 
   it('ignores a moderator that is not an identifier string', () => {
     expect(moderationMarksOf({ mod: 1, $moderatedBy: new Uint8Array(32) }).moderatedBy).toBeUndefined()
+  })
+})
+
+describe('the moderator view', () => {
+  afterEach(() => {
+    setModeratorViewContracts([])
+  })
+
+  it('is off until set, and then only for the contracts it was set for', () => {
+    expect(moderationViewAll()).toBe(false)
+    expect(moderationViewAll('blog')).toBe(false)
+    setModeratorViewContracts(['social'])
+    expect(moderationViewAll()).toBe(true)
+    expect(moderationViewAll('social')).toBe(true)
+    expect(moderationViewAll('blog')).toBe(false)
+    expect(moderationViewAll('storefront')).toBe(false)
+    setModeratorViewContracts([])
+    expect(moderationViewAll()).toBe(false)
+  })
+
+  it('keeps a hidden item of its contract and drops one of another', () => {
+    const hidden = { id: 'b', moderation: { mod: 1 } }
+    setModeratorViewContracts(['social'])
+    expect(withoutHiddenItems([hidden])).toEqual([hidden])
+    expect(withoutHiddenItems([hidden], 'blog')).toEqual([])
+    expect(dropsHidden({ mod: 1 }, 'storefront')).toBe(true)
+  })
+
+  it('unlocks no action on hidden content: only an archival build does', () => {
+    const hidden = { moderation: { mod: 1 } }
+    setModeratorViewContracts(['social', 'blog', 'storefront'])
+    expect(actionsBlockedByHide(hidden)).toBe(true)
+    expect(actionsBlockedByHide({ moderation: {} })).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect(actionsBlockedByHide(hidden)).toBe(false)
+  })
+
+  it('does not turn the build flags on', () => {
+    setModeratorViewContracts(['social', 'blog', 'storefront'])
+    expect(archivalBuild()).toBe(false)
+    expect(moderationLogEnabled()).toBe(false)
+  })
+
+  it('tells its listeners when, and only when, it changes', () => {
+    const listener = vi.fn()
+    onModeratorViewChange(listener)
+    expect(setModeratorViewContracts(['social'])).toBe(true)
+    expect(setModeratorViewContracts(['social'])).toBe(false)
+    expect(setModeratorViewContracts(['social', 'blog'])).toBe(true)
+    expect(setModeratorViewContracts([])).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('moderatorViewScope', () => {
+  const state = (overrides: Partial<Parameters<typeof moderatorViewScope>[0]> = {}) =>
+    ({ viewer: 'alice', seatedFor: 'alice', seated: ['social', 'blog'] as const, enabled: true, ...overrides })
+
+  it('covers the viewer\'s verified seats once they turned it on', () => {
+    expect(moderatorViewScope(state())).toEqual(['social', 'blog'])
+  })
+
+  it('is empty for anyone who is not a verified seated moderator', () => {
+    // Signed out.
+    expect(moderatorViewScope(state({ viewer: null }))).toEqual([])
+    // Seats not read yet, or read for someone else (a switch of account).
+    expect(moderatorViewScope(state({ seatedFor: null }))).toEqual([])
+    expect(moderatorViewScope(state({ viewer: 'mallory' }))).toEqual([])
+    // On no seated team: the switch alone turns nothing on.
+    expect(moderatorViewScope(state({ seated: [] }))).toEqual([])
+  })
+
+  it('is empty while the switch is off', () => {
+    expect(moderatorViewScope(state({ enabled: false }))).toEqual([])
   })
 })

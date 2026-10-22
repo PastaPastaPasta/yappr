@@ -1,5 +1,6 @@
 'use client'
 
+import { Fragment } from 'react'
 import { usePathname } from 'next/navigation'
 import { NetworkPill } from '@/components/layout/network-pill'
 import { SkipLink } from '@/components/layout/skip-link'
@@ -7,9 +8,13 @@ import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
 import { LoginModal } from '@/components/auth/login-modal'
 import { ComposeModal } from '@/components/compose/compose-modal'
 import { LinkPreviewModalProvider } from '@/components/post/link-preview'
+import { ModeratorViewBar, ModeratorViewController } from '@/components/moderation/moderator-view'
+import { useModeratorViewStore } from '@/hooks/use-moderator-view'
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  // The moderator view changed what every listing reads: mount the page afresh so each reads again.
+  const moderatorViewGeneration = useModeratorViewStore((state) => state.generation)
 
   if (pathname === '/embed' || pathname.startsWith('/embed/')) {
     return <>{children}</>
@@ -17,13 +22,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <LinkPreviewModalProvider>
+      <ModeratorViewController />
       <SkipLink />
       <NetworkPill />
-      {children}
+      <Fragment key={moderatorViewGeneration}>{children}</Fragment>
       <div className="h-16 md:hidden" />
       <MobileBottomNav />
       <LoginModal />
       <ComposeModal />
+      <ModeratorViewBar />
     </LinkPreviewModalProvider>
   )
 }

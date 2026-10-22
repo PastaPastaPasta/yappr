@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EvoSDK } from '@dashevo/evo-sdk'
 import bs58 from 'bs58'
+import { setModeratorViewContracts } from '@/lib/moderation-view'
 import { installLaneFanout, resetLaneCursorsForTests } from './sdk-lane-fanout'
 
 type Where = [string, string, unknown]
@@ -16,6 +17,8 @@ interface FakeDoc {
 /** A valid 32-byte identifier in base58, distinct per seed. */
 const identifier = (seed: number) => bs58.encode(new Uint8Array(32).fill(seed))
 const hexOf = (id: string) => Buffer.from(bs58.decode(id)).toString('hex')
+const SOCIAL = identifier(201)
+const BLOG = identifier(202)
 
 const laneOf = (where: Where[] | undefined) => ({
   live: where?.find((clause) => clause[0] === 'live')?.[2],
@@ -67,15 +70,48 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('installLaneFanout, flag off', () => {
-  it('shadows nothing: the facade keeps its own methods and reads go straight through', async () => {
+  afterEach(() => {
+    setModeratorViewContracts([])
+  })
+
+  it('hands every read to the SDK untouched', async () => {
     vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
-    const { documents, sdk } = fakeSdk()
-    const before = { ...documents }
+    const { spies, sdk } = fakeSdk()
     installLaneFanout(sdk)
-    expect(documents).toEqual(before)
-    for (const name of Object.keys(before) as (keyof typeof before)[]) expect(documents[name]).toBe(before[name])
-    await sdk.documents.query({ dataContractId: 'c', documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 5 } as never)
-    expect(documents.query).toHaveBeenCalledTimes(1)
+    const request = { dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 5 }
+    await sdk.documents.query(request as never)
+    await sdk.documents.count({ dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED } as never)
+    await sdk.documents.ranked({ dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED, groupBy: '$ownerId', aggregate: { type: 'count' }, limit: 5 } as never)
+    expect(spies.query.mock.calls).toEqual([[request]])
+    expect(spies.query.mock.calls[0][0]).toBe(request)
+    expect(spies.count).toHaveBeenCalledTimes(1)
+    expect(spies.ranked).toHaveBeenCalledTimes(1)
+  })
+
+  it('fans out only the contracts the moderator view is on for', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_CONTRACT_ID', SOCIAL)
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', BLOG)
+    vi.resetModules()
+    const view = await import('@/lib/moderation-view')
+    const { installLaneFanout: install } = await import('./sdk-lane-fanout')
+    const { spies, sdk } = fakeSdk()
+    install(sdk)
+    const read = (dataContractId: string) => sdk.documents.query({ dataContractId, documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 10 } as never)
+
+    view.setModeratorViewContracts(['social'])
+    await read(SOCIAL)
+    expect(spies.query).toHaveBeenCalledTimes(6)
+    spies.query.mockClear()
+    // Another moderated contract, and any other contract, read the listed lane only.
+    await read(BLOG)
+    await read(identifier(77))
+    expect(spies.query).toHaveBeenCalledTimes(2)
+    spies.query.mockClear()
+
+    view.setModeratorViewContracts([])
+    await read(SOCIAL)
+    expect(spies.query).toHaveBeenCalledTimes(1)
   })
 })
 
