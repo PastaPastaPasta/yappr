@@ -52,8 +52,10 @@ describe('charter release safety policy', () => {
     const docs = readFileSync(new URL('../docs/TESTNET_RELEASE.md', import.meta.url), 'utf8');
     const lists = docs.match(/social uses ([^;]+); blog uses ([^;]+); storefront uses ([^.]+)\./);
     expect(lists).not.toBeNull();
-    for (const [i, name] of ['social', 'blog', 'storefront'].entries()) {
-      const entry = APP_CONNECT_ENTRIES.find((e) => e.name === name);
+    // The member each target's charter is filed on: the one its contract variable names (never a replaced v17-era member).
+    const envKeys = ['NEXT_PUBLIC_YAPPR_CONTRACT_ID', 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID'];
+    for (const [i, envKey] of envKeys.entries()) {
+      const entry = APP_CONNECT_ENTRIES.find((e) => e.envKey === envKey);
       const template = JSON.parse(readFileSync(contractFilePath(entry.file), 'utf8'));
       const documented = [...lists[i + 1].matchAll(/`([^`]+)`/g)].map((match) => match[1]);
       expect(documented.sort()).toEqual(Object.keys(template.config.moderation.moderators.moderatedDocumentTypes).sort());

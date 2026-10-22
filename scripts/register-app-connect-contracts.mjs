@@ -20,6 +20,15 @@
  *   --live --journal <f>  registers (below)
  *   [--upto <name>]       live: stop after that entry (`--upto app` registers only the anchor)
  *   [--retry-refused]     live: re-prepare a create the chain refused, at the next nonce
+ *   [--append-after <name>]
+ *                         the group already holds every entry through <name> (testnet:
+ *                         `passkeyVault`, TESTNET_REGISTERED_THROUGH): create only the entries after it,
+ *                         each joining the EXISTING group in its own create. Needs --start-nonce, the
+ *                         anchor's nonce (it fixes APP_ID and GROUP_ID). --plan builds and audits only
+ *                         the new creates; --dry-run proves the anchor, the group and every registered
+ *                         entry on chain at its planned id, and that the maker's next nonce is the first
+ *                         new entry's; --live resumes the set's journal (every registered entry verified
+ *                         there) and records the new entries' rendering apart from the original set's.
  *
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <id> --start-nonce 13
  *   NETWORK=devnet node scripts/register-app-connect-contracts.mjs --dry-run
@@ -48,6 +57,9 @@
  *     --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 dir>/journal.json \
  *     --maker <id> --maker-key-file <0600 file> --maker-key-id <n> --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600
+ * Testnet "hide, don't delete" members (docs/SOCIAL_V18.md; the windows and delay are the owner's call):
+ *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run --append-after passkeyVault --maker <id> --start-nonce 57 \
+ *     --interim notYetUsable --election-windows <join>,<vote> --election-delay <seconds> --challenge-cool-down 1209600
  *
  * Every mode but --plan gates on the protocol version of the PROVED current
  * epoch (never a status page), and prints the cost estimate of what it would
@@ -79,7 +91,7 @@ import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
-import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
+import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
@@ -95,7 +107,7 @@ const big = (_key, value) => (typeof value === 'bigint' ? String(value) : value)
 
 function parseArgs(argv) {
   const args = {
-    mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false,
+    mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false, appendAfter: null,
     interim: null, electionWindows: null, electionDelay: null, challengeCoolDown: null, production: false, keyFile: null, keyId: null,
   };
   const value = (i, flag) => {
@@ -116,6 +128,7 @@ function parseArgs(argv) {
       case '--journal': args.journal = value(++i, arg); break;
       case '--upto': args.upto = value(++i, arg); break;
       case '--retry-refused': args.retryRefused = true; break;
+      case '--append-after': args.appendAfter = value(++i, arg); break;
       case '--interim': args.interim = value(++i, arg); break;
       case '--election-windows': args.electionWindows = value(++i, arg); break;
       case '--election-delay': args.electionDelay = value(++i, arg); break;
@@ -130,6 +143,7 @@ function parseArgs(argv) {
   if (args.mode === 'live' && !args.journal) throw new Error('--live needs --journal <file> (it keeps the signed bytes of every create)');
   if (args.mode !== 'live' && (args.journal || args.upto || args.retryRefused)) throw new Error('--journal, --upto and --retry-refused belong to --live');
   if (args.mode === 'plan' && args.startNonce === null) throw new Error('--plan needs --start-nonce <n> (the anchor\'s identity nonce)');
+  if (args.appendAfter !== null && args.mode !== 'live' && args.startNonce === null) throw new Error('--append-after needs --start-nonce <n>, the registered anchor\'s identity nonce');
   return args;
 }
 
@@ -240,17 +254,47 @@ function describePolicy(policy) {
   return `interim ${policy.interim ?? "the files' own"}; election windows ${windows}; election delay ${delay}; challenge cool-down ${policy.challengeCoolDown === null ? "the files' own" : `${policy.challengeCoolDown} s`}`;
 }
 
-function printPlan(plan, makerSource, policy) {
+function printPlan(plan, makerSource, policy, created) {
   console.log(`App Connect contract set on ${network()}: maker ${plan.groupOwner} (${makerSource}), anchor nonce ${plan.anchor.nonce}`);
   console.log(`elected contracts register with: ${describePolicy(policy)}`);
   console.log(`APP_ID=${plan.appId}`);
   console.log(`GROUP_ID=${plan.groupId}`);
   console.log(`GROUP_OWNER=${plan.groupOwner}`);
-  console.log('nonce  contract    id                                            source');
+  console.log('nonce  contract       id                                            source');
   for (const c of plan.contracts) {
-    const role = c === plan.anchor ? ' (registers the group and joins it)' : '';
-    console.log(`${String(c.nonce).padStart(5)}  ${c.name.padEnd(10)}  ${c.id.padEnd(44)}  ${c.file} ${c.sha256.slice(0, 12)}…${role}`);
+    const role = !created.includes(c) ? ' (registered; not created again)'
+      : c === plan.anchor ? ' (registers the group and joins it)' : '';
+    const replaced = c.replacedBy ? `, replaced by ${c.replacedBy}` : '';
+    console.log(`${String(c.nonce).padStart(5)}  ${c.name.padEnd(13)}  ${c.id.padEnd(44)}  ${c.file} ${c.sha256.slice(0, 12)}…${role}${replaced}`);
   }
+}
+
+/**
+ * An append run's read-only preconditions (`--append-after`): the group exists,
+ * owned by the maker alone; every entry it already holds exists at its planned
+ * id, owned by the maker, carries its pinned file's document types and is a
+ * proved member; no entry to create exists yet; and the maker's next nonce is
+ * the first new entry's, so the printed ids are the ones a live run produces.
+ */
+async function proveAppendable(handle, plan, created, chainNonce) {
+  const read = (fn) => readback(handle, fn);
+  const info = await read(() => handle.sdk.contractGroups.info(plan.groupId));
+  if (!info || info.ownerId !== plan.groupOwner || info.adminIds.length !== 0) throw new Error(`group ${plan.groupId}: owner ${info?.ownerId}, admins ${info?.adminIds}; expected ${plan.groupOwner} alone`);
+  const platformVersion = PlatformVersion.latest();
+  for (const entry of plan.contracts.filter((c) => !created.includes(c))) {
+    const [contract, memberships] = await Promise.all([read(() => handle.sdk.contracts.fetch(entry.id)), read(() => handle.sdk.contractGroups.forContractWithProof(entry.id))]);
+    if (!contract || contract.ownerId.toBase58() !== plan.groupOwner) throw new Error(`${entry.name}: ${entry.id} is not registered by the maker; the group does not hold the entries --append-after names`);
+    const declared = contractSource(readFileSync(contractFilePath(entry.file), 'utf8'));
+    if (!sameSchemas(contract.toJSON(platformVersion).documentSchemas, DataContract.fromJSON(registrationJson(declared, { id: entry.id, ownerId: plan.groupOwner }), true, platformVersion).toJSON(platformVersion).documentSchemas)) {
+      throw new Error(`${entry.name}: ${entry.id} does not carry ${entry.file}'s document types`);
+    }
+    if (!memberships.data.contract.includes(plan.groupId)) throw new Error(`${entry.name}: ${entry.id} is not a member of ${plan.groupId}`);
+    console.log(`  ${entry.name.padEnd(13)} ${entry.id} registered, a proved member (height ${memberships.metadata.height})`);
+  }
+  for (const entry of created) {
+    if (await read(() => handle.sdk.contracts.fetch(entry.id))) throw new Error(`REFUSING: ${entry.name} ${entry.id} already exists on chain`);
+  }
+  if (chainNonce !== created[0].nonce - 1n) throw new Error(`the maker is at nonce ${chainNonce}; ${created[0].name} at ${created[0].nonce} needs it at ${created[0].nonce - 1n} (another transition took a nonce: re-plan with the ids it would get)`);
 }
 
 function printEnv(set, heading) {
@@ -266,12 +310,23 @@ const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: p
  * interim and election windows; every entry from its pinned file at a
  * consistent id.
  */
-function checkJournal(journal, plan, path, policy) {
+function checkJournal(journal, plan, path, policy, appendAfter) {
   for (const [key, want] of [['network', network()], ['makerId', plan.groupOwner], ['startNonce', String(plan.anchor.nonce)], ['groupId', plan.groupId]]) {
     if (journal[key] !== want) throw new Error(`journal ${path}: ${key} is ${journal[key]}, this run's is ${want}`);
   }
-  const recorded = JSON.stringify({ interim: journal.interim ?? null, electionWindows: journal.electionWindows ?? null, electionDelay: journal.electionDelay ?? null, challengeCoolDown: journal.challengeCoolDown ?? null });
-  if (recorded !== JSON.stringify(journalPolicy(policy))) throw new Error(`journal ${path} was rendered with ${recorded}, this run with ${JSON.stringify(journalPolicy(policy))}; refusing to mix`);
+  // An append batch renders its own new entries: its policy is recorded under `appends`, apart
+  // from the original set's, and a resumed batch must name the same one.
+  const batch = appendAfter === null ? null : (journal.appends ?? []).find((b) => b.after === appendAfter);
+  const recordedPolicy = appendAfter === null ? journal : batch?.policy;
+  if (recordedPolicy) {
+    const recorded = JSON.stringify({ interim: recordedPolicy.interim ?? null, electionWindows: recordedPolicy.electionWindows ?? null, electionDelay: recordedPolicy.electionDelay ?? null, challengeCoolDown: recordedPolicy.challengeCoolDown ?? null });
+    if (recorded !== JSON.stringify(journalPolicy(policy))) throw new Error(`journal ${path} was rendered with ${recorded}, this run with ${JSON.stringify(journalPolicy(policy))}; refusing to mix`);
+  }
+  if (appendAfter !== null) {
+    const registered = plan.contracts.slice(0, plan.contracts.findIndex((c) => c.name === appendAfter) + 1);
+    const missing = registered.filter((c) => journal.contracts[c.name]?.state !== 'verified').map((c) => c.name);
+    if (missing.length > 0) throw new Error(`journal ${path}: --append-after ${appendAfter}, but ${missing.join(', ')} is not verified there; an append resumes the set's own journal`);
+  }
   for (const c of plan.contracts) {
     const saved = journal.contracts[c.name];
     if (saved && (saved.sha256 !== c.sha256 || saved.id !== generateId(plan.groupOwner, BigInt(saved.nonce)))) {
@@ -568,6 +623,7 @@ async function main() {
   let startNonce = args.startNonce;
   let balance = null;
   let feeMultiplierPermille = 1000n;
+  let chainNonce = null;
   const makerNonce = async () => ((await readback(handle, () => handle.sdk.identities.nonce(maker.id))) ?? 0n) & NONCE_SEQUENCE_MASK;
   if (args.mode !== 'plan') {
     handle = createSdkHandle({ contractIds: [] });
@@ -578,7 +634,7 @@ async function main() {
     if (!(protocolVersion >= 14)) throw new Error(`contract groups need protocol version 14; the proved epoch ${index} runs ${protocolVersion}`);
     feeMultiplierPermille = BigInt(epoch.data.feeMultiplierPermille);
     await requireDriveVersion(handle);
-    const chainNonce = await makerNonce();
+    chainNonce = await makerNonce();
     balance = BigInt((await readback(handle, () => handle.sdk.identities.balance(maker.id))) ?? 0n);
     console.log(`connected to ${network()}: proved epoch ${index} at height ${epoch.metadata.height} runs PV${protocolVersion}, fee multiplier ${feeMultiplierPermille}‰; maker nonce ${chainNonce}, ${formatCredits(balance)}`);
     if (journal) {
@@ -586,33 +642,42 @@ async function main() {
       startNonce = BigInt(journal.startNonce);
     }
     startNonce ??= chainNonce + 1n;
-    if (args.mode !== 'live' && chainNonce !== startNonce - 1n) throw new Error(`the maker is at nonce ${chainNonce}; the anchor at ${startNonce} needs it at ${startNonce - 1n}`);
+    if (args.mode !== 'live' && args.appendAfter === null && chainNonce !== startNonce - 1n) throw new Error(`the maker is at nonce ${chainNonce}; the anchor at ${startNonce} needs it at ${startNonce - 1n}`);
   }
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
   const plan = planAppConnectSet({ makerId: maker.id, startNonce, generateId });
-  printPlan(plan, maker.source, policy);
-  if (args.upto && !plan.contracts.some((c) => c.name === args.upto)) throw new Error(`--upto ${args.upto}: not an entry (${plan.contracts.map((c) => c.name).join(', ')})`);
-  if (journal) checkJournal(journal, plan, args.journal, policy);
+  // The entries this run creates: all of them, or (--append-after) those the group does not hold yet.
+  const created = entriesToCreate(plan.contracts, args.appendAfter);
+  printPlan(plan, maker.source, policy, created);
+  if (args.upto && !created.some((c) => c.name === args.upto)) throw new Error(`--upto ${args.upto}: not an entry this run creates (${created.map((c) => c.name).join(', ')})`);
+  if (args.appendAfter !== null && args.mode === 'live' && !journal) throw new Error('--live --append-after resumes the set\'s own journal (every entry through the one named must be verified there); none at that path');
+  if (journal) checkJournal(journal, plan, args.journal, policy, args.appendAfter);
+
+  // An append: the anchor, the group and every registered entry must be on chain as planned.
+  if (handle && args.appendAfter !== null && args.mode !== 'live') {
+    console.log(`\nthe group already holds every entry through ${args.appendAfter} (proved):`);
+    await proveAppendable(handle, plan, created, chainNonce);
+  }
 
   // A fresh run: nothing of the planned set and not the group may exist yet. A resumed run
   // checks only what it allocates (registerLive), since a member may have landed at a later
   // nonce than planned, leaving its planned id to whatever else took that nonce.
-  if (handle && Object.keys(journal?.contracts ?? {}).length === 0) {
+  if (handle && args.appendAfter === null && Object.keys(journal?.contracts ?? {}).length === 0) {
     for (const c of plan.contracts) {
       if (await readback(handle, () => handle.sdk.contracts.fetch(c.id))) throw new Error(`REFUSING: ${c.name} ${c.id} already exists on chain`);
     }
     if (await readback(handle, () => handle.sdk.contractGroups.info(plan.groupId))) throw new Error(`REFUSING: group ${plan.groupId} already exists`);
   }
 
-  // Every mode builds the whole set unsigned first: nothing is signed or broadcast unless all of it would pass.
+  // Every mode builds everything it creates unsigned first: nothing is signed or broadcast unless all of it would pass.
   console.log('\ncreates (unsigned, at the planned nonces):');
-  const estimates = new Map(plan.contracts.map((entry) => [entry.name, prepare(entry, { plan, platformVersion, signing: null, policy, feeMultiplierPermille }).estimate]));
+  const estimates = new Map(created.map((entry) => [entry.name, prepare(entry, { plan, platformVersion, signing: null, policy, feeMultiplierPermille }).estimate]));
 
   // What this run would still pay for: a live run skips what its journal verified and stops at --upto.
   // (A create a crashed run left `prepared` or `broadcasting` may have been paid already; it is counted again.)
   const last = args.upto ? plan.contracts.findIndex((c) => c.name === args.upto) : plan.contracts.length - 1;
-  const pending = plan.contracts.slice(0, last + 1).filter((c) => journal?.contracts?.[c.name]?.state !== 'verified');
+  const pending = plan.contracts.slice(0, last + 1).filter((c) => created.includes(c) && journal?.contracts?.[c.name]?.state !== 'verified');
   const estimate = pending.reduce((sum, c) => sum + estimates.get(c.name), 0n);
   console.log(`\nestimated cost of ${pending.map((c) => c.name).join(', ') || 'nothing'}: ${formatCredits(estimate)}`);
   if (balance !== null) {
@@ -625,12 +690,15 @@ async function main() {
 
   if (args.mode === 'signed-dry-run') {
     console.log('\ncreates (signed, never broadcast):');
-    for (const entry of plan.contracts) prepare(entry, { plan, platformVersion, signing, policy, feeMultiplierPermille });
+    for (const entry of created) prepare(entry, { plan, platformVersion, signing, policy, feeMultiplierPermille });
     printEnv(plan, 'env');
     return;
   }
 
   const state = journal ?? { network: network(), makerId: plan.groupOwner, startNonce: String(plan.anchor.nonce), groupId: plan.groupId, ...journalPolicy(policy), contracts: {} };
+  if (args.appendAfter !== null && !(state.appends ?? []).some((b) => b.after === args.appendAfter)) {
+    state.appends = [...(state.appends ?? []), { after: args.appendAfter, policy: journalPolicy(policy), startedAt: new Date().toISOString() }];
+  }
   const verified = await registerLive({ args, plan, state, handle, makerNonce, signing, platformVersion, policy });
   printEnv({ ...plan, contracts: verified }, verified.length === plan.contracts.length ? 'env' : `env so far (${verified.length} of ${plan.contracts.length})`);
 }

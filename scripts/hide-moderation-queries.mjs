@@ -21,15 +21,11 @@
  * Each entry: `{ id, contract, docType, kind, purpose, lanes?, request(v) }`.
  * `kind` is documents | count | ranked | average; `purpose` default | archive | log.
  * `request(v)` builds the SDK request body (without `dataContractId` and
- * `documentTypeName`) from sample values `v` (see {@link SAMPLE_KEYS}) and, for a
+ * `documentTypeName`) from sample values `v` (base58 ids `author`, `me`, `post`,
+ * `reply`, `blog`, `blogPost`, `store`, `item`, `target`; a stored `tag`) and, for a
  * laned entry, the lane in `v.live` / `v.mod` / `v.state`. No network, no keys.
  */
 
-/** The values a request reads off `v`: ids are base58, `tag` a stored tag, `since` ms. */
-export const SAMPLE_KEYS = ['author', 'me', 'post', 'reply', 'tag', 'since', 'blog', 'blogPost', 'store', 'item', 'target'];
-
-/** yap.pr's lane: listed, not hidden. */
-export const DEFAULT_LANE = Object.freeze({ live: 1, mod: null });
 const MOD_VALUES = [null, 1, 2];
 /** Every (`live`, `mod`) lane of a listing keyed on both. */
 export const LIVE_MOD_LANES = Object.freeze([1, 2].flatMap((live) => MOD_VALUES.map((mod) => Object.freeze({ live, mod }))));
