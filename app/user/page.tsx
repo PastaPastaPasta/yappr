@@ -16,6 +16,7 @@ import { repostsAreQuotes } from '@/lib/contract-topology'
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
+import { useSdk } from '@/contexts/sdk-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
@@ -157,11 +158,18 @@ function UserProfileContent() {
   const [profileModerationRead, setProfileModerationRead] = useState<'pending' | 'done' | 'failed'>('pending')
   const authorRestricted = useAuthorRestricted('social', userId, hidesProfiles && seesHidden)
   const [restrictedHere, setRestrictedHere] = useState<boolean | null>(null)
+  // A signed-out visit can mount before the SDK is configured; reading then
+  // fails ("SDK not configured") and the profile would read as unavailable.
+  const { isReady: sdkReady, error: sdkError } = useSdk()
   useEffect(() => {
     setProfileModeration(null)
     setRestrictedHere(null)
     if (!hidesProfiles || !userId) {
       setProfileModerationRead('done')
+      return
+    }
+    if (!sdkReady) {
+      setProfileModerationRead(sdkError ? 'failed' : 'pending')
       return
     }
     setProfileModerationRead('pending')
@@ -177,7 +185,7 @@ function UserProfileContent() {
     return () => {
       cancelled = true
     }
-  }, [hidesProfiles, userId])
+  }, [hidesProfiles, userId, sdkReady, sdkError])
   const profileHidden = isHidden(profileModeration?.moderation)
   const showsHiddenProfileStub = (profileHidden || profileModerationRead === 'failed') && !seesHidden
   const awaitingProfileModeration = profileModerationRead === 'pending'
