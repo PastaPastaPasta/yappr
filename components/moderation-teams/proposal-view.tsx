@@ -107,7 +107,6 @@ export function ProposalView({ contract, proposalId, election }: {
     setRequestsFailed(false)
     try {
       setRequests(await charterService.joinRequests(proposalId))
-      setRequestsFailed(false)
     } catch (readError) {
       logger.warn('Moderation teams: join requests could not be read', readError)
       // Unknown, never "nobody asked": an application must not go solo on a list it could not read.

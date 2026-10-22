@@ -29,6 +29,7 @@ const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
 const locks = vi.hoisted(() => vi.fn())
 const sdkLocks = vi.hoisted(() => vi.fn())
+const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -52,7 +53,13 @@ vi.mock('./identity-nonce', () => ({
   allocateNonce: () => 1n,
   reserveNonce: nonces.reserve,
   releaseNonce: nonces.release,
-  withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>) => { await sdkLocks(); return write() },
+  WRITE_PRECONDITION_FAILED: 'This was not sent: what it depended on changed.',
+  withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>) => {
+    sdkPreconditions.push(precondition)
+    await sdkLocks()
+    if (precondition && !(await precondition())) throw new Error('This was not sent: what it depended on changed.')
+    return write()
+  },
 }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: keys.match }))
 vi.mock('@/lib/auth/key-step-up', async (original: () => Promise<Record<string, unknown>>) => ({ ...(await original()), requestKeyStepUp: keys.stepUp, cancelKeyStepUp: () => undefined }))
@@ -387,9 +394,13 @@ describe('a session forgotten mid-write', () => {
     sdkLocks.mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
     const undoing = charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e2', memberId: 'm1' })
     await vi.waitFor(() => expect(sdkLocks).toHaveBeenCalled())
+    const precondition = sdkPreconditions[sdkPreconditions.length - 1]
+    await expect(precondition?.()).resolves.toBe(true)
     charterService.forgetKeys()
+    await expect(precondition?.()).resolves.toBe(false)
     release()
-    await expect(undoing).rejects.toMatchObject({ outcome: 'cancelled' })
+    // Declined by the coordinator's precondition, before any nonce is reserved.
+    await expect(undoing).rejects.toMatchObject({ outcome: 'cancelled', message: 'Nothing was sent.' })
     expect(sdk.documents.delete).not.toHaveBeenCalled()
     expect(stored('addedModerator', 'e2:m1')).toMatchObject({ landed: 'doc-1' })
   })
@@ -410,11 +421,20 @@ describe('the charter key', () => {
     sdk.identities.fetch.mockResolvedValue({ publicKeys: [leaderKeyOnChain(getPublicKey(charter, true))] })
     // The original MASTER is disabled: it no longer matches an enabled key.
     keys.match.mockReturnValue({ ok: false, reason: 'not-found' })
-    keys.stepUp.mockResolvedValueOnce(Buffer.from(original).toString('hex'))
+    const originalHex = Buffer.from(original).toString('hex')
+    const replacementHex = Buffer.from(new Uint8Array(32).fill(4)).toString('hex')
+    keys.stepUp.mockImplementationOnce(async ({ validate }: { validate: (typed: string) => Promise<string | null> }) => {
+      await expect(validate(originalHex)).resolves.toBeNull()
+      return originalHex
+    })
     await expect(charterService.charterKey(OWNER, 'leader', { create: false })).resolves.toEqual(charter)
     charterService.forgetKeys()
+    // The enabled replacement MASTER made no charter key: the prompt says which MASTER key to use.
     keys.match.mockReturnValue({ ok: true, key: { keyId: 9 }, match: { keyId: 9 } })
-    keys.stepUp.mockResolvedValueOnce(Buffer.from(new Uint8Array(32).fill(4)).toString('hex'))
+    keys.stepUp.mockImplementationOnce(async ({ validate }: { validate: (typed: string) => Promise<string | null> }) => {
+      await expect(validate(replacementHex)).resolves.toContain('a replaced one still works')
+      return replacementHex
+    })
     await expect(charterService.charterKey(OWNER, 'leader', { create: false })).rejects.toThrow("doesn't fit")
   })
 })

@@ -47,7 +47,7 @@ import {
 import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
 import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
-import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
@@ -488,7 +488,7 @@ class CharterService {
       title: onChain ? 'Unlock your charter key' : 'Set up your charter key',
       description: onChain
         ? (role === 'leader' ? 'Join messages are encrypted to your charter key.' : 'Your join message is encrypted with your charter key.')
-          + ' Enter your MASTER key (Yappr makes your charter key from it) or the charter key itself. It stays in this tab only.'
+          + ' Enter the MASTER key it was made from (Yappr makes your charter key from it) or the charter key itself. It stays in this tab only.'
         : (role === 'leader' ? 'Members encrypt their join messages to a charter key on your account.' : 'Your join message is encrypted with a charter key on your account.')
           + ' Yappr adds it once, signed with your MASTER key, which stays in this tab only and is never stored.',
       label: onChain ? 'MASTER key or charter key' : 'MASTER key',
@@ -499,7 +499,9 @@ class CharterService {
             unlocked.fill(0)
             return null
           }
-          if (onChain && isMaster(asWif(typed))) return "Your account's charter key wasn't made from this MASTER key. Enter the charter key itself."
+          if (onChain && isMaster(asWif(typed))) {
+            return "Your account's charter key wasn't made from this MASTER key. Enter the MASTER key you had when you set it up (a replaced one still works), or the charter key itself."
+          }
           return onChain ? "That key doesn't unlock this account's charter key." : "That isn't this account's MASTER key."
         } catch (error) {
           return keyInputError(error)
@@ -527,34 +529,38 @@ class CharterService {
     master: Uint8Array,
     charterKey: Uint8Array,
   ): Promise<void> {
-    const sdk = await getEvoSdk()
-    const w = await wasmModule()
-    const { purpose, documentType } = CHARTER_KEYS[role]
-    const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
-    const publicKey = secp256k1.getPublicKey(charterKey, true)
-    const signer = new w.IdentitySigner()
-    const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
-    // The new key signs its own ownership proof.
-    const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
+    // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
-      signer.addKey(masterKey)
-      signer.addKey(newKey)
-      await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
-    } catch (error) {
-      if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
-      logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
+      const sdk = await getEvoSdk()
+      const w = await wasmModule()
+      const { purpose, documentType } = CHARTER_KEYS[role]
+      const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
+      const publicKey = secp256k1.getPublicKey(charterKey, true)
+      const signer = new w.IdentitySigner()
+      const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
+      // The new key signs its own ownership proof.
+      const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
+      try {
+        signer.addKey(masterKey)
+        signer.addKey(newKey)
+        await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
+      } catch (error) {
+        if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
+        logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
+      } finally {
+        signer.free()
+        masterKey.free()
+        newKey.free()
+      }
+      for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
+        const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
+        if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
+        await sleep(PROOF_PAUSE_MS)
+      }
+      throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
     } finally {
       master.fill(0)
-      signer.free()
-      masterKey.free()
-      newKey.free()
     }
-    for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
-      const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
-      if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
-      await sleep(PROOF_PAUSE_MS)
-    }
-    throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
   }
 
   // ---- writes -----------------------------------------------------------------
@@ -929,9 +935,9 @@ class CharterService {
       const { wif, identityKey } = await this.signingKey(ownerId)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
-      // The SDK picks this nonce itself: the coordinator holds other writes off it.
+      // The SDK picks this nonce itself: the coordinator holds other writes off it. Queued behind
+      // another write, a session forgotten meanwhile fails the precondition: nothing reserved or sent.
       await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {
-        // Queued behind another write: nothing is signed for a session forgotten meanwhile.
         this.assertSameSession(generation)
         const signer = new w.IdentitySigner()
         const privateKey = w.PrivateKey.fromWIF(wif)
@@ -943,8 +949,9 @@ class CharterService {
           signer.free()
           privateKey.free()
         }
-      }, `${type}:${documentId}`)
+      }, `${type}:${documentId}`, async () => generation === this.generation)
     } catch (error) {
+      if (error instanceof Error && error.message === WRITE_PRECONDITION_FAILED) throw new CharterActionError('Nothing was sent.', 'cancelled')
       throw charterActionError('undo-team-change', error)
     } finally {
       // Once the delete was sent, whatever its outcome: a stale "filed" is worse than a refused duplicate.
