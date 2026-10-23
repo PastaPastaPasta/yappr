@@ -220,6 +220,36 @@ function forgetPendingCreate(key: string, entry: PendingCreate): void {
   }
 }
 
+/** Whether the slot holds a signed create that may still go through (an unreadable value may). */
+function hasPendingCreate(key: string): boolean {
+  try {
+    const stored = loadSlot(key)
+    return stored !== null && !isLanded(stored)
+  } catch {
+    // Unreadable: it may still go through, which is what this asks.
+    return true
+  }
+}
+
+/** Frees a slot on the owner's deliberate say-so, its nonce kept as spent. */
+async function abandonSlot(ownerId: string, key: string): Promise<void> {
+  await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
+    let stored: StoredSlot | null = null
+    try {
+      stored = loadSlot(key)
+    } catch {
+      // Unreadable: drop the raw value below all the same.
+    }
+    try {
+      localStorage.removeItem(PENDING_PREFIX + key)
+    } catch {
+      // Storage blocked: nothing was stored there.
+    }
+    // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
+    if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
+  })
+}
+
 type MatchResult = ReturnType<typeof matchIdentityKey<IdentityPublicKey>>
 
 /** Why a typed key can't sign charters documents, in words; null when it can. */
@@ -648,14 +678,14 @@ class CharterService {
       if (running.fingerprint !== input.fingerprint) return Promise.reject(charterActionError(action, new CharterActionError(STILL_SENDING, 'uncertain')))
       return running.work
     }
-    const work = this.fileOnce(key, input).catch((error: unknown) => {
+    const work = this.fileOnce(action, key, input).catch((error: unknown) => {
       throw charterActionError(action, error)
     }).finally(() => this.inFlight.delete(key))
     this.inFlight.set(key, { fingerprint: input.fingerprint, work })
     return work
   }
 
-  private async fileOnce(key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
+  private async fileOnce(action: CharterAction, key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
     const { ownerId, type, fingerprint, targetContractId = '', fund = false } = input
     // Leaving the page, signing out or switching account cancels whatever this write has not yet signed.
     const generation = input.session ?? this.generation
@@ -730,8 +760,13 @@ class CharterService {
         // lost connection are not verdicts: prove the document instead.
         if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
           // A resend's refusal speaks for a node now, not for the first send, which may have landed
-          // (say, a node behind on its funding): the entry stays until settling proves what happened.
-          if (!fresh) throw error
+          // (say, a node behind on its funding). Where a second signature could file a duplicate (a
+          // proposal, an application) the entry stays until settling proves what happened; reasons and
+          // join requests are unique per owner, so their entry goes as before.
+          if (!fresh && (type === 'submittedCharter' || type === 'electedCharter')) {
+            const reason = charterActionError(action, error).message
+            throw new CharterActionError(`An earlier try may still go through; the network refused to resend it just now: ${reason}`, 'uncertain')
+          }
           // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
           this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false))
           throw error
@@ -824,13 +859,26 @@ class CharterService {
    * election" and the deliberate {@link abandonApplication}.
    */
   hasPendingApplication(ownerId: string, targetContractId: string): boolean {
-    try {
-      const stored = loadSlot(`${ownerId}:electedCharter:${targetContractId}`)
-      return stored !== null && !isLanded(stored)
-    } catch {
-      // Unreadable: it may still go through, which is what this asks.
-      return true
-    }
+    return hasPendingCreate(`${ownerId}:electedCharter:${targetContractId}`)
+  }
+
+  /**
+   * Whether a proposal for `targetContractId` signed in this browser may still
+   * go through (stored, not yet proved): the form then offers the deliberate
+   * {@link abandonProposal}.
+   */
+  hasPendingProposal(ownerId: string, targetContractId: string): boolean {
+    return hasPendingCreate(`${ownerId}:submittedCharter:${targetContractId}`)
+  }
+
+  /**
+   * The leader's deliberate way out of a proposal stuck uncertain (its resend
+   * refused over and over, say): frees its slot so a new one can be signed.
+   * The earlier one may still execute, so the form asks for confirmation that
+   * a second, permanent proposal may follow.
+   */
+  async abandonProposal(ownerId: string, targetContractId: string): Promise<void> {
+    await abandonSlot(ownerId, `${ownerId}:submittedCharter:${targetContractId}`)
   }
 
   /**
@@ -840,22 +888,7 @@ class CharterService {
    * follow. Nothing else ever clears an application's slot.
    */
   async abandonApplication(ownerId: string, targetContractId: string): Promise<void> {
-    const key = `${ownerId}:electedCharter:${targetContractId}`
-    await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
-      let stored: StoredSlot | null = null
-      try {
-        stored = loadSlot(key)
-      } catch {
-        // Unreadable: drop the raw value below all the same.
-      }
-      try {
-        localStorage.removeItem(PENDING_PREFIX + key)
-      } catch {
-        // Storage blocked: nothing was stored there.
-      }
-      // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
-      if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
-    })
+    await abandonSlot(ownerId, `${ownerId}:electedCharter:${targetContractId}`)
   }
 
   /** Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its nonce is spent. */

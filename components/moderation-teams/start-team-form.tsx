@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { CheckCircleIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/contexts/auth-context'
@@ -50,9 +51,16 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
   const [share, setShare] = useState(DEFAULT_MODERATORS_SHARE)
   const [split, setSplit] = useState<RewardSplit>({ ...DEFAULT_REWARD_SPLIT })
   const { balance, needsKey, setNeedsKey } = useAccountReadiness(me, 'leader', status)
-  const { busy, error, setBusy, run } = useCharterRun()
+  const { busy, error, setBusy, setError, run } = useCharterRun()
   const [touched, setTouched] = useState(false)
   const [filed, setFiled] = useState<string | null>(null)
+  // A proposal sent from this browser whose outcome is still unknown (read again after each try or clear).
+  const [pendingProposal, setPendingProposal] = useState(false)
+  const [confirmAbandon, setConfirmAbandon] = useState(false)
+  const recheckPending = useCallback(() => {
+    setPendingProposal(!!me && !!declared.contractId && charterService.hasPendingProposal(me, declared.contractId))
+  }, [me, declared.contractId])
+  useEffect(recheckPending, [recheckPending])
 
   // Reasons to pick from: the leader's own, and those other proposals for this contract list.
   useEffect(() => {
@@ -173,6 +181,16 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
       }, { stillOpen, session })
     })
     if (proposalId) setFiled(proposalId)
+    recheckPending()
+  }
+
+  const abandonProposal = () => {
+    charterService.abandonProposal(me, declared.contractId)
+      .then(() => {
+        setError(null)
+        recheckPending()
+      })
+      .catch((abandonError: unknown) => logger.warn('Moderation teams: the proposal could not be cleared', abandonError))
   }
 
   const splitTotal = split.leader + split.equal + split.actions
@@ -290,6 +308,25 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
 
       <Section>
         {error && <Notice tone="error" testId="start-team-error">{error}</Notice>}
+        {pendingProposal && (
+          <Notice tone="warn" testId="proposal-uncertain">
+            <p>A proposal you sent from this browser may still go through. Check the {declared.label} teams list before submitting again.</p>
+            <div className="mt-2">
+              <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => setConfirmAbandon(true)} data-testid="abandon-proposal">
+                Clear and start over
+              </Button>
+            </div>
+          </Notice>
+        )}
+        <ConfirmDialog
+          isOpen={confirmAbandon}
+          onClose={() => setConfirmAbandon(false)}
+          onConfirm={() => { setConfirmAbandon(false); abandonProposal() }}
+          title="Clear and start over?"
+          message="Your earlier proposal may still go through. If you submit again and it does, you will have filed a second proposal. Proposals are permanent and can't be removed. Only do this once the teams list shows no proposal from you."
+          confirmText="Clear and start over"
+          variant="danger"
+        />
         {busy && <Notice testId="start-team-progress">{busy}</Notice>}
         <Button type="submit" disabled={busy !== null} data-testid="submit-proposal">
           {busy ? 'Working…' : 'Submit proposal'}

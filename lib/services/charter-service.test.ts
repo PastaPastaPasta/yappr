@@ -158,7 +158,10 @@ describe('a refusal', () => {
     // Landed, but unreadable; a node behind on the funding refuses the replay.
     sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('insufficient balance'), { code: 40120 }))
     builders.consumed.mockResolvedValue(true)
-    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused' })
+    const refusedResend = charterService.submitProposal(OWNER, TERMS)
+    // Uncertain, never "refused": the proposal may have landed; the reason is kept.
+    await expect(refusedResend).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(refusedResend).rejects.toThrow('the network refused to resend it just now')
     expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
     expect(nonces.release).not.toHaveBeenCalled()
     // Another try resends the same bytes, and signs nothing new.
@@ -676,6 +679,39 @@ describe('a landed marker', () => {
     expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
     expect(stored('addedModerator', 'e1:m1')).toBeNull()
     await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-2')
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a refused resend of a unique write', () => {
+  it('drops a join request whose resend is refused: a second one would be refused as a duplicate', async () => {
+    const charterKey = vi.spyOn(charterService, 'charterKey').mockImplementation(async () => new Uint8Array(32).fill(1))
+    Object.assign(sdk, { moderationCharters: { buildJoinRequest: vi.fn(async () => ({ toObject: () => ({ encryptedMessage: new Uint8Array([7]) }), free: () => undefined })) } })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    try {
+      await expect(charterService.requestToJoin(OWNER, 'p-u', 'hello')).rejects.toMatchObject({ outcome: 'uncertain' })
+      sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('bad key'), { code: 40120 }))
+      await expect(charterService.requestToJoin(OWNER, 'p-u', 'hello')).rejects.toMatchObject({ outcome: 'refused' })
+      expect(stored('joinRequest', 'p-u')).toBeNull()
+    } finally {
+      charterKey.mockRestore()
+    }
+  })
+})
+
+describe("the leader's way out of a proposal stuck uncertain", () => {
+  it('clears the slot only when asked, keeping the old nonce counted as spent, so a new proposal can be signed', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(true)
+    await charterService.abandonProposal(OWNER, TERMS.targetContractId)
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(false)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(builders.sign).toHaveBeenCalledTimes(2)
   })
 })
