@@ -363,7 +363,7 @@ blob = iv | AES-256-GCM(HKDF(stateKey, "state\0"), pad(state))     // spread ove
   `since` (the week it started) and `readAt` (a `$createdAt`: everything newer
   is unread).
 - Blocks as `identity → (blocked, changedAt)`, so an unblock survives a
-  merge. Each conversation's `hiddenAt` ("delete conversation"; a message newer
+  merge. Each conversation's `hiddenAt` ("hide conversation"; a message newer
   than it un-hides the chat). Settings (including retention) with the time they
   were last changed, the invite scan position, and, for owners, the next group
   number `n`.
@@ -406,7 +406,7 @@ save fees, and flushed when the page is hidden or closed
 finishes (signing and broadcasting outlive the page), so each device also keeps
 its own read and hidden positions and block entries in its local cache and
 re-applies them on load, saving whatever the last visit did not. Explicit
-choices (block, unblock, delete conversation, leave, retention) are written
+choices (block, unblock, hide conversation, leave, retention) are written
 immediately. It is also written immediately when the user starts a
 conversation, so their other devices find it. Incoming 1:1s need no immediate write, because invites are permanent
 and every device scans them. **Joining a group does:** its grant sits in a 1:1
@@ -678,7 +678,7 @@ against about 33 for one feed load. No credits.
   the leaving device marks it left in its local cache, and any other device
   (or the same one after a reinstall) marks it left when it reads the
   member's own `0x02` on the current base from the chain, and files it with
-  the deleted conversations (its hidden position moves up to the leave), as
+  the hidden conversations (its hidden position moves up to the leave), as
   leaving does, in case the leaving device's save never landed. A grant on a
   later base (the owner adding them back) clears the mark; an old-base leave
   never sets it. A group the member left and the owner has since removed them
@@ -754,7 +754,7 @@ from two devices are harmless, because keys are deterministic.
 | Rename / end a group | n/a | 1 roster replace | |
 | Resend keys (manual) | n/a | 1 grant | |
 | Mark read | 1 receipt replace | 0 now; one coalesced self-state replace | |
-| Block, delete conversation | n/a | 1 self-state replace | |
+| Block, hide conversation | n/a | 1 self-state replace | |
 | Sweep | n/a | 1 delete per message | About half refunded for short messages, more for long ones |
 
 ## 8. Remaining leaks

@@ -123,7 +123,7 @@ test('DM-003: deleting the last conversation keeps accurate copy and the restore
   await page.getByPlaceholder('Search messages').fill('missing')
   await expect(page.getByText('No conversations match your search')).toBeVisible()
   await page.getByPlaceholder('Search messages').fill('')
-  await page.getByRole('button', { name: 'Show 1 deleted conversation' }).click()
+  await page.getByRole('button', { name: 'Show 1 hidden conversation' }).click()
   await expect(page.getByTestId('dm-row')).toBeVisible()
 })
 test('PFQA-02: removal activity uses a consumer-facing label', async ({ page }) => {

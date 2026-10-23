@@ -15,7 +15,7 @@
  *     text and emoji/unicode round-trip; every body is exactly a size class.
  *  6. Block/unblock: B blocks A, A's next message stays hidden for B (and for
  *     B's second device, through the merged self-state); unblocking shows it.
- *  7. "Delete conversation" hides the thread until a newer message arrives.
+ *  7. "Hide conversation" hides the thread until a newer message arrives.
  * 10. The retention setting shows the §5.6 wording and persists across devices.
  * 11. A pre-existing v4 thread between A and B is read and merged into the
  *     same timeline, and a legacy-only thread's first reply starts a v5 chat.
@@ -304,18 +304,18 @@ test.describe('DM v5: 1:1 conversations', () => {
     await expect(bubbles(pb2, `${tag} while blocked`)).toBeVisible({ timeout: DELIVERY_MS })
   })
 
-  test('delete conversation hides it until a newer message arrives', async () => {
+  test('hide conversation hides it until a newer message arrives', async () => {
     test.setTimeout(600_000)
     const pb = b1!.page
     await gotoMessages(pb)
     await openRow(pb, row(pb, directKey(A)))
-    // B's other conversations can already be deleted (other DM files, interrupted runs): count from there.
-    const showDeleted = pb.getByRole('button', { name: /^Show \d+ deleted conversations?$/ })
+    // B's other conversations can already be hidden (other DM files, interrupted runs): count from there.
+    const showDeleted = pb.getByRole('button', { name: /^Show \d+ hidden conversations?$/ })
     const deletedBefore = (await showDeleted.count()) === 0 ? 0 : Number((await showDeleted.innerText()).match(/\d+/)?.[0] ?? 0)
-    await threadMenu(pb, 'Delete conversation')
+    await threadMenu(pb, 'Hide conversation')
     await expect(row(pb, directKey(A))).toHaveCount(0)
     const deletedAfter = deletedBefore + 1
-    await expect(showDeleted).toHaveText(`Show ${deletedAfter} deleted conversation${deletedAfter === 1 ? '' : 's'}`)
+    await expect(showDeleted).toHaveText(`Show ${deletedAfter} hidden conversation${deletedAfter === 1 ? '' : 's'}`)
     await flushSelfState(b1!)
     // Hidden survives a reload (hiddenAt is in the self-state).
     await expect

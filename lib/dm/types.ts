@@ -79,7 +79,7 @@ export interface DirectConversation {
   since: number
   /** A `$createdAt` in ms: everything newer is unread. */
   readAt: number
-  /** "Delete conversation" time in ms, 0 if never: a newer message un-hides it. */
+  /** "Hide conversation" time in ms, 0 if never: a newer message un-hides it. */
   hiddenAt: number
 }
 

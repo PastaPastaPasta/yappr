@@ -251,7 +251,7 @@ export function MessagesV5({ identityId }: MessagesV5Props) {
     if (!selectedRow || selectedRow.legacyOnly) return
     engine.hide(selectedRow.key)
     setSelectedKey(null)
-    toast.success('Conversation deleted. It comes back if a new message arrives.')
+    toast.success('Conversation hidden. It comes back if a new message arrives.')
   }
 
   const isLoading = !snapshot?.ready
