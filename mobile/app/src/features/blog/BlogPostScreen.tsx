@@ -1,7 +1,7 @@
 import type { BlogDTO, BlogPostDTO, BlogReportTargetDTO } from '@engine/api';
 import { Image } from 'expo-image';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text as RNText, View } from 'react-native';
 import { BookOpenIcon } from 'react-native-heroicons/outline';
 
@@ -9,7 +9,7 @@ import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useViewerId } from '~/data/session';
-import { runWrite } from '~/data/writes';
+import { useWrite } from '~/data/writes';
 import { readErrorMessage, useOffline } from '~/features/explore/states';
 import { copyText } from '~/features/post/post-navigation';
 import { confirmAlert } from '~/ui/Dialog';
@@ -81,6 +81,116 @@ function AuthorRow({ blog, post, palette, follow }: { blog: BlogDTO; post: BlogP
 }
 
 /**
+ * Where deleting the post stands. Only a confirmed ticket, or a proved read of
+ * the post that finds it deleted, is `deleted`: the engine taking the ticket
+ * is only `deleting`. `unconfirmed` may still land; `failed` did not.
+ */
+type Deletion = 'idle' | 'deleting' | 'unconfirmed' | 'failed' | 'deleted';
+
+const DELETION_TEXT: Record<Exclude<Deletion, 'idle'>, string> = {
+  deleting: 'Deleting this post…',
+  unconfirmed: "Deleting this post was sent but isn't confirmed yet. It usually shows within a minute or two.",
+  failed: "This post wasn't deleted.",
+  deleted: 'Post deleted.',
+};
+
+/**
+ * Deleting the post, followed to its outcome: "Deleting…" while it is on its
+ * way, "Post deleted" (and back) only once it is confirmed or a read proves the
+ * post gone, and an unconfirmed or failed delete stays said on the screen.
+ * `reread` reads the post again and answers whether it is still there.
+ */
+function usePostDeletion(postId: string | undefined, blogId: string, gone: boolean, reread: () => Promise<boolean>) {
+  const navigation = useNavigation();
+  const remove = useWrite(deletePostWrite);
+  // From the tap until the engine answers with a ticket (or refuses): a second tap must not send another.
+  const [sending, setSending] = useState(false);
+  const sendingNow = useRef(false);
+  /** The last call's answer was lost (engine restart, timeout): it may have landed, with no ticket here to follow. */
+  const [lost, setLost] = useState(false);
+  /** A read after a lost answer found the post still there: deleting it again is offered (a second delete is harmless). */
+  const [stillThere, setStillThere] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const asked = remove.ticket !== null || lost;
+
+  let state: Deletion = 'idle';
+  if (remove.status === 'confirmed' || (asked && gone)) state = 'deleted';
+  else if (sending || remove.status === 'pending') state = 'deleting';
+  // The last call's lost answer outranks an earlier ticket's outcome.
+  else if (lost) state = 'unconfirmed';
+  // Its call still runs past the engine's deadline (a slow network): its own answer settles it.
+  else if (remove.status === 'unconfirmed' && remove.ticket?.error?.code === 'STILL_SENDING') state = 'deleting';
+  // Unconfirmed but retryable is proved not to have landed.
+  else if (remove.status === 'failed' || (remove.status === 'unconfirmed' && remove.ticket?.retryable === true)) state = 'failed';
+  else if (remove.status === 'unconfirmed') state = 'unconfirmed';
+
+  const announced = useRef(false);
+  useEffect(() => {
+    if (state !== 'deleted' || announced.current) return;
+    announced.current = true;
+    toast.success('Post deleted');
+    // Only while the post is still in front: a delete that lands later never pops another screen.
+    if (navigation.isFocused() && router.canGoBack()) router.back();
+  }, [state, navigation]);
+
+  const send = () => {
+    if (!postId || sendingNow.current) return Promise.resolve();
+    sendingNow.current = true;
+    setSending(true);
+    setLost(false);
+    setStillThere(false);
+    return remove
+      .send({ postId, blogId })
+      .then((result) => {
+        if (result.status === 'unknown') setLost(true);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        sendingNow.current = false;
+        setSending(false);
+      });
+  };
+
+  const start = () => {
+    if (!postId || sendingNow.current) return;
+    confirmAlert({ title: 'Delete this post?', message: 'It will be removed from your blog. This can’t be undone.', confirmText: 'Delete', destructive: true })
+      .then((ok) => (ok ? send() : undefined))
+      .catch(() => undefined);
+  };
+
+  // "Check again": the ticket, if there is one, and a read of the post, which proves it gone or not.
+  const check = () => {
+    if (checking) return;
+    setChecking(true);
+    Promise.all([remove.ticket ? remove.check() : null, reread()])
+      .then(([, there]) => {
+        if (lost && there) setStillThere(true);
+      })
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
+  };
+
+  return {
+    state,
+    start,
+    check,
+    checking,
+    /** Delete again: the last answer was lost and a read since found the post still there. */
+    again:
+      state === 'unconfirmed' && lost && stillThere
+        ? () => {
+            send().catch(() => undefined);
+          }
+        : null,
+    /**
+     * Leaving: the screen keeps what it showed while it goes (the Android rule, mobile/CLAUDE.md).
+     * Deleted while the reader was elsewhere, nothing navigates and it shows what it reads.
+     */
+    frozen: state === 'deleted' && navigation.isFocused() && router.canGoBack(),
+  };
+}
+
+/**
  * A blog post in its blog's theme (web `blog-post-view.tsx`): title,
  * summary, author, reading time, cover, the content with a working table of
  * contents, the reader's "Aa", share, report, and comments.
@@ -103,6 +213,16 @@ export function BlogPostScreen() {
   const blog = useEngineQuery(queryKeys.blog.detail(blogId), (api) => api.blogs.get(blogId), { persist: true });
   const post = useEngineQuery(queryKeys.blog.postBySlug(blogId, slug), (api) => api.blogs.postBySlug(blogId, slug), { persist: true });
   const follow = useBlogFollow(blogId, Boolean(blog.data));
+  // A read of the post that finds it deleted, or no longer there.
+  const gone = post.data === null || post.data?.deleted === true;
+  const refetchPost = post.refetch;
+  const reread = useCallback(() => refetchPost().then((read) => Boolean(read.data && !read.data.deleted)), [refetchPost]);
+  const deletion = usePostDeletion(post.data?.id, blogId, gone, reread);
+  // The post as last shown. Once deleted it stays on screen while the screen leaves: the read that
+  // proved it gone must not change the tree in the render that pops (Android, mobile/CLAUDE.md).
+  const [kept, setKept] = useState<{ blog: BlogDTO; post: BlogPostDTO } | null>(null);
+  const live = blog.data && post.data ? { blog: blog.data, post: post.data } : null;
+  if (!deletion.frozen && (kept?.blog !== live?.blog || kept?.post !== live?.post)) setKept(live);
 
   const onHeadingLayout = useCallback((index: number, y: number) => {
     headingY.current.set(index, y);
@@ -115,7 +235,8 @@ export function BlogPostScreen() {
     scroll.current?.scrollTo({ y: scrollY.current + dy, animated: true });
   }, []);
 
-  if (!blog.data || !post.data) {
+  const view = deletion.frozen ? (kept ?? live) : live;
+  if (!view) {
     const failed = blog.isError ? blog : post.isError ? post : null;
     return (
       <Screen>
@@ -140,8 +261,8 @@ export function BlogPostScreen() {
     );
   }
 
-  const b = blog.data;
-  const p = post.data;
+  const b = view.blog;
+  const p = view.post;
   const palette = blogPalette(b.theme, mode);
   const scale = FONT_SCALES[size];
   const own = viewerId === p.ownerId;
@@ -151,11 +272,13 @@ export function BlogPostScreen() {
   const headingFont = fontStyle(b.theme.fonts.heading);
   const bodyFont = fontStyle(b.theme.fonts.body);
 
+  // While a delete may still land (or has), the post is not offered for editing or deleting again.
+  const deletable = own && !p.deleted && (deletion.state === 'idle' || deletion.state === 'failed');
   const menu = [
     { id: 'share', title: 'Share', systemImage: 'square.and.arrow.up' },
     { id: 'copy', title: 'Copy link', systemImage: 'link' },
-    ...(own && !p.deleted ? [{ id: 'edit', title: 'Edit post', systemImage: 'pencil' }] : []),
-    ...(own && !p.deleted && info.data?.canDeletePost ? [{ id: 'delete', title: 'Delete post', systemImage: 'trash', destructive: true }] : []),
+    ...(deletable ? [{ id: 'edit', title: 'Edit post', systemImage: 'pencil' }] : []),
+    ...(deletable && info.data?.canDeletePost ? [{ id: 'delete', title: 'Delete post', systemImage: 'trash', destructive: true }] : []),
     ...(!own && canReport && !p.deleted ? [{ id: 'report', title: 'Report post', systemImage: 'flag', destructive: true }] : []),
   ];
 
@@ -164,19 +287,7 @@ export function BlogPostScreen() {
     else if (action === 'copy') copyText(url, 'Link copied');
     else if (action === 'edit') router.push({ pathname: '/blog/[id]/post/[slug]/edit', params: { id: b.id, slug: p.slug } });
     else if (action === 'report') requireAuth(() => setReport({ docType: 'blogPost', targetId: p.id, ownerId: p.ownerId }));
-    else if (action === 'delete') {
-      confirmAlert({ title: 'Delete this post?', message: 'It will be removed from your blog. This can’t be undone.', confirmText: 'Delete', destructive: true })
-        .then((ok) => {
-          if (!ok) return;
-          return runWrite(deletePostWrite, { postId: p.id, blogId: b.id }).then((result) => {
-            if (result.status === 'submitted') {
-              toast.success('Post deleted');
-              router.back();
-            }
-          });
-        })
-        .catch(() => undefined);
-    }
+    else if (action === 'delete') deletion.start();
   };
 
   const onRefresh = () => {
@@ -223,6 +334,35 @@ export function BlogPostScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.accent} colors={[palette.accent]} />}
           testID="blog-post-scroll"
         >
+          {deletion.state !== 'idle' ? (
+            <View accessibilityLiveRegion="polite" collapsable={false} style={{ gap: 4 }} testID="blog-post-deletion">
+              <RNText style={{ color: palette.muted, fontSize: 15 }}>{DELETION_TEXT[deletion.state]}</RNText>
+              {deletion.state === 'unconfirmed' ? (
+                <View style={{ flexDirection: 'row', gap: 16 }}>
+                  <Pressable
+                    onPress={deletion.check}
+                    disabled={deletion.checking}
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: deletion.checking }}
+                    style={{ minHeight: MIN_TARGET, justifyContent: 'center' }}
+                    testID="blog-post-deletion-check"
+                  >
+                    <RNText style={{ color: palette.link, fontWeight: '600', fontSize: 15 }}>{deletion.checking ? 'Checking…' : 'Check again'}</RNText>
+                  </Pressable>
+                  {deletion.again ? (
+                    <Pressable
+                      onPress={deletion.again}
+                      accessibilityRole="button"
+                      style={{ minHeight: MIN_TARGET, justifyContent: 'center' }}
+                      testID="blog-post-deletion-again"
+                    >
+                      <RNText style={{ color: palette.link, fontWeight: '600', fontSize: 15 }}>Delete again</RNText>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           {p.deleted ? (
             <RNText style={{ color: palette.muted, fontSize: 16 }}>This post was deleted by its author.</RNText>
           ) : (

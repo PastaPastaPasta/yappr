@@ -17,3 +17,10 @@ export const syncStorage = {
     storage.remove(key);
   },
 };
+
+/** Removes every key that starts with `prefix` (an account's data, when it signs out). */
+export function removeKeysWithPrefix(prefix: string): void {
+  for (const key of storage.getAllKeys()) {
+    if (key.startsWith(prefix)) storage.remove(key);
+  }
+}
