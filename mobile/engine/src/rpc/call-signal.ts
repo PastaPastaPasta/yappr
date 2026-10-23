@@ -1,4 +1,4 @@
-import { RpcError, RpcErrorCode } from '../protocol/envelope'
+import { abortedError } from '../protocol/envelope'
 
 /**
  * The cancellation signal of the engine call being started (ENGINE.md §4.6).
@@ -28,5 +28,5 @@ export function startWithSignal<T>(signal: AbortSignal, start: () => T): T {
 }
 
 export function throwIfCancelled(signal: AbortSignal): void {
-  if (signal.aborted) throw new RpcError('The call was cancelled', RpcErrorCode.Aborted)
+  if (signal.aborted) throw abortedError()
 }

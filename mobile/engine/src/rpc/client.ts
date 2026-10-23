@@ -3,6 +3,7 @@ import {
   PROTOCOL_VERSION,
   RpcError,
   RpcErrorCode,
+  abortedError,
   type EngineHello,
   type KvOp,
   type LogLevel,
@@ -254,13 +255,12 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
 
   const call = (path: string, args: unknown[], options: CallOptions = {}): Promise<unknown> => new Promise((resolve, reject) => {
     const { signal, cancelRemote = true } = options
-    const cancelled = () => new RpcError(`Engine call ${path} was cancelled`, RpcErrorCode.Aborted)
     if (closed) {
       reject(new RpcError(closed.message, RpcErrorCode.Disconnected))
       return
     }
     if (signal?.aborted) {
-      reject(cancelled())
+      reject(abortedError(path))
       return
     }
     const id = String(++nextId)
@@ -275,7 +275,7 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
       const onAbort = () => {
         const aborted = take(id)
         if (!aborted) return
-        aborted.reject(cancelled())
+        aborted.reject(abortedError(path))
         if (!sent || !cancelRemote || closed) return
         try {
           transport.send(JSON.stringify({ t: 'cancel', v: PROTOCOL_VERSION, id }))

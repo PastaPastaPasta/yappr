@@ -23,7 +23,7 @@ import { engine } from '~/engine';
 const ROOT = 'yappr-deliveries';
 
 /** A file or folder name the cache directory takes: no path separators or control characters. */
-export const safeFileName = (name: string) =>
+const safeFileName = (name: string) =>
   name.replace(/[\\/:\u0000-\u001f]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'download';
 
 export interface DeliveredFileRef {

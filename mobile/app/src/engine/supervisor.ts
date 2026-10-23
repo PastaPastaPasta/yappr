@@ -1,5 +1,5 @@
 import type { EngineApi, EngineInfo } from '@engine/api';
-import { LOG_LEVELS, RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
+import { LOG_LEVELS, RpcError, RpcErrorCode, abortedError, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
 import { createEngineClient, type EngineClient, type StorageBatch } from '@engine/rpc/client';
 
 import { errorMessage } from './logs';
@@ -177,8 +177,6 @@ const ENGINE_GONE = new Set<string>([RpcErrorCode.Restarted, RpcErrorCode.Discon
 
 const errorCode = (error: unknown) =>
   typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
-
-const cancelled = (path: string) => new RpcError(`Engine call ${path} was cancelled`, EngineErrorCode.Aborted);
 
 /** Status fields that belong to one epoch, cleared on every (re)mount. */
 const FRESH_EPOCH = { reason: null, unsupported: null, hello: null, info: null, caps: null, timings: null } as const;
@@ -706,7 +704,7 @@ export class EngineSupervisor<Load = unknown> {
       return;
     }
     if (job.signal?.aborted) {
-      job.reject(cancelled(job.path));
+      job.reject(abortedError(job.path));
       return;
     }
     if (this.accepting && this.client && (this.booted || job.kind === 'control')) {
@@ -720,7 +718,7 @@ export class EngineSupervisor<Load = unknown> {
         const index = this.queue.indexOf(job);
         if (index < 0) return;
         this.queue.splice(index, 1);
-        job.reject(cancelled(job.path));
+        job.reject(abortedError(job.path));
         this.update({});
       },
       { once: true },
@@ -753,19 +751,20 @@ export class EngineSupervisor<Load = unknown> {
   private send(client: EngineClient<EngineApi>, job: Job) {
     const started = this.now();
     const epoch = this.status.epoch;
-    let settled = false;
-    /** True for the first outcome only (response, failure or deadline). */
-    const settle = () => {
-      clearTimeout(timer);
-      if (settled) return false;
-      settled = true;
-      return true;
-    };
     // Ends the client's wait on a deadline or when the caller gives up. A read is cancelled in the engine
     // too (ENGINE.md §4.6); a write or session call keeps running there and reconciles.
     const stop = new AbortController();
     const giveUp = () => stop.abort();
     job.signal?.addEventListener('abort', giveUp, { once: true });
+    let settled = false;
+    /** True for the first outcome only (response, failure or deadline). */
+    const settle = () => {
+      clearTimeout(timer);
+      job.signal?.removeEventListener('abort', giveUp);
+      if (settled) return false;
+      settled = true;
+      return true;
+    };
     const timeoutMs = methodTimeoutMs(job.path);
     const timer = setTimeout(() => {
       if (settle()) {
@@ -774,9 +773,7 @@ export class EngineSupervisor<Load = unknown> {
       }
     }, timeoutMs);
 
-    client.call(job.path, job.args, { signal: stop.signal, cancelRemote: job.kind === 'read' }).finally(() => {
-      job.signal?.removeEventListener('abort', giveUp);
-    }).then(
+    client.call(job.path, job.args, { signal: stop.signal, cancelRemote: job.kind === 'read' }).then(
       (value) => {
         if (!settle()) return;
         if (job.kind !== 'control') this.recordFirstCall(epoch, job.path, started);

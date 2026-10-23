@@ -133,7 +133,7 @@ export function holdDeliveredFile(owner: string, name: string, bytes: Uint8Array
  * drops it.
  */
 export function readDeliveredFileChunk(owner: string, handle: string, offset: number): Uint8Array {
-  const file = typeof handle === 'string' ? held.get(handle) : undefined
+  const file = held.get(handle)
   if (!file) throw new Error(CLOSED_MESSAGE)
   if (file.owner !== owner) {
     releaseDeliveredFile(handle)

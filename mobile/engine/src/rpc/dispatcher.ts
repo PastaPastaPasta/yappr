@@ -3,6 +3,7 @@ import {
   PROTOCOL_VERSION,
   RpcError,
   RpcErrorCode,
+  abortedError,
   type EngineHello,
   type Envelope,
   type KvOp,
@@ -59,10 +60,10 @@ export function resolveMethod(api: ApiTree, path: string): (...args: unknown[]) 
  * The method's own late outcome is dropped.
  */
 function untilAborted<T>(work: T | Promise<T>, signal: AbortSignal): Promise<T> {
+  // The signal is this request's own: it is dropped with the request, listener and all.
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(new RpcError('The call was cancelled', RpcErrorCode.Aborted))
-    signal.addEventListener('abort', onAbort, { once: true })
-    Promise.resolve(work).then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+    signal.addEventListener('abort', () => reject(abortedError()), { once: true })
+    Promise.resolve(work).then(resolve, reject)
   })
 }
 

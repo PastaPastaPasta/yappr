@@ -101,7 +101,6 @@ jest.mock('expo-file-system', () => {
   const { createHash } = jest.requireActual('crypto');
   const BUNDLE = 'file:///bundle/';
   const files = new Map();
-  const dirs = new Set();
   const uriOf = (parts) =>
     parts
       .map((part) => (typeof part === 'string' ? part : part.uri))
@@ -144,22 +143,20 @@ jest.mock('expo-file-system', () => {
     constructor(...parts) {
       this.uri = uriOf(parts);
     }
+    // A folder exists while it holds a file; creating one is a no-op.
     get exists() {
-      return dirs.has(this.uri) || [...files.keys()].some((uri) => under(uri, this.uri));
+      return [...files.keys()].some((uri) => under(uri, this.uri));
     }
-    create() {
-      dirs.add(this.uri);
-    }
+    create() {}
     delete() {
       for (const uri of [...files.keys()]) if (under(uri, this.uri)) files.delete(uri);
-      for (const uri of [...dirs]) if (under(uri, this.uri)) dirs.delete(uri);
     }
   }
   return {
     Paths: { bundle: { uri: BUNDLE }, cache: new Directory('file:///cache') },
     File,
     Directory,
-    __fs: { files, dirs },
+    __fs: { files },
   };
 });
 // MMKV files persist by id, as on a device, and outlive the process (react-native-mmkv's own test

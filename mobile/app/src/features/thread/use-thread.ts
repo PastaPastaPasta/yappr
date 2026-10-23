@@ -37,7 +37,7 @@ function heldThread(id: string): ThreadDTO | undefined {
  * page is the whole thread already.
  */
 export function mergeThreadPage(held: ThreadDTO, page: ThreadDTO): ThreadDTO | null {
-  const { layout, ...whole } = page;
+  const { layout } = page;
   if (!layout) return page;
   const known = new Map(held.replies.items.map((reply) => [reply.id, reply]));
   for (const reply of page.replies.items) known.set(reply.id, reply);
@@ -48,13 +48,7 @@ export function mergeThreadPage(held: ThreadDTO, page: ThreadDTO): ThreadDTO | n
     const moved = reply.depth !== slot.depth || reply.isAuthorThread !== slot.isAuthorThread || reply.hiddenReplyCount !== slot.hiddenReplyCount;
     items.push(moved ? { ...reply, ...slot } : reply);
   }
-  return {
-    ...whole,
-    focus: held.focus ?? whole.focus,
-    ancestors: held.ancestors,
-    removedAncestorIds: held.removedAncestorIds,
-    replies: { ...whole.replies, items },
-  };
+  return { ...held, focus: held.focus ?? page.focus, replies: { ...page.replies, items } };
 }
 
 /**

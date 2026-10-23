@@ -156,3 +156,7 @@ export class RpcError extends Error {
     this.name = 'RpcError'
   }
 }
+
+/** The rejection of a call its caller gave up on (`path`, where known). */
+export const abortedError = (path?: string) =>
+  new RpcError(path ? `Engine call ${path} was cancelled` : 'The call was cancelled', RpcErrorCode.Aborted)

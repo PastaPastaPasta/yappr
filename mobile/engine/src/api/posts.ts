@@ -344,11 +344,19 @@ async function continueThread(kind: string, key: string, session: string, held: 
   const layout = flat
     .filter(entry => shown.has(entry.reply.id))
     .map(({ reply, depth, isAuthorThread, hiddenReplyCount }) => ({ id: reply.id, depth, isAuthorThread, hiddenReplyCount }))
-  const pages = held.pages + 1
-  const next = page.nextCursor
-  if (next !== undefined) threadSessions.set(key, { ...held, pages, next, replies, shown })
+  const state = { ...held, pages: held.pages + 1, next: page.nextCursor, replies, shown }
+  return { ...pageThread(kind, key, session, state, items), layout }
+}
+
+/**
+ * A thread page answering `state`: kept for a continuation while there is a
+ * next page, forgotten at the end, with the cursor that continues it.
+ */
+function pageThread(kind: string, key: string, session: string, state: ThreadSession, items: ThreadReplyDTO[]): ThreadDTO {
+  threadSessions.prune()
+  if (state.next !== undefined) threadSessions.set(key, state)
   else threadSessions.delete(key)
-  return { ...held.view, replies: nextPage(items, kind, next !== undefined ? { pages, s: session } : null), layout }
+  return { ...state.view, replies: nextPage(items, kind, state.next !== undefined ? { pages: state.pages, s: session } : null) }
 }
 
 async function loadV2Replies(focus: Post): Promise<FlatReply[]> {
@@ -568,13 +576,8 @@ export const posts = {
       ancestors: chain.flatMap(post => dtos.get(post.id) ?? []),
       removedAncestorIds: removed,
     }
-    threadSessions.prune()
-    if (read.next !== undefined) {
-      threadSessions.set(sessionKey, { focus, pages, next: read.next, replies: read.raw, view, shown: new Set(items.map(item => item.id)) })
-    } else {
-      threadSessions.delete(sessionKey)
-    }
-    return { ...view, replies: nextPage(items, kind, read.next !== undefined ? { pages, s: session } : null) }
+    const state = { focus, pages, next: read.next, replies: read.raw, view, shown: new Set(items.map(item => item.id)) }
+    return pageThread(kind, sessionKey, session, state, items)
   },
 
   /**
