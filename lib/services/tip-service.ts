@@ -124,6 +124,8 @@ class TipService {
       return { success: false, error: 'Transfer key is required', errorCode: 'INVALID_KEY' };
     }
 
+    let transferAttempted = false;
+
     try {
       // Check sender balance
       const balance = await identityService.getBalance(senderId);
@@ -230,6 +232,7 @@ class TipService {
       logger.info('Calling sdk.identities.creditTransfer...');
       // Cast needed: SDK has duplicate IdentityCreditTransferOptions interfaces that get merged.
       // The high-level facade only needs { identity, recipientId, amount, signer, signingKey? }.
+      transferAttempted = true;
       const result = await sdk.identities.creditTransfer({
         identity,
         recipientId,
@@ -262,8 +265,8 @@ class TipService {
         ((error as { message?: string })?.message) ||
         (typeof error === 'string' ? error : 'Unknown error');
 
-      // Handle known DAPI timeout issue (like in state-transition-service)
-      if (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result')) {
+      // Only apply optimistic timeout handling after attempting the credit transfer.
+      if (transferAttempted && (errorMessage.includes('504') || errorMessage.includes('timeout') || errorMessage.includes('wait_for_state_transition_result'))) {
         // Assume success - clear cache and return optimistic result
         identityService.clearCache(senderId);
 
