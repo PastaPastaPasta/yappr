@@ -56,3 +56,12 @@ test('primary navigation moves between sections', async ({ page }) => {
   await page.getByRole('link', { name: 'Blog', exact: true }).click()
   await expect(page).toHaveURL(/\/testing\/blog/)
 })
+
+test('store view without an id offers a way back to the store list', async ({ page }) => {
+  await page.goto(appUrl('/store/view/'))
+
+  await expect(page.getByText('Store not found', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Browse Stores', exact: true }).click()
+  await expect(page).toHaveURL(appUrl('/store/'))
+  await expect(page.getByRole('heading', { name: 'Stores', exact: true })).toBeVisible()
+})
