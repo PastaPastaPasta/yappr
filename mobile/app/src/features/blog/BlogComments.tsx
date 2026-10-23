@@ -1,5 +1,5 @@
 import type { BlogCommentDTO, BlogPostDTO, BlogReportTargetDTO } from '@engine/api';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { Keyboard, Pressable, Text as RNText, TextInput, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -19,13 +19,16 @@ import { useRelativeTime } from '~/ui/use-relative-time';
 import { commentWrite, deleteCommentWrite, isLocalComment, isPendingComment, rereadCommentsLater } from './blog-writes';
 import { onColor, type BlogPalette } from './blog-theme';
 
-function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
+/** No comments read yet: one array, so what lists them is not rebuilt for it. */
+const NONE: BlogCommentDTO[] = [];
+
+export const CommentRow = memo(function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
   comment: BlogCommentDTO;
   palette: BlogPalette;
   own: boolean;
   canReport: boolean;
-  onReport: () => void;
-  onDelete: () => void;
+  onReport: (comment: BlogCommentDTO) => void;
+  onDelete: (comment: BlogCommentDTO) => void;
 }) {
   const when = useRelativeTime(comment.createdAt);
   const name = comment.author?.displayName ?? 'Someone';
@@ -45,11 +48,11 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
           {pending ? (
             <RNText style={{ color: palette.muted, fontSize: 13, minHeight: MIN_TARGET, textAlignVertical: 'center', paddingTop: 12 }}>Posting…</RNText>
           ) : local ? null : own ? (
-            <Pressable onPress={onDelete} accessibilityRole="button" accessibilityLabel="Delete your comment" hitSlop={12} style={{ minHeight: MIN_TARGET, justifyContent: 'center' }} testID={`blog-comment-delete-${comment.id}`}>
+            <Pressable onPress={() => onDelete(comment)} accessibilityRole="button" accessibilityLabel="Delete your comment" hitSlop={12} style={{ minHeight: MIN_TARGET, justifyContent: 'center' }} testID={`blog-comment-delete-${comment.id}`}>
               <RNText style={{ color: palette.muted, fontSize: 13 }}>Delete</RNText>
             </Pressable>
           ) : canReport ? (
-            <Pressable onPress={onReport} accessibilityRole="button" accessibilityLabel="Report this comment" hitSlop={12} style={{ minHeight: MIN_TARGET, justifyContent: 'center' }} testID={`blog-comment-report-${comment.id}`}>
+            <Pressable onPress={() => onReport(comment)} accessibilityRole="button" accessibilityLabel="Report this comment" hitSlop={12} style={{ minHeight: MIN_TARGET, justifyContent: 'center' }} testID={`blog-comment-report-${comment.id}`}>
               <RNText style={{ color: palette.muted, fontSize: 13 }}>Report</RNText>
             </Pressable>
           ) : null}
@@ -57,20 +60,24 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
       </View>
     </View>
   );
-}
+});
 
 /**
  * A post's comments (web `blog-comments.tsx`): read, write, delete your own,
- * report others'. Comments a post turned off say so.
+ * report others'. The post screen calls this and lists the result, one row for
+ * the header and one per comment (a post can have a hundred), so the draft and
+ * the send state live here, in the screen, and survive the header row scrolling
+ * out of the list.
  */
-export function BlogComments({ post, palette, maxLength, canReport, onReport, onReveal }: {
+export function useBlogComments({ post, maxLength, canReport, onReport, onReveal, actionsRef }: {
   post: BlogPostDTO;
-  palette: BlogPalette;
   maxLength: number;
   canReport: boolean;
   onReport: (target: BlogReportTargetDTO) => void;
   /** Scroll the screen down by this much, to bring the Post comment button up from under the keyboard. */
   onReveal?: (dy: number) => void;
+  /** The composer's button row (`CommentsHeader`'s `actionsRef`), measured to bring it above the keyboard. */
+  actionsRef: RefObject<View | null>;
 }) {
   const viewerId = useViewerId();
   const username = useSessionStore((state) => state.session?.username ?? null);
@@ -78,10 +85,10 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
   /** What the last tap sent, until the writer types again: given back if it fails. */
   const [sent, setSent] = useState<string | null>(null);
   const send = useWrite(commentWrite);
-  const comments = useEngineQuery(queryKeys.blog.comments(post.id), (api) => api.blogs.comments(post.id), {
+  const query = useEngineQuery(queryKeys.blog.comments(post.id), (api) => api.blogs.comments(post.id), {
     enabled: post.commentsEnabled,
   });
-  const shown = comments.data ?? [];
+  const shown = query.data ?? NONE;
   // From the tap, before the engine answers with a ticket, to the ticket settling: one comment at a time.
   const [starting, setStarting] = useState(false);
   const inFlight = useRef(false);
@@ -104,13 +111,12 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
   };
 
   // The Post comment button sits below the field, where iOS doesn't scroll to: bring it up above the keyboard.
-  const actions = useRef<View>(null);
   const focused = useRef(false);
   const keyboardTop = useRef<number | null>(null);
   const reveal = () => {
     const top = keyboardTop.current;
     if (!focused.current || top === null || !onReveal) return;
-    actions.current?.measureInWindow((_x, y, _width, height) => {
+    actionsRef.current?.measureInWindow((_x, y, _width, height) => {
       const overlap = y + height + 12 - top;
       if (overlap > 0) onReveal(overlap);
     });
@@ -132,10 +138,6 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
       didHide.remove();
     };
   }, []);
-
-  if (!post.commentsEnabled) {
-    return <RNText style={{ color: palette.muted, fontSize: 15, paddingVertical: 12 }}>Comments are turned off for this post.</RNText>;
-  }
 
   const submit = () =>
     requireAuth(() => {
@@ -168,19 +170,71 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
         });
     });
 
-  const remove = (comment: BlogCommentDTO) => {
-    confirmAlert({ title: 'Delete your comment?', message: 'This can’t be undone.', confirmText: 'Delete', destructive: true })
-      .then((ok) => {
-        if (!ok) return;
-        runWrite(deleteCommentWrite, { commentId: comment.id, postId: post.id }).catch(() => undefined);
-      })
-      .catch(() => undefined);
-  };
+  // Stable, so a comment's row (memoized) is not drawn again for every key typed in the composer.
+  const postId = post.id;
+  const remove = useCallback(
+    (comment: BlogCommentDTO) => {
+      confirmAlert({ title: 'Delete your comment?', message: 'This can’t be undone.', confirmText: 'Delete', destructive: true })
+        .then((ok) => {
+          if (!ok) return;
+          runWrite(deleteCommentWrite, { commentId: comment.id, postId }).catch(() => undefined);
+        })
+        .catch(() => undefined);
+    },
+    [postId],
+  );
+  const report = useCallback(
+    (comment: BlogCommentDTO) => onReport({ docType: 'blogComment', targetId: comment.id, ownerId: comment.ownerId }),
+    [onReport],
+  );
 
-  const count = shown.length;
   const length = Array.from(text).length;
   const tooLong = length > maxLength;
-  const cannotSend = sending || !text.trim() || tooLong;
+  return {
+    enabled: post.commentsEnabled,
+    viewerId,
+    comments: shown,
+    /** The list's state: reading it, failed, or read (possibly empty). */
+    read: query.isPending ? ('pending' as const) : query.isError ? ('error' as const) : ('done' as const),
+    retry: () => {
+      query.refetch().catch(() => undefined);
+    },
+    canReport: canReport && viewerId !== null,
+    report,
+    remove,
+    // The composer.
+    text,
+    setText,
+    length,
+    maxLength,
+    tooLong,
+    sending,
+    starting,
+    unconfirmed: send.status === 'unconfirmed',
+    cannotSend: sending || !text.trim() || tooLong,
+    submit,
+    focus: () => {
+      focused.current = true;
+      reveal();
+    },
+    blur: () => {
+      focused.current = false;
+    },
+    contentSizeChanged: reveal,
+  };
+}
+
+export type BlogComments = ReturnType<typeof useBlogComments>;
+
+/** Comments a post turned off say so. */
+export function CommentsOff({ palette }: { palette: BlogPalette }) {
+  return <RNText style={{ color: palette.muted, fontSize: 15, paddingVertical: 12 }}>Comments are turned off for this post.</RNText>;
+}
+
+/** The comments' title and the composer (or the sign-in prompt). */
+export function CommentsHeader({ comments, palette, actionsRef }: { comments: BlogComments; palette: BlogPalette; actionsRef: RefObject<View | null> }) {
+  const { viewerId, text, length, maxLength, tooLong, sending, starting, cannotSend } = comments;
+  const count = comments.comments.length;
   return (
     <View style={{ gap: 8 }} testID="blog-comments">
       <RNText accessibilityRole="header" style={{ color: palette.heading, fontSize: 20, fontWeight: '700' }}>
@@ -190,33 +244,28 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
         <View style={{ gap: 8 }}>
           <TextInput
             value={text}
-            onChangeText={setText}
+            onChangeText={comments.setText}
             editable={!starting}
             multiline
             placeholder="Write a comment…"
             placeholderTextColor={palette.muted}
             accessibilityLabel="Write a comment"
-            onFocus={() => {
-              focused.current = true;
-              reveal();
-            }}
-            onBlur={() => {
-              focused.current = false;
-            }}
-            onContentSizeChange={reveal}
+            onFocus={comments.focus}
+            onBlur={comments.blur}
+            onContentSizeChange={comments.contentSizeChanged}
             style={{ minHeight: 88, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, color: palette.text, borderRadius: 12, padding: 12, fontSize: 15, textAlignVertical: 'top' }}
             testID="blog-comment-input"
           />
-          <View ref={actions} collapsable={false} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View ref={actionsRef} collapsable={false} style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <RNText style={{ flex: 1, color: tooLong ? '#dc2626' : palette.muted, fontSize: 13 }}>
-              {send.status === 'unconfirmed'
+              {comments.unconfirmed
                 ? 'Your comment is on its way.'
                 : length > maxLength - 50
                   ? `${length}/${maxLength}`
                   : ''}
             </RNText>
             <Pressable
-              onPress={submit}
+              onPress={comments.submit}
               disabled={cannotSend}
               accessibilityRole="button"
               accessibilityLabel={sending ? 'Posting your comment' : 'Post comment'}
@@ -234,29 +283,25 @@ export function BlogComments({ post, palette, maxLength, canReport, onReport, on
           <RNText style={{ color: palette.link, fontSize: 15 }}>Sign in to comment</RNText>
         </Pressable>
       )}
-      {comments.isPending ? (
-        <View style={{ paddingVertical: 16 }}>
-          <Spinner />
-        </View>
-      ) : comments.isError ? (
-        <Pressable onPress={() => { comments.refetch().catch(() => undefined); }} accessibilityRole="button" style={{ minHeight: MIN_TARGET, justifyContent: 'center' }}>
-          <RNText style={{ color: palette.muted }}>{"Couldn't load comments. Tap to try again."}</RNText>
-        </Pressable>
-      ) : count === 0 ? (
-        <RNText style={{ color: palette.muted, fontSize: 15, paddingVertical: 8 }}>No comments yet. Start the conversation.</RNText>
-      ) : (
-        shown.map((comment) => (
-          <CommentRow
-            key={comment.id}
-            comment={comment}
-            palette={palette}
-            own={comment.ownerId === viewerId}
-            canReport={canReport && viewerId !== null}
-            onReport={() => onReport({ docType: 'blogComment', targetId: comment.id, ownerId: comment.ownerId })}
-            onDelete={() => remove(comment)}
-          />
-        ))
-      )}
     </View>
   );
+}
+
+/** What stands in for the comments until there are some: reading, failed, or none yet. */
+export function CommentsState({ comments, palette }: { comments: BlogComments; palette: BlogPalette }) {
+  if (comments.read === 'pending') {
+    return (
+      <View style={{ paddingVertical: 16 }}>
+        <Spinner />
+      </View>
+    );
+  }
+  if (comments.read === 'error') {
+    return (
+      <Pressable onPress={comments.retry} accessibilityRole="button" style={{ minHeight: MIN_TARGET, justifyContent: 'center' }}>
+        <RNText style={{ color: palette.muted }}>{"Couldn't load comments. Tap to try again."}</RNText>
+      </Pressable>
+    );
+  }
+  return <RNText style={{ color: palette.muted, fontSize: 15, paddingVertical: 8 }}>No comments yet. Start the conversation.</RNText>;
 }

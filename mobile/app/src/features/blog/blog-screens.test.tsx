@@ -57,6 +57,28 @@ jest.mock('~/ui/ContextMenu', () => {
   };
 });
 jest.mock('@gorhom/bottom-sheet', () => jest.requireActual('@gorhom/bottom-sheet/mock'));
+// FlashList's own Jest setup (@shopify/flash-list/jestSetup): fixed layouts, so cells render.
+jest.mock('@shopify/flash-list/dist/recyclerview/utils/measureLayout', () => {
+  const layout = { x: 0, y: 0, width: 400, height: 900 };
+  return {
+    ...jest.requireActual('@shopify/flash-list/dist/recyclerview/utils/measureLayout'),
+    measureParentSize: () => layout,
+    measureFirstChildLayout: () => layout,
+    measureItemLayout: () => ({ x: 0, y: 0, width: 400, height: 100 }),
+  };
+});
+// The reader's list, with the two scroll calls the screen makes recorded (the layout above never scrolls).
+const mockScrollToIndex = jest.fn((_params: { index: number; animated?: boolean; viewOffset?: number }) => Promise.resolve());
+const mockScrollToOffset = jest.fn();
+jest.mock('@shopify/flash-list', () => {
+  const React = jest.requireActual('react');
+  const actual = jest.requireActual('@shopify/flash-list');
+  const FlashList = React.forwardRef(function FlashList(props: object, ref: React.Ref<unknown>) {
+    React.useImperativeHandle(ref, () => ({ scrollToIndex: mockScrollToIndex, scrollToOffset: mockScrollToOffset }), []);
+    return React.createElement(actual.FlashList, props);
+  });
+  return { ...actual, FlashList };
+});
 
 const AUTHOR = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF';
 const READER = '8u9pqhrG1RbkuWvbqQ5WwFgaW2yGkVx2AYBnQ3j5vT1A';
@@ -598,5 +620,71 @@ describe('post reader', () => {
     await settle();
     expect(screen.getByTestId('blog-comment-input').props.value).toBe('Nice post');
     expect(screen.queryByText('1 comment')).toBeNull();
+  });
+
+  describe('a long post with many comments (MARCH-8)', () => {
+    const paragraph = (n: number) => ({ id: `p${n}`, type: 'paragraph', props: {}, content: [{ type: 'text', text: `Paragraph ${n}`, styles: {} }], children: [] });
+    const heading = (id: string, text: string) => ({ id, type: 'heading', props: { level: 2 }, content: [{ type: 'text', text, styles: {} }], children: [] });
+    const LONG = [
+      { id: 'toc', type: 'tableOfContents', props: {}, children: [] },
+      ...Array.from({ length: 150 }, (_, n) => paragraph(n)),
+      heading('h1', 'Middle part'),
+      ...Array.from({ length: 150 }, (_, n) => paragraph(150 + n)),
+      heading('h2', 'Last part'),
+      paragraph(300),
+    ];
+    const comment = (n: number) => ({
+      id: `c${n}`, ownerId: AUTHOR, author: null, postId: POST, createdAt: new Date(2026, 9, 3), content: `Comment ${n}`,
+    });
+
+    beforeEach(() => {
+      mockScrollToIndex.mockClear();
+      mockScrollToOffset.mockClear();
+      useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+      mockParams.current = { id: BLOG, slug: 'field-notes' };
+      fakeEngine.method('blogs.postBySlug').mockResolvedValue({ ...post, content: LONG });
+      fakeEngine.method('blogs.comments').mockResolvedValue(Array.from({ length: 100 }, (_, n) => comment(n)));
+    });
+
+    it('mounts the first blocks and a few comments, not all of them', async () => {
+      renderScreen(<BlogPostScreen />);
+      await settle();
+
+      expect(screen.getByTestId('blog-post-title')).toHaveTextContent('Field notes');
+      expect(screen.getByText('Paragraph 0')).toBeTruthy();
+      // The far end of the post is not mounted, and neither are the comments under it.
+      expect(screen.queryByText('Paragraph 300')).toBeNull();
+      expect(screen.queryByText('Paragraph 150')).toBeNull();
+      expect(screen.queryByTestId('blog-comment-input')).toBeNull();
+      expect(screen.queryAllByText(/^Paragraph \d+$/).length).toBeLessThan(30);
+      expect(screen.queryAllByText(/^Comment \d+$/).length).toBe(0);
+    });
+
+    it('lists a hundred comments through the list, a window of them at a time', async () => {
+      fakeEngine.method('blogs.postBySlug').mockResolvedValue(post);
+      renderScreen(<BlogPostScreen />);
+      await settle();
+
+      expect(screen.getByText('100 comments')).toBeTruthy();
+      expect(screen.getByTestId('blog-comment-input')).toBeTruthy();
+      const mounted = screen.queryAllByText(/^Comment \d+$/).length;
+      expect(mounted).toBeGreaterThan(0);
+      expect(mounted).toBeLessThan(30);
+      expect(screen.queryByText('Comment 99')).toBeNull();
+    });
+
+    it('jumps to a heading through the table of contents, to a heading that is not mounted yet', async () => {
+      renderScreen(<BlogPostScreen />);
+      await settle();
+
+      expect(screen.queryByText('Last part')).toBeTruthy();
+      expect(screen.getAllByText('Last part').length).toBe(1);
+      fireEvent.press(screen.getByText('Last part'));
+      // The row of that heading: the post's head comes first, then one row per block.
+      expect(mockScrollToIndex).toHaveBeenCalledTimes(1);
+      expect(mockScrollToIndex).toHaveBeenCalledWith({ index: 1 + LONG.findIndex((block) => block.id === 'h2'), animated: true, viewOffset: -12 });
+      fireEvent.press(screen.getByText('Middle part'));
+      expect(mockScrollToIndex).toHaveBeenLastCalledWith({ index: 1 + LONG.findIndex((block) => block.id === 'h1'), animated: true, viewOffset: -12 });
+    });
   });
 });
