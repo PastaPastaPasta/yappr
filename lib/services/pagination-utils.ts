@@ -486,8 +486,9 @@ async function walkPages(
     read += page.length;
 
     // A short page is the end of the list, except for a continuation page of an
-    // `in` query, which can come back a row short: only an empty one ends it.
-    if (page.length === 0 || (page.length < limit && (!inClause || !startAfter))) return false;
+    // `in` query (one sent with a cursor, the builder's own included), which can
+    // come back a row short: only an empty one ends it.
+    if (page.length === 0 || (page.length < limit && (!inClause || !query.startAfter))) return false;
 
     const next = page[page.length - 1].$id as string | undefined;
     if (!next || next === startAfter) {
