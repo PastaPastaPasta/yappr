@@ -48,7 +48,9 @@ export function MobileBottomNav() {
   const [isHydrated, setIsHydrated] = useState(false)
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenuButtonRef = useRef<HTMLButtonElement>(null)
-  const signInAfterCloseRef = useRef(false)
+  // Where focus goes once the sheet has gone: back to Menu, nowhere (a link
+  // or sign-out leaves the page as it is), or into the sign-in dialog.
+  const afterCloseRef = useRef<'menu' | 'page' | 'sign-in'>('menu')
   const unreadNotificationCount = useVisibleUnreadNotificationCount()
   // Refreshed by the Sidebar's poll: it is hidden with CSS on mobile, not
   // unmounted, so its effect is the single source of both badge counts.
@@ -60,8 +62,19 @@ export function MobileBottomNav() {
 
   // Close menu on route change
   useEffect(() => {
+    afterCloseRef.current = 'page'
     setMoreMenuOpen(false)
   }, [pathname])
+
+  const openMoreMenu = () => {
+    afterCloseRef.current = 'menu'
+    setMoreMenuOpen(true)
+  }
+
+  const leaveMoreMenu = () => {
+    afterCloseRef.current = 'page'
+    setMoreMenuOpen(false)
+  }
 
   // A sheet opened on mobile must also release its focus/scroll lock if the
   // viewport switches to the desktop navigation.
@@ -164,7 +177,6 @@ export function MobileBottomNav() {
         open={moreMenuOpen}
         onOpenChange={setMoreMenuOpen}
         variant="sheet"
-        inertBackground
         overlayClassName="items-end px-0"
         className="max-h-[100dvh] overflow-y-auto rounded-b-none border-t border-gray-200 safe-area-inset-bottom dark:border-gray-800"
         onOpenAutoFocus={(event) => {
@@ -173,13 +185,13 @@ export function MobileBottomNav() {
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
+          const next = afterCloseRef.current
+          afterCloseRef.current = 'menu'
+          if (next === 'page') return
           moreMenuButtonRef.current?.focus({ preventScroll: true })
           // Open sign-in after this sheet releases its focus scope, so the
           // login modal returns to Menu instead of a departing sheet button.
-          if (signInAfterCloseRef.current) {
-            signInAfterCloseRef.current = false
-            openLoginModal()
-          }
+          if (next === 'sign-in') openLoginModal()
         }}
       >
         <div className="p-4">
@@ -202,7 +214,7 @@ export function MobileBottomNav() {
                 <Link
                   key={item.name}
                   href={item.href}
-                  onClick={() => setMoreMenuOpen(false)}
+                  onClick={leaveMoreMenu}
                   className={cn(
                     "flex flex-col items-center justify-center p-3 rounded-xl transition-colors",
                     isActive
@@ -223,7 +235,7 @@ export function MobileBottomNav() {
               <div className="border-t border-gray-200 dark:border-gray-800 mt-4 pt-4">
                 <button
                   onClick={() => {
-                    setMoreMenuOpen(false)
+                    leaveMoreMenu()
                     logout().catch((err) => logger.error('Logout failed:', err))
                   }}
                   className="flex items-center gap-3 w-full p-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
@@ -239,7 +251,7 @@ export function MobileBottomNav() {
             <div className="border-t border-gray-200 dark:border-gray-800 mt-4 pt-4">
               <button
                 onClick={() => {
-                  signInAfterCloseRef.current = true
+                  afterCloseRef.current = 'sign-in'
                   setMoreMenuOpen(false)
                 }}
                 className="flex items-center justify-center w-full p-3 rounded-xl bg-yappr-500 text-white font-medium hover:bg-yappr-600 transition-colors"
@@ -249,7 +261,7 @@ export function MobileBottomNav() {
             </div>
           )}
 
-          <LegalLinks className="mt-4" onNavigate={() => setMoreMenuOpen(false)} />
+          <LegalLinks className="mt-4" onNavigate={leaveMoreMenu} />
         </div>
       </Modal>
 
@@ -285,9 +297,10 @@ export function MobileBottomNav() {
               <Tooltip.Trigger asChild>
                 <button
                   aria-label="Menu"
+                  aria-haspopup="dialog"
                   aria-expanded={moreMenuOpen}
                   ref={moreMenuButtonRef}
-                  onClick={() => setMoreMenuOpen(true)}
+                  onClick={openMoreMenu}
                   className="flex-1 flex items-center justify-center h-full relative"
                 >
                   <Bars3Icon className={cn(

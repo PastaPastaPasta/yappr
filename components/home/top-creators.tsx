@@ -18,14 +18,20 @@ const ITEM = 'shrink-0 sm:min-w-0 sm:shrink'
 const CHIP = 'flex w-[200px] items-center gap-2 rounded-2xl border border-gray-200 py-2.5 pl-2 pr-1.5 dark:border-gray-800 sm:w-auto'
 const SKELETON_COUNT = 6
 
-/** The people with the most posts, with a stable footprint while loading or empty. */
+/**
+ * The people with the most posts. It keeps its footprint from loading to an
+ * empty result, so the posts below do not jump; on error it steps aside (the
+ * posts below carry the retry).
+ */
 export function TopCreators({ users, loading, error }: TopCreatorsProps) {
+  if (error) return null
+
   return (
     <section aria-labelledby="top-creators-heading" className="mb-10 min-w-0">
       <h2 id="top-creators-heading" className="mb-3 px-4 text-xl font-bold">Top creators</h2>
-      {error || (!loading && users.length === 0) ? (
+      {!loading && users.length === 0 ? (
         <p className="mx-4 flex h-[66px] items-center text-sm text-gray-500 dark:text-gray-400 sm:h-[136px]">
-          {error ? 'Top creators are unavailable right now.' : 'No creators to show yet.'}
+          No creators to show yet.
         </p>
       ) : (
         <ul className={LIST}>

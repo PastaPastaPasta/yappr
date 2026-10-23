@@ -1,7 +1,6 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { motion } from 'framer-motion'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import {
@@ -145,14 +144,15 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
             onClick={(e) => stopAndRun(e, like.onClick)}
             disabled={likeDisabled}
             className={cn(
-              'group flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
+              'group group/like flex items-center gap-1 p-2 rounded-full transition-colors hover:bg-red-50 dark:hover:bg-red-950',
               ((deleted && !like.active) || likeRefused) && 'opacity-50 cursor-not-allowed',
               like.active && 'text-red-500'
             )}
           >
-            <motion.div aria-hidden="true" tabIndex={-1} whileTap={{ scale: 0.8 }} transition={{ type: 'spring', stiffness: 400, damping: 17 }}>
+            {/* A CSS press, not framer's whileTap, which makes its element a second tab stop inside the button. */}
+            <span aria-hidden="true" className="transition-transform duration-150 group-active/like:scale-[0.8]">
               {like.active ? <HeartIconSolid className="h-5 w-5 text-red-500" /> : <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />}
-            </motion.div>
+            </span>
             <span className={cn('text-sm transition-colors', like.active ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500')}>
               {like.count > 0 && formatNumber(like.count)}
             </span>

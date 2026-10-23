@@ -12,7 +12,7 @@ interface PageShellProps {
   mainClassName?: string
   /** Hide the right column (wide-mode reading views). */
   hideRightSidebar?: boolean
-  /** Reserve the landing page's election banner slot while its state loads. */
+  /** Hold the election banner's room until the tab knows whether one is due (the landing page). */
   reserveElectionBannerSlot?: boolean
 }
 

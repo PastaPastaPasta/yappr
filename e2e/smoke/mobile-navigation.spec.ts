@@ -5,8 +5,8 @@ test.use({ viewport: { width: 390, height: 844 } })
 
 test('mobile navigation identifies its controls and opens its menu', async ({ page }) => {
   await page.goto(appUrl('/explore/'))
-  // The navigation becomes inert and hidden from assistive technology while
-  // its modal menu is open, but its trigger still carries the expanded state.
+  // The modal menu hides the navigation from assistive technology while it is
+  // open, but its trigger still carries the expanded state.
   const nav = page.getByRole('navigation', { name: 'Mobile navigation', includeHidden: true })
   await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()
