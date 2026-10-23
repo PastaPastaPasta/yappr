@@ -258,6 +258,8 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(3)
     expect(summary.done).toBe(3)
+    // Already that way by no change of this run's: nothing is said of its marks or when.
+    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['b', 'c'])
   })
 
   it('reports progress, counting only confirmed changes', async () => {

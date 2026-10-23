@@ -431,7 +431,9 @@ function PostCardView({
     openModeratorHideModal(postHideTarget(post, action), (outcome) => {
       if (outcome.restricted !== undefined) setAuthorRestrictedHere(outcome.restricted)
       // The shown marks keep the post's restriction flag from its read (useShownModeration).
-      if (outcome.moderation !== undefined) recordModeration(post.id, outcome.moderation, !outcome.unconfirmed, outcome.at)
+      if (outcome.moderation !== undefined) {
+        recordModeration(post.id, outcome.moderation, { proved: !outcome.unconfirmed, at: outcome.at, basis: post.moderation })
+      }
     })
   }
   const { open: openReportModal } = useReportPostModal()

@@ -450,9 +450,15 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
 
   for (const item of todo) {
     const result = await send(item)
-    if (result.success || result.errorCode === ALREADY) {
+    if (result.success) {
       // As this run asked; ordered by its own block time when the answer gave it.
       markDone(item, result.moderatedAt !== undefined ? { at: result.moderatedAt } : {})
+      streakCode = null
+      continue
+    }
+    if (result.errorCode === ALREADY) {
+      // Already that way on chain, by no change of this run's: counted, nothing said of when.
+      progress.done++
       streakCode = null
       continue
     }

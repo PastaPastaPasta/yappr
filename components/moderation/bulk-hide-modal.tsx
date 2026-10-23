@@ -238,7 +238,7 @@ export function BulkHideModal() {
       onDone: (item, change) => {
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
-        recordMarks(item.id, change.marks === undefined ? asked : change.marks, true, change.marks === undefined ? at : change.marks?.moderatedAt)
+        recordMarks(item.id, change.marks === undefined ? asked : change.marks, { at: change.marks === undefined ? at : change.marks?.moderatedAt })
       },
       onProgress: (next) => {
         if (current()) setProgress(next)

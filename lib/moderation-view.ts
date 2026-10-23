@@ -184,6 +184,8 @@ export interface RecordedMarks {
   marks: MarksWithRestriction | null
   at: number
   proved: boolean
+  /** An unproved change: the read on screen when it was made. Any other read, on this mount or a later one, supersedes it. */
+  basis?: MarksWithRestriction
 }
 
 /** True when `read` supersedes `recorded` ({@link shownMarks}): the record can be dropped. */
