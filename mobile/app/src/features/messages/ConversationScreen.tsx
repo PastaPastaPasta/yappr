@@ -17,6 +17,7 @@ import {
   useConversationBlocked,
 } from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
+import { Button } from '~/ui/Button';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
@@ -362,7 +363,12 @@ export function ConversationScreen() {
   const blockedReason = composerBlockedReason(
     conversation && { kind: conversation.kind, flags: { ...conversation.flags, blocked: peerBlocked } },
   );
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = messages;
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = messages;
+  const loadOlder = () => {
+    fetchNextPage().catch(() => undefined);
+  };
+  // After a failed page the loaded messages stay, and the footer below asks: reaching the top again must not retry by itself.
+  const olderFailed = hasNextPage && isFetchNextPageError && !isFetchingNextPage;
 
   return (
     <Screen>
@@ -392,13 +398,20 @@ export function ConversationScreen() {
             }
             maintainVisibleContentPosition={{ startRenderingFromBottom: true, autoscrollToBottomThreshold: 0.2 }}
             onStartReached={() => {
-              if (hasNextPage && !isFetchingNextPage) fetchNextPage().catch(() => undefined);
+              if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) loadOlder();
             }}
             onStartReachedThreshold={0.5}
             ListHeaderComponent={
               isFetchingNextPage ? (
                 <View className="items-center py-3">
                   <Spinner size="sm" />
+                </View>
+              ) : olderFailed ? (
+                <View className="items-center gap-2 px-6 py-4" testID="dm-older-error">
+                  <Text variant="subhead" tone="secondary" className="text-center">
+                    Couldn&apos;t load older messages
+                  </Text>
+                  <Button label="Retry" variant="outline" size="sm" onPress={loadOlder} testID="dm-older-retry" />
                 </View>
               ) : null
             }

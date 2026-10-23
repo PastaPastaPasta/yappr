@@ -50,8 +50,18 @@ type Sources = ReadonlyMap<ModeratedContractKey, ElectionSource<ClosedElection>>
  */
 const CANDIDATES: readonly ModeratedContractKey[] = electedContracts()
 
+/**
+ * Remembers that every candidate has its team, keyed by their contract ids:
+ * a seat is never lifted, so a repeat visit knows at once there is no banner.
+ * It only shapes the layout; the reads still run.
+ */
+const ALL_OPEN_KEY = 'moderator-elections-all-open'
+const CANDIDATE_IDS = CANDIDATES.map((contract) => moderatedContract(contract).contractId).join(',')
+
 const EMPTY: Sources = new Map()
 let sources: Sources = EMPTY
+/** Whether this tab knows if a banner is due: nothing to elect, every team remembered seated, a remembered answer, or a finished read. */
+let answered = CANDIDATES.length === 0 || readScoped(ALL_OPEN_KEY) === CANDIDATE_IDS
 const listeners = new Set<() => void>()
 /** Contracts read open (a team is seated): a seat is never lifted, so they are not read again. */
 const settledOpen = new Set<ModeratedContractKey>()
@@ -63,6 +73,7 @@ let stopWatching: (() => void) | null = null
 
 function publish(next: Sources) {
   sources = next
+  answered = true
   for (const listener of listeners) listener()
 }
 
@@ -132,6 +143,7 @@ async function readElections(): Promise<boolean> {
     if (answer === 'open') settledOpen.add(contracts[index])
   })
   const allOpen = CANDIDATES.every((contract) => settledOpen.has(contract))
+  if (allOpen) writeScoped(ALL_OPEN_KEY, CANDIDATE_IDS)
   if (mine !== generation) return allOpen
   const answers = new Map(contracts.map((contract, index) => [contract, results[index]]))
   const next = mergeElectionAnswers(CANDIDATES, answers, sources, settledOpen)
@@ -140,7 +152,8 @@ async function readElections(): Promise<boolean> {
     if (pending.length > 0) writeScoped(CACHE_KEY, serializeElections(pending, Date.now()))
     else removeScoped(CACHE_KEY)
   }
-  if (!sameSources(sources, next)) publish(next)
+  // The first finished cycle answers even when nothing changed (or a read failed).
+  if (!answered || !sameSources(sources, next)) publish(next)
   return allOpen
 }
 
@@ -213,6 +226,15 @@ export function useModeratorElections(): readonly PendingElection[] | null {
     const pending = pendingElections(current, now, livePhase)
     return pending.length > 0 ? pending : null
   }, [current, now])
+}
+
+/**
+ * Whether this tab knows yet if an election banner is due (see `answered`).
+ * Until it does, a layout can hold the banner's room so the answer does not
+ * move the page. Read beside {@link useModeratorElections}, which runs the read.
+ */
+export function useElectionsAnswered(): boolean {
+  return useSyncExternalStore(subscribe, () => answered, () => CANDIDATES.length === 0)
 }
 
 /**

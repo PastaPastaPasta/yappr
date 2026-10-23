@@ -180,8 +180,28 @@ describe('store notifications', () => {
     const [shippedRow, reviewRow] = groupNotifications([shipped, review]);
     expect(phraseOf(shippedRow)).toBe('shipped your order');
     expect(shippedRow.store?.snippet).toBe('On its way');
-    expect(destinationOf(shippedRow)).toEqual({ kind: 'web', path: '/orders' });
+    expect(destinationOf(shippedRow)).toEqual({ kind: 'route', route: '/orders' });
     // Nowhere to go: not the actor's profile.
     expect(destinationOf(reviewRow)).toBeNull();
+  });
+
+  const STORE_ID = '5Qh8dyoLiYgQ8wTj3nhoSEgdc5g1q1pHQrHYxpY8a5Cn';
+  const ITEM_ID = '9v3bZ2d7sWjA6dPYo1fQb8Bd2mwq8M6Ls5dSkd1y3k2u';
+  const destinationFor = (type: NotificationDTO['type'], path: string | null) =>
+    destinationOf(groupNotifications([notification({ id: `${type}-1`, type, store: { phrase: 'x', snippet: null, path } })])[0]);
+
+  it('opens each store event on its native screen (the paths lib words for the web)', () => {
+    expect(destinationFor('orderStatus', '/orders')).toEqual({ kind: 'route', route: '/orders' });
+    expect(destinationFor('storeOrder', '/orders/seller')).toEqual({ kind: 'route', route: '/store/orders' });
+    expect(destinationFor('itemReview', `/item?id=${ITEM_ID}`)).toEqual({ kind: 'route', route: `/item/${ITEM_ID}` });
+    expect(destinationFor('storeReview', `/store/view?id=${STORE_ID}`)).toEqual({
+      kind: 'route',
+      route: `/store/${STORE_ID}`,
+    });
+  });
+
+  it('keeps the web only for a path the app has no screen for', () => {
+    expect(destinationFor('itemReview', '/item?id=not-an-id')).toEqual({ kind: 'web', path: '/item?id=not-an-id' });
+    expect(destinationFor('storeReview', null)).toBeNull();
   });
 });

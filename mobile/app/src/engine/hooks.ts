@@ -1,7 +1,7 @@
 import { router, usePathname } from 'expo-router';
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { DEFAULT_IPFS_GATEWAY } from '~/ui/media-url';
+import { DEFAULT_IPFS_GATEWAYS, type IpfsGateway } from '~/ui/media-url';
 
 import { engine, engineSupervisor, type Engine } from './index';
 import type { EngineStatus } from './supervisor';
@@ -16,11 +16,18 @@ export function useEngineStatus(): EngineStatus {
   return useSyncExternalStore(engineSupervisor.subscribeStatus, engineSupervisor.getStatus);
 }
 
-/** The engine's first path-style IPFS gateway (`engine.info().ipfsGateways`), for MediaUrlProvider. */
-export function useIpfsGateway(): string {
+/**
+ * The engine's ordered IPFS gateway list (`engine.info().ipfsGateways`), for
+ * MediaUrlProvider. The last list it reported stays while the engine restarts
+ * (`info` is empty then), so the images already on screen aren't reloaded
+ * through another gateway and back.
+ */
+export function useIpfsGateways(): readonly IpfsGateway[] {
   const { info } = useEngineStatus();
-  const gateway = info?.ipfsGateways?.find((g) => g.format === 'path');
-  return gateway ? `https://${gateway.domain}/ipfs/` : DEFAULT_IPFS_GATEWAY;
+  const reported = info?.ipfsGateways;
+  const [known, setKnown] = useState<readonly IpfsGateway[]>(DEFAULT_IPFS_GATEWAYS);
+  if (reported && reported.length > 0 && reported !== known) setKnown(reported);
+  return known;
 }
 
 /** DiceBear markup for AvatarSvgProvider, rendered by the engine (`profiles.avatarSvg`). */

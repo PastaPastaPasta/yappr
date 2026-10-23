@@ -31,7 +31,8 @@ const doc = (id: string, ownerId: string, createdAt: number, fields: Doc = {}): 
 function answer(rows: Partial<Record<string, Doc[]>>) {
   bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((query) => {
     if (query.documentTypeName === 'itemReview') {
-      const ids = query.where?.[0][2] as string[]
+      const key = query.where?.[0][2] as string | string[]
+      const ids = Array.isArray(key) ? key : [key]
       return (rows.itemReview ?? []).filter((row) => ids.includes(row.itemId as string))
     }
     return rows[query.documentTypeName] ?? []
@@ -41,8 +42,8 @@ function answer(rows: Partial<Record<string, Doc[]>>) {
 const bundled = (call: number) => (bundle.mock.calls[call] as [QueryDocumentsOptions[]])[0]
 const shapes = (queries: QueryDocumentsOptions[]) => queries.map((query) => [query.documentTypeName, query.where?.[0]])
 
-async function service() {
-  vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v9')
+async function service(topology = 'v9') {
+  vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology)
   vi.resetModules()
   return (await import('./store-notification-service')).storeNotificationService
 }
@@ -318,5 +319,63 @@ describe('store notifications', () => {
     // Without the items there is nothing to read item reviews by; orders and store reviews still are.
     expect(shapes(bundled(0)).map(([type]) => type)).toEqual(['orderStatusUpdate', 'storeOrder', 'storeReview'])
     expect(events.map((event) => event.id)).toEqual(['storeOrder-Ord1'])
+  })
+
+  describe('on storefront v11 ("hide, don\'t delete")', () => {
+    it('reads the laned sources in the listed lane, item reviews one item a read, and leaves orders and status updates unlaned', async () => {
+      getByOwner.mockResolvedValue(sellerStore)
+      getAllByStore.mockResolvedValue([
+        { id: ITEM, title: 'Blue mug', createdAt: new Date(500) },
+        { id: NEW_ITEM, title: 'Red mug', createdAt: new Date(400) },
+      ])
+      answer({
+        storeReview: [doc('Rev1', BUYER, 3_000, { storeId: STORE, rating: 4 })],
+        itemReview: [
+          doc('IRev1', BUYER, 4_000, { storeId: STORE, itemId: ITEM, rating: 5 }),
+          doc('IRev2', BUYER, 3_500, { storeId: STORE, itemId: NEW_ITEM, rating: 2 }),
+        ],
+      })
+      const stores = await service('v11')
+
+      const events = await stores.getNotifications(SELLER, SINCE, vi.fn())
+
+      expect(bundled(0).map((query) => [query.documentTypeName, query.where, query.orderBy])).toEqual([
+        ['orderStatusUpdate', [['orderId.$ownerId', '==', SELLER], ['$createdAt', '>', SINCE]], [['orderId.$ownerId', 'asc'], ['$createdAt', 'desc']]],
+        ['storeOrder', [['storeId', '==', STORE], ['$createdAt', '>', SINCE]], [['storeId', 'asc'], ['$createdAt', 'desc']]],
+        ['storeReview', [['storeId', '==', STORE], ['mod', '==', null], ['$createdAt', '>', SINCE]], [['storeId', 'asc'], ['mod', 'asc'], ['$createdAt', 'desc']]],
+        ['storeItem', [['storeId', '==', STORE], ['mod', '==', null], ['$createdAt', '>', 500]], [['storeId', 'asc'], ['mod', 'asc'], ['$createdAt', 'desc']]],
+        // `itemReviews [itemId, mod, $createdAt]` serves no `in` on the item with the lane pinned after it.
+        ['itemReview', [['itemId', '==', ITEM], ['mod', '==', null], ['$createdAt', '>', SINCE]], [['itemId', 'asc'], ['mod', 'asc'], ['$createdAt', 'desc']]],
+        ['itemReview', [['itemId', '==', NEW_ITEM], ['mod', '==', null], ['$createdAt', '>', SINCE]], [['itemId', 'asc'], ['mod', 'asc'], ['$createdAt', 'desc']]],
+      ])
+      expect(events.map((event) => [event.id, event.store.itemTitle])).toEqual([
+        ['storeReview-Rev1', undefined], ['itemReview-IRev1', 'Blue mug'], ['itemReview-IRev2', 'Red mug'],
+      ])
+    })
+
+    it('reads a newly listed item\'s reviews in the listed lane too', async () => {
+      getByOwner.mockResolvedValue(sellerStore)
+      const stores = await service('v11')
+      await stores.getNotifications(SELLER, SINCE, vi.fn())
+      answer({ storeItem: [doc(NEW_ITEM, SELLER, 6_000, { storeId: STORE, title: 'Red mug' })] })
+      bundle.mockClear()
+
+      await stores.getNotifications(SELLER, 5_000, vi.fn())
+
+      expect(bundled(1).map((query) => query.where)).toEqual([[['itemId', '==', NEW_ITEM], ['mod', '==', null], ['$createdAt', '>', 5_000]]])
+    })
+
+    it('reads a busy item on past a full page from its last row, capped like any single-key source', async () => {
+      getByOwner.mockResolvedValue(sellerStore)
+      answer({ itemReview: Array.from({ length: 100 }, (_, i) => doc(`IRev${i}`, BUYER, 9_000 - i, { itemId: ITEM, rating: 5 })) })
+      paginateFetchAll.mockResolvedValue({ documents: [], reachedLimit: false })
+      const stores = await service('v11')
+
+      await stores.getNotifications(SELLER, SINCE, vi.fn())
+
+      const [, builder, , options] = paginateFetchAll.mock.calls[0] as [unknown, (startAfter?: string) => QueryDocumentsOptions, unknown, { maxResults: number; inClause?: boolean }]
+      expect(builder()).toMatchObject({ documentTypeName: 'itemReview', startAfter: 'IRev99', where: [['itemId', '==', ITEM], ['mod', '==', null], ['$createdAt', '>', SINCE]] })
+      expect(options).toEqual({ maxResults: 900, inClause: false })
+    })
   })
 })

@@ -1,5 +1,5 @@
 import { FlashList } from '@shopify/flash-list';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, RefreshControl, View } from 'react-native';
 import { BellIcon, CheckIcon, Cog6ToothIcon } from 'react-native-heroicons/outline';
@@ -148,6 +148,8 @@ export function NotificationsScreen() {
     else if (destination.kind === 'user') openUser(destination.id);
     else if (destination.kind === 'privateFeedRequests') openOnItsTab('/settings/private-feed');
     else if (destination.kind === 'blogPost') openBlogPost(destination.blogId, destination.slug);
+    // Order, store and item screens exist in every tab's stack: a plain push, so Back returns here.
+    else if (destination.kind === 'route') router.push(destination.route as Href);
     else openExternal(`${config.webBaseUrl}${destination.path}`);
   }, []);
 

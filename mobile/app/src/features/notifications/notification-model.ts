@@ -1,5 +1,7 @@
 import type { AuthorDTO, NotificationDTO, NotificationFilter, PostDTO, SettingsDTO } from '@engine/api';
 
+import { resolveLink } from '~/navigation/deep-links';
+
 /**
  * What the Notifications tab shows, as pure functions of the engine's
  * `NotificationDTO`s (PRD NOTIF-01 – NOTIF-06, UX_SPEC §4.18 and copy §5.8).
@@ -175,10 +177,24 @@ export function snippetOf(
 export type Destination =
   | { kind: 'post'; id: string }
   | { kind: 'user'; id: string }
+  /** A native screen: a store event's order, store or item. */
+  | { kind: 'route'; route: string }
+  /** A web page with no native screen. */
   | { kind: 'web'; path: string }
   | { kind: 'privateFeedRequests' }
   | { kind: 'blogPost'; blogId: string; slug: string }
   | null;
+
+/**
+ * A store event's web path (`/orders`, `/orders/seller`, `/item?id=`, `/store/view?id=`),
+ * as the native screen deep links map it (`navigation/deep-links.ts`: `/orders`,
+ * `/store/orders`, `/item/:id`, `/store/:id`). A path the app has no screen for
+ * stays on the web.
+ */
+function storeDestination(path: string): Destination {
+  const target = resolveLink(path, { initial: false, webBasePath: '', allowAppRoutes: false });
+  return target.kind === 'route' ? { kind: 'route', route: target.route } : { kind: 'web', path };
+}
 
 /**
  * Where a tap goes (NOTIF-01): follows and private-feed approvals and
@@ -186,10 +202,10 @@ export type Destination =
  * feed settings, where it is approved; likes and reposts the liked post;
  * replies, quotes and mentions the new post (its thread shows the context);
  * blog events the blog post, natively; store events the order, store or
- * item, on the web.
+ * item, natively too (`storeDestination`).
  */
 export function destinationOf(row: NotificationRowModel): Destination {
-  if (row.store) return row.store.path ? { kind: 'web', path: row.store.path } : null;
+  if (row.store) return row.store.path ? storeDestination(row.store.path) : null;
   if (row.type === 'privateFeedRequest') return { kind: 'privateFeedRequests' };
   if (row.type === 'blogPost' || row.type === 'blogComment') {
     if (!row.blog) return null;

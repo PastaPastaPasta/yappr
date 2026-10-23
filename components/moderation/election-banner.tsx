@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { ArrowTopRightOnSquareIcon, ChevronRightIcon, ScaleIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import { useModeratorElections } from '@/hooks/use-moderator-elections'
+import { useSdk } from '@/contexts/sdk-context'
+import { useElectionsAnswered, useModeratorElections } from '@/hooks/use-moderator-elections'
 import { electionBanner, type ElectionBannerContent } from '@/lib/election-banner'
 import { moderatedContract } from '@/lib/moderated-contracts'
 import { masternodeVoteUrl, teamsHref } from '@/lib/moderation-charters/links'
@@ -39,9 +40,23 @@ const SlotContext = createContext<(node: HTMLDivElement | null) => void>(() => u
  * above its sticky header, so it scrolls away with the page and leaves the
  * sticky sidebars alone. Renders an empty element; the banner itself is
  * mounted once, by {@link ElectionBannerFrame}.
+ *
+ * With `reserve` (the landing page) it holds about a banner's height until
+ * the tab knows whether one is due, so the answer does not push the hero
+ * down; then it takes the banner's own height, or none. A failed SDK setup
+ * (nothing will be read) releases it too.
  */
-export function ElectionBannerSlot() {
-  return <div ref={useContext(SlotContext)} />
+export function ElectionBannerSlot({ reserve = false }: { reserve?: boolean }) {
+  const answered = useElectionsAnswered()
+  const { error: sdkError } = useSdk()
+  const holding = reserve && !answered && !sdkError
+  return (
+    <div
+      ref={useContext(SlotContext)}
+      data-reserve-election-slot={reserve ? (holding ? 'holding' : 'released') : undefined}
+      className={holding ? 'min-h-[137px] md:min-h-[97px]' : undefined}
+    />
+  )
 }
 
 /**

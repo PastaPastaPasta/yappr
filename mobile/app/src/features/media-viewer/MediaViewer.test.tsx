@@ -2,7 +2,7 @@ import type { SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
-import { Share } from 'react-native';
+import { Linking, Share } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -130,6 +130,49 @@ describe('MediaViewer', () => {
     await act(async () => fireEvent.press(screen.getByLabelText('Like, 3 likes')));
     expect(fakeEngine.method('engage.like')).toHaveBeenCalledWith(expect.objectContaining({ id: 'pic' }));
     expect(screen.getByLabelText('Unlike, 4 likes')).toBeTruthy();
+  });
+
+  describe('video (MUX-10)', () => {
+    const videoPost = (url: string) =>
+      fixturePost({
+        id: 'vid',
+        media: [{ type: 'video', url, thumbnail: 'https://example.com/t.jpg', width: 800, height: 450 }],
+      });
+
+    it('offers "Watch video", which opens the video outside the app, instead of an inert play icon', async () => {
+      const post = videoPost('https://example.com/v.mp4');
+      queryClient.setQueryData(queryKeys.post.detail('vid'), post);
+      fakeEngine.method('posts.get').mockResolvedValue(post);
+      const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+      renderViewer('vid');
+      await act(async () => {});
+
+      fireEvent.press(screen.getByLabelText('Watch video'));
+      expect(open).toHaveBeenCalledWith('https://example.com/v.mp4');
+      expect(screen.queryByText('Video preview')).toBeNull();
+      open.mockRestore();
+    });
+
+    it('says "Video preview" when the video has no link the app may open', async () => {
+      const post = videoPost('file:///v.mp4');
+      queryClient.setQueryData(queryKeys.post.detail('vid'), post);
+      fakeEngine.method('posts.get').mockResolvedValue(post);
+      renderViewer('vid');
+      await act(async () => {});
+
+      expect(screen.getByText('Video preview')).toBeTruthy();
+      expect(screen.queryByLabelText('Watch video')).toBeNull();
+    });
+
+    it('shows no video controls for an image', async () => {
+      const post = fixturePost({ id: 'img', media: [{ type: 'image', url: 'https://example.com/a.jpg' }] });
+      queryClient.setQueryData(queryKeys.post.detail('img'), post);
+      fakeEngine.method('posts.get').mockResolvedValue(post);
+      renderViewer('img');
+      await act(async () => {});
+      expect(screen.queryByLabelText('Watch video')).toBeNull();
+      expect(screen.queryByText('Video preview')).toBeNull();
+    });
   });
 
   it('says "Image unavailable" for a post without media', async () => {

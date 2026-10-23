@@ -184,6 +184,8 @@ The owner's archival / "uncensored" frontend support (env flags, off on every ya
 
 Per-lane reads are admissible on every listing (`mod == 1` and `mod == 2` are plain equalities). An `in` over the lanes (`mod in [1, 2]`, ordered `mod asc, $createdAt desc`) is admissible only where `mod` is last or before-last: `post.timeline`, both `mentionedUserAndTime` and `blog.timeline`. Elsewhere read one lane at a time.
 
+**Seller notifications** (`lib/services/store-notification-service.ts`) read `storeReview.storeReviews`, `storeItem.storeAndTime` and `itemReview.itemReviews` in the listed lane, `mod == null`, like the store page: a seller is told of the reviews their store lists, and a review a moderator hid or put on legal hold does not notify. An archival build or a seated moderator's view fans these reads out to every lane, as it does the store page's. An `in` on `itemId` is not served with `mod` pinned after it, so storefront v11 reads each item's reviews with its own `itemId ==` read (v10 read one `in` per 100 items). Orders and status updates are not laned.
+
 ## Restriction
 
 A restricted author can still post and reply: the chain files what they write in lane 2, which yap.pr does not list. Social v18 and blog v10 each carry the type:
