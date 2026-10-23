@@ -411,6 +411,9 @@ describe('a session forgotten mid-write', () => {
     builders.exists.mockResolvedValue(null)
     settle.mockResolvedValue(null)
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    // While the session lasts, settling may re-send.
+    const [, live] = settle.mock.calls[0] as [unknown, { mayResend: () => boolean }]
+    expect(live.mayResend()).toBe(true)
     sdk.stateTransitions.broadcastAndWait.mockClear()
     settle.mockClear()
     builders.exists.mockImplementationOnce(async () => { charterService.forgetKeys(); return null })
@@ -580,6 +583,7 @@ describe('a landed marker', () => {
     builders.exists.mockResolvedValue(false)
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-old')
     expect(builders.sign).not.toHaveBeenCalled()
+    expect(builders.exists).not.toHaveBeenCalled()
   })
 
   it('once older than 15 minutes answers a deletable team change only on proof that it is still there', async () => {

@@ -309,6 +309,17 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
   })
 
+  it('re-sends as before while the caller allows it', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))
+    sdk.stateTransitions.broadcastStateTransition.mockClear()
+    const mayResend = vi.fn(() => true)
+
+    await stateTransitionService.settleCreate(receipt, { mayResend })
+    expect(mayResend).toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledTimes(1)
+  })
+
   it('sends nothing when the caller withdraws the re-send, leaving an undecided outcome unknown', async () => {
     const receipt = await unconfirmedCreate()
     sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))

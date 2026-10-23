@@ -134,7 +134,9 @@ function savePendingCreate(key: string, entry: PendingCreate): boolean {
  * (filed, or filed in an earlier version) and signs nothing. For
  * {@link LANDED_TRUSTED_MS} it is trusted as is; after that a retry saying the
  * same thing is answered only once the document is proved still there, and a
- * write saying something else is a new one.
+ * write saying something else is a new one. A proposal's marker for the same
+ * contents stays authoritative at any age: proposals can never be deleted, so
+ * an absence read (which may be stale) never reopens one.
  */
 interface LandedCreate {
   landed: string
@@ -417,8 +419,10 @@ class CharterService {
    * own raw key when it is an unbound CRITICAL or HIGH authentication key,
    * else one typed in earlier in this tab, else asked for now.
    */
-  private async signingKey(identityId: string): Promise<{ wif: string; identityKey: IdentityPublicKey }> {
+  private async signingKey(identityId: string, generation = this.generation): Promise<{ wif: string; identityKey: IdentityPublicKey }> {
     const identity = await fetchIdentity(identityId)
+    // An action cancelled meanwhile asks for nothing, and keeps nothing typed for it.
+    this.assertSameSession(generation)
     const keys = identity.publicKeys
     const match = (wif: string) => matchIdentityKey(wif, keys, {
       network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
@@ -430,7 +434,6 @@ class CharterService {
       const result = match(wif)
       if (result.ok && signingKeyProblem(result, result.key) === null) return { wif, identityKey: result.key }
     }
-    const generation = this.generation
     const input = await requestKeyStepUp({
       identityId,
       title: 'Sign with your CRITICAL key',
@@ -468,6 +471,8 @@ class CharterService {
     const generation = session ?? this.generation
     this.assertSameSession(generation)
     const identity = await fetchIdentity(identityId)
+    // Cancelled while the identity was read: the old account's MASTER key is never asked for.
+    this.assertSameSession(generation)
     const { purpose, documentType } = CHARTER_KEYS[role]
     const onChain = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType)).sort((a, b) => b.keyId - a.keyId)[0] ?? null
     const onChainData = onChain ? keyData(onChain) : null
@@ -727,8 +732,9 @@ class CharterService {
 
     // One lock for a resend; a new create first leaves it for its prompts, then takes it again. Settling
     // can rebroadcast stored bytes, so a session forgotten while waiting for either lock settles nothing.
-    // (The final settle below stays unchecked: what it may rebroadcast, this call's create or another tab's
-    // stored one, is the same signed bytes under the same nonce, so it can never send anything new.)
+    // (The final settle below takes no lock-time check: it is proof-only once the session is forgotten,
+    // through settleCreate's mayResend, and what it may rebroadcast while the session lasts, this call's
+    // create or another tab's stored one, is the same signed bytes under the same nonce.)
     const first = await lock(async () => {
       this.assertSameSession(generation)
       const slot = await resolveSlot()
@@ -739,7 +745,7 @@ class CharterService {
 
     let sending = first
     if (!sending) {
-      const fresh = { data: await input.data(), signing: await this.signingKey(ownerId) }
+      const fresh = { data: await input.data(), signing: await this.signingKey(ownerId, generation) }
       const second = await lock(async () => {
         // Storage again: another tab may have signed, proved or dropped this slot meanwhile.
         this.assertSameSession(generation)
@@ -979,7 +985,7 @@ class CharterService {
     const generation = this.generation
     let sent = false
     try {
-      const { wif, identityKey } = await this.signingKey(ownerId)
+      const { wif, identityKey } = await this.signingKey(ownerId, generation)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
       // The SDK picks this nonce itself: the coordinator holds other writes off it. Queued behind
