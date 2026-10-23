@@ -17,7 +17,7 @@ export function FeedComposeBox() {
   // the box appear and collapse.
   const [hasSavedSession, setHasSavedSession] = useState(false);
   const { user, isAuthRestoring } = useAuth();
-  const setComposeOpen = useAppStore((state) => state.setComposeOpen);
+  const openCompose = useAppStore((state) => state.openCompose);
 
   useEffect(() => {
     setIsHydrated(true);
@@ -51,7 +51,7 @@ export function FeedComposeBox() {
             data-testid={placeholder ? undefined : 'open-compose-btn'}
             disabled={placeholder}
             tabIndex={placeholder ? -1 : undefined}
-            onClick={() => setComposeOpen(true)}
+            onClick={() => openCompose()}
             className="flex-1 justify-start h-auto text-left px-4 py-3 bg-gray-50 dark:bg-gray-950 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
           >
             What&apos;s happening?

@@ -4,6 +4,7 @@ import type { Post } from './types'
 import type { ProgressiveEnrichment } from '@/components/post/post-card'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 import { scopedKey } from '@/lib/storage-scope'
+import { composeDraftKey, hasUnpostedContent, switchDraft } from '@/lib/compose/drafts'
 
 export type PostVisibility = 'public' | 'private' | 'private-with-teaser'
 
@@ -22,19 +23,32 @@ export interface PendingPostNavigation {
   enrichment?: ProgressiveEnrichment
 }
 
-interface AppState {
-  isComposeOpen: boolean
-  replyingTo: Post | null
-  quotingPost: Post | null
-  // Thread composition state
+interface ThreadDraft {
   threadPosts: ThreadPost[]
   activeThreadPostId: string | null
+}
+
+interface AppState {
+  isComposeOpen: boolean
+  // The target of the draft held below, which stays set while the composer is closed.
+  replyingTo: Post | null
+  quotingPost: Post | null
+  // Thread composition state: the live draft, kept across close and reopen
+  threadPosts: ThreadPost[]
+  activeThreadPostId: string | null
+  // Drafts for other targets (in memory only), keyed by composeDraftKey
+  stashedDrafts: Record<string, ThreadDraft>
   // Pending navigation data (set when clicking post, consumed on detail page mount)
   pendingPostNavigation: PendingPostNavigation | null
 
-  setComposeOpen: (open: boolean) => void
-  setReplyingTo: (post: Post | null) => void
-  setQuotingPost: (post: Post | null) => void
+  /** Open the composer for a new post, a reply or a quote, bringing back that target's draft. */
+  openCompose: (target?: { replyingTo?: Post | null; quotingPost?: Post | null }) => void
+  /** Hide the composer and keep the draft. */
+  closeCompose: () => void
+  /** Hide the composer and throw the live draft away: after a post, or an explicit discard. */
+  discardCompose: () => void
+  /** Forget every stashed draft: another account must never see them. */
+  clearStashedDrafts: () => void
   // Thread composition actions
   addThreadPost: () => void
   removeThreadPost: (id: string) => void
@@ -43,7 +57,6 @@ interface AppState {
   updateThreadPostTeaser: (id: string, teaser: string) => void
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
-  resetThreadPosts: () => void
   // Navigation actions for instant post detail transitions
   setPendingPostNavigation: (post: Post, enrichment?: ProgressiveEnrichment) => void
   consumePendingPostNavigation: (postId: string) => PendingPostNavigation | null
@@ -56,25 +69,36 @@ const createInitialThreadPost = (): ThreadPost => ({
   teaser: '',
 })
 
+const createFreshDraft = (): ThreadDraft => {
+  const initialPost = createInitialThreadPost()
+  return { threadPosts: [initialPost], activeThreadPostId: initialPost.id }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   isComposeOpen: false,
   replyingTo: null,
   quotingPost: null,
-  threadPosts: [createInitialThreadPost()],
-  activeThreadPostId: null,
+  ...createFreshDraft(),
+  stashedDrafts: {},
   pendingPostNavigation: null,
 
-  setComposeOpen: (open) => {
-    // Reset thread drafts on both open and close so no stale draft survives.
-    const initialPost = createInitialThreadPost()
-    set({
-      isComposeOpen: open,
-      threadPosts: [initialPost],
-      activeThreadPostId: initialPost.id
+  openCompose: (target = {}) => set((state) => {
+    const replyingTo = target.replyingTo ?? null
+    const quotingPost = target.quotingPost ?? null
+    // A draft belongs to its target: a draft for reply X is parked while Y opens.
+    const { draft, stash } = switchDraft<ThreadDraft>({
+      currentKey: composeDraftKey(state),
+      current: { threadPosts: state.threadPosts, activeThreadPostId: state.activeThreadPostId },
+      isEmpty: (d) => !hasUnpostedContent(d.threadPosts),
+      nextKey: composeDraftKey({ replyingTo, quotingPost }),
+      stash: state.stashedDrafts,
+      fresh: createFreshDraft,
     })
-  },
-  setReplyingTo: (post) => set({ replyingTo: post }),
-  setQuotingPost: (post) => set({ quotingPost: post }),
+    return { isComposeOpen: true, replyingTo, quotingPost, ...draft, stashedDrafts: stash }
+  }),
+  closeCompose: () => set({ isComposeOpen: false }),
+  discardCompose: () => set({ isComposeOpen: false, replyingTo: null, quotingPost: null, ...createFreshDraft() }),
+  clearStashedDrafts: () => set({ stashedDrafts: {} }),
 
   addThreadPost: () => set((state) => {
     const newPost = createInitialThreadPost()
@@ -129,14 +153,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
 
   setActiveThreadPost: (id) => set({ activeThreadPostId: id }),
-
-  resetThreadPosts: () => {
-    const initialPost = createInitialThreadPost()
-    set({
-      threadPosts: [initialPost],
-      activeThreadPostId: initialPost.id
-    })
-  },
 
   // Navigation actions for instant feed -> post detail transitions
   setPendingPostNavigation: (post, enrichment) => {

@@ -32,7 +32,7 @@ function PostDetailContent() {
   const searchParams = useSearchParams()
   const postId = searchParams.get('id')
   const { user } = useAuth()
-  const { setReplyingTo, setComposeOpen } = useAppStore()
+  const openCompose = useAppStore((s) => s.openCompose)
   const openLoginModal = useLoginModal((s) => s.open)
   const postingClosed = usePostingClosed()
 
@@ -153,8 +153,7 @@ function PostDetailContent() {
 
   const handleReply = () => {
     if (!post || isDeleted || replyBlockedReason || !canReplyToPrivate) return
-    setReplyingTo(post)
-    setComposeOpen(true)
+    openCompose({ replyingTo: post })
   }
 
   if (!postId) {

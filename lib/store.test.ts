@@ -20,9 +20,9 @@ describe('app store actions', () => {
   // selected value changes, so a draft edit must leave them untouched.
   it('keep the same identity while a draft changes', () => {
     const selected = () => [
-      useAppStore.getState().setReplyingTo,
-      useAppStore.getState().setComposeOpen,
-      useAppStore.getState().setQuotingPost,
+      useAppStore.getState().openCompose,
+      useAppStore.getState().closeCompose,
+      useAppStore.getState().discardCompose,
     ]
     const before = selected()
     const { threadPosts, updateThreadPost } = useAppStore.getState()

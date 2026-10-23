@@ -22,6 +22,7 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { privateFeedClientSupported } from '@/lib/contract-topology'
 import { planPosts, publishThread, threadTagProblem } from '@/lib/compose/publish-thread'
+import { composeDraftKey, hasUnpostedContent } from '@/lib/compose/drafts'
 import { characterCount, firstPostMentionHints, hasVisibleContent, isOverContentLimit, mentionLimitHint } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { mediaTypeOfMime } from '@/lib/media/media-fields'
@@ -31,6 +32,7 @@ import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Spinner } from '@/components/ui/spinner'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
@@ -70,11 +72,11 @@ function Banner({ tone, children }: { tone: 'purple' | 'amber' | 'gray'; childre
 export function ComposeModal() {
   const {
     isComposeOpen,
-    setComposeOpen,
+    closeCompose,
+    discardCompose,
+    clearStashedDrafts,
     replyingTo,
-    setReplyingTo,
     quotingPost,
-    setQuotingPost,
     threadPosts,
     activeThreadPostId,
     addThreadPost,
@@ -84,7 +86,6 @@ export function ComposeModal() {
     updateThreadPostTeaser,
     markThreadPostAsPosted,
     setActiveThreadPost,
-    resetThreadPosts,
   } = useAppStore()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
@@ -92,6 +93,7 @@ export function ComposeModal() {
   const [isPosting, setIsPosting] = useState(false)
   const [postingProgress, setPostingProgress] = useState<PostingProgress | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   // One toggle covers the author's own thread: the root and every continuation
   // part carry it. A reply to someone else's post has no toggle and is never
   // flagged. Once clicked, the profile seed below must not overwrite the choice.
@@ -121,19 +123,34 @@ export function ComposeModal() {
   const canAttachPoll = pollrIsConfigured() && !pollrIsV4() && !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
   const poll = useComposePoll(canAttachPoll)
 
-  // Seed the sensitive toggle from the author's own NSFW profile flag on open.
+  // The draft the image, poll and NSFW toggle below belong to. They stay across
+  // close and reopen of the same draft; opening another target starts them over.
+  const draftKey = composeDraftKey({ replyingTo, quotingPost })
+  const localDraftKeyRef = useRef<string | null>(null)
+  const seededDraftKeyRef = useRef<string | null>(null)
+  const { remove: removeImage } = image
+  const { forget: forgetPoll } = poll
   useEffect(() => {
-    if (!isComposeOpen) return
+    if (!isComposeOpen || localDraftKeyRef.current === draftKey) return
+    localDraftKeyRef.current = draftKey
+    removeImage()
+    forgetPoll()
     sensitiveTouchedRef.current = false
-    if (!user) {
-      setMarkSensitive(false)
-      return
-    }
+    setShowPreview(false)
+    setMarkSensitive(false)
+  }, [isComposeOpen, draftKey, removeImage, forgetPoll])
+
+  // Seed the sensitive toggle from the author's own NSFW profile flag when a draft is
+  // first opened; a resumed draft keeps the choice the author made.
+  useEffect(() => {
+    if (!isComposeOpen || !user || seededDraftKeyRef.current === draftKey) return
     let cancelled = false
     import('@/lib/services/unified-profile-service')
       .then(({ unifiedProfileService }) => unifiedProfileService.getProfile(user.identityId))
       .then((profile) => {
-        if (!cancelled && !sensitiveTouchedRef.current) setMarkSensitive(profile?.nsfw === true)
+        if (cancelled) return
+        seededDraftKeyRef.current = draftKey
+        if (!sensitiveTouchedRef.current) setMarkSensitive(profile?.nsfw === true)
       })
       .catch(() => {
         // No profile, or the lookup failed: leave the toggle off.
@@ -141,7 +158,7 @@ export function ComposeModal() {
     return () => {
       cancelled = true
     }
-  }, [isComposeOpen, user])
+  }, [isComposeOpen, user, draftKey])
 
   useEffect(() => {
     if (!isComposeOpen) return
@@ -193,19 +210,41 @@ export function ComposeModal() {
     (!poll.draft || !!poll.createdPollId || pollDraftProblem(poll.draft, pollQuestion) === null)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
 
-  const handleClose = () => {
-    image.remove()
+  /** Throw the draft away: after a successful post, or when the author discards it. */
+  const discardDraft = useCallback(() => {
+    removeImage()
     // Silent: on the success path the poll is not orphaned, and every failure
     // path in handlePost has already toasted the poll's Pollr link.
-    poll.forget()
-    setComposeOpen(false)
-    setReplyingTo(null)
-    setQuotingPost(null)
-    resetThreadPosts()
+    forgetPoll()
+    discardCompose()
+    localDraftKeyRef.current = null
+    seededDraftKeyRef.current = null
+    setConfirmingDiscard(false)
     setShowPreview(false)
     setMarkSensitive(false)
     setPostingProgress(null)
+  }, [removeImage, forgetPoll, discardCompose])
+
+  // Dismissing (X, Escape, outside click) keeps what the author typed, and asks
+  // before losing it. While a post is going out the composer stays open: its
+  // result lands on this draft, which another target must not take over.
+  const hasDraft = hasUnpostedContent(threadPosts) || !!image.attached || !!poll.draft
+  const requestClose = () => {
+    if (isPosting) return
+    if (hasDraft) setConfirmingDiscard(true)
+    else discardDraft()
   }
+
+  // Another account must not find this one's drafts.
+  const identityId = user?.identityId ?? null
+  const lastIdentityRef = useRef(identityId)
+  useEffect(() => {
+    const previous = lastIdentityRef.current
+    lastIdentityRef.current = identityId
+    if (previous === null || previous === identityId) return
+    discardDraft()
+    clearStashedDrafts()
+  }, [identityId, discardDraft, clearStashedDrafts])
 
   const stopPosting = () => {
     setIsPosting(false)
@@ -325,7 +364,7 @@ export function ComposeModal() {
         if (successful.length > 1) {
           window.dispatchEvent(new CustomEvent('thread-created', { detail: { posts: successful, totalPosts: successful.length } }))
         }
-        handleClose()
+        discardDraft()
       } else if (failedAtIndex === null) {
         // Timeouts only: keep the modal open so Post retries them.
         markPosted()
@@ -386,7 +425,7 @@ export function ComposeModal() {
 
   return (
     <>
-      <Dialog.Root open={isComposeOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
+      <Dialog.Root open={isComposeOpen} onOpenChange={(open) => { if (!open) requestClose() }}>
         <AnimatePresence>
           {isComposeOpen && (
             <Dialog.Portal forceMount>
@@ -413,7 +452,7 @@ export function ComposeModal() {
 
                       <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-gray-100 dark:border-gray-800">
                         <div className="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
-                          <IconButton aria-label="Close composer" onClick={handleClose} className="h-8 w-8 shrink-0 hover:bg-gray-200 dark:hover:bg-gray-800">
+                          <IconButton aria-label="Close composer" onClick={requestClose} className="h-8 w-8 shrink-0 hover:bg-gray-200 dark:hover:bg-gray-800">
                             <XMarkIcon className="h-5 w-5" />
                           </IconButton>
                           {user && <UserAvatar userId={user.identityId} size="sm" alt="Your avatar" />}
@@ -643,7 +682,17 @@ export function ComposeModal() {
       </Dialog.Root>
 
       <AddEncryptionKeyModal isOpen={privateFeed.showAddKeyModal} onClose={privateFeed.cancelAddKey} onSuccess={privateFeed.onKeyAdded} />
-      <StorageProviderModal open={image.showProviderModal} onOpenChange={image.setShowProviderModal} onSettingsNavigate={handleClose} />
+      {/* Setting up uploads leaves the page; the draft waits for the author's return. */}
+      <StorageProviderModal open={image.showProviderModal} onOpenChange={image.setShowProviderModal} onSettingsNavigate={closeCompose} />
+      <ConfirmDialog
+        isOpen={confirmingDiscard}
+        onClose={() => setConfirmingDiscard(false)}
+        onConfirm={discardDraft}
+        title="Discard post?"
+        message={replyingTo ? 'Your reply hasn’t been sent. If you discard it, it’s gone.' : 'Your post hasn’t been sent. If you discard it, it’s gone.'}
+        confirmText="Discard"
+        cancelText="Keep editing"
+      />
     </>
   )
 }
