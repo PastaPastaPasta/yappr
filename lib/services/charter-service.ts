@@ -308,10 +308,12 @@ class CharterService {
   /**
    * The messages of a proposal's join requests, decrypted with the leader's
    * charter key (asked for when this tab does not hold it): by request id,
-   * null where a message could not be read.
+   * null where a message could not be read. Nothing decrypted is returned
+   * once `session` (the leader's, by default this one) has ended.
    */
-  async readJoinMessages(submittedCharterId: string, leaderId: string): Promise<Map<string, string | null>> {
-    const leaderKey = await this.charterKey(leaderId, 'leader', { create: false })
+  async readJoinMessages(submittedCharterId: string, leaderId: string, { session }: { session?: number } = {}): Promise<Map<string, string | null>> {
+    const generation = session ?? this.generation
+    const leaderKey = await this.charterKey(leaderId, 'leader', { create: false, session: generation })
     const sdk = await getEvoSdk()
     const { PrivateKey } = await wasmModule()
     const contract = await sdk.contracts.fetch(CHARTERS_CONTRACT_ID)
@@ -337,6 +339,11 @@ class CharterService {
       contract.free()
       recipientPrivateKey.free()
       leaderKey.fill(0)
+    }
+    // Signed out or switched account while decrypting: the plaintext is dropped, never handed on.
+    if (generation !== this.generation) {
+      messages.clear()
+      this.assertSameSession(generation)
     }
     return messages
   }
@@ -711,7 +718,8 @@ class CharterService {
     }
 
     /** Under the lock: broadcasts the entry's signed bytes; a definite refusal drops it. */
-    const send = async (entry: PendingCreate): Promise<PendingCreate> => {
+    /** `fresh`: these bytes are sent for the first time (a refusal is then their verdict); otherwise a resend. */
+    const send = async (entry: PendingCreate, fresh: boolean): Promise<PendingCreate> => {
       // A resend waits for the lock too: a session forgotten meanwhile sends nothing (the bytes stay stored).
       this.assertSameSession(generation)
       try {
@@ -721,6 +729,9 @@ class CharterService {
         // a nonce clash (these bytes may have executed on an earlier try) and a
         // lost connection are not verdicts: prove the document instead.
         if (!isAlreadyExistsError(error) && !sentWriteOutcomeUnknown(error)) {
+          // A resend's refusal speaks for a node now, not for the first send, which may have landed
+          // (say, a node behind on its funding): the entry stays until settling proves what happened.
+          if (!fresh) throw error
           // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
           this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false))
           throw error
@@ -739,7 +750,7 @@ class CharterService {
       this.assertSameSession(generation)
       const slot = await resolveSlot()
       if (slot.kind === 'landed') return slot.id
-      return slot.kind === 'pending' ? send(slot.entry) : null
+      return slot.kind === 'pending' ? send(slot.entry, false) : null
     })
     if (typeof first === 'string') return first
 
@@ -751,7 +762,7 @@ class CharterService {
         this.assertSameSession(generation)
         const slot = await resolveSlot()
         if (slot.kind === 'landed') return slot.id
-        if (slot.kind === 'pending') return send(slot.entry)
+        if (slot.kind === 'pending') return send(slot.entry, false)
         this.assertSameSession(generation)
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
         this.assertSameSession(generation)
@@ -779,7 +790,7 @@ class CharterService {
           releaseNonce(ownerId, CHARTERS_CONTRACT_ID, created.reservation)
           throw new CharterActionError(NONCE_STORE_ERROR, 'refused')
         }
-        return send(created)
+        return send(created, true)
       })
       if (typeof second === 'string') return second
       sending = second
@@ -902,11 +913,12 @@ class CharterService {
   }
 
   /** Asks to join a proposal's team, with a message only its leader can read; resolves to the request's id. */
-  async requestToJoin(ownerId: string, submittedCharterId: string, message: string): Promise<string> {
+  async requestToJoin(ownerId: string, submittedCharterId: string, message: string, { session }: { session?: number } = {}): Promise<string> {
+    const generation = session ?? this.generation
     // Built (and its charter key asked for) only when a new request is signed: a request
     // already signed, maybe sent, is resent as it is, its message encrypted then.
     const data = async (): Promise<Record<string, unknown>> => {
-      const memberKey = await this.charterKey(ownerId, 'member', { create: true })
+      const memberKey = await this.charterKey(ownerId, 'member', { create: true, session: generation })
       try {
         const sdk = await getEvoSdk()
         const w = await wasmModule()
@@ -930,7 +942,7 @@ class CharterService {
     // The message tells a retry from an edited request: hashed, so its text is never stored.
     const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`yappr/join-request:${ownerId}:${submittedCharterId}:${message}`)))
     const fingerprint = `${submittedCharterId}:${bytesToBase64(digest)}`
-    return this.file('join', { ownerId, type: 'joinRequest', data, slot: submittedCharterId, fingerprint })
+    return this.file('join', { ownerId, type: 'joinRequest', data, slot: submittedCharterId, fingerprint, session: generation })
   }
 
   /**
@@ -939,9 +951,11 @@ class CharterService {
    * re-checks the election (window open, no seat, not applied, balance) right
    * before a new application is signed, after the key prompt and any wait
    * for another tab's write; a resend of one already signed skips it.
+   * `session` binds it to the action that began it (before its own reads).
    */
   async fileApplication(
-    ownerId: string, proposal: CharterProposal, targetContractId: string, members: readonly string[], stillEligible?: () => Promise<void>,
+    ownerId: string, proposal: CharterProposal, targetContractId: string, members: readonly string[],
+    { stillEligible, session }: { stillEligible?: () => Promise<void>; session?: number } = {},
   ): Promise<string> {
     const w = await wasmModule()
     const data = {
@@ -951,7 +965,7 @@ class CharterService {
     }
     // One application per target: a changed member list waits for an earlier try to resolve.
     return this.file('application', { ownerId, type: 'electedCharter', data: async () => data, slot: targetContractId,
-      fingerprint: `${proposal.id}:${[...members].sort().join(',')}`, targetContractId, fund: true, beforeSigning: stillEligible })
+      fingerprint: `${proposal.id}:${[...members].sort().join(',')}`, targetContractId, fund: true, beforeSigning: stillEligible, session })
   }
 
   /** Adds a member from the proposal's join requests to the seated team. */

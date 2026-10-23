@@ -96,7 +96,10 @@ export function ProposalView({ contract, proposalId, election }: {
   const [reasons, setReasons] = useState<CharterReason[] | null>(null)
   const [requests, setRequests] = useState<JoinRequest[] | null>(null)
   const [requestsFailed, setRequestsFailed] = useState(false)
-  const [messages, setMessages] = useState<Map<string, string | null> | null>(null)
+  // Decrypted join messages, kept only for the leader who unlocked them.
+  const [unlocked, setUnlocked] = useState<{ owner: string; texts: Map<string, string | null> } | null>(null)
+  // Signed out or switched account: the previous leader's plaintext goes at once.
+  useEffect(() => { setUnlocked(null) }, [me])
   const [members, setMembers] = useState<string[]>([])
   const [message, setMessage] = useState(DEFAULT_MESSAGE)
   const [confirmed, setConfirmed] = useState(false)
@@ -157,6 +160,7 @@ export function ProposalView({ contract, proposalId, election }: {
   const stage = status ? electionStage(status, now) : null
   const standing = status ? proposalStanding(proposal, status) : null
   const isLeader = me === proposal.leaderId
+  const messages = isLeader && unlocked && unlocked.owner === me ? unlocked.texts : null
   const myRequest = me ? requests?.find((r) => r.ownerId === me) ?? null : null
   const join = standing ? joinBlocker({ proposal, viewerId: me, alreadyAsked: myRequest !== null, standing }) : null
   const apply = status && stage ? applyBlocker({ stage, proposal, viewerId: me, status, members, requested, balance, minimumBalance: LEADER_MINIMUM_CREDITS }) : 'unknown'
@@ -174,17 +178,22 @@ export function ProposalView({ contract, proposalId, election }: {
     const problem = messageProblem(message)
     if (problem) throw new CharterActionError(problem, 'refused')
     if (proposal.targetContractId !== declared.contractId) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
-    await charterService.requestToJoin(me, proposal.id, message.trim() || DEFAULT_MESSAGE)
+    await charterService.requestToJoin(me, proposal.id, message.trim() || DEFAULT_MESSAGE, { session: charterService.session() })
     await loadRequests()
     return 'Your request is sent. The leader decides who is on the team.'
   })
 
   const readMessages = () => run('Unlocking messages…', 'join', async () => {
-    setMessages(await charterService.readJoinMessages(proposal.id, proposal.leaderId))
+    if (!me) return
+    const session = charterService.session()
+    const texts = await charterService.readJoinMessages(proposal.id, proposal.leaderId, { session })
+    setUnlocked({ owner: me, texts })
   })
 
   const fileApplication = () => runForOutcome('Filing your application…', 'application', async () => {
     if (!me) return
+    // Bound before its first read: leaving the page while it runs stops the application unsigned.
+    const session = charterService.session()
     // This tab's contract, and the proposal's own target: the deposit can only go to the contest shown.
     const target = declared.contractId
     if (!target || proposal.targetContractId !== target) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
@@ -199,7 +208,7 @@ export function ProposalView({ contract, proposalId, election }: {
     }
     await preflight()
     try {
-      await charterService.fileApplication(me, proposal, target, members, preflight)
+      await charterService.fileApplication(me, proposal, target, members, { stillEligible: preflight, session })
     } finally {
       recheckPending()
     }

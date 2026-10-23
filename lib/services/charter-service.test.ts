@@ -150,6 +150,25 @@ describe('an uncertain proposal', () => {
 })
 
 describe('a refusal', () => {
+  it("keeps an uncertain create when its resend is refused: the refusal speaks for a node now, not for the first send", async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    // Landed, but unreadable; a node behind on the funding refuses the replay.
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('insufficient balance'), { code: 40120 }))
+    builders.consumed.mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused' })
+    expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
+    expect(nonces.release).not.toHaveBeenCalled()
+    // Another try resends the same bytes, and signs nothing new.
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(3)
+  })
+
+
   it('drops the bytes on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
@@ -373,7 +392,7 @@ describe('a write queued behind another', () => {
 
   it('re-checks the election after the prompt and the wait, signing nothing once applications have closed', async () => {
     const closed = vi.fn(async () => { throw new CharterActionError('Applications have closed: masternodes are voting.', 'refused') })
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], closed)).rejects.toThrow('Applications have closed')
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: closed })).rejects.toThrow('Applications have closed')
     expect(closed).toHaveBeenCalledTimes(1)
     expect(builders.sign).not.toHaveBeenCalled()
   })
@@ -382,14 +401,14 @@ describe('a write queued behind another', () => {
     let closed = false
     hooks.onAwaitNonce = () => { closed = true }
     const eligible = vi.fn(async () => { if (closed) throw new CharterActionError('Applications have closed: masternodes are voting.', 'refused') })
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], eligible)).rejects.toThrow('Applications have closed')
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: eligible })).rejects.toThrow('Applications have closed')
     expect(builders.sign).not.toHaveBeenCalled()
   })
 
   it('refuses with nothing sent when the re-check cannot read the election', async () => {
     const offline = vi.fn(async () => { throw new Error('Request timed out') })
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], offline)).rejects.toMatchObject({ outcome: 'refused' })
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], offline)).rejects.toThrow('Nothing was sent')
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: offline })).rejects.toMatchObject({ outcome: 'refused' })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: offline })).rejects.toThrow('Nothing was sent')
     expect(builders.sign).not.toHaveBeenCalled()
   })
 
@@ -397,15 +416,43 @@ describe('a write queued behind another', () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
     const open = vi.fn(async () => undefined)
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], open)).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: open })).rejects.toMatchObject({ outcome: 'uncertain' })
     open.mockRejectedValue(new Error('should not be asked'))
-    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], open)).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: open })).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(open).toHaveBeenCalledTimes(1)
     expect(builders.sign).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('a session forgotten mid-write', () => {
+  it('signs no application whose action began in a session that ended during its first reads', async () => {
+    const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-s', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
+    // The page captured its session, then the leader left while the election was being read.
+    const session = charterService.session()
+    charterService.forgetKeys()
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-s', ['m1'], { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    await expect(charterService.requestToJoin(OWNER, 'p1', 'hello', { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+  })
+
+  it('hands back no decrypted join message once the leader session ends during decryption', async () => {
+    const charterKey = vi.spyOn(charterService, 'charterKey').mockImplementation(async () => new Uint8Array(32).fill(1))
+    const doc = { id: { toBase58: () => 'j1' }, ownerId: { toBase58: () => 'o1' }, toObject: () => ({ senderKeyId: 3 }), free: () => undefined }
+    Object.assign(sdk, {
+      contracts: { fetch: async () => ({ free: () => undefined }) },
+      moderationCharters: { joinRequests: async () => new Map([['j1', doc]]) },
+      encryptedFor: { decrypt: async () => { charterService.forgetKeys(); return new TextEncoder().encode('secret plan') } },
+    })
+    sdk.identities.fetch.mockResolvedValue({ publicKeys: [], getPublicKeyById: () => ({}) })
+    try {
+      const session = charterService.session()
+      await expect(charterService.readJoinMessages('p1', OWNER, { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    } finally {
+      charterKey.mockRestore()
+    }
+  })
+
   it('settles proof-only once the session is forgotten during the existence read', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
