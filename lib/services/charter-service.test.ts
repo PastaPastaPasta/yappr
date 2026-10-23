@@ -345,6 +345,15 @@ describe('join requests', () => {
   })
 })
 
+describe('a proposal', () => {
+  it('re-checks the seat right before it is signed, signing nothing once a team was seated', async () => {
+    const seated = vi.fn(async () => { throw new CharterActionError('Social already has a seated team, so new teams can\'t stand yet.', 'refused') })
+    await expect(charterService.submitProposal(OWNER, TERMS, seated)).rejects.toThrow('already has a seated team')
+    expect(seated).toHaveBeenCalledTimes(1)
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+})
+
 describe('a write queued behind another', () => {
   const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-q', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
 
@@ -403,6 +412,7 @@ describe('a session forgotten mid-write', () => {
     settle.mockResolvedValue(null)
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
     sdk.stateTransitions.broadcastAndWait.mockClear()
+    settle.mockClear()
     locks.mockClear()
     let release: () => void = () => undefined
     locks.mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
@@ -411,6 +421,8 @@ describe('a session forgotten mid-write', () => {
     charterService.forgetKeys()
     release()
     await expect(retry).rejects.toMatchObject({ outcome: 'cancelled' })
+    // Settling may rebroadcast the stored bytes: it is not even started.
+    expect(settle).not.toHaveBeenCalled()
     expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
     expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
   })
@@ -536,12 +548,31 @@ describe('a landed marker', () => {
     expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
   })
 
-  it('is treated as absent and dropped once 15 minutes old', async () => {
-    const marker = { landed: 'doc-old', fingerprint: JSON.stringify(TERMS), at: Date.now() - 16 * 60_000 }
-    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify(marker))
+  it('once older than 15 minutes answers the same proposal only on proof that it is still there, and never signs it twice', async () => {
+    const old = (fingerprint: string) => JSON.stringify({ landed: 'doc-old', fingerprint, at: Date.now() - 16 * 60_000 })
+    const same = JSON.stringify({ ...TERMS, reasonIds: [...TERMS.reasonIds] })
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), old(same))
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-old')
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(builders.exists).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ id: 'doc-old', type: 'submittedCharter', owner: OWNER }), expect.anything())
+    // A read that fails proves nothing: refused, nothing signed.
+    builders.exists.mockRejectedValueOnce(new Error('Quorum not found in cache'))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused' })
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+
+  it('once older than 15 minutes gives way to a different write, or to the same one proved gone', async () => {
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ landed: 'doc-old', fingerprint: 'other terms', at: Date.now() - 16 * 60_000 }))
     builders.exists.mockResolvedValue(true)
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
     expect(builders.sign).toHaveBeenCalledTimes(1)
+    // The same terms again, the earlier document proved gone: signed anew.
+    const same = JSON.stringify({ ...TERMS, reasonIds: [...TERMS.reasonIds] })
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ landed: 'doc-old', fingerprint: same, at: Date.now() - 16 * 60_000 }))
+    builders.exists.mockResolvedValueOnce(false).mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-2')
+    expect(builders.sign).toHaveBeenCalledTimes(2)
   })
 
   it('goes with the team change it marks when that change is undone, so the change made again is signed', async () => {

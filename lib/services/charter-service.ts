@@ -129,9 +129,12 @@ function savePendingCreate(key: string, entry: PendingCreate): boolean {
 }
 
 /**
- * What a slot holds for a while once its create is proved landed, in place of
- * the signed create: a retry from any tab, whose own read may still lag,
- * answers from it (filed, or filed in an earlier version) and signs nothing.
+ * What a slot holds once its create is proved landed, in place of the signed
+ * create: a retry from any tab, whose own read may still lag, answers from it
+ * (filed, or filed in an earlier version) and signs nothing. For
+ * {@link LANDED_TRUSTED_MS} it is trusted as is; after that a retry saying the
+ * same thing is answered only once the document is proved still there, and a
+ * write saying something else is a new one.
  */
 interface LandedCreate {
   landed: string
@@ -139,7 +142,12 @@ interface LandedCreate {
   at: number
 }
 
-const LANDED_KEPT_MS = 15 * 60_000
+const LANDED_TRUSTED_MS = 15 * 60_000
+
+const isRecent = (marker: LandedCreate) => {
+  const age = Date.now() - marker.at
+  return age >= 0 && age < LANDED_TRUSTED_MS
+}
 
 type StoredSlot = PendingCreate | LandedCreate
 
@@ -164,13 +172,12 @@ function storedReservationId(key: string): unknown {
 }
 
 /**
- * What the slot holds: a signed create, a recent landed marker, or null for
- * nothing (an expired marker is dropped when `dropExpired`, which only a
- * caller under the write lock asks for). A stored value that cannot be read
- * may still be a transition that lands, so it never reads as "none": the
- * write stops as uncertain instead of signing another.
+ * What the slot holds: a signed create, a landed marker, or null for nothing.
+ * A stored value that cannot be read may still be a transition that lands, so
+ * it never reads as "none": the write stops as uncertain instead of signing
+ * another.
  */
-function loadSlot(key: string, { dropExpired }: { dropExpired: boolean }): StoredSlot | null {
+function loadSlot(key: string): StoredSlot | null {
   let raw: string | null
   try {
     raw = localStorage.getItem(PENDING_PREFIX + key)
@@ -187,10 +194,7 @@ function loadSlot(key: string, { dropExpired }: { dropExpired: boolean }): Store
     } | LandedCreate
     if ('landed' in saved) {
       if (typeof saved.landed !== 'string' || typeof saved.fingerprint !== 'string' || typeof saved.at !== 'number') throw new Error('unexpected shape')
-      const age = Date.now() - saved.at
-      if (age >= 0 && age < LANDED_KEPT_MS) return saved
-      if (dropExpired) localStorage.removeItem(PENDING_PREFIX + key)
-      return null
+      return saved
     }
     if (typeof saved.signed?.id !== 'string' || typeof saved.signed.nonce !== 'string' || typeof saved.signed.bytes !== 'string'
       || typeof saved.fingerprint !== 'string' || typeof saved.reservation?.id !== 'string') throw new Error('unexpected shape')
@@ -655,11 +659,22 @@ class CharterService {
      */
     type Slot = { kind: 'landed'; id: string } | { kind: 'dead'; entry: PendingCreate } | { kind: 'empty' } | { kind: 'pending'; entry: PendingCreate }
     const resolveSlot = async (): Promise<Slot> => {
-      const stored = loadSlot(key, { dropExpired: true })
+      const stored = loadSlot(key)
       if (!stored) return { kind: 'empty' }
       if (isLanded(stored)) {
-        if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
-        return { kind: 'landed', id: stored.landed }
+        if (isRecent(stored)) {
+          if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
+          return { kind: 'landed', id: stored.landed }
+        }
+        // An older marker: the same write again is the filed one while it is proved there (proposals are
+        // never unique per target, so it is never signed twice on a guess); anything else is a new write.
+        if (stored.fingerprint === fingerprint) {
+          const there = await charterStepExists(w, sdk, { id: stored.landed, type, owner: ownerId }, targetContractId).catch(() => null)
+          if (there === true) return { kind: 'landed', id: stored.landed }
+          if (there === null) throw new CharterActionError("Your earlier filing couldn't be checked. Try again in a moment.", 'refused')
+        }
+        localStorage.removeItem(PENDING_PREFIX + key)
+        return { kind: 'empty' }
       }
       const outcome = await settle(stored.signed)
       if (outcome === 'landed') {
@@ -695,8 +710,10 @@ class CharterService {
       return entry
     }
 
-    // One lock for a resend; a new create first leaves it for its prompts, then takes it again.
+    // One lock for a resend; a new create first leaves it for its prompts, then takes it again. Settling
+    // can rebroadcast stored bytes, so a session forgotten while waiting for either lock settles nothing.
     const first = await lock(async () => {
+      this.assertSameSession(generation)
       const slot = await resolveSlot()
       if (slot.kind === 'landed') return slot.id
       return slot.kind === 'pending' ? send(slot.entry) : null
@@ -708,6 +725,7 @@ class CharterService {
       const fresh = { data: await input.data(), signing: await this.signingKey(ownerId) }
       const second = await lock(async () => {
         // Storage again: another tab may have signed, proved or dropped this slot meanwhile.
+        this.assertSameSession(generation)
         const slot = await resolveSlot()
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry)
@@ -773,7 +791,7 @@ class CharterService {
    */
   hasPendingApplication(ownerId: string, targetContractId: string): boolean {
     try {
-      const stored = loadSlot(`${ownerId}:electedCharter:${targetContractId}`, { dropExpired: false })
+      const stored = loadSlot(`${ownerId}:electedCharter:${targetContractId}`)
       return stored !== null && !isLanded(stored)
     } catch {
       // Unreadable: it may still go through, which is what this asks.
@@ -792,7 +810,7 @@ class CharterService {
     await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
       let stored: StoredSlot | null = null
       try {
-        stored = loadSlot(key, { dropExpired: true })
+        stored = loadSlot(key)
       } catch {
         // Unreadable: drop the raw value below all the same.
       }
@@ -836,14 +854,18 @@ class CharterService {
     }
   }
 
-  /** Files the proposal (`submittedCharter`); resolves to its id. */
+  /**
+   * Files the proposal (`submittedCharter`); resolves to its id. `stillOpen`
+   * re-checks that no team holds the seat right before a new proposal is
+   * signed (a resend of one already signed skips it).
+   */
   async submitProposal(ownerId: string, terms: {
     targetContractId: string
     description: string
     reasonIds: readonly string[]
     moderatorsShare: number
     rewardSplit: RewardSplit
-  }): Promise<string> {
+  }, stillOpen?: () => Promise<void>): Promise<string> {
     const w = await wasmModule()
     const data = {
       targetContractId: charterIdBytes(w, terms.targetContractId),
@@ -853,7 +875,7 @@ class CharterService {
       rewardSplit: { ...terms.rewardSplit },
     }
     const fingerprint = JSON.stringify({ ...terms, reasonIds: [...terms.reasonIds] })
-    return this.file('proposal', { ownerId, type: 'submittedCharter', data: async () => data, slot: terms.targetContractId, fingerprint })
+    return this.file('proposal', { ownerId, type: 'submittedCharter', data: async () => data, slot: terms.targetContractId, fingerprint, beforeSigning: stillOpen })
   }
 
   /** Asks to join a proposal's team, with a message only its leader can read; resolves to the request's id. */
@@ -965,7 +987,7 @@ class CharterService {
       // Once the delete was sent, whatever its outcome: a stale "filed" is worse than a refused duplicate.
       if (sent) await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
         try {
-          const stored = loadSlot(key, { dropExpired: true })
+          const stored = loadSlot(key)
           if (stored && isLanded(stored) && stored.landed === documentId) localStorage.removeItem(PENDING_PREFIX + key)
         } catch {
           // Storage blocked or unreadable: nothing of ours to drop.

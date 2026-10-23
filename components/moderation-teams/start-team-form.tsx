@@ -14,7 +14,8 @@ import { moderationElectionService, type CharterReason, type ElectionStatus } fr
 import { charterService } from '@/lib/services/charter-service'
 import { CHARTER_LIMITS, DEFAULT_MODERATORS_SHARE, DEFAULT_REWARD_SPLIT, charterTermsProblems, reasonProblem, utf8Bytes, type ReasonDraft, type RewardSplit } from '@/lib/moderation-charters/rules.mjs'
 import { DEPOSIT_TEXT, startCostLines } from '@/lib/moderation-charters/costs'
-import { electionStage } from '@/lib/moderation-charters/team-flow'
+import { chainOffsetMs, electionStage, statusForContract } from '@/lib/moderation-charters/team-flow'
+import { CharterActionError } from '@/lib/moderation-charters/refusals'
 import { inviteUrl, teamsHref } from '@/lib/moderation-charters/links'
 import { CostPreview, FieldError, Hint, InviteLink, Notice, ReasonCode, Section, useAccountReadiness, useChainNow, useCharterRun, useCreateFees } from './shared'
 
@@ -151,13 +152,23 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
         setSelected((ids) => [...ids, id])
       }
       setBusy('Filing your proposal…')
+      const target = declared.contractId
+      // Read again right before a new proposal is signed: a team may have been seated while this was filled in.
+      const stillOpen = async () => {
+        const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
+        if (!fresh) throw new CharterActionError("The election couldn't be read. Refresh, then try again.", 'refused')
+        const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
+        if (freshStage.kind === 'seated' || freshStage.kind === 'deciding') {
+          throw new CharterActionError(`${declared.label} already has a seated team, so new teams can't stand yet.`, 'refused')
+        }
+      }
       return charterService.submitProposal(me, {
-        targetContractId: declared.contractId,
+        targetContractId: target,
         description,
         reasonIds,
         moderatorsShare: share,
         rewardSplit: split,
-      })
+      }, stillOpen)
     })
     if (proposalId) setFiled(proposalId)
   }
