@@ -402,7 +402,11 @@ function PostCardView({
   )
 
   const [showLikesModal, setShowLikesModal] = useState(false)
-  const { setReplyingTo, setComposeOpen, setQuotingPost } = useAppStore()
+  // Selectors, not the whole store: the actions never change, whereas the
+  // draft's state changes on every keystroke, and every mounted card would re-render with it.
+  const setReplyingTo = useAppStore((s) => s.setReplyingTo)
+  const setComposeOpen = useAppStore((s) => s.setComposeOpen)
+  const setQuotingPost = useAppStore((s) => s.setQuotingPost)
   const { open: openTipModal } = useTipModal()
   const { open: openRecoveryModal } = useRecoveryModal()
   const { open: openDeleteModal } = useDeleteConfirmationModal()

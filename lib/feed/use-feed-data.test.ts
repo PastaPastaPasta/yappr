@@ -7,7 +7,7 @@ type Update = Post[] | null | ((current: Post[] | null) => Post[] | null);
 const mocks = vi.hoisted(() => ({
   effects: [] as EffectCallback[], state: [] as unknown[], slot: 0, refs: [] as { current: unknown }[], refSlot: 0,
   cached: vi.fn(), cacheSet: vi.fn(), enrich: vi.fn(), load: vi.fn(), setData: vi.fn(), setLoading: vi.fn(),
-  polling: vi.fn(), followingIds: vi.fn(), queryFollowing: vi.fn(),
+  polling: vi.fn(), followingIds: vi.fn(), queryFollowing: vi.fn(), loadFollowing: vi.fn(),
 }));
 // Exercise the real hook's callbacks with deterministic deferred service results.
 // React state rendering is separate; capture effects, observe the data setter and
@@ -45,7 +45,7 @@ vi.mock('@/hooks/use-progressive-enrichment', () => ({ useProgressiveEnrichment:
 }) }));
 vi.mock('@/lib/feed/enrich-posts', () => ({ enrichPostsWithRepostsAndQuotes: mocks.enrich }));
 vi.mock('@/lib/feed/load-for-you-feed', () => ({ loadForYouFeed: mocks.load }));
-vi.mock('@/lib/feed/load-following-feed', () => ({ loadFollowingFeed: vi.fn() }));
+vi.mock('@/lib/feed/load-following-feed', () => ({ loadFollowingFeed: mocks.loadFollowing }));
 vi.mock('@/lib/services', () => ({ followService: { getFollowingIdsCached: mocks.followingIds }, postService: {} }));
 vi.mock('@/lib/services/document-service', () => ({ queryPostsByOwnersSince: mocks.queryFollowing, queryPostsSince: vi.fn() }));
 vi.mock('@/lib/poll-scheduling', () => ({ startVisibilityPolling: mocks.polling }));
@@ -92,7 +92,7 @@ beforeEach(() => {
   cleanups = [];
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   mocks.setData.mockImplementation((update: Update) => { current = typeof update === 'function' ? update(current) : update; });
-  mocks.cached.mockReturnValue({ posts: [cachedPost], cursor: cachedPost.id, hasMore: false });
+  mocks.cached.mockReturnValue({ posts: [cachedPost], hasMore: false, token: { kind: 'cursor', cursor: cachedPost.id } });
   // Every call gets its own deferred so a later load's enrichment cannot be
   // completed by resolving the cached page's; `complete` is always the first.
   const resolvers: ((posts: Post[]) => void)[] = [];
@@ -107,7 +107,7 @@ afterEach(() => { cleanups.forEach(cleanup => cleanup()); vi.unstubAllGlobals();
 describe('following-feed poll failures', () => {
   it('keeps partial posts and the retry watermark while rejecting to the backoff scheduler', async () => {
     const cached = { ...cachedPost, createdAt: new Date(100_000) };
-    mocks.cached.mockReturnValue({ posts: [cached], cursor: cached.id, hasMore: false });
+    mocks.cached.mockReturnValue({ posts: [cached], hasMore: false, token: { kind: 'window', window: null } });
     mount(true, 'following');
     // The cached mount sets the timestamp; React's next render arms the poll.
     mocks.effects.length = 0;
@@ -201,7 +201,7 @@ describe('feed page load lifetime', () => {
   });
 
   it('does not append a loadMore page that lands after a refresh', async () => {
-    mocks.cached.mockReturnValueOnce({ posts: [cachedPost], cursor: cachedPost.id, hasMore: true });
+    mocks.cached.mockReturnValueOnce({ posts: [cachedPost], hasMore: true, token: { kind: 'cursor', cursor: cachedPost.id } });
     mount();
     const resolvePage = deferredPage();
     const loadingMore = render().loadMore();
@@ -219,5 +219,56 @@ describe('feed page load lifetime', () => {
     mount(false);
     expect(mocks.setLoading).toHaveBeenCalledWith(false);
     expect(mocks.load).not.toHaveBeenCalled();
+  });
+});
+
+describe('Following feed cache revisit', () => {
+  const nextWindow = { start: new Date('2026-10-20T00:00:00Z'), end: new Date('2026-10-21T00:00:00Z'), windowHours: 24 };
+  const olderPost = transformRawPost({ $id: 'post00000004', $ownerId: 'owner0000004', $createdAt: 400, content: 'older' });
+
+  it('keeps the next window with the page it caches', async () => {
+    mocks.cached.mockReturnValue(undefined);
+    mocks.loadFollowing.mockImplementation(async (options: { onBatchReady: (posts: Post[], window: unknown, hasMore: boolean) => void }) => {
+      options.onBatchReady([freshPost], nextWindow, true);
+    });
+    mount(true, 'following');
+    await settle();
+    expect(mocks.cacheSet).toHaveBeenCalledWith('feed', 'feed_following_viewer', {
+      posts: [freshPost], hasMore: true, token: { kind: 'window', window: nextWindow },
+    });
+  });
+
+  it('continues from the cached window when Following is revisited, then loads more', async () => {
+    mocks.cached.mockReturnValue({ posts: [cachedPost], hasMore: true, token: { kind: 'window', window: nextWindow } });
+    mocks.loadFollowing.mockImplementation(async (options: { onBatchReady: (posts: Post[], window: unknown, hasMore: boolean) => void }) => {
+      options.onBatchReady([olderPost], null, false);
+    });
+    mount(true, 'following');
+    expect(mocks.loadFollowing).not.toHaveBeenCalled();
+    const feed = render(true, 'following');
+    expect(feed.hasMore).toBe(true);
+    await feed.loadMore();
+    expect(mocks.loadFollowing).toHaveBeenCalledTimes(1);
+    expect(mocks.loadFollowing).toHaveBeenCalledWith(expect.objectContaining({ timeWindow: nextWindow }));
+    expect(current?.map(post => post.id)).toEqual([cachedPost.id, olderPost.id]);
+  });
+
+  it('reloads instead of restoring a cached page that cannot continue', async () => {
+    mocks.loadFollowing.mockImplementation(async (options: { onBatchReady: (posts: Post[], window: unknown, hasMore: boolean) => void }) => {
+      options.onBatchReady([freshPost], null, false);
+    });
+    // The pre-token shape, and a Following page that claims more without a window.
+    for (const stale of [
+      { posts: [cachedPost], cursor: null, hasMore: true },
+      { posts: [cachedPost], hasMore: true, token: { kind: 'window', window: null } },
+    ]) {
+      mocks.effects.length = 0;
+      mocks.loadFollowing.mockClear();
+      mocks.cached.mockReturnValue(stale);
+      mount(true, 'following');
+      await settle();
+      expect(mocks.loadFollowing).toHaveBeenCalledTimes(1);
+      cleanups.forEach(cleanup => cleanup());
+    }
   });
 });

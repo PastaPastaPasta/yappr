@@ -367,48 +367,64 @@ export abstract class BaseDocumentService<T> {
    * One read for every queued id. A lone id is a plain by-id fetch; several
    * are one proved `$id in` query per 100 ids, where an id missing from the
    * result is Platform proving the document absent, as a by-id fetch would.
-   * Should that query fail, each id falls back to its own fetch, so every
-   * caller still gets its own answer or its own error.
+   * Should a query fail, only the ids it covered fall back to their own
+   * fetches (a few at a time, never the whole batch at once), so every caller
+   * still gets its own answer or its own error, and chunks that were read are
+   * not read again.
    */
   private readQueued(queued: Map<string, ReadWaiter<T>[]>): void {
-    const settle = (id: string, read: Promise<T | null>) => {
-      read.then(
-        (value) => queued.get(id)?.forEach((waiter) => waiter.resolve(value)),
-        (error: unknown) => queued.get(id)?.forEach((waiter) => waiter.reject(error))
-      );
-    };
+    const answer = (id: string, value: T | null) => queued.get(id)?.forEach((waiter) => waiter.resolve(value));
+    const settle = (id: string, read: Promise<T | null>): Promise<void> => read.then(
+      (value) => answer(id, value),
+      (error: unknown) => queued.get(id)?.forEach((waiter) => waiter.reject(error))
+    );
     const ids = Array.from(queued.keys());
     if (ids.length === 1) {
-      settle(ids[0], this.fetchOne(ids[0]));
+      settle(ids[0], this.fetchOne(ids[0])).catch((error: unknown) => logger.error('getOrThrow: failed to answer a read:', error));
       return;
     }
     const batch = this.cache.fencedRead(async (fill) => {
       const sdk = await getEvoSdk();
       const found = new Map<string, T>();
+      // The ids of the chunks whose query failed: they, and only they, are read one by one.
+      const unread: string[] = [];
       await mapLimit(chunk(ids, MAX_IN_CLAUSE_VALUES), 2, async (part) => {
-        const rawDocuments = await queryDocuments(sdk, {
-          dataContractId: this.contractId,
-          documentTypeName: this.documentType,
-          where: [['$id', 'in', part]],
-          limit: part.length,
-        });
-        for (const doc of rawDocuments) {
-          const id = doc.$id as string | undefined;
-          if (!id) continue;
-          const transformed = this.transformDocument(doc);
-          fill(id, transformed);
-          found.set(id, transformed);
+        try {
+          const rawDocuments = await queryDocuments(sdk, {
+            dataContractId: this.contractId,
+            documentTypeName: this.documentType,
+            where: [['$id', 'in', part]],
+            limit: part.length,
+          });
+          for (const doc of rawDocuments) {
+            const id = doc.$id as string | undefined;
+            if (!id) continue;
+            const transformed = this.transformDocument(doc);
+            fill(id, transformed);
+            found.set(id, transformed);
+          }
+        } catch (error) {
+          logger.warn(`getOrThrow: batched $id-in ${this.documentType} read of ${part.length} ids failed, falling back to per-id fetches:`, error);
+          unread.push(...part);
         }
       });
-      return found;
+      return { found, unread };
     });
-    const recovered = batch.catch((error: unknown) => {
-      logger.warn(`getOrThrow: batched $id-in ${this.documentType} read failed, falling back to per-id fetches:`, error);
-      return null;
-    });
-    for (const id of ids) {
-      settle(id, recovered.then((found) => (found ? found.get(id) ?? null : this.fetchOne(id))));
-    }
+    batch
+      .catch((error: unknown) => {
+        logger.warn(`getOrThrow: batched $id-in ${this.documentType} read failed, falling back to per-id fetches:`, error);
+        return { found: new Map<string, T>(), unread: ids };
+      })
+      .then(({ found, unread }) => {
+        const unreadIds = new Set(unread);
+        for (const id of ids) {
+          // A read chunk's missing id is Platform proving the document absent.
+          if (!unreadIds.has(id)) answer(id, found.get(id) ?? null);
+        }
+        // The same bound as getMany's fallback, so a failing gateway is not also asked for every id at once.
+        return mapLimit(unread, 5, (id) => settle(id, this.fetchOne(id)));
+      })
+      .catch((error: unknown) => logger.error(`getOrThrow: failed to answer ${this.documentType} reads:`, error));
   }
 
   /** One document by id, cached unless invalidated while the read was out. */

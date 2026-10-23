@@ -8,6 +8,7 @@ import { cacheManager } from '@/lib/cache-manager';
 import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
+import { readCachedFeedPage, type CachedFeedPage, type FeedPageToken } from '@/lib/feed/feed-page-cache';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, mergeFeedItems, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
@@ -29,13 +30,6 @@ interface UseFeedDataOptions {
   activeTab: FeedTab;
   feedLanguage?: string;
   enabled?: boolean;
-}
-
-/** The first page as cached: its posts plus the pagination state that goes with them. */
-interface CachedFeedPage {
-  posts: Post[];
-  cursor: string | null;
-  hasMore: boolean;
 }
 
 interface FeedLoadPagination {
@@ -92,8 +86,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const shownFeedRef = useRef<{ tab: FeedTab; loadPosts: unknown } | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [lastPostId, setLastPostId] = useState<string | null>(null);
-  const [followingNextWindow, setFollowingNextWindow] = useState<FollowingFeedWindow | null>(null);
+  // Where the next page starts: an id for For You, a time window for Following.
+  const [pageToken, setPageToken] = useState<FeedPageToken | null>(null);
   const [pendingNewPosts, setPendingNewPosts] = useState<Post[]>([]);
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null);
   // Late page/background results belong to the feed view that requested them.
@@ -268,19 +262,20 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
             : `feed_for_you_${feedLanguage || 'all'}`;
 
         if (!forceRefresh && !isPaginating) {
-          const cached = cacheManager.get<CachedFeedPage>('feed', cacheKey);
+          const cached = readCachedFeedPage(
+            cacheManager.get<CachedFeedPage>('feed', cacheKey),
+            activeTab === 'following' ? 'window' : 'cursor'
+          );
           if (cached) {
             logger.debug('Feed: Using cached data');
             setData(cached.posts);
             setLoading(false);
 
             if (cached.posts.length > 0) {
-              // The raw cursor and hasMore are cached with the page: a first
-              // page thinned by tombstones is shorter than the page size and
-              // its last live post is not where the timeline left off.
-              if (cached.cursor) {
-                setLastPostId(cached.cursor);
-              }
+              // The token and hasMore are cached with the page: a first page
+              // thinned by tombstones is shorter than the page size and its
+              // last live post is not where the timeline left off.
+              setPageToken(cached.token);
               setHasMore(cached.hasMore);
               const newestTimestamp = Math.max(...cached.posts.map(getFeedItemTimestamp));
               setNewestPostTimestamp(newestTimestamp);
@@ -294,7 +289,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         }
 
         let posts: Post[] = [];
-        let cursor: string | null = null;
+        let nextToken: FeedPageToken;
         let pageHasMore = false;
         // Enrichment that arrived with the posts (composite For You pages).
         let forYouPreloaded: PreloadedEnrichment | undefined;
@@ -318,7 +313,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
           if (!isCurrent()) return;
 
           pageHasMore = followingHasMore;
-          setFollowingNextWindow(followingCursor);
+          nextToken = { kind: 'window', window: followingCursor };
+          setPageToken(nextToken);
           setHasMore(pageHasMore);
 
           if (followingPosts.length === 0) {
@@ -342,11 +338,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
           posts = forYouResult.posts;
           forYouPreloaded = forYouResult.preloaded;
-          cursor = forYouResult.cursor;
+          nextToken = { kind: 'cursor', cursor: forYouResult.cursor };
           pageHasMore = forYouResult.hasMore;
 
-          if (cursor) {
-            setLastPostId(cursor);
+          if (forYouResult.cursor) {
+            setPageToken(nextToken);
           }
           setHasMore(pageHasMore);
 
@@ -389,7 +385,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         }
 
         if (!isPaginating && sortedPosts.length > 0) {
-          cacheManager.set<CachedFeedPage>('feed', cacheKey, { posts: sortedPosts, cursor, hasMore: pageHasMore });
+          cacheManager.set<CachedFeedPage>('feed', cacheKey, { posts: sortedPosts, hasMore: pageHasMore, token: nextToken });
         }
       } catch (error) {
         if (!isCurrent()) return;
@@ -409,24 +405,20 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const loadMore = useCallback(async () => {
     if (isLoadingMore || !hasMore) return;
 
-    if (activeTab === 'following') {
-      if (!followingNextWindow) return;
-    } else if (!lastPostId) {
-      return;
-    }
+    const pagination: FeedLoadPagination | null =
+      activeTab === 'following'
+        ? pageToken?.kind === 'window' && pageToken.window ? { timeWindow: pageToken.window } : null
+        : pageToken?.kind === 'cursor' && pageToken.cursor ? { startAfter: pageToken.cursor } : null;
+    if (!pagination) return;
 
     const generation = loadGenerationRef.current;
     setIsLoadingMore(true);
     try {
-      if (activeTab === 'following' && followingNextWindow) {
-        await loadPosts(false, { timeWindow: followingNextWindow });
-      } else if (lastPostId) {
-        await loadPosts(false, { startAfter: lastPostId });
-      }
+      await loadPosts(false, pagination);
     } finally {
       if (generation === loadGenerationRef.current) setIsLoadingMore(false);
     }
-  }, [activeTab, followingNextWindow, hasMore, isLoadingMore, lastPostId, loadPosts]);
+  }, [activeTab, hasMore, isLoadingMore, loadPosts, pageToken]);
 
   const checkForNewPosts = useCallback(async () => {
     if (!newestPostTimestamp || isLoading) return;
@@ -584,8 +576,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     shownFeedRef.current = { tab: activeTab, loadPosts };
     resetEnrichment();
     setData(null);
-    setLastPostId(null);
-    setFollowingNextWindow(null);
+    setPageToken(null);
     setIsLoadingMore(false);
     setHasMore(true);
     setPendingNewPosts([]);
