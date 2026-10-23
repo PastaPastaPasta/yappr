@@ -28,7 +28,17 @@ YAPPR_SAKURA_IDENTITIES=<identities.json> E2E_PERSONA=97 E2E_PEER_PERSONA=98 \
 
 # A release build (no Metro): leave out --metro-port
 mobile/e2e/run.sh --platform ios --device <udid> --suite smoke
+
+# The staging release build (APP_VARIANT=staging-testnet, mobile/RELEASE.md): smoke only
+mobile/e2e/run.sh --platform ios --device <udid> --variant staging-testnet --suite smoke
 ```
+
+`--variant` is `devnet` (the default), `staging-testnet`, `testnet` or
+`production`; it picks the installed app's id and URL scheme, and
+`mobile/app/src/__tests__/e2e-variants.test.ts` keeps that table equal to
+`mobile/app/src/variants.ts`. Every variant except devnet runs on public
+fixtures (a name prefix, a hashtag), so only `smoke` applies to them: `full`
+writes, and only ever to sakura.
 
 `run.sh --help` lists every option. The full suite also needs `npm ci` in the
 repo root, `mobile/engine` and `mobile/tools`. It starts:
