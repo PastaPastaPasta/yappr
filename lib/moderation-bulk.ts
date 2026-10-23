@@ -367,7 +367,12 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     const still: BulkItem[] = []
     for (const item of asked) {
       if (read.changed.has(item.id)) fail(item, CHANGED_ERROR, false)
-      else if (!read.todo.has(item.id)) markDone(item, { marks: read.marks?.get(item.id) ?? null })
+      else if (!read.todo.has(item.id)) {
+        // Announced with what the read holds; a document the read did not find (gone) is counted, not announced.
+        const marks = read.marks?.get(item.id)
+        if (marks === undefined) progress.done++
+        else markDone(item, { marks })
+      }
       else if (stillError) fail(item, stillError)
       else still.push(item)
     }

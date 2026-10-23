@@ -1445,7 +1445,12 @@ class ModerationService {
         fields,
         ...(reason === undefined ? {} : { reason: reasonOf(reason) }),
       }), guarded);
-      [changed] = normalizeSDKResponse(document);
+      // Only to order the change against later reads: a document that cannot be read leaves the change as done.
+      try {
+        [changed] = normalizeSDKResponse(document);
+      } catch (error) {
+        logger.warn('moderationService: could not read the changed document', error);
+      }
     }, undefined, reason, heldAuth);
     const result: ModerationResult = refused && !answer.success
       ? { success: false, error: 'Not sent: it changed since it was read.', errorCode: 'PRECONDITION_FAILED' }

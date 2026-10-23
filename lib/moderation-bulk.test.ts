@@ -137,7 +137,12 @@ describe('runBulk', () => {
     const todo: Pending = pending ?? (async (asked) => new Set(asked.map((i) => i.id)))
     return {
       apply: vi.fn<Apply>(apply ?? (async () => ok)),
-      pending: vi.fn(async (asked: readonly BulkItem[]): Promise<BulkChainRead> => ({ todo: await todo(asked), changed: new Set(changed) })),
+      // Every document read is found; those neither to do nor changed read as listed (no marks).
+      pending: vi.fn(async (asked: readonly BulkItem[]): Promise<BulkChainRead> => {
+        const still = await todo(asked)
+        const done = asked.filter((i) => !still.has(i.id) && !changed.includes(i.id))
+        return { todo: still, changed: new Set(changed), marks: new Map(done.map((i) => [i.id, null])) }
+      }),
       onDone: vi.fn<(item: BulkItem, change: BulkChange) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
       ...(recheck ? { recheck: vi.fn(recheck) } : {}),
@@ -162,6 +167,14 @@ describe('runBulk', () => {
     expect(summary.done).toBe(3)
     // Every confirmed one reaches the cards on screen: a and b with what the read holds, c as this run asked.
     expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { marks: null }], ['b', { marks: null }], ['c', {}]])
+  })
+
+  it('counts a document the read no longer finds, without announcing it', async () => {
+    const d = deps()
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(), marks: new Map() }))
+    const summary = await runBulk([items[0]], d)
+    expect(summary.done).toBe(1)
+    expect(d.onDone).not.toHaveBeenCalled()
   })
 
   it('never counts a document that changed some other way as done', async () => {
