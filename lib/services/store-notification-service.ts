@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
-import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID } from '../constants';
+import type { LanePin } from '@/lib/contract-topology';
+import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, lanePinOrderBy, storefrontListingsCarryModLane, storefrontModPin } from '../constants';
 import type { StoreNotificationDetail, StoreNotificationType } from '../../types';
 import { isOrderStatus } from '../storefront/store-notification-copy';
 import { queryDocumentBundle } from './document-query-bundle';
@@ -24,9 +25,10 @@ export interface RawStoreNotification {
 const PAGE = 100;
 /**
  * Rows per single-key source and fetch: a busier window keeps its newest
- * rows. An `in` read (item reviews) has no cap: it walks item by item, so a
- * cut would drop the last items' rows whatever their age, and the
- * watermark would then pass them.
+ * rows. An `in` read (item reviews up to storefront v10) has no cap: it walks
+ * item by item, so a cut would drop the last items' rows whatever their age,
+ * and the watermark would then pass them. (On v11 each item is a single-key
+ * source of its own.)
  */
 const MAX_PER_SOURCE = 1000;
 /** How often to look again for the store of a user who had none. */
@@ -91,19 +93,44 @@ export function deriveStoreNotifications(docs: StoreNotificationDocuments, itemT
  * A `[key, $createdAt]` source's rows after `after`, newest first (as every
  * notification source walks). An `in` key is ordered descending too: a
  * composite refuses a sibling whose `in` walks against the page's direction.
+ * `lane` is the moderator lane a laned listing pins between its key and
+ * `$createdAt` (storefront v11's `[storeId|itemId, mod, $createdAt]`); it is
+ * an equality, so its order direction does not change the walk.
  */
-function sinceQuery(documentTypeName: string, field: string, operator: '==' | 'in', value: string | string[], after: number): QueryDocumentsOptions {
+function sinceQuery(documentTypeName: string, field: string, operator: '==' | 'in', value: string | string[], after: number, lane: readonly LanePin[] = []): QueryDocumentsOptions {
   return {
     dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
     documentTypeName,
-    where: [[field, operator, value], ['$createdAt', '>', after]],
-    orderBy: [[field, operator === 'in' ? 'desc' : 'asc'], ['$createdAt', 'desc']],
+    where: [[field, operator, value], ...lane, ['$createdAt', '>', after]],
+    orderBy: [[field, operator === 'in' ? 'desc' : 'asc'], ...lanePinOrderBy(lane), ['$createdAt', 'desc']],
     limit: PAGE,
   };
 }
 
-const itemReviewQueries = (itemIds: string[], after: number) =>
-  chunk(itemIds, MAX_IN_CLAUSE_VALUES).map(batch => sinceQuery(ITEM_REVIEW, 'itemId', 'in', batch, after));
+/**
+ * The laned sources (store items, store reviews, item reviews) read the
+ * listed lane, `mod == null` on storefront v11 (nothing before): a seller is
+ * told of the reviews their store page shows, and a review a moderator hid
+ * (or put on legal hold) does not notify, as it does not show there. An
+ * archival build, or a seated moderator's view, fans the same read out to
+ * every lane at the SDK (lib/services/sdk-lane-fanout.ts), as it does the
+ * store page's. Orders and status updates carry no lane.
+ */
+const listedSinceQuery = (documentTypeName: string, field: string, value: string, after: number) =>
+  sinceQuery(documentTypeName, field, '==', value, after, storefrontModPin());
+
+/**
+ * The reviews of these items since `after`. Up to v10 one `in` read per 100
+ * items walks `itemReviews [itemId, $createdAt]`. v11's `[itemId, mod,
+ * $createdAt]` puts the lane after the item, and Drive serves an `in` only
+ * after the index's equalities (docs/SOCIAL_V18.md "Reading the lanes": read
+ * one lane at a time elsewhere), so each item is read on its own, in the
+ * listed lane; the bundle still sends them a composite at a time.
+ */
+function itemReviewQueries(itemIds: string[], after: number): QueryDocumentsOptions[] {
+  if (storefrontListingsCarryModLane()) return itemIds.map(id => listedSinceQuery(ITEM_REVIEW, 'itemId', id, after));
+  return chunk(itemIds, MAX_IN_CLAUSE_VALUES).map(batch => sinceQuery(ITEM_REVIEW, 'itemId', 'in', batch, after));
+}
 
 /** A store's items: their titles, and the newest one's creation time (chain time). */
 interface StoreItems {
@@ -118,6 +145,9 @@ interface StoreItems {
  *   $createdAt]`), reviews of it (`storeReviews [storeId, $createdAt]`) and
  *   of its items (`itemReviews [itemId, $createdAt]`, an `in` over the
  *   store's items, kept current by `storeAndTime [storeId, $createdAt]`);
+ *   on storefront v11 the last three are `[key, mod, $createdAt]` and read
+ *   the listed lane ({@link listedSinceQuery}), item reviews one item a read
+ *   ({@link itemReviewQueries});
  * - for a buyer, status changes on their orders (`buyerFeed
  *   [orderId.$ownerId, $createdAt]`).
  * One bundle a poll (the buyer feed, and a seller's sources); a full page
@@ -189,9 +219,9 @@ class StoreNotificationService {
     const queries = [
       ...(buyerFeed ? [buyerFeed] : []),
       sinceQuery(STORE_ORDER, 'storeId', '==', storeId, after),
-      sinceQuery(STORE_REVIEW, 'storeId', '==', storeId, after),
+      listedSinceQuery(STORE_REVIEW, 'storeId', storeId, after),
       ...(items ? [
-        sinceQuery(STORE_ITEM, 'storeId', '==', storeId, items.newestAt),
+        listedSinceQuery(STORE_ITEM, 'storeId', storeId, items.newestAt),
         ...itemReviewQueries([...items.titles.keys()], after),
       ] : []),
     ];
