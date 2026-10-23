@@ -35,9 +35,9 @@ describe('orders copy the store status on storefront v5-v7 (QA D-25)', () => {
     vi.resetModules();
     vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
     const { storeOrderService: service } = await import('./store-order-service');
-    const create = vi.spyOn(service, 'create' as never).mockResolvedValue({} as never);
+    const create = vi.spyOn(service, 'createOutcome').mockResolvedValue({ status: 'confirmed', document: {} as never });
     await service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) });
-    return (create.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+    return create.mock.calls[0][1] as Record<string, unknown>;
   };
 
   it('writes storeStatus active on v5 through v7, and nothing new before it', async () => {
@@ -52,27 +52,40 @@ describe('orders copy the store status on storefront v5-v7 (QA D-25)', () => {
 });
 
 describe('an order at a store that stopped taking orders (storefront v8)', () => {
-  const place = async (topology: string, error: Error) => {
+  const place = async (topology: string, error: string) => {
     vi.resetModules();
     vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
     const { storeOrderService: service } = await import('./store-order-service');
-    vi.spyOn(service, 'create' as never).mockRejectedValue(error as never);
+    vi.spyOn(service, 'createOutcome').mockResolvedValue({ status: 'failed', error });
     return service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) });
   };
 
   it('maps the 40127 of the store status condition to the closed-store copy', async () => {
     const statusMismatch = 'state error (code=40127): the document\'s {"const":"active"} does not agree with the referenced document\'s status (where on storeId)';
-    await expect(place('v8', new Error(statusMismatch))).rejects.toThrow("This store isn't taking orders right now.");
+    expect(await place('v8', statusMismatch)).toEqual({ status: 'failed', error: "This store isn't taking orders right now." });
   });
 
   it('keeps a 40127 on the seller agreement as it is', async () => {
     const sellerMismatch = 'state error (code=40127): the document\'s sellerId does not agree with the referenced document\'s $ownerId (where on storeId)';
-    await expect(place('v8', new Error(sellerMismatch))).rejects.toThrow(sellerMismatch);
+    expect(await place('v8', sellerMismatch)).toEqual({ status: 'failed', error: sellerMismatch });
   });
 
   it('leaves other failures, and every earlier cut, untouched', async () => {
-    await expect(place('v8', new Error('offline'))).rejects.toThrow('offline');
-    await expect(place('v7', new Error('refused (code=40127)'))).rejects.toThrow('refused (code=40127)');
+    expect(await place('v8', 'offline')).toEqual({ status: 'failed', error: 'offline' });
+    expect(await place('v7', 'refused (code=40127)')).toEqual({ status: 'failed', error: 'refused (code=40127)' });
+  });
+});
+
+describe('an order whose outcome is not proved (WARCH-1)', () => {
+  it('comes back pending with its receipt, and passes the recovery hooks through to the create', async () => {
+    vi.resetModules();
+    const { storeOrderService: service } = await import('./store-order-service');
+    const receipt = { contractId: 'c', documentType: 'storeOrder', ownerId: 'b', documentId: 'o1', nonce: BigInt(7), transition: new Uint8Array([1]) };
+    const create = vi.spyOn(service, 'createOutcome').mockResolvedValue({ status: 'pending', document: {} as never, receipt });
+    const beforeBroadcast = vi.fn();
+    const outcome = await service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) }, { beforeBroadcast, replacesNonce: BigInt(7) });
+    expect(outcome).toEqual({ status: 'pending', document: {}, receipt });
+    expect(create.mock.calls[0][2]).toEqual({ beforeBroadcast, replacesNonce: BigInt(7) });
   });
 });
 
@@ -104,17 +117,17 @@ describe('storefront v6 (the mainnet re-cut)', () => {
   });
 
   it('refuses an order from your own store before signing', async () => {
-    const create = vi.spyOn(storeOrderService, 'create' as never).mockResolvedValue({} as never);
-    await expect(storeOrderService.createOrder(seller, { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) }))
-      .rejects.toThrow(/your own store/);
+    const create = vi.spyOn(storeOrderService, 'createOutcome').mockResolvedValue({ status: 'confirmed', document: {} as never });
+    expect(await storeOrderService.createOrder(seller, { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) }))
+      .toMatchObject({ status: 'failed', error: expect.stringMatching(/your own store/) });
     expect(create).not.toHaveBeenCalled();
   });
 
   it('refuses an encrypted payload past the 5,120 B cap before signing on v6', async () => {
     const { service } = await loadV6();
-    const create = vi.spyOn(service, 'create' as never).mockResolvedValue({} as never);
+    const create = vi.spyOn(service, 'createOutcome').mockResolvedValue({ status: 'confirmed', document: {} as never });
     const place = (bytes: number) => service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(bytes), nonce: new Uint8Array(24) });
-    await expect(place(5121)).rejects.toThrow(/too large to send/);
+    expect(await place(5121)).toMatchObject({ status: 'failed', error: expect.stringMatching(/too large to send/) });
     expect(create).not.toHaveBeenCalled();
     await place(5120);
     expect(create).toHaveBeenCalledTimes(1);

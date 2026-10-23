@@ -130,7 +130,7 @@ beforeEach(() => {
   m.store.getCurrent.mockResolvedValue(store())
   m.zones.getByStore.mockResolvedValue([zone()])
   m.order.encryptOrderPayload.mockResolvedValue(new Uint8Array([1, 2, 3]))
-  m.order.createOrder.mockResolvedValue({ id: ORDER, __createConfirmed: true })
+  m.order.createOrder.mockResolvedValue({ status: 'confirmed', document: { id: ORDER } })
 })
 
 describe('checkout quote', () => {
@@ -258,7 +258,7 @@ describe('placing an order', () => {
   })
 
   it('stays unconfirmed when the broadcast was not confirmed', async () => {
-    m.order.createOrder.mockResolvedValue({ id: ORDER, __createConfirmed: false })
+    m.order.createOrder.mockResolvedValue({ status: 'pending', document: { id: ORDER } })
     const e = engine()
     const ticket = await settled(e.tickets, await e.store.placeOrder({ storeId: STORE, shipTo: address, paymentUri: 'dash:yXdashAddress', reviewed: reviewed() }))
     expect(ticket.state).toBe('unconfirmed')

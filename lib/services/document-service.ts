@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
+import { createOutcomeOf, type CreateOutcome } from './create-outcome';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { postListingWherePrefix, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage } from '@/lib/contract-topology';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
@@ -539,29 +540,13 @@ export abstract class BaseDocumentService<T> {
     options?: Parameters<typeof stateTransitionService.createDocument>[4]
   ): Promise<T> {
     try {
-      logger.debug(`Creating ${this.documentType} document`);
-
-      const startedAt = Date.now();
-      const result = await stateTransitionService.createDocument(
-        this.contractId,
-        this.documentType,
-        ownerId,
-        data,
-        options
-      );
-
-      if (!result.success || !result.document) {
-        throw new Error(result.error || 'Failed to create document');
-      }
-
-      // Clear relevant caches
-      this.clearCache();
-
-      const transformed = this.transformDocument(withCreationTime(result.document, startedAt));
+      const outcome = await this.createOutcome(ownerId, data, options);
+      if (outcome.status === 'failed') throw new Error(outcome.error);
+      const transformed = outcome.document;
 
       // Preserve creation confirmation status for callers that need UX handling.
-      if (typeof result.confirmed === 'boolean' && transformed && typeof transformed === 'object') {
-        (transformed as Record<string, unknown>).__createConfirmed = result.confirmed;
+      if (transformed && typeof transformed === 'object') {
+        (transformed as Record<string, unknown>).__createConfirmed = outcome.status === 'confirmed';
       }
 
       return transformed;
@@ -569,6 +554,25 @@ export abstract class BaseDocumentService<T> {
       logger.error(`Error creating ${this.documentType} document:`, error);
       throw error;
     }
+  }
+
+  /**
+   * {@link createWithOptions} as a typed {@link CreateOutcome}: confirmed,
+   * pending with the receipt that settles it, or failed (a verdict: it will
+   * not land). It rejects only on an unexpected error, which is no verdict:
+   * the create may have been sent.
+   */
+  async createOutcome(
+    ownerId: string,
+    data: Parameters<typeof stateTransitionService.createDocument>[3],
+    options?: Parameters<typeof stateTransitionService.createDocument>[4]
+  ): Promise<CreateOutcome<T>> {
+    logger.debug(`Creating ${this.documentType} document`);
+    const startedAt = Date.now();
+    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, data, options);
+    const outcome = createOutcomeOf(result, (document) => this.transformDocument(withCreationTime(document, startedAt)));
+    if (outcome.status !== 'failed') this.clearCache();
+    return outcome;
   }
 
   /** Transform a plain document object (e.g. a composite sub-result) into `T`. */

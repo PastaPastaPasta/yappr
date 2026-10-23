@@ -80,6 +80,12 @@ class CartService {
     // Load cart from localStorage on initialization
     if (typeof window !== 'undefined') {
       this.loadCart();
+      // Another window changed the cart: show it here too.
+      window.addEventListener('storage', (event) => {
+        if (event.key !== CART_STORAGE_KEY && event.key !== null) return;
+        this.loadCart();
+        this.notifyListeners();
+      });
     }
   }
 
@@ -152,7 +158,11 @@ class CartService {
    * Get current cart
    */
   getCart(): Cart {
-    return this.cart ?? this.loadCart();
+    // Read through to storage every time: another window may have changed the
+    // cart (say, placed an order and cleared its lines), and a change saved
+    // from a stale copy here would bring those lines back.
+    if (typeof localStorage === 'undefined') return this.cart ?? (this.cart = { items: [], updatedAt: new Date() });
+    return this.loadCart();
   }
 
   /**
@@ -167,6 +177,16 @@ class CartService {
    */
   getItemsForStore(storeId: string): CartItem[] {
     return this.getItems().filter(item => item.storeId === storeId);
+  }
+
+  /**
+   * Whether the cart as stored now still holds each of `lines` at its
+   * quantity: another window may have placed the order and emptied it. An
+   * unreadable cart holds nothing.
+   */
+  storedCartHolds(lines: readonly CartItem[]): boolean {
+    const stored = this.loadCart().items;
+    return lines.every(line => stored.some(kept => kept.storeId === line.storeId && isLine(kept, line) && kept.quantity === line.quantity));
   }
 
   /**

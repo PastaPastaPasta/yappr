@@ -722,16 +722,14 @@ async function placeOrder(buyer: string, input: PlaceOrderInput, ctx: { ticketId
   })
   orderNonces.set(ctx.ticketId, prepared.nonce)
   ctx.stage()
-  let created: StoreOrder
-  try {
-    created = await storeOrderService.createOrder(buyer, prepared)
-  } catch (error) {
+  const outcome = await storeOrderService.createOrder(buyer, prepared)
+  if (outcome.status === 'failed') {
     // createOrder's own refusals (own store, too large, store closed) come before signing.
-    const message = error instanceof Error ? error.message : ''
-    if (/own store|too large|isn't taking orders/.test(message)) throw new NotSentError(badRequest(message))
-    throw error
+    if (/own store|too large|isn't taking orders/.test(outcome.error)) throw new NotSentError(badRequest(outcome.error))
+    throw new Error(outcome.error)
   }
-  const confirmed = wasConfirmed(created)
+  const created: StoreOrder = outcome.document
+  const confirmed = outcome.status === 'confirmed'
   ctx.documents([storefrontDoc(STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, created.id, 'create', confirmed)])
   cartService.removeStoreItems(prepared.storeId)
   return confirmed

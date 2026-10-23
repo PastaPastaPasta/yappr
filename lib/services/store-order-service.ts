@@ -7,8 +7,10 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
+import type { CreateOutcome } from './create-outcome';
+import { stateTransitionService, type CreateReceipt, type CreateSettlement } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontIsV8, storefrontOrdersCarryStoreStatus } from '../constants';
-import { extractErrorMessage, isPropertyAgreementError } from '../error-utils';
+import { isPropertyAgreementError } from '../error-utils';
 import { storeService } from './store-service';
 import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '../storefront/storefront-contract';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
@@ -126,6 +128,10 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
    *
    * The encryption should be done by the caller using crypto-helpers
    * following the same pattern as private posts.
+   *
+   * A `pending` outcome was sent and may still land: never build another
+   * order for it, settle its receipt (see `lib/storefront/pending-checkout-order.ts`).
+   * `options` passes `beforeBroadcast` and `replacesNonce` through to the create.
    */
   async createOrder(
     buyerId: string,
@@ -134,13 +140,14 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       sellerId: string;
       encryptedPayload: Uint8Array;
       nonce: Uint8Array;
-    }
-  ): Promise<StoreOrder> {
+    },
+    options?: Pick<NonNullable<Parameters<typeof stateTransitionService.createDocument>[4]>, 'beforeBroadcast' | 'replacesNonce'>
+  ): Promise<CreateOutcome<StoreOrder>> {
     // v6 refuses both on chain (`sellerId` distinctFrom `$ownerId`; the 5,120 B
     // payload cap), so refuse them here, before signing. No cut has a use for a self-order.
-    if (buyerId === data.sellerId) throw new Error(OWN_STORE_ORDER_MESSAGE);
+    if (buyerId === data.sellerId) return { status: 'failed', error: OWN_STORE_ORDER_MESSAGE };
     const tooLarge = orderPayloadSizeError(data.encryptedPayload.length);
-    if (tooLarge) throw new Error(tooLarge);
+    if (tooLarge) return { status: 'failed', error: tooLarge };
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(data.storeId),
       // v2 checks this against the store's own $ownerId, so a wrong value is
@@ -158,18 +165,20 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       ...(storefrontOrdersCarryStoreStatus() ? { storeStatus: 'active' } : {})
     };
 
-    try {
-      return await this.create(buyerId, documentData);
-    } catch (error) {
-      // v8: a 40127 naming the store's `status` (the `{const: "active"}`
-      // condition) means the store stopped taking orders after checkout loaded
-      // it. The reference's other entry, `$ownerId: sellerId`, is a different
-      // fault and keeps its own error.
-      if (storefrontIsV8() && isPropertyAgreementError(error) && STATUS_CONDITION.test(extractErrorMessage(error))) {
-        throw new Error(STORE_NOT_TAKING_ORDERS_MESSAGE);
-      }
-      throw error;
+    const outcome = await this.createOutcome(buyerId, documentData, options);
+    // v8: a 40127 naming the store's `status` (the `{const: "active"}`
+    // condition) means the store stopped taking orders after checkout loaded
+    // it. The reference's other entry, `$ownerId: sellerId`, is a different
+    // fault and keeps its own error.
+    if (outcome.status === 'failed' && storefrontIsV8() && isPropertyAgreementError(outcome.error) && STATUS_CONDITION.test(outcome.error)) {
+      return { status: 'failed', error: STORE_NOT_TAKING_ORDERS_MESSAGE };
     }
+    return outcome;
+  }
+
+  /** Settles a pending {@link createOrder}: `landed`, `not-recorded` (proved it never will), `stalled` (refused now), or null while unknown. */
+  settleOrder(receipt: CreateReceipt): Promise<CreateSettlement> {
+    return stateTransitionService.settleCreate(receipt);
   }
 
   /**
