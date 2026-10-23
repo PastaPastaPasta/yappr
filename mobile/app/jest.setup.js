@@ -1,3 +1,55 @@
+// Real timers a test file leaves pending must not outlive it. App code schedules some that nothing
+// cancels once the last test is done (the reconciler's 5 to 60 s rechecks, the private feed's 4 s
+// re-read) and TanStack Query schedules a gcTime timer (5 minutes) for every cache entry. A worker
+// that still has one fails to exit ("A worker process has failed to exit gracefully"), and a run
+// in one process (a single file, or a one-CPU CI runner) waits for it. So every timer is noted
+// here and whatever is still pending is cleared after the file's last test and again at teardown.
+// Fake timers replace these functions while a test uses them, and never reach the clock.
+{
+  const pending = new Set();
+  let closed = false;
+  const { setTimeout: realSetTimeout, setInterval: realSetInterval, clearTimeout: realClearTimeout, clearInterval: realClearInterval } = global;
+  const note = (timer) => {
+    // After the environment is torn down nothing will clear it: let it go.
+    if (closed) timer.unref?.();
+    else pending.add(timer);
+    return timer;
+  };
+  global.setTimeout = (callback, delay, ...args) => {
+    const timer = realSetTimeout(
+      (...fired) => {
+        pending.delete(timer);
+        return callback(...fired);
+      },
+      delay,
+      ...args,
+    );
+    return note(timer);
+  };
+  global.setInterval = (callback, delay, ...args) => note(realSetInterval(callback, delay, ...args));
+  global.clearTimeout = (timer) => {
+    pending.delete(timer);
+    realClearTimeout(timer);
+  };
+  global.clearInterval = (timer) => {
+    pending.delete(timer);
+    realClearInterval(timer);
+  };
+  const flush = () => {
+    for (const timer of pending) realClearTimeout(timer);
+    pending.clear();
+  };
+  // After the file's last test. jest.environment.js flushes again when the environment is torn down, which
+  // is after every hook (a fetch that settles late schedules its gcTime then), and stops noting timers.
+  afterAll(flush);
+  global[Symbol.for('yappr.jest.pendingTimers')] = {
+    close() {
+      flush();
+      closed = true;
+    },
+  };
+}
+
 // Native-module mocks for Jest.
 require('react-native-gesture-handler/jestSetup');
 jest.mock('react-native-worklets', () => require('react-native-worklets/lib/module/mock'));

@@ -291,6 +291,22 @@ npm run bundle -- --output-dir /tmp/expo-export   # Metro smoke test (expo expor
 A PR that changes native dependencies, `app.config.ts` or config plugins must
 also prebuild and build on **both** platforms (see Run).
 
+- `tsc --noEmit` and `npm run typecheck` agree. `tsconfig.json` lists
+  `expo/types` in `types`, so `process.env` is typed the same without the
+  gitignored `expo-env.d.ts` that `npm run typegen` writes. Without it,
+  `expo-modules-core`'s `ProcessEnv` (`[key: string]: any`) makes every
+  `process.env.X` in a web `lib/` file `any`, and a callback on it fails with
+  TS7006 only in the app's program, never in the root check. Annotate such
+  callbacks anyway (`lib/constants.ts` does).
+- Jest must exit on its own, with no "worker process has failed to exit
+  gracefully". App code and TanStack Query schedule real timers nothing cancels
+  after a test file's last test (the reconciler's rechecks, a 4 s private feed
+  re-read, a cache entry's 5 minute to 7 day `gcTime`), and one pending timer
+  holds a worker, or a one-process run, open. `jest.setup.js` notes every timer
+  and clears what is pending after the file's last test; `jest.environment.js`
+  does it again at teardown and unrefs any later one. Never use `--forceExit`.
+  To find a handle `--detectOpenHandles` misses, dump the live timers with their
+  creation stacks (an `async_hooks` hook in `NODE_OPTIONS=--require`).
 - Tests live next to the code they cover (`*.test.ts`) or in `src/__tests__/`.
   Never put them under `src/app/`, because every file there is a route.
 - `src/__tests__/navigation.test.tsx` renders the real route tree with

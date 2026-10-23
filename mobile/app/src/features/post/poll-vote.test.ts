@@ -8,6 +8,9 @@ import { pollVoteWrite } from './poll-vote';
 const restored = (op: string, target: unknown) => ({ op, target }) as unknown as WriteTicket;
 
 describe('pollVoteWrite', () => {
+  // The app's query client is shared by the file: what a test seeds must not outlive it.
+  afterEach(() => queryClient.clear());
+
   it("recognises its own ballot ticket after a restart cut the call short, and no other poll's", () => {
     const vars = { pollId: 'p1', choices: [1] };
     expect(pollVoteWrite.matches?.(restored('poll.vote', { pollId: 'p1' }), vars)).toBe(true);
