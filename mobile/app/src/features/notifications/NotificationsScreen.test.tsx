@@ -10,7 +10,7 @@ import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
-import { openPost, openUser } from '~/features/post/post-navigation';
+import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
 import { NotificationSettingsScreen } from '~/features/settings/ContentSettingsScreens';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
@@ -229,6 +229,31 @@ describe('Notifications', () => {
 
     await act(async () => fireEvent.press(screen.getByTestId('notification-follow-1')));
     expect(openUser).toHaveBeenCalledWith(AUTHORS.nameless.id);
+  });
+
+  it('opens a store notification on its native screen, never the browser (MUX-6)', async () => {
+    signIn();
+    const push = jest.spyOn(router, 'push').mockImplementation(() => undefined);
+    list().mockResolvedValue(
+      page([
+        {
+          id: 'orderStatus-1',
+          type: 'orderStatus',
+          actor: AUTHORS.bob,
+          at: minutesAgo(1),
+          read: true,
+          target: null,
+          preview: null,
+          store: { phrase: 'shipped your order', snippet: null, path: '/orders' },
+        },
+      ]),
+    );
+    await renderScreen();
+
+    await act(async () => fireEvent.press(screen.getByTestId('notification-orderStatus-1')));
+    expect(push).toHaveBeenCalledWith('/orders');
+    expect(openExternal).not.toHaveBeenCalled();
+    push.mockRestore();
   });
 
   it('puts the row and the badge back when a read mark is refused', async () => {
