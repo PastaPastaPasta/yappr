@@ -4,7 +4,7 @@
  * reaches the page: an unknown refusal reads as "That didn't go through".
  */
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, consensusCodeOf, extractErrorMessage, isOutcomeUnknownError } from '@/lib/error-utils'
-import { KeyStepUpCancelledError, KeyStepUpUnavailableError } from '@/lib/auth/key-step-up'
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 
 /** What was being written. */
 export type CharterAction = 'reason' | 'proposal' | 'join' | 'application' | 'add-member' | 'remove-member' | 'undo-team-change' | 'charter-key'
@@ -82,10 +82,11 @@ const ANY_ACTION: Record<number, string> = {
 /** The page's message for a failed charters write: a {@link CharterActionError}. */
 export function charterActionError(action: CharterAction, error: unknown): CharterActionError {
   if (error instanceof CharterActionError) return error
-  if (error instanceof KeyStepUpCancelledError) return new CharterActionError('Nothing was sent.', 'cancelled')
-  if (error instanceof KeyStepUpUnavailableError) return new CharterActionError('Open the Moderation teams page to do this.', 'refused')
+  // The key sheet was closed, or the sign-in the action began in ended: nothing was signed.
+  if (error instanceof CriticalKeyCancelledError) return new CharterActionError('Nothing was sent.', 'cancelled')
   // Nothing was sent: another write may still land on this nonce sequence, or this browser's storage refused the nonce.
   const plain = extractErrorMessage(error)
+  if (plain === CRITICAL_KEY_REQUIRED) return new CharterActionError("That key can't sign this. Use your account's CRITICAL key.", 'refused')
   if (plain === PENDING_WRITE_ERROR || plain === NONCE_STORE_ERROR) return new CharterActionError(plain, 'refused')
   const code = consensusCodeOf(error) ?? codeInMessage(error)
   if (code !== null) {

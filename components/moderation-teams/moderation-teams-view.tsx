@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageHeader, PageShell } from '@/components/layout/page-shell'
 import { TooltipButton } from '@/components/ui/tooltip-button'
-import { KeyStepUpSheet } from '@/components/auth/key-step-up-sheet'
 import { useAuth } from '@/contexts/auth-context'
 import { cn } from '@/lib/utils'
 import { moderatedContract } from '@/lib/moderated-contracts'
@@ -80,7 +79,6 @@ export function ModerationTeamsView() {
       ) : (
         <ElectionOverview contract={active} election={election} />
       )}
-      <KeyStepUpSheet />
     </PageShell>
   )
 }

@@ -63,7 +63,13 @@ vi.mock('./identity-nonce', () => ({
   },
 }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: keys.match }))
-vi.mock('@/lib/auth/key-step-up', async (original: () => Promise<Record<string, unknown>>) => ({ ...(await original()), requestKeyStepUp: keys.stepUp, cancelKeyStepUp: () => undefined }))
+// The shared step-up: its session lifecycle is real; the sheet's prompt is answered by keys.stepUp.
+vi.mock('@/lib/auth/critical-key', async (original: () => Promise<Record<string, unknown>>) => ({
+  ...(await original()),
+  askForKey: (_identityId: string, prompt: unknown) => keys.stepUp(prompt),
+}))
+const auth = vi.hoisted(() => ({ identity: 'owner1' as string | null, epoch: 1 }))
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => auth.identity }))
 vi.mock('@/lib/secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => false }))
 vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
@@ -71,6 +77,8 @@ vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
 const { charterService } = await import('./charter-service')
 const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
 const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
+const { bindCriticalKeySession } = await import('@/lib/auth/critical-key')
+bindCriticalKeySession(() => auth.epoch)
 
 /** A fresh page (a reload, or another tab) sharing this browser's storage. */
 async function anotherTab() {
@@ -90,6 +98,8 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  auth.identity = OWNER
+  auth.epoch = 1
   hooks.onSdk = undefined
   hooks.onAwaitNonce = undefined
   keys.match.mockReset().mockReturnValue({ ok: true, key: { keyId: 1 }, match: { keyId: 1 } })
@@ -438,6 +448,33 @@ describe('a write queued behind another', () => {
   })
 })
 
+describe('a sign-out (the auth epoch moves on before any cleanup finishes)', () => {
+  it('stops a write waiting for the lock, without the page forgetting anything', async () => {
+    let release: () => void = () => undefined
+    locks.mockImplementationOnce(() => undefined).mockImplementationOnce(() => new Promise<void>((done) => { release = done }))
+    const filing = charterService.submitProposal(OWNER, TERMS)
+    await vi.waitFor(() => expect(locks).toHaveBeenCalledTimes(2))
+    // logoutNow(): the epoch moves at once; the identity is still published until cleanup ends.
+    auth.epoch++
+    release()
+    await expect(filing).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+  })
+
+  it('stops a write once another account signs in, and never uses a charter key unlocked before', async () => {
+    const session = charterService.session()
+    auth.identity = 'someone-else'
+    await expect(charterService.fileReason(OWNER, { code: 'SPM', label: 'Spam' }, { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    const { holdCharterKey, heldCharterKey } = await import('@/lib/moderation-charters/charter-keys')
+    holdCharterKey(OWNER, 'leader', new Uint8Array(32).fill(9))
+    expect(heldCharterKey(OWNER, 'leader')).not.toBeNull()
+    auth.epoch++
+    expect(heldCharterKey(OWNER, 'leader')).toBeNull()
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+})
+
 describe('a session forgotten mid-write', () => {
   it('signs no application whose action began in a session that ended during its first reads', async () => {
     const proposal = { id: 'p1', leaderId: OWNER, targetContractId: 'target-s', description: '', reasonIds: [], moderatorsShare: 60, rewardSplit: null, createdAt: null }
@@ -565,16 +602,16 @@ describe('the charter key', () => {
     keys.match.mockReturnValue({ ok: false, reason: 'not-found' })
     const originalHex = Buffer.from(original).toString('hex')
     const replacementHex = Buffer.from(new Uint8Array(32).fill(4)).toString('hex')
-    keys.stepUp.mockImplementationOnce(async ({ validate }: { validate: (typed: string) => Promise<string | null> }) => {
-      await expect(validate(originalHex)).resolves.toBeNull()
+    keys.stepUp.mockImplementationOnce(async ({ check }: { check: (typed: string) => Promise<string | null> }) => {
+      await expect(check(originalHex)).resolves.toBeNull()
       return originalHex
     })
     await expect(charterService.charterKey(OWNER, 'leader', { create: false })).resolves.toEqual(charter)
     charterService.forgetKeys()
     // The enabled replacement MASTER made no charter key: the prompt says which MASTER key to use.
     keys.match.mockReturnValue({ ok: true, key: { keyId: 9 }, match: { keyId: 9 } })
-    keys.stepUp.mockImplementationOnce(async ({ validate }: { validate: (typed: string) => Promise<string | null> }) => {
-      await expect(validate(replacementHex)).resolves.toContain('a replaced one still works')
+    keys.stepUp.mockImplementationOnce(async ({ check }: { check: (typed: string) => Promise<string | null> }) => {
+      await expect(check(replacementHex)).resolves.toContain('a replaced one still works')
       return replacementHex
     })
     await expect(charterService.charterKey(OWNER, 'leader', { create: false })).rejects.toThrow("doesn't fit")

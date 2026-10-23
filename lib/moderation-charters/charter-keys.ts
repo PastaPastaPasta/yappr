@@ -17,6 +17,7 @@
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import * as secp256k1 from '@noble/secp256k1'
+import { criticalKeySession } from '@/lib/auth/critical-key'
 import { bytesEqual } from '@/lib/bytes'
 import { parsePrivateKey } from '@/lib/crypto/wif'
 import { CHARTER_KEYS } from './rules.mjs'
@@ -70,24 +71,37 @@ export function keyMatches(privateKey: Uint8Array, publicKey: Uint8Array): boole
   }
 }
 
-const held = new Map<string, Uint8Array>()
+/** Each held charter key with the sign-in it was unlocked in: any sign-in or sign-out since ends it. */
+const held = new Map<string, { key: Uint8Array; session: number }>()
 const slot = (identityId: string, role: CharterRole) => `${identityId}:${role}`
 
-/** Holds `identityId`'s charter key of `role` for this tab. The caller has matched it to the identity. */
+/** Holds `identityId`'s charter key of `role` for this tab and this sign-in. The caller has matched it to the identity. */
 export function holdCharterKey(identityId: string, role: CharterRole, privateKey: Uint8Array): void {
-  held.set(slot(identityId, role), privateKey.slice())
+  forgetCharterKey(slot(identityId, role))
+  held.set(slot(identityId, role), { key: privateKey.slice(), session: criticalKeySession() })
 }
 
-/** The charter key of `role` this tab holds for `identityId`, if any (unchecked against the chain). */
+/** The charter key of `role` this tab holds for `identityId` in this sign-in, if any (unchecked against the chain). */
 export function heldCharterKey(identityId: string, role: CharterRole): Uint8Array | null {
-  return held.get(slot(identityId, role))?.slice() ?? null
+  const entry = held.get(slot(identityId, role))
+  if (!entry) return null
+  // Unlocked in an earlier sign-in (a sign-out since, even one still cleaning up): never used again.
+  if (entry.session !== criticalKeySession()) {
+    forgetCharterKey(slot(identityId, role))
+    return null
+  }
+  return entry.key.slice()
+}
+
+function forgetCharterKey(name: string): void {
+  held.get(name)?.key.fill(0)
+  held.delete(name)
 }
 
 /** Drops every charter key this tab holds, or only `identityId`'s. */
 export function forgetCharterKeys(identityId?: string): void {
-  for (const [key, value] of [...held]) {
-    if (identityId && !key.startsWith(`${identityId}:`)) continue
-    value.fill(0)
-    held.delete(key)
+  for (const name of [...held.keys()]) {
+    if (identityId && !name.startsWith(`${identityId}:`)) continue
+    forgetCharterKey(name)
   }
 }

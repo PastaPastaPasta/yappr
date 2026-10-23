@@ -18,6 +18,10 @@
  *
  * Every key is matched against the identity's enabled CRITICAL authentication
  * key before it signs: one for another identity never matches.
+ *
+ * The same sheet also asks for another key an action needs ({@link askForKey}:
+ * the MASTER key a moderation team's charter key is made from), checked by the
+ * caller, never kept, and bound to the session the same way.
  */
 import { matchIdentityKey, type IdentityKeyLike } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
@@ -33,11 +37,25 @@ export type CriticalKeyUse = 'moderation' | 'token'
  */
 export type CriticalKeySource = 'typed' | 'phrase' | 'passkey'
 
+/**
+ * Another key the sheet asks for ({@link askForKey}): its own words, and the
+ * caller's check of what was typed (an error to show, or null when it fits;
+ * it must not throw). What is typed is handed back once, never kept here.
+ */
+export interface KeyPrompt {
+  title: string
+  why: string
+  label: string
+  check: (typed: string) => Promise<string | null>
+}
+
 export interface CriticalKeyRequest {
   /** Tells one request from the next, so the sheet starts afresh for each. */
   id: number
   identityId: string
   use: CriticalKeyUse
+  /** Set when the sheet asks for another key than the CRITICAL one. */
+  prompt?: KeyPrompt
 }
 
 export interface CriticalKeyAnswer {
@@ -157,12 +175,12 @@ export function cancelCriticalKeyRequest(request: CriticalKeyRequest): void {
 
 let requests = 0
 
-function ask(identityId: string, use: CriticalKeyUse): Promise<CriticalKeyAnswer | null> {
-  if (pending && pending.request.identityId === identityId && pending.request.use === use) return pending.promise
+function ask(identityId: string, use: CriticalKeyUse, prompt?: KeyPrompt): Promise<CriticalKeyAnswer | null> {
+  if (!prompt && pending && !pending.request.prompt && pending.request.identityId === identityId && pending.request.use === use) return pending.promise
   settle(null)
   let resolve!: (answer: CriticalKeyAnswer | null) => void
   const promise = new Promise<CriticalKeyAnswer | null>((done) => { resolve = done })
-  pending = { request: { id: ++requests, identityId, use }, promise, resolve }
+  pending = { request: { id: ++requests, identityId, use, ...(prompt ? { prompt } : {}) }, promise, resolve }
   listeners.forEach((listener) => listener())
   return promise
 }
@@ -256,4 +274,27 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
   if (!result?.ok) throw new Error(CRITICAL_KEY_REQUIRED)
   if (answer.keep) holdCriticalKey(identityId, answer.wif, answer.source)
   return { wif: answer.wif, key: result.key, assertLive }
+}
+
+/**
+ * Another key `identityId`'s action needs, asked for with the same sheet
+ * (`prompt` words it and checks what is typed): resolves to the text the
+ * sheet's check accepted. Bound to `session` ({@link criticalKeySession}) like
+ * {@link criticalKeyFor}: a sign-out or a switch of account while it is asked
+ * stops the action (CriticalKeyCancelledError), as does closing the sheet.
+ * Nothing is kept: the caller zeroes what it derives.
+ */
+export async function askForKey(identityId: string, prompt: KeyPrompt, session: number): Promise<string> {
+  const assertLive = liveSessionCheck(identityId, session)
+  assertLive()
+  if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
+  const answer = await ask(identityId, 'moderation', prompt)
+  if (!answer) throw new CriticalKeyCancelledError()
+  assertLive()
+  return answer.wif
+}
+
+/** Closes the sheet when it is asking `identityId` with one of `prompts` (the action that asked is gone). */
+export function cancelPrompt(isOurs: (request: CriticalKeyRequest) => boolean): void {
+  if (pending && isOurs(pending.request)) settle(null)
 }

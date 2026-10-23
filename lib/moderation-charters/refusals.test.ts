@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { KeyStepUpCancelledError } from '@/lib/auth/key-step-up'
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { CharterActionError, charterActionError } from './refusals'
 
 const refusal = (code: number, message = 'refused') => Object.assign(new Error(message), { code })
@@ -30,7 +30,8 @@ describe('refusals in plain words', () => {
 
   it('tells an uncertain outcome from a refusal, and a closed key prompt from both', () => {
     expect(charterActionError('application', new Error('Request timed out after 30s'))).toMatchObject({ outcome: 'uncertain' })
-    expect(charterActionError('application', new KeyStepUpCancelledError())).toMatchObject({ outcome: 'cancelled' })
+    expect(charterActionError('application', new CriticalKeyCancelledError())).toMatchObject({ outcome: 'cancelled' })
+    expect(charterActionError('application', new Error(CRITICAL_KEY_REQUIRED))).toMatchObject({ outcome: 'refused' })
     const kept = new CharterActionError('as is', 'refused', 1)
     expect(charterActionError('join', kept)).toBe(kept)
   })

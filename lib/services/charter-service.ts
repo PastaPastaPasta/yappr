@@ -13,7 +13,9 @@
  *
  * Keys. Every charters document is an ordinary document write, signed with
  * an unbound CRITICAL or HIGH authentication key: the session's own raw key
- * when it has one, otherwise asked for (a wallet session holds none that may
+ * when it has one, otherwise the account's CRITICAL key from the shared
+ * step-up (`lib/auth/critical-key.ts`: a key held for this session, or asked
+ * for with its sheet; a wallet session holds none that may
  * sign for the charters contract). The charter keys join requests are
  * encrypted between are made from the MASTER key, asked for once when the
  * key is first needed (lib/moderation-charters/charter-keys.ts). Every key
@@ -31,7 +33,8 @@ import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { base64ToBytes, bytesToBase64, requireBytes } from '@/lib/bytes'
-import { cancelKeyStepUp, requestKeyStepUp } from '@/lib/auth/key-step-up'
+import { askForKey, cancelPrompt, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key'
+import { currentIdentityId } from '@/lib/auth/active-identity'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { NONCE_STORE_ERROR, extractErrorMessage, isAlreadyExistsError, sentWriteOutcomeUnknown } from '@/lib/error-utils'
@@ -262,28 +265,61 @@ function signingKeyProblem(result: MatchResult, key: IdentityPublicKey | null): 
   return "That key isn't one of this account's keys."
 }
 
+/**
+ * The session an action began in: this page's key generation (bumped by
+ * `forgetKeys` when the page is left) and the sign-in it ran under (the auth
+ * controller's epoch, moved by every sign-in and sign-out, and the identity).
+ * A write checks it right before each step that signs, sends or asks for a
+ * key, so leaving the page or signing out stops whatever it has not yet done.
+ */
+export interface CharterSession {
+  generation: number
+  epoch: number
+  identityId: string | null
+}
+
 class CharterService {
   /** Signing keys typed in, by identity: this tab's memory only. */
-  private signingWifs = new Map<string, string>()
   /** The write each slot has under way, so a second click joins it instead of signing again. */
   private inFlight = new Map<string, { fingerprint: string; work: Promise<string> }>()
   /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
   private generation = 0
+  /** Key prompts this service has open on the shared sheet (one at a time there). */
+  private prompting = 0
 
   /**
    * The current session, to pass to each write of a multi-write action (key
    * setup, reasons, then the proposal): once `forgetKeys` runs, every later
    * write of that action is refused unsigned, not only the one under way.
    */
-  session(): number {
-    return this.generation
+  session(): CharterSession {
+    return { generation: this.generation, epoch: criticalKeySession(), identityId: currentIdentityId() }
+  }
+
+  /**
+   * Whether `session` still holds: this page has not forgotten its keys, and
+   * the sign-in it began in (auth epoch and identity) is still the one, so a
+   * sign-out ends it at once, before its key cleanup is done.
+   */
+  private isLive(session: CharterSession): boolean {
+    return session.generation === this.generation && session.epoch === criticalKeySession() && session.identityId === currentIdentityId()
+  }
+
+  /** Runs a key prompt on the shared sheet, so `forgetKeys` can close it. */
+  private async prompt<T>(ask: () => Promise<T>): Promise<T> {
+    this.prompting++
+    try {
+      return await ask()
+    } finally {
+      this.prompting--
+    }
   }
 
   /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
   forgetKeys(): void {
     this.generation++
-    cancelKeyStepUp()
-    this.signingWifs.clear()
+    // A key prompt this service has open closes with the page that asked (the shared sheet is app-wide).
+    if (this.prompting > 0) cancelPrompt(() => true)
     forgetCharterKeys()
   }
 
@@ -341,8 +377,8 @@ class CharterService {
    * null where a message could not be read. Nothing decrypted is returned
    * once `session` (the leader's, by default this one) has ended.
    */
-  async readJoinMessages(submittedCharterId: string, leaderId: string, { session }: { session?: number } = {}): Promise<Map<string, string | null>> {
-    const generation = session ?? this.generation
+  async readJoinMessages(submittedCharterId: string, leaderId: string, { session }: { session?: CharterSession } = {}): Promise<Map<string, string | null>> {
+    const generation = session ?? this.session()
     const leaderKey = await this.charterKey(leaderId, 'leader', { create: false, session: generation })
     const sdk = await getEvoSdk()
     const { PrivateKey } = await wasmModule()
@@ -371,7 +407,7 @@ class CharterService {
       leaderKey.fill(0)
     }
     // Signed out or switched account while decrypting: the plaintext is dropped, never handed on.
-    if (generation !== this.generation) {
+    if (!this.isLive(generation)) {
       messages.clear()
       this.assertSameSession(generation)
     }
@@ -454,48 +490,32 @@ class CharterService {
   /**
    * A key that may sign charters documents for `identityId`: the session's
    * own raw key when it is an unbound CRITICAL or HIGH authentication key,
-   * else one typed in earlier in this tab, else asked for now.
+   * else the account's CRITICAL key from the shared step-up (one held for this
+   * sign-in, or asked for with its sheet), bound to `generation`'s sign-in.
    */
-  private async signingKey(identityId: string, generation = this.generation): Promise<{ wif: string; identityKey: IdentityPublicKey }> {
+  private async signingKey(identityId: string, generation: CharterSession = this.session()): Promise<{ wif: string; identityKey: IdentityPublicKey }> {
     const identity = await fetchIdentity(identityId)
     // An action cancelled meanwhile asks for nothing, and keeps nothing typed for it.
     this.assertSameSession(generation)
-    const keys = identity.publicKeys
-    const match = (wif: string) => matchIdentityKey(wif, keys, {
-      network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
-    })
     // A wallet session must not reach past its grant to a raw key left in storage.
-    const candidates = [hasAppConnectSession(identityId) ? null : getPrivateKey(identityId)?.trim(), this.signingWifs.get(identityId)]
-    for (const wif of candidates) {
-      if (!wif) continue
-      const result = match(wif)
-      if (result.ok && signingKeyProblem(result, result.key) === null) return { wif, identityKey: result.key }
+    const raw = hasAppConnectSession(identityId) ? null : getPrivateKey(identityId)?.trim()
+    if (raw) {
+      const result = matchIdentityKey(raw, identity.publicKeys, {
+        network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
+      })
+      if (result.ok && signingKeyProblem(result, result.key) === null) return { wif: raw, identityKey: result.key }
     }
-    const input = await requestKeyStepUp({
-      identityId,
-      title: 'Sign with your CRITICAL key',
-      description: 'Moderation charters are signed with your account\'s CRITICAL (or HIGH) key, which your wallet holds. It stays in this tab only and is forgotten when you leave this page.',
-      label: 'CRITICAL or HIGH key',
-      validate: async (typed) => {
-        try {
-          const result = match(asWif(typed))
-          return signingKeyProblem(result, result.ok ? result.key : null)
-        } catch (error) {
-          return keyInputError(error)
-        }
-      },
-    })
+    const critical = await this.prompt(() => criticalKeyFor(identityId, identity.publicKeys, 'moderation', null, generation.epoch))
     this.assertSameSession(generation)
-    const wif = asWif(input)
-    const result = match(wif)
-    if (!result.ok) throw new CharterActionError("That key can't sign this. Use your CRITICAL or HIGH key.", 'refused')
-    this.signingWifs.set(identityId, wif)
-    return { wif, identityKey: result.key }
+    if ((critical.key as { contractBounds?: unknown }).contractBounds) {
+      throw new CharterActionError('That key only signs for another contract. Use your CRITICAL key.', 'refused')
+    }
+    return { wif: critical.wif, identityKey: critical.key }
   }
 
-  /** The keys were forgotten (sign-out, a switch of account, the page left) while this was asked: stop. */
-  private assertSameSession(generation: number): void {
-    if (generation !== this.generation) throw new CharterActionError('Nothing was sent.', 'cancelled')
+  /** The page forgot its keys, or the sign-in it began in ended (sign-out, a switch of account) meanwhile: stop. */
+  private assertSameSession(generation: CharterSession): void {
+    if (!this.isLive(generation)) throw new CharterActionError('Nothing was sent.', 'cancelled')
   }
 
   /**
@@ -504,8 +524,8 @@ class CharterService {
    * charter key itself) typed in now. With `create`, an identity without one
    * gets it added, signed with that MASTER key.
    */
-  async charterKey(identityId: string, role: CharterRole, { create, session }: { create: boolean; session?: number }): Promise<Uint8Array> {
-    const generation = session ?? this.generation
+  async charterKey(identityId: string, role: CharterRole, { create, session }: { create: boolean; session?: CharterSession }): Promise<Uint8Array> {
+    const generation = session ?? this.session()
     this.assertSameSession(generation)
     const identity = await fetchIdentity(identityId)
     // Cancelled while the identity was read: the old account's MASTER key is never asked for.
@@ -538,16 +558,15 @@ class CharterService {
         bytes.fill(0)
       }
     }
-    const input = await requestKeyStepUp({
-      identityId,
+    const input = await this.prompt(() => askForKey(identityId, {
       title: onChain ? 'Unlock your charter key' : 'Set up your charter key',
-      description: onChain
+      why: onChain
         ? (role === 'leader' ? 'Join messages are encrypted to your charter key.' : 'Your join message is encrypted with your charter key.')
           + ' Enter the MASTER key it was made from (Yappr makes your charter key from it) or the charter key itself. It stays in this tab only.'
         : (role === 'leader' ? 'Members encrypt their join messages to a charter key on your account.' : 'Your join message is encrypted with a charter key on your account.')
           + ' Yappr adds it once, signed with your MASTER key, which stays in this tab only and is never stored.',
       label: onChain ? 'MASTER key or charter key' : 'MASTER key',
-      validate: async (typed) => {
+      check: async (typed) => {
         try {
           const unlocked = unlock(typed)
           if (unlocked) {
@@ -562,7 +581,7 @@ class CharterService {
           return keyInputError(error)
         }
       },
-    })
+    }, generation.epoch))
     this.assertSameSession(generation)
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
@@ -583,7 +602,7 @@ class CharterService {
     role: CharterRole,
     master: Uint8Array,
     charterKey: Uint8Array,
-    generation: number,
+    generation: CharterSession,
   ): Promise<void> {
     // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
@@ -663,7 +682,7 @@ class CharterService {
     /** What it says, to tell a retry from a changed write. */
     fingerprint: string
     /** The session of the action this write belongs to ({@link session}); this one's when not given. */
-    session?: number
+    session?: CharterSession
     targetContractId?: string
     fund?: boolean
     /**
@@ -688,7 +707,7 @@ class CharterService {
   private async fileOnce(action: CharterAction, key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
     const { ownerId, type, fingerprint, targetContractId = '', fund = false } = input
     // Leaving the page, signing out or switching account cancels whatever this write has not yet signed.
-    const generation = input.session ?? this.generation
+    const generation = input.session ?? this.session()
     const sdk = await getEvoSdk()
     const w = await wasmModule()
     const lock = <T>(work: () => Promise<T>) => withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, work)
@@ -700,7 +719,7 @@ class CharterService {
       if (type === 'electedCharter') return null
       const outcome = await stateTransitionService.settleCreate({
         contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
-      }, { mayResend: () => generation === this.generation }) // proof only once the session is forgotten
+      }, { mayResend: () => this.isLive(generation) }) // proof only once the session is over
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
     const uncertain = () => new CharterActionError(type === 'electedCharter' ? APPLICATION_MAY_STILL_LAND : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
@@ -916,7 +935,7 @@ class CharterService {
    * reason this owner already filed with the same code and text (an earlier
    * try that landed unseen) is reused.
    */
-  async fileReason(ownerId: string, reason: { code: string; label: string; description?: string }, { session }: { session?: number } = {}): Promise<string> {
+  async fileReason(ownerId: string, reason: { code: string; label: string; description?: string }, { session }: { session?: CharterSession } = {}): Promise<string> {
     const data = { code: reason.code, label: reason.label.trim(), ...(reason.description?.trim() ? { description: reason.description.trim() } : {}) }
     try {
       return await this.file('reason', { ownerId, type: 'reason', data: async () => data, slot: data.code, fingerprint: JSON.stringify(data), session })
@@ -939,7 +958,7 @@ class CharterService {
     reasonIds: readonly string[]
     moderatorsShare: number
     rewardSplit: RewardSplit
-  }, { stillOpen, session }: { stillOpen?: () => Promise<void>; session?: number } = {}): Promise<string> {
+  }, { stillOpen, session }: { stillOpen?: () => Promise<void>; session?: CharterSession } = {}): Promise<string> {
     const w = await wasmModule()
     const data = {
       targetContractId: charterIdBytes(w, terms.targetContractId),
@@ -953,8 +972,8 @@ class CharterService {
   }
 
   /** Asks to join a proposal's team, with a message only its leader can read; resolves to the request's id. */
-  async requestToJoin(ownerId: string, submittedCharterId: string, message: string, { session }: { session?: number } = {}): Promise<string> {
-    const generation = session ?? this.generation
+  async requestToJoin(ownerId: string, submittedCharterId: string, message: string, { session }: { session?: CharterSession } = {}): Promise<string> {
+    const generation = session ?? this.session()
     // Built (and its charter key asked for) only when a new request is signed: a request
     // already signed, maybe sent, is resent as it is, its message encrypted then.
     const data = async (): Promise<Record<string, unknown>> => {
@@ -995,7 +1014,7 @@ class CharterService {
    */
   async fileApplication(
     ownerId: string, proposal: CharterProposal, targetContractId: string, members: readonly string[],
-    { stillEligible, session }: { stillEligible?: () => Promise<void>; session?: number } = {},
+    { stillEligible, session }: { stillEligible?: () => Promise<void>; session?: CharterSession } = {},
   ): Promise<string> {
     const w = await wasmModule()
     const data = {
@@ -1036,7 +1055,7 @@ class CharterService {
   async undoTeamChange(ownerId: string, type: 'addedModerator' | 'removedModerator', change: { documentId: string; electedCharterId: string; memberId: string }): Promise<void> {
     const { documentId } = change
     const key = `${ownerId}:${type}:${change.electedCharterId}:${change.memberId}`
-    const generation = this.generation
+    const generation = this.session()
     let sent = false
     try {
       const { wif, identityKey } = await this.signingKey(ownerId, generation)
@@ -1056,7 +1075,7 @@ class CharterService {
           signer.free()
           privateKey.free()
         }
-      }, `${type}:${documentId}`, async () => generation === this.generation)
+      }, `${type}:${documentId}`, async () => this.isLive(generation))
     } catch (error) {
       if (error instanceof Error && error.message === WRITE_PRECONDITION_FAILED) throw new CharterActionError('Nothing was sent.', 'cancelled')
       throw charterActionError('undo-team-change', error)

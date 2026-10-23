@@ -8,6 +8,8 @@ import {
   CRITICAL_KEY_REQUIRED,
   CriticalKeyCancelledError,
   answerCriticalKeyRequest,
+  askForKey,
+  cancelPrompt,
   availableCriticalKey,
   bindCriticalKeySession,
   criticalKeySession,
@@ -297,5 +299,50 @@ describe('forgetCriticalKeysOnIdentityChange', () => {
     forgetCriticalKey(A)
     await expect(waiting).rejects.toBeInstanceOf(CriticalKeyCancelledError)
     stop()
+  })
+})
+
+describe('askForKey (another key, asked with the same sheet)', () => {
+  const prompt = { title: 'Set up your charter key', why: 'Why.', label: 'MASTER key', check: async () => null }
+
+  it('shows the caller\'s prompt and hands back what was typed, keeping nothing', async () => {
+    let shown: unknown = null
+    const unsubscribe = subscribeCriticalKeyRequests(() => {
+      const request = currentCriticalKeyRequest()
+      if (!request) return
+      shown = request.prompt
+      queueMicrotask(() => answerCriticalKeyRequest(request, { wif: 'typed master', source: 'typed', keep: false }))
+    })
+    unmount = unsubscribe
+    await expect(askForKey(A, prompt, 0)).resolves.toBe('typed master')
+    expect(shown).toBe(prompt)
+    expect(availableCriticalKey(A, KEYS, 'moderation', null)).toBeNull()
+  })
+
+  it('stops when the sign-in it began in ends while the sheet is open', async () => {
+    let epoch = 5
+    const unbindSession = bindCriticalKeySession(() => epoch)
+    const unsubscribe = subscribeCriticalKeyRequests(() => {
+      const request = currentCriticalKeyRequest()
+      if (!request) return
+      // A sign-out moves the epoch while the key is being typed; the answer still arrives.
+      epoch++
+      queueMicrotask(() => answerCriticalKeyRequest(request, { wif: 'typed master', source: 'typed', keep: false }))
+    })
+    unmount = unsubscribe
+    await expect(askForKey(A, prompt, 5)).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    unbindSession()
+  })
+
+  it('closes when the action that asked is gone', async () => {
+    const unsubscribe = subscribeCriticalKeyRequests(() => undefined)
+    unmount = unsubscribe
+    const waiting = askForKey(A, prompt, 0)
+    cancelPrompt((request) => request.prompt === prompt)
+    await expect(waiting).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+  })
+
+  it('needs a mounted sheet', async () => {
+    await expect(askForKey(A, prompt, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
   })
 })

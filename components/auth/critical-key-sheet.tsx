@@ -49,7 +49,7 @@ export function CriticalKeySheet() {
 }
 
 function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
-  const { identityId, use } = request
+  const { identityId, use, prompt } = request
   // Uncontrolled: the key or phrase is read from the field when it is checked and cleared from it once used,
   // never copied into React state.
   const field = useRef<HTMLInputElement>(null)
@@ -61,18 +61,19 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<'key' | 'passkey' | null>(null)
   const [passkey, setPasskey] = useState(false)
-  const phraseAllowed = recoveryPhraseOffered(getConfiguredNetwork())
-  const copy = COPY[use]
+  // Another key than the CRITICAL one (a MASTER key, say): the caller's words and check; never kept, no phrase or passkey.
+  const phraseAllowed = !prompt && recoveryPhraseOffered(getConfiguredNetwork())
+  const copy = prompt ? { title: prompt.title, why: prompt.why } : COPY[use]
 
   // A passkey's CRITICAL key moderates, but never signs a token transition (docs/PASSKEY_VAULT.md, V2).
   useEffect(() => {
-    if (use !== 'moderation' || !passkeysOffered()) return
+    if (prompt || use !== 'moderation' || !passkeysOffered()) return
     let cancelled = false
     hasCriticalKeyPasskey(identityId)
       .then((found) => { if (!cancelled) setPasskey(found) })
       .catch(() => { /* hasCriticalKeyPasskey answers false on failure */ })
     return () => { cancelled = true }
-  }, [identityId, use])
+  }, [identityId, use, prompt])
 
   const clearField = () => {
     if (field.current) field.current.value = ''
@@ -107,6 +108,16 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
     setBusy('key')
     setError(null)
     try {
+      if (prompt) {
+        const problem = await prompt.check(typed)
+        if (problem) {
+          setError(problem)
+          return
+        }
+        clearField()
+        answerCriticalKeyRequest(request, { wif: typed, source: 'typed', keep: false })
+        return
+      }
       const result = await check(typed)
       if (!result.ok) {
         setError(result.error)
@@ -152,7 +163,7 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
       {/* No <form>: a form that goes away once submitted reads to browsers as a sign-in whose password they offer to save. */}
       <div>
         <label htmlFor="critical-key-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          {phraseAllowed ? 'Private key or recovery phrase' : 'Private key'}
+          {prompt ? prompt.label : phraseAllowed ? 'Private key or recovery phrase' : 'Private key'}
         </label>
         <input
           ref={field}
@@ -174,13 +185,15 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
           className={`${INPUT} [&::-webkit-credentials-auto-fill-button]:!hidden`}
         />
         {error && <p role="alert" className="mt-2 text-sm text-red-500" data-testid="critical-key-error">{error}</p>}
-        <div className="mt-4 flex items-center justify-between gap-3">
-          <label htmlFor="critical-key-keep" className="text-sm text-gray-700 dark:text-gray-300">
-            Keep for this tab
-            <span className="block text-xs text-gray-500">Off: used for this action only.</span>
-          </label>
-          <Switch id="critical-key-keep" data-testid="critical-key-keep" checked={keep} onCheckedChange={setKeep} disabled={busy !== null} />
-        </div>
+        {!prompt && (
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <label htmlFor="critical-key-keep" className="text-sm text-gray-700 dark:text-gray-300">
+              Keep for this tab
+              <span className="block text-xs text-gray-500">Off: used for this action only.</span>
+            </label>
+            <Switch id="critical-key-keep" data-testid="critical-key-keep" checked={keep} onCheckedChange={setKeep} disabled={busy !== null} />
+          </div>
+        )}
         <div className="mt-5 flex flex-col gap-3">
           <Button type="button" data-testid="critical-key-continue" disabled={!hasText || busy !== null} onClick={() => { submit().catch(() => { /* reported inside */ }) }} className="w-full">
             {busy === 'key' ? 'Checking…' : 'Continue'}
