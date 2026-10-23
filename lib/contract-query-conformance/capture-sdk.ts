@@ -1,9 +1,10 @@
 /**
  * A fake Evo SDK for the query → index conformance spec: every document read
  * the services send is recorded (contract, doctype and the request shape) and
- * answered with an empty result of the shape the caller expects. Every other
- * SDK namespace answers any call with an empty value, so a reader that also
- * touches identities, names or tokens runs to its document reads.
+ * answered with an empty result of the shape the caller expects, unless a
+ * reader installed fixture documents for it ({@link CaptureSdk.answerWith}).
+ * Every other SDK namespace answers any call with an empty value, so a reader
+ * that also touches identities, names or tokens runs to its document reads.
  */
 
 import type { EvoSDK } from '@dashevo/evo-sdk'
@@ -37,6 +38,15 @@ export interface CapturedRequest {
 }
 
 type AnyRecord = Record<string, unknown>
+
+/** A documents read as the fake sees it, before it is recorded. */
+export type DocumentsRead = Omit<CapturedRequest, 'reader'>
+
+/**
+ * Fixture documents for a documents read (a page, a composite member, a
+ * continuation with its `startAfter`), or undefined to answer it empty.
+ */
+export type CaptureResponder = (read: DocumentsRead) => readonly AnyRecord[] | undefined
 
 function idText(value: unknown): string {
   if (typeof value === 'string') return value
@@ -87,6 +97,12 @@ export interface CaptureSdk {
   logged: { reader: string; level: 'warn' | 'error'; message: string }[]
   /** The logger the spec installs in place of `@/lib/logger`. */
   logger: Record<'debug' | 'info' | 'warn' | 'error', (...args: unknown[]) => void>
+  /**
+   * Answers documents reads (queries and composite members) from `responder`
+   * while `run` executes, so a reader whose later reads follow only a
+   * non-empty answer (an owned store, a full page) is driven through them.
+   */
+  answerWith<T>(responder: CaptureResponder, run: () => Promise<T>): Promise<T>
 }
 
 export function createCaptureSdk(): CaptureSdk {
@@ -94,6 +110,8 @@ export function createCaptureSdk(): CaptureSdk {
   const failures: { reader: string; error: unknown }[] = []
   const logged: CaptureSdk['logged'] = []
   let reader = '(outside a driven reader)'
+  let responder: CaptureResponder | null = null
+  const answer = (read: DocumentsRead): AnyRecord[] => [...(responder?.(read) ?? [])]
   const log = (level: 'warn' | 'error') => (...args: unknown[]) => {
     const message = args.map((arg) => (arg instanceof Error ? arg.message : typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
     logged.push({ reader, level, message })
@@ -104,7 +122,7 @@ export function createCaptureSdk(): CaptureSdk {
   }
 
   const documentsQuery = (query: AnyRecord) => {
-    record({
+    const read: DocumentsRead = {
       surface: 'documents',
       dataContractId: idText(query.dataContractId),
       documentTypeName: String(query.documentTypeName),
@@ -114,8 +132,9 @@ export function createCaptureSdk(): CaptureSdk {
       startAt: query.startAt,
       startAfter: query.startAfter,
       timeRange: Array.isArray(query.timeRange) ? (query.timeRange as TimeRangeSelection[]) : undefined,
-    })
-    return Promise.resolve(new Map())
+    }
+    record(read)
+    return Promise.resolve(new Map(answer(read).map((doc, index) => [String(doc.$id ?? index), doc])))
   }
 
   const documents = {
@@ -192,11 +211,19 @@ export function createCaptureSdk(): CaptureSdk {
           pageAscending,
         })
       }
+      const memberRead = (member: AnyRecord, documentType: unknown): DocumentsRead => ({
+        surface: 'documents',
+        dataContractId: idText(member.dataContractId ?? page.dataContractId),
+        documentTypeName: String(documentType),
+        where: asWhere(member.where),
+        orderBy: asOrderBy(member.orderBy),
+        limit: asNumber(member.limit),
+      })
       return Promise.resolve({
-        pageDocuments: [],
+        pageDocuments: answer(memberRead(page, page.documentType)),
         subResults: subQueries.map((sub) => sub.kind === 'counts'
           ? { kind: 'counts', counts: new Map() }
-          : { kind: 'documents', documents: [], missingIds: [], removed: [] }),
+          : { kind: 'documents', documents: sub.bind ? [] : answer(memberRead(sub, sub.documentType)), missingIds: [], removed: [] }),
       })
     },
     get(dataContractId: unknown, documentTypeName: unknown) {
@@ -225,6 +252,15 @@ export function createCaptureSdk(): CaptureSdk {
     failures,
     logged,
     logger: { debug: () => undefined, info: () => undefined, warn: log('warn'), error: log('error') },
+    async answerWith(next, run) {
+      const previous = responder
+      responder = next
+      try {
+        return await run()
+      } finally {
+        responder = previous
+      }
+    },
     async drive(label, run) {
       const previous = reader
       reader = label

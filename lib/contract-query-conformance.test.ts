@@ -86,7 +86,10 @@
  *                     getItemRatingSummary, getItemReviewCounts, topRatedStores,
  *                     mostOrderedStores, topStoreCategories, topItemsInStore,
  *                     loadBuyerOrdersComposite, countSellerOrders;
- *                     store-notification getNotifications
+ *                     store-notification getNotifications (a buyer; and a seller
+ *                     who owns a store, with cached and new items and review
+ *                     pages that run on past a full page, so the seller
+ *                     sources and their continuations are judged too)
  *   pollr             pollr-poll-service getPoll, countBallots; pollr-vote-service
  *                     getBallotState, getMyBallot, getTally
  *   DM v5             SdkDmChain messagesByTags, invitesSince, invitesNewestFirst,
@@ -135,7 +138,8 @@
  *     getLikersOf's full-page branch, loadHomepage's second wave) are not
  *     captured either; readers that need documents to go further are driven
  *     with sample posts instead (enrichPostsBatch, loadPostEnrichment,
- *     fetchReplyParents, the replies page).
+ *     fetchReplyParents, the replies page), or with fixture documents the
+ *     fake answers (`capture.answerWith`: the seller's store notifications).
  *   - model limits (see query-index-model.ts): a composite sub-query's walk
  *     direction agreeing with its page's, merged-proof path checks,
  *     integerRange, having, sums and range averages are not judged.
@@ -143,7 +147,7 @@
 
 import bs58 from 'bs58'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { createCaptureSdk, type CapturedRequest } from './contract-query-conformance/capture-sdk'
+import { createCaptureSdk, type CapturedRequest, type CaptureResponder, type DocumentsRead } from './contract-query-conformance/capture-sdk'
 import {
   checkAverageQuery,
   checkCompositePage,
@@ -237,6 +241,99 @@ const ITEM = ident(52)
 const ORDER = ident(53)
 const POLL = ident(61)
 const SINCE = 1_700_000_000_000
+const SELLER = ident(13)
+const NEW_ITEM = ident(56)
+
+/** A distinct identifier for fixture row `n` of a kind (`kind` fills the bytes, `n` the first two). */
+function rowId(kind: number, n: number): string {
+  const bytes = new Uint8Array(32).fill(kind)
+  bytes[0] = n >> 8
+  bytes[1] = n & 0xff
+  return bs58.encode(bytes)
+}
+
+/** The value a read pins `field` to, or undefined. */
+function pinned(read: DocumentsRead, field: string, operator = '=='): unknown {
+  return read.where?.find(([name, op]) => name === field && op === operator)?.[2]
+}
+
+/**
+ * The seller fixture's rows: orders, store reviews in pages that run past a
+ * full one, and each held item's reviews. An `in` read over the items (v10)
+ * walks them in pages of `inPages`, a continuation coming back a row short
+ * (99) with another page after it, as Platform's can; a one-item read (v11)
+ * walks its item's reviews 100 to a page.
+ */
+const SELLER_FIXTURE = { orders: 3, storeReviewPages: [100, 7], itemReviews: { first: 150, second: 50 }, inPages: [100, 99, 1], newItemReviews: 1 } as const
+
+/** Splits `rows` into pages of `sizes`, then of 100. */
+function pagesOf<T>(rows: readonly T[], sizes: readonly number[] = []): T[][] {
+  const pages: T[][] = []
+  let at = 0
+  for (const size of sizes) {
+    pages.push(rows.slice(at, at + size))
+    at += size
+  }
+  for (; at < rows.length; at += 100) pages.push(rows.slice(at, at + 100))
+  return pages
+}
+
+/** Answers a paged read: the first page without a cursor, then the page after the one whose last row is the cursor, then none. */
+function paged(pages: readonly Record<string, unknown>[][], read: DocumentsRead): Record<string, unknown>[] {
+  if (read.startAfter === undefined) return pages[0] ?? []
+  const after = pages.findIndex((page) => page[page.length - 1]?.$id === read.startAfter)
+  return after < 0 ? [] : pages[after + 1] ?? []
+}
+
+/**
+ * A seller who owns STORE, holds two listed items (ITEM and another, read
+ * once) and has listed NEW_ITEM since (the poll's `storeAndTime` read), with
+ * the orders and reviews of {@link SELLER_FIXTURE}.
+ */
+function sellerStoreFixture(): CaptureResponder {
+  const OTHER_ITEM = ident(54)
+  const review = (kind: number, n: number, fields: Record<string, unknown>) =>
+    ({ $id: rowId(kind, n), $ownerId: OTHER, $createdAt: SINCE + 10_000 - n, storeId: STORE, rating: 5, ...fields })
+  const storeReviews = pagesOf(Array.from({ length: SELLER_FIXTURE.storeReviewPages[0] + SELLER_FIXTURE.storeReviewPages[1] },
+    (_, n) => review(70, n, { content: 'Fast shipping' })), SELLER_FIXTURE.storeReviewPages)
+  const reviewsOf = new Map([
+    [ITEM, Array.from({ length: SELLER_FIXTURE.itemReviews.first }, (_, n) => review(71, n, { itemId: ITEM, orderId: ORDER }))],
+    [OTHER_ITEM, Array.from({ length: SELLER_FIXTURE.itemReviews.second }, (_, n) => review(74, n, { itemId: OTHER_ITEM, orderId: ORDER }))],
+    [NEW_ITEM, Array.from({ length: SELLER_FIXTURE.newItemReviews }, (_, n) => review(73, n, { itemId: NEW_ITEM, orderId: ORDER }))],
+  ])
+  const listedItems = [ITEM, OTHER_ITEM].map((id, n) => ({ $id: id, $ownerId: SELLER, $createdAt: SINCE - 5_000 + n, storeId: STORE, title: `Item ${n}`, status: 'active' }))
+  return (read) => {
+    switch (read.documentTypeName) {
+      case 'store':
+        return pinned(read, '$ownerId') === SELLER
+          ? [{ $id: STORE, $ownerId: SELLER, $createdAt: SINCE - 10_000, name: 'Shop', status: 'active' }]
+          : undefined
+      case 'storeItem':
+        if (pinned(read, 'storeId') !== STORE || [1, 2].includes(pinned(read, 'mod') as number)) return undefined
+        // The poll's read of items listed since the newest held; the full list otherwise.
+        return pinned(read, '$createdAt', '>') !== undefined
+          ? [{ $id: NEW_ITEM, $ownerId: SELLER, $createdAt: SINCE + 100, storeId: STORE, title: 'New item', status: 'active' }]
+          : listedItems
+      case 'storeOrder':
+        return pinned(read, 'storeId') === STORE
+          ? Array.from({ length: SELLER_FIXTURE.orders }, (_, n) => ({ $id: rowId(72, n), $ownerId: OTHER, $createdAt: SINCE + 50 + n, storeId: STORE }))
+          : undefined
+      case 'storeReview':
+        return pinned(read, 'storeId') === STORE ? paged(storeReviews, read) : undefined
+      case 'itemReview': {
+        const one = pinned(read, 'itemId')
+        if (typeof one === 'string') return paged(pagesOf(reviewsOf.get(one) ?? []), read)
+        const items = pinned(read, 'itemId', 'in')
+        if (!Array.isArray(items)) return undefined
+        // Item by item, in the read's (descending) item order.
+        const rows = [...items].sort().reverse().flatMap((id) => reviewsOf.get(String(id)) ?? [])
+        return paged(pagesOf(rows, items.includes(NEW_ITEM) ? [] : SELLER_FIXTURE.inPages), read)
+      }
+      default:
+        return undefined
+    }
+  }
+}
 
 /** Select a release set: stub its env, reload the modules, and install the fake SDK on the fresh service. */
 async function selectReleaseSet(env: Record<string, string>): Promise<void> {
@@ -281,6 +378,8 @@ function samplePost(id: string, overrides: Partial<Post> = {}): Post {
 function sampleReply(id: string): Post {
   return samplePost(id, { targetKind: 'reply', rootPostId: POST, parentId: POST, parentOwnerId: OTHER })
 }
+
+const SELLER_READER = 'storeNotificationService.getNotifications (a seller with a store)'
 
 /** One reader: a label and the call that drives it (modules are imported after the env is stubbed). */
 interface Reader {
@@ -544,6 +643,10 @@ async function readers(): Promise<Reader[]> {
     { name: 'storeStatsService.loadBuyerOrdersComposite', run: () => storeStatsService.loadBuyerOrdersComposite(ME, 50) },
     { name: 'storeStatsService.countSellerOrders', run: () => storeStatsService.countSellerOrders(OTHER, STORE) },
     { name: 'storeNotificationService.getNotifications', run: () => storeNotificationService.getNotifications(ME, SINCE, ignore) },
+    {
+      name: SELLER_READER,
+      run: () => capture.answerWith(sellerStoreFixture(), () => storeNotificationService.getNotifications(SELLER, SINCE, ignore)),
+    },
     // ---- pollr ----
     { name: 'pollrPollService.getPoll', run: () => pollrPollService.getPoll(POLL) },
     { name: 'pollrPollService.countBallots', run: () => pollrPollService.countBallots(POLL) },
@@ -638,12 +741,13 @@ describe.each(RELEASE_SETS)('client query shapes on $name', ({ env, models: MODE
   const judged: Judged[] = []
   const skippedContracts = new Set<string>()
   const silentReaders: string[] = []
+  const results = new Map<string, unknown>()
 
   beforeAll(async () => {
     await selectReleaseSet(env)
     for (const reader of await readers()) {
       const before = capture.requests.length
-      await capture.drive(reader.name, reader.run)
+      results.set(reader.name, await capture.drive(reader.name, reader.run))
       if (capture.requests.length === before) silentReaders.push(reader.name)
     }
     // Every request is judged (limits, operands and windows can change a
@@ -678,6 +782,37 @@ describe.each(RELEASE_SETS)('client query shapes on $name', ({ env, models: MODE
   it('serves every captured request through an index of its contract', () => {
     const failures = refused().filter((entry) => !pending(entry)).map(failureLine)
     expect([...new Set(failures)]).toEqual([])
+  })
+
+  it('drives a seller\'s store notifications through every source, new items and continued review pages', () => {
+    const events = results.get(SELLER_READER) as { type: string }[] | undefined
+    const counts = new Map<string, number>()
+    for (const event of events ?? []) counts.set(event.type, (counts.get(event.type) ?? 0) + 1)
+    expect(Object.fromEntries(counts)).toEqual({
+      storeOrder: SELLER_FIXTURE.orders,
+      storeReview: SELLER_FIXTURE.storeReviewPages[0] + SELLER_FIXTURE.storeReviewPages[1],
+      itemReview: SELLER_FIXTURE.itemReviews.first + SELLER_FIXTURE.itemReviews.second + SELLER_FIXTURE.newItemReviews,
+    })
+    const seller = judged.filter((entry) => entry.reader === SELLER_READER)
+    const reads = (type: string) => seller.filter((entry) => entry.request.documentTypeName === type)
+    const laned = env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY === 'v11'
+    const cursored = (type: string) => reads(type).filter((entry) => entry.request.startAfter !== undefined).length
+    // The review walks ran past their first page: an `in` walk (v10) until an
+    // empty page, past its short continuation; a one-item walk (v11) until a short one.
+    expect(cursored('storeReview')).toBe(1)
+    expect(cursored('itemReview')).toBe(laned ? 1 : SELLER_FIXTURE.inPages.length)
+    // v11 reads item reviews one item a read; v10 one `in` over the held items, then one over the new one.
+    expect(reads('itemReview').filter((entry) => entry.request.startAfter === undefined).map(({ request }) =>
+      (request.where ?? request.subQuery?.where ?? [])[0]?.[1])).toEqual(laned ? ['==', '==', '=='] : ['in', 'in'])
+    // The laned sources read the listed lane on storefront v11, nothing pinned before.
+    for (const type of ['storeItem', 'storeReview', 'itemReview']) {
+      const sent = reads(type)
+      expect(sent.length).toBeGreaterThan(0)
+      for (const { request } of sent) {
+        const where = request.where ?? request.subQuery?.where ?? []
+        expect(where.some(([field, operator, value]) => field === 'mod' && operator === '==' && value === null)).toBe(laned)
+      }
+    }
   })
 
   it('still refuses every pending builder fix; a fixed one must leave PENDING_BUILDER_FIXES', () => {
