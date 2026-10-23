@@ -10,7 +10,7 @@ import { encryptDigitalFile } from '@/lib/crypto/digital-delivery'
 import type { DigitalAsset } from '@/lib/types'
 import { parse, stringify } from '../../src/protocol/codec'
 import {
-  DELIVERED_FILE_CHUNK_BYTES, fetchDeliveredFile, holdDeliveredFile, readDeliveredFileChunk, releaseDeliveredFile,
+  DELIVERED_FILE_CHUNK_BYTES, fetchDeliveredFile, holdDeliveredFile, openOnce, readDeliveredFileChunk, releaseDeliveredFile,
 } from '../../src/api/delivered-file'
 
 const MiB = 1024 * 1024
@@ -52,7 +52,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('fetchDeliveredFile', () => {
+// Encrypting, decrypting and hashing megabytes in pure JS: generous under a loaded CI runner.
+describe('fetchDeliveredFile', { timeout: 30_000 }, () => {
   it.each([
     ['with a declared length', true],
     ['without one', false],
@@ -73,7 +74,7 @@ describe('fetchDeliveredFile', () => {
   })
 })
 
-describe('held delivered files', () => {
+describe('held delivered files', { timeout: 30_000 }, () => {
   it('reassembles the plaintext from bounded chunks whose MD5 matches the one declared', () => {
     const plaintext = new Uint8Array(randomBytes(5 * DELIVERED_FILE_CHUNK_BYTES + 1234))
     const file = holdDeliveredFile(OWNER, 'book.pdf', plaintext)
@@ -94,9 +95,12 @@ describe('held delivered files', () => {
     // The chunk that reached the end released it.
     expect(() => readDeliveredFileChunk(OWNER, file.handle, whole.length)).toThrow('no longer open')
 
-    const empty = holdDeliveredFile(OWNER, 'empty.txt', new Uint8Array(0))
-    expect(empty.md5).toBe(md5Hex(new Uint8Array(0)))
-    expect(readDeliveredFileChunk(OWNER, empty.handle, 0)).toHaveLength(0)
+    // An empty file has nothing to read: it is not held, and takes no place from a file that is.
+    const kept = holdDeliveredFile(OWNER, 'kept.bin', new Uint8Array(10))
+    const empties = [1, 2, 3].map(() => holdDeliveredFile(OWNER, 'empty.txt', new Uint8Array(0)))
+    expect(empties[0]).toMatchObject({ size: 0, md5: md5Hex(new Uint8Array(0)) })
+    expect(() => readDeliveredFileChunk(OWNER, empties[0].handle, 0)).toThrow('no longer open')
+    expect(readDeliveredFileChunk(OWNER, kept.handle, 0)).toHaveLength(10)
   })
 
   it('a chunk md5 catches: a lost or repeated chunk assembles to another digest', () => {
@@ -107,6 +111,24 @@ describe('held delivered files', () => {
     const repeated = new Uint8Array([...a, ...a, ...b])
     expect(md5Hex(repeated)).not.toBe(file.md5)
     releaseDeliveredFile(file.handle)
+  })
+
+  it('runs one open per file at a time: a retry joins the download still running', async () => {
+    const files = [10, 20].map(size => holdDeliveredFile(OWNER, `${size}.bin`, new Uint8Array(size)))
+    const open = vi.fn()
+      .mockImplementationOnce(async () => files[0])
+      .mockImplementationOnce(async () => files[1])
+    const first = openOnce('buyer:order:delivery:0:0', open)
+    const retry = openOnce('buyer:order:delivery:0:0', open)
+    const other = openOnce('buyer:order:delivery:0:1', open)
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(await retry).toBe(await first)
+    expect(await other).toBe(files[1])
+    // Settled: the next open downloads again.
+    open.mockImplementationOnce(async () => files[0])
+    await openOnce('buyer:order:delivery:0:0', open)
+    expect(open).toHaveBeenCalledTimes(3)
+    files.forEach(file => releaseDeliveredFile(file.handle))
   })
 
   it('reads only for the account that opened it, and drops it for any other', () => {

@@ -118,12 +118,34 @@ export function releaseDeliveredFile(handle: string): void {
 
 const idleTimer = (handle: string) => setTimeout(() => releaseDeliveredFile(handle), HELD_IDLE_MS)
 
-/** Hold `bytes` for `owner` to read in chunks. */
+/**
+ * Hold `bytes` for `owner` to read in chunks. An empty file has nothing to
+ * read, so it is not held (the host reads no chunk of it, and closing its
+ * handle is a no-op).
+ */
 export function holdDeliveredFile(owner: string, name: string, bytes: Uint8Array): HeldFileDTO {
-  while (held.size >= MAX_HELD) releaseDeliveredFile(held.keys().next().value as string)
   const handle = bytesToHex(crypto.getRandomValues(new Uint8Array(16)))
-  held.set(handle, { owner, bytes, timer: idleTimer(handle) })
+  if (bytes.length > 0) {
+    while (held.size >= MAX_HELD) releaseDeliveredFile(held.keys().next().value as string)
+    held.set(handle, { owner, bytes, timer: idleTimer(handle) })
+  }
   return { handle, name, size: bytes.length, md5: bytesToHex(md5(bytes)) }
+}
+
+const opening = new Map<string, Promise<HeldFileDTO>>()
+
+/**
+ * `open()` once per `key` at a time: a retry of an open its caller gave up on
+ * (the host's deadline; an open is never cancelled in the engine) joins the
+ * download still running instead of starting a second one. Whoever reads the
+ * result first gets the file; one nobody reads is let go when idle.
+ */
+export function openOnce(key: string, open: () => Promise<HeldFileDTO>): Promise<HeldFileDTO> {
+  const running = opening.get(key)
+  if (running) return running
+  const started = open().finally(() => opening.delete(key))
+  opening.set(key, started)
+  return started
 }
 
 /**

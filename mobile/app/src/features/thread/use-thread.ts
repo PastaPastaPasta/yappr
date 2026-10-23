@@ -68,8 +68,9 @@ export function useThread(id: string) {
       // Leaving the screen cancels the read in the engine (ENGINE.md §4.6).
       const api = engine.withSignal(signal);
       const read = async () => {
+        // A delta only continues the page held: a refresh re-reads that page through the cursor before it.
         const held = pageParam === null ? undefined : heldThread(id);
-        if (held) {
+        if (held && pageParam === held.replies.cursor) {
           const merged = mergeThreadPage(held, await api.posts.thread(id, pageParam, { delta: true }));
           if (merged) return merged;
         }

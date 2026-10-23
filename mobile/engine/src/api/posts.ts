@@ -340,6 +340,8 @@ async function continueThread(kind: string, key: string, session: string, held: 
   // The rows the caller lacks: this page's, as nested (past the rendered depth they are only counted).
   const unsent = flat.filter(entry => !held.shown.has(entry.reply.id))
   const items = threadItems(unsent, await hydrateThread([], unsent.map(entry => entry.reply)))
+  // A cancelled call never moves the session on: the caller, holding the page before, may ask again.
+  throwIfCancelled(signal)
   const shown = new Set([...held.shown, ...items.map(item => item.id)])
   const layout = flat
     .filter(entry => shown.has(entry.reply.id))
@@ -570,6 +572,7 @@ export const posts = {
     throwIfCancelled(signal)
 
     const dtos = await hydrateThread([focus, ...chain], read.replies.map(entry => entry.reply))
+    throwIfCancelled(signal)
     const items = threadItems(read.replies, dtos)
     const view = {
       focus: dtos.get(focus.id) ?? null,

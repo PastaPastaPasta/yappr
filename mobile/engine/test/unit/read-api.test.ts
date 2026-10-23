@@ -68,6 +68,7 @@ vi.mock('@/lib/services/dpns-service', async (load) => ({
 }))
 
 const { feed } = await import('../../src/api/feed')
+const { startWithSignal } = await import('../../src/rpc/call-signal')
 const { posts } = await import('../../src/api/posts')
 const { profiles } = await import('../../src/api/profiles')
 const { graph } = await import('../../src/api/graph')
@@ -566,13 +567,13 @@ describe('posts.thread continuations hydrate only the new page (MARCH-5)', () =>
   const enriched = () => m.postService.enrichPostsBatch.mock.calls.reduce((sum, [list]) => sum + (list as Post[]).length, 0)
 
   /** Page through the whole thread; with `delta`, merge each answer into the replies held, as the app does. */
-  async function pageThrough(delta: boolean) {
+  async function pageThrough(delta: boolean, focus = id('Root')) {
     vi.clearAllMocks()
-    let thread = await posts.thread(id('Root'))
+    let thread = await posts.thread(focus)
     let bytes = JSON.stringify(thread).length
     const held = new Map(thread.replies.items.map(item => [item.id, item]))
     while (thread.replies.cursor) {
-      const next = await posts.thread(id('Root'), thread.replies.cursor, { delta })
+      const next = await posts.thread(focus, thread.replies.cursor, { delta })
       bytes += JSON.stringify(next).length
       if (next.layout) {
         expect(validate(threadDTO, next)).toEqual([])
@@ -619,6 +620,62 @@ describe('posts.thread continuations hydrate only the new page (MARCH-5)', () =>
     expect(merged.thread.replies.items[0].isAuthorThread).toBe(true)
     // Each reply's DTO is sent once; only the small layout is resent.
     expect(merged.bytes * 2).toBeLessThan(whole.bytes)
+  })
+
+  it('keeps the session where it was when a continuation is cancelled, so asking again still continues it', async () => {
+    const first = await posts.thread(id('Root'))
+    const controller = new AbortController()
+    // The host gives up while the page is being hydrated.
+    m.postService.enrichPostsBatch.mockImplementationOnce(async (list: Post[]) => {
+      controller.abort()
+      return list
+    })
+    await expect(startWithSignal(controller.signal, () => posts.thread(id('Root'), first.replies.cursor, { delta: true })))
+      .rejects.toMatchObject({ code: 'ABORTED' })
+    // Had the cancelled call moved the session on, this would read as a refresh (the whole thread, no layout).
+    const again = await posts.thread(id('Root'), first.replies.cursor, { delta: true })
+    expect(again.layout).toHaveLength(2 * PAGE)
+    expect(again.replies.items).toHaveLength(PAGE)
+  })
+
+  it.each([
+    ['the root', 'Root'],
+    ['a reply', 'F'],
+  ])('merges deltas to the whole read, stubs included, when the focus is %s', async (_label, focusKey) => {
+    m.topology = { hasFlatThreads: true, repliesOutliveTheirParent: true, replyThreadsCarryLiveMarker: true }
+    const theirs = (r: Reply): Reply => ({ ...r, author: user(id('Other')) })
+    const focusReply = reply('F', 2)
+    // Pages of three: the focus and its subtree, a reply under a parent the moderators hid (it answers the
+    // focus) and one under a parent proved deleted.
+    // Distinct times: replies are ordered by time, and a tie keeps no order either way.
+    const all = [
+      theirs(reply('A', 3)), focusReply, theirs(reply('B', 4, 'F')),
+      theirs(reply('C', 6, 'F')), theirs(reply('Kid', 7, 'Hid')), theirs(reply('D', 8)),
+      theirs(reply('Orphan', 9, 'Gone')), theirs(reply('E', 10, 'B')), theirs(reply('G', 11, 'C')),
+    ]
+    const hid = { ...theirs(reply('Hid', 5, 'F')), content: 'secret', moderation: { mod: 1, modLabel: 2 } }
+    m.postService.getPostById.mockImplementation(async (postId: string) => (postId === id('Root') ? post('Root', 1) : null))
+    m.replyService.getReplyById.mockImplementation(async (replyId: string) => (replyId === id('F') ? focusReply : null))
+    m.replyService.getReplies.mockImplementation(async (_root: string, options: { startAfter?: string }) => {
+      const start = options.startAfter ? all.findIndex(entry => entry.id === options.startAfter) + 1 : 0
+      const documents = all.slice(start, start + 3)
+      return { documents, ...(start + 3 < all.length ? { nextCursor: documents[documents.length - 1].id } : {}) }
+    })
+    m.replyService.getNestedReplies.mockImplementation(async (parents: string[]) =>
+      new Map(parents.map(parent => [parent, all.filter(entry => entry.replyToReplyId === parent)])))
+    m.replyService.getManyOrThrow.mockImplementation(async (ids: string[]) => (ids.includes(id('Hid')) ? [hid] : []))
+    m.provenAbsent.mockImplementation(async (_type: string, ids: string[]) => new Set(ids.filter(candidate => candidate === id('Gone'))))
+
+    const whole = await pageThrough(false, id(focusKey))
+    const merged = await pageThrough(true, id(focusKey))
+    const rows = (items: typeof whole.thread.replies.items) =>
+      items.map(item => [item.id.replace(/x+$/, ''), item.depth, item.isAuthorThread, item.hiddenReplyCount, item.hiddenStub ?? false, item.deletedStub ?? false])
+    expect(rows(merged.thread.replies.items)).toEqual(rows(whole.thread.replies.items))
+    expect(merged.thread.replies.items).toEqual(whole.thread.replies.items)
+    const stubs = whole.thread.replies.items.filter(item => item.hiddenStub || item.deletedStub).map(item => item.id)
+    expect(stubs).toEqual(focusKey === 'Root' ? expect.arrayContaining([id('Hid'), id('Gone')]) : [id('Hid')])
+    expect(JSON.stringify(merged.thread)).not.toMatch(/secret/)
+    expect(merged.focusReads).toBeLessThan(whole.focusReads)
   })
 
   it('reads a refresh of the page already served whole, and so a delta the engine cannot continue', async () => {

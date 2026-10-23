@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 
 import { queryClient } from '~/state/query-client';
 
-import { useEngineInfiniteQuery, useEngineQuery } from './queries';
+import { fetchEngineQuery, useEngineInfiniteQuery, useEngineQuery } from './queries';
 import { fakeEngine } from './testing/fake-engine';
 
 /** The signals the data layer handed the engine (`engine.withSignal`), in order. */
@@ -52,6 +52,22 @@ describe('engine reads end with their screen (ENGINE.md §4.6, MARCH-4)', () => 
     await waitFor(() => expect(mockSignals).toHaveLength(1));
     unmount();
     await waitFor(() => expect(mockSignals[0].aborted).toBe(true));
+  });
+
+  it('reads afresh when an imperative fetch joined a read its screen then cancelled', async () => {
+    let answer!: (value: null) => void;
+    fakeEngine
+      .method('posts.get')
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    const { unmount } = renderHook(() => useEngineQuery(['post', 'joined'], (api) => api.posts.get('joined')), { wrapper });
+    await waitFor(() => expect(mockSignals).toHaveLength(1));
+    // Joins the screen's read in flight.
+    const fetched = fetchEngineQuery(['post', 'joined'], (api) => api.posts.get('joined'));
+    unmount();
+    await waitFor(() => expect(fakeEngine.method('posts.get')).toHaveBeenCalledTimes(2));
+    answer(null);
+    await expect(fetched).resolves.toBeNull();
   });
 
   it('leaves a read that finished alone', async () => {

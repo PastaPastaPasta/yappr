@@ -167,6 +167,8 @@ interface Job {
   args: unknown[];
   kind: MethodKind;
   signal?: AbortSignal;
+  /** Set while queued: stops watching `signal` for a give-up once the job leaves the queue. */
+  dequeued?: () => void;
   resolve(value: unknown): void;
   reject(error: unknown): void;
   replayed: boolean;
@@ -712,22 +714,21 @@ export class EngineSupervisor<Load = unknown> {
       return;
     }
     // A call given up while it waits for the engine leaves the queue.
-    job.signal?.addEventListener(
-      'abort',
-      () => {
-        const index = this.queue.indexOf(job);
-        if (index < 0) return;
-        this.queue.splice(index, 1);
-        job.reject(abortedError(job.path));
-        this.update({});
-      },
-      { once: true },
-    );
+    const giveUp = () => {
+      const index = this.queue.indexOf(job);
+      if (index < 0) return;
+      this.queue.splice(index, 1);
+      job.reject(abortedError(job.path));
+      this.update({});
+    };
+    job.signal?.addEventListener('abort', giveUp, { once: true });
+    job.dequeued = () => job.signal?.removeEventListener('abort', giveUp);
     this.queue.push(job);
     if (this.queue.length > this.options.queueCap) {
       const oldestRead = this.queue.findIndex((queued) => queued.kind === 'read');
       if (oldestRead >= 0) {
         const [dropped] = this.queue.splice(oldestRead, 1);
+        dropped.dequeued?.();
         this.failCall(dropped, new RpcError('Too many calls waiting for the engine', EngineErrorCode.Busy));
       }
     }
@@ -738,13 +739,19 @@ export class EngineSupervisor<Load = unknown> {
     const jobs = this.queue;
     this.queue = [];
     this.update({});
-    for (const job of jobs) this.dispatch(job);
+    for (const job of jobs) {
+      job.dequeued?.();
+      this.dispatch(job);
+    }
   }
 
   private failQueue(error: Error) {
     const jobs = this.queue;
     this.queue = [];
-    for (const job of jobs) job.reject(error);
+    for (const job of jobs) {
+      job.dequeued?.();
+      job.reject(error);
+    }
     this.update({});
   }
 

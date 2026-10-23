@@ -388,6 +388,25 @@ describe('ThreadScreen', () => {
     expect(screen.getByText('Page two')).toBeTruthy();
   });
 
+  it('never asks for a delta on a refresh, which re-reads the held page through the cursor before it (MARCH-5)', async () => {
+    fakeEngine
+      .method('posts.thread')
+      .mockResolvedValueOnce(threadOf([reply('r1', 'Page one')], {}, true))
+      .mockResolvedValueOnce(threadOf([reply('r1', 'Page one'), reply('r2', 'Page two')]));
+    renderThread('root', 'r2');
+    await act(async () => {});
+    await act(async () => {});
+    expect(fakeEngine.method('posts.thread')).toHaveBeenLastCalledWith('root', 'next', { delta: true });
+
+    // The held page came through 'next' and ends the thread: refreshing it asks for 'next' again, whole.
+    fakeEngine.method('posts.thread').mockResolvedValueOnce(threadOf([reply('r1', 'Page one'), reply('r2', 'Page two fresh')]));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.post.thread('root') });
+    });
+    expect(fakeEngine.method('posts.thread')).toHaveBeenLastCalledWith('root', 'next');
+    expect(screen.getByText('Page two fresh')).toBeTruthy();
+  });
+
   it('reads the whole page when a delta places a reply it does not hold (MARCH-5)', async () => {
     fakeEngine
       .method('posts.thread')

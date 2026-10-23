@@ -29,7 +29,7 @@ import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer } from '../dto/hydrate'
 import { decodeCursor, encodeCursor } from '../dto/cursor'
 import type { Page } from './dto'
-import { fetchDeliveredFile, holdDeliveredFile, readDeliveredFileChunk, releaseDeliveredFile, type HeldFileDTO } from './delivered-file'
+import { fetchDeliveredFile, holdDeliveredFile, openOnce, readDeliveredFileChunk, releaseDeliveredFile, type HeldFileDTO } from './delivered-file'
 import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore } from '../writes/tickets'
 import { signer } from '../writes/handler-kit'
 import { wasConfirmed } from '../writes/lib-results'
@@ -978,29 +978,8 @@ export function createOrderModule(tickets: TicketStore) {
      */
     async openDeliveredFile(input: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number }): Promise<HeldFileDTO> {
       const viewer = requireViewer('Saving a file')
-      const order = await readOrder(input?.orderId)
-      const key = getEncryptionKeyBytes(viewer)
-      if (!key) throw badRequest(UNLOCK_MESSAGE)
-      let delivery: OrderDelivery | undefined
-      try {
-        if (order.sellerId === viewer) {
-          const read = await orderDeliveryService.loadDecrypted([order], (found, owner) => orderDeliveryService.decryptAsSeller(found, owner, key))
-          delivery = read.get(order.id)?.find(found => found.id === input.deliveryId)
-        } else if (order.buyerId === viewer) {
-          const sellerKey = await cachedSellerKey(order.sellerId)
-          const found = (await orderDeliveryService.getForBuyer(viewer)).get(order.id)?.find(candidate => candidate.id === input.deliveryId)
-          if (found && sellerKey) delivery = { ...found, payload: orderDeliveryService.decryptAsBuyer(found, order, key, sellerKey) }
-        } else {
-          throw badRequest('This order is not yours')
-        }
-      } catch (error) {
-        throw readFailure(error)
-      }
-      const asset = delivery?.payload?.items[input.itemIndex]?.assets[input.assetIndex]
-      if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
-      if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
-      // The declared size is the seller's word: the download itself stops past the cap.
-      return holdDeliveredFile(viewer, asset.name, await fetchDeliveredFile(asset, MAX_SAVED_FILE_BYTES))
+      // A retry of an open given up on joins the download still running (`openOnce`).
+      return openOnce([viewer, input?.orderId, input?.deliveryId, input?.itemIndex, input?.assetIndex].join(':'), () => openFile(viewer, input))
     },
 
     /**
@@ -1024,6 +1003,33 @@ export function createOrderModule(tickets: TicketStore) {
       const stored = (await itemDeliverableService.loadKits([itemId], key).catch((error: unknown) => { throw readFailure(error) })).get(itemId)
       return { locked: false, kit: stored ? kitDTO(stored.kit) : null, revision: kitRevision(stored) }
     },
+  }
+
+  /** `openDeliveredFile`'s download and decryption, held for `viewer`. */
+  async function openFile(viewer: string, input: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number }): Promise<HeldFileDTO> {
+    const order = await readOrder(input?.orderId)
+    const key = getEncryptionKeyBytes(viewer)
+    if (!key) throw badRequest(UNLOCK_MESSAGE)
+    let delivery: OrderDelivery | undefined
+    try {
+      if (order.sellerId === viewer) {
+        const read = await orderDeliveryService.loadDecrypted([order], (found, owner) => orderDeliveryService.decryptAsSeller(found, owner, key))
+        delivery = read.get(order.id)?.find(found => found.id === input.deliveryId)
+      } else if (order.buyerId === viewer) {
+        const sellerKey = await cachedSellerKey(order.sellerId)
+        const found = (await orderDeliveryService.getForBuyer(viewer)).get(order.id)?.find(candidate => candidate.id === input.deliveryId)
+        if (found && sellerKey) delivery = { ...found, payload: orderDeliveryService.decryptAsBuyer(found, order, key, sellerKey) }
+      } else {
+        throw badRequest('This order is not yours')
+      }
+    } catch (error) {
+      throw readFailure(error)
+    }
+    const asset = delivery?.payload?.items[input.itemIndex]?.assets[input.assetIndex]
+    if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
+    if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
+    // The declared size is the seller's word: the download itself stops past the cap.
+    return holdDeliveredFile(viewer, asset.name, await fetchDeliveredFile(asset, MAX_SAVED_FILE_BYTES))
   }
 
   const writes = {

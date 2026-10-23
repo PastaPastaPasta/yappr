@@ -314,8 +314,8 @@ export function retriedReadError(key: QueryKey): Error | undefined {
  * read ("Try again") starts afresh: TanStack would join the retry instead
  * (a read with no data is never restarted), and a stalled one takes 30-60 s
  * to fail, all that time with "Try again" doing nothing. The cancel puts the
- * read back on the error it showed, which releases the hold; the engine's
- * call runs on and its answer is dropped.
+ * read back on the error it showed, which releases the hold, and the query's
+ * signal cancels the engine's call too (ENGINE.md §4.6).
  */
 export async function cancelRetriedRead(key: QueryKey): Promise<void> {
   if (!retriedReadError(key)) return;
