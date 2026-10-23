@@ -34,6 +34,7 @@ vi.mock('../profile/v10-profile', () => ({
   profileExtensionSource: () => null,
 }));
 vi.mock('../constants', () => ({
+  YAPPR_CONTRACT_ID: 'app-contract', getConfiguredNetwork: () => 'testnet',
   YAPPR_DM_CONTRACT_ID: '', YAPPR_DM_V5_CONTRACT_ID: '', dmIsV5: () => false, YAPPR_PROFILE_CONTRACT_ID: '', KEY_EXCHANGE_CONTRACT_ID: '',
   YAPPR_BLOG_CONTRACT_ID: '', YAPPR_STOREFRONT_CONTRACT_ID: '',
   POLLR_CONTRACT_ID: '', TOKEN_HISTORY_CONTRACT_ID: '',
@@ -66,6 +67,45 @@ beforeEach(() => {
   mocks.connect.mockReset().mockResolvedValue(undefined);
   mocks.broadcast.mockReset().mockResolvedValue(undefined);
   mocks.fetch.mockReset().mockResolvedValue({ id: 'identity' });
+});
+
+describe('a read before anything has initialized', () => {
+  // A page's first effect runs before SdkProvider's, so on a direct link its read comes first.
+  it("starts the app's own configuration instead of failing", async () => {
+    const sdkService = await service();
+    const sdk = await sdkService.getSdk();
+    expect(mocks.instances).toHaveLength(1);
+    expect(mocks.instances[0].options).toMatchObject({ network: 'testnet' });
+    expect(sdkService.isReady()).toBe(true);
+    // SdkProvider's bootstrap, arriving afterwards with the same configuration, keeps that instance.
+    await sdkService.initialize({ network: 'testnet', contractId: 'app-contract' });
+    expect(mocks.instances).toHaveLength(1);
+    expect(await sdkService.getSdk()).toBe(sdk);
+  });
+
+  it('shares one initialization between an early read and the bootstrap that follows it', async () => {
+    const sdkService = await service();
+    const early = sdkService.getSdk();
+    const bootstrap = sdkService.initialize({ network: 'testnet', contractId: 'app-contract' });
+    const [sdk] = await Promise.all([early, bootstrap]);
+    expect(mocks.instances).toHaveLength(1);
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(await sdkService.getSdk()).toBe(sdk);
+  });
+});
+
+describe('a configuration change', () => {
+  it('waits out an initialization for another configuration, then replaces it', async () => {
+    const sdkService = await service();
+    const early = sdkService.getSdk();
+    const changed = sdkService.initialize(config);
+    const [read] = await Promise.all([early, changed]);
+    expect(mocks.instances).toHaveLength(2);
+    expect(mocks.instances[1].options).toMatchObject({ network: 'devnet', devnetName: config.devnetName });
+    // The early read waited for the replacement rather than failing or keeping the old instance.
+    expect(read).toBe(mocks.instances[1]);
+    expect(await sdkService.getSdk()).toBe(mocks.instances[1]);
+  });
 });
 
 describe('connection recovery', () => {

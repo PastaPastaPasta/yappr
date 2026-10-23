@@ -51,8 +51,8 @@ export function ElectionStatusPanel({ contract = 'social' }: { contract?: Modera
   const declared = moderatedContract(contract)
   const { contractId } = declared
   const elected = declared.elected() !== null
-  // A panel mounts (and its effect runs) before SdkProvider has called
-  // initialize(), so a read on mount fails with "SDK not configured".
+  // Reads once SdkProvider's bootstrap is done, so a bootstrap that failed is
+  // reported as the read failing rather than left loading.
   const { isReady: sdkReady, error: sdkError } = useSdk()
   // One loader per mounted panel: concurrent loads share a single read.
   const loader = useMemo(() => createElectionStatusLoader(() => moderationElectionService.getStatus(contractId)), [contractId])

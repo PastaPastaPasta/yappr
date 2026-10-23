@@ -3,7 +3,7 @@ import type { EvoSDK } from '@dashevo/evo-sdk';
 import { bundleKey, bundledContractsFor, staleContractIds } from '@/lib/contracts/bundled-contracts';
 import { markRegisteredVerified, rememberRegisteredContract, trackRegisteredRefresh } from '@/lib/registered-contracts';
 import { instrumentSdk } from '@/lib/query-inspector/capture';
-import { YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
+import { YAPPR_CONTRACT_ID, getConfiguredNetwork, YAPPR_DM_CONTRACT_ID, YAPPR_DM_V5_CONTRACT_ID, dmIsV5, YAPPR_PROFILE_CONTRACT_ID, KEY_EXCHANGE_CONTRACT_ID, YAPPR_BLOG_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, POLLR_CONTRACT_ID, TOKEN_HISTORY_CONTRACT_ID, DAPI_ADDRESSES, DEVNET_NAME, DEVNET_QUORUM_URL } from '../constants';
 import { profileBaseSource, profileExtensionSource } from '../profile/v10-profile';
 import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
@@ -20,6 +20,15 @@ export interface EvoSdkConfig {
   addresses?: readonly string[];
   /** Trusted quorum service override on any network. */
   quorumUrl?: string;
+}
+
+/**
+ * The configuration this build's app runs on: the network it was built for and
+ * its social contract. SdkProvider and the auth controller initialize with it,
+ * and `getSdk()` falls back to it when nothing has initialized yet.
+ */
+export function appSdkConfig(): EvoSdkConfig {
+  return { network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID };
 }
 
 /**
@@ -106,15 +115,21 @@ class EvoSdkService {
       return;
     }
 
-    // If currently initializing, wait for it to complete
+    // An initialization under way for this config is joined; one for another
+    // config is waited out, then replaced below.
     if (this._isInitializing && this.initPromise) {
+      const inFlight = this.config;
       await this.initPromise;
-      return;
+      if (inFlight !== null && sameConfig(inFlight, config)) return;
     }
 
-    // If config changed, cleanup first
+    // If config changed, drop the old instance. Synchronously, together with
+    // setting the new config: a getSdk() in between must never see the
+    // service unconfigured and start its fallback alongside this one.
     if (this._isInitialized && this.config) {
-      await this.cleanup();
+      this.sdk = null;
+      this._isInitialized = false;
+      this.connectionLost = false;
     }
 
     this.config = config;
@@ -405,18 +420,21 @@ class EvoSdkService {
   }
 
   /**
-   * Get the SDK instance, initializing if necessary
+   * Get the SDK instance, initializing if necessary. A read made before
+   * anything has initialized (a component's effect runs before SdkProvider's,
+   * since React runs a parent's effects after its children's) starts the
+   * app's own configuration instead of failing, so a page's first read never
+   * depends on what ran before it.
    */
   async getSdk(): Promise<EvoSDK> {
     // A rebuild that fails reports through its own caller; this caller gets a
     // fresh attempt below rather than the rebuild's error.
     if (this.reconnectPromise) await this.reconnectPromise.catch(() => undefined);
     if (!this._isInitialized || !this.sdk) {
-      if (!this.config) {
-        throw new Error('SDK not configured. Call initialize() first.');
-      }
-      await this.initialize(this.config);
+      await this.initialize(this.config ?? appSdkConfig());
     }
+    // A configuration change replaced the instance while this caller waited: wait for its successor.
+    if (!this.sdk && this._isInitializing && this.initPromise) await this.initPromise;
     if (!this.sdk) {
       throw new Error('SDK initialization failed');
     }
@@ -448,8 +466,8 @@ class EvoSdkService {
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
     this.lastRebuildAt = Date.now();
 
-    // Retain the configuration throughout recovery; callers must never see
-    // the temporary unconfigured state produced by a full cleanup().
+    // Retain the configuration throughout recovery: a rebuild replaces the
+    // instance, never the configuration it is built from.
     logger.debug('EvoSdkService: replacing the SDK instance (address pool exhausted, quorum missing from the trusted context, or connectivity restored)');
     // A config change during the wait wins; do not resurrect the old one.
     if (this.config !== config) return;
@@ -511,18 +529,6 @@ class EvoSdkService {
   }
 
   /**
-   * Clean up resources
-   */
-  async cleanup(): Promise<void> {
-    this.sdk = null;
-    this._isInitialized = false;
-    this._isInitializing = false;
-    this.initPromise = null;
-    this.config = null;
-    this.connectionLost = false;
-  }
-
-  /**
    * Whether an error means the instance itself is unusable, rather than the
    * request being wrong. Two cases, both fixed only by a rebuild:
    *
@@ -547,14 +553,6 @@ class EvoSdkService {
     // address pool it exhausted still says "no available addresses" and rebuilds.
     if (message.includes(QUORUM_KEY_UNAVAILABLE) && !message.includes('no available addresses')) return false;
     return CONNECTION_ERROR_MARKERS.some(marker => message.includes(marker));
-  }
-
-  /**
-   * Reinitialize with new configuration
-   */
-  async reinitialize(config: EvoSdkConfig): Promise<void> {
-    await this.cleanup();
-    await this.initialize(config);
   }
 }
 

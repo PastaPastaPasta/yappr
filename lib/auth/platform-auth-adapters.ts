@@ -10,7 +10,7 @@ import type {
 import { decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { KEY_EXCHANGE_CONTRACT_ID, YAPPR_CONTRACT_ID, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
-import { evoSdkService } from '@/lib/services/evo-sdk-service'
+import { appSdkConfig, evoSdkService } from '@/lib/services/evo-sdk-service'
 import {
   clearEncryptionKey,
   clearEncryptionKeyType,
@@ -51,10 +51,7 @@ import {
 } from '@/lib/services/identity-update-builder'
 
 async function ensureSdk(): Promise<void> {
-  await evoSdkService.initialize({
-    network: getConfiguredNetwork(),
-    contractId: YAPPR_CONTRACT_ID,
-  })
+  await evoSdkService.initialize(appSdkConfig())
 }
 
 function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {

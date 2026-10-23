@@ -478,6 +478,19 @@ describe('a proposal link', () => {
     await expect(charterService.getProposal('J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv')).resolves.toBeNull()
     expect(read).toHaveBeenCalledWith('J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv')
   })
+
+  it('answers with the proposal the chain holds', async () => {
+    const id = 'J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv'
+    const doc = { toObject: () => ({ $id: id, targetContractId: 'target', description: 'We hide spam.' }), free: vi.fn() }
+    Object.assign(sdk, { moderationCharters: { submittedCharter: vi.fn().mockResolvedValue(doc) } })
+    await expect(charterService.getProposal(id)).resolves.toMatchObject({ id, targetContractId: 'target', description: 'We hide spam.' })
+    expect(doc.free).toHaveBeenCalled()
+  })
+
+  it('throws when the read fails, never answering that there is no proposal', async () => {
+    Object.assign(sdk, { moderationCharters: { submittedCharter: vi.fn().mockRejectedValue(new Error('offline')) } })
+    await expect(charterService.getProposal('J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv')).rejects.toThrow('offline')
+  })
 })
 
 describe('join requests', () => {

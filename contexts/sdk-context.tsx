@@ -2,8 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
+import { appSdkConfig, evoSdkService } from '@/lib/services/evo-sdk-service'
 
 interface SdkContextType {
   // True once the bootstrap has succeeded, and stays true while the service
@@ -35,14 +34,12 @@ export function SdkProvider({ children }: { children: React.ReactNode }) {
       })
     }
 
-    // This provider is the app-wide SDK bootstrap and usually wins the race
-    // against the on-demand callers (services, platform-auth), so
-    // it has to agree with them on the network. Hardcoding it would leave a
-    // /devnet build reading testnet through every `useSdk()` consumer until
-    // some later caller forced a reinit.
-    const network = getConfiguredNetwork()
-    logger.debug(`SdkProvider: Starting EvoSDK initialization for ${network}...`)
-    settle(evoSdkService.initialize({ network, contractId: YAPPR_CONTRACT_ID }), 'initialization')
+    // The app-wide SDK bootstrap. A child's effect runs before this one, so a
+    // service read on mount may already have started the same configuration
+    // (getSdk() falls back to it); initialize() then joins that attempt.
+    const config = appSdkConfig()
+    logger.debug(`SdkProvider: Starting EvoSDK initialization for ${config.network}...`)
+    settle(evoSdkService.initialize(config), 'initialization')
 
     // Requests made while offline ban endpoints inside the instance, and the
     // bootstrap itself may have failed; either is repaired once we are back.
