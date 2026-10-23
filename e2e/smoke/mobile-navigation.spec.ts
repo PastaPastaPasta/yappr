@@ -5,13 +5,15 @@ test.use({ viewport: { width: 390, height: 844 } })
 
 test('mobile navigation identifies its controls and opens its menu', async ({ page }) => {
   await page.goto(appUrl('/explore/'))
-  const nav = page.getByRole('navigation', { name: 'Mobile navigation' })
+  // The modal menu hides the navigation from assistive technology while it is
+  // open, but its trigger still carries the expanded state.
+  const nav = page.getByRole('navigation', { name: 'Mobile navigation', includeHidden: true })
   await expect(nav.getByRole('link', { name: 'Home', exact: true })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Explore', exact: true })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Messages', exact: true })).toBeVisible()
   await expect(nav.getByRole('button', { name: 'Sign in to post', exact: true })).toBeVisible()
 
-  const menu = nav.getByRole('button', { name: 'Menu', exact: true })
+  const menu = nav.getByRole('button', { name: 'Menu', exact: true, includeHidden: true })
   await expect(menu).toHaveAttribute('aria-expanded', 'false')
   await menu.focus()
   await expect(page.getByRole('tooltip', { name: 'Menu', exact: true })).toBeVisible()
