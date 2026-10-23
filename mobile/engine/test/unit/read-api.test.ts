@@ -541,3 +541,98 @@ describe('profiles.posts Posts tab (v2/v9 reposts)', () => {
     expect(second.cursor).toBeNull()
   })
 })
+
+describe('posts.thread continuations hydrate only the new page (MARCH-5)', () => {
+  const PAGE = 20
+  const PAGES = 10
+  /**
+   * `PAGES` raw reply pages of `PAGE` replies, each page's last reply its
+   * cursor. Every fifth reply past the first page answers one a page earlier
+   * (a later page nesting under an earlier one), and every ninth is the
+   * author's own (the author thread is listed first).
+   */
+  const pagedThread = () => {
+    const all = Array.from({ length: PAGES * PAGE }, (_, n) => {
+      const under = n >= PAGE && n % 5 === 0 ? `R${n + 1 - PAGE}` : undefined
+      const entry = reply(`R${n + 1}`, 10 + n, under)
+      return n % 9 === 0 ? entry : { ...entry, author: user(id(`U${n % 7}`)) }
+    })
+    m.replyService.getReplies.mockImplementation(async (_root: string, options: { startAfter?: string }) => {
+      const start = options.startAfter ? all.findIndex(entry => entry.id === options.startAfter) + 1 : 0
+      const documents = all.slice(start, start + PAGE)
+      return { documents, ...(start + PAGE < all.length ? { nextCursor: documents[documents.length - 1].id } : {}) }
+    })
+  }
+  const enriched = () => m.postService.enrichPostsBatch.mock.calls.reduce((sum, [list]) => sum + (list as Post[]).length, 0)
+
+  /** Page through the whole thread; with `delta`, merge each answer into the replies held, as the app does. */
+  async function pageThrough(delta: boolean) {
+    vi.clearAllMocks()
+    let thread = await posts.thread(id('Root'))
+    let bytes = JSON.stringify(thread).length
+    const held = new Map(thread.replies.items.map(item => [item.id, item]))
+    while (thread.replies.cursor) {
+      const next = await posts.thread(id('Root'), thread.replies.cursor, { delta })
+      bytes += JSON.stringify(next).length
+      if (next.layout) {
+        expect(validate(threadDTO, next)).toEqual([])
+        for (const item of next.replies.items) held.set(item.id, item)
+        const items = next.layout.map(slot => {
+          const item = held.get(slot.id)
+          if (!item) throw new Error(`The layout places ${slot.id}, which was never sent`)
+          return { ...item, ...slot }
+        })
+        thread = { ...next, replies: { ...next.replies, items }, layout: undefined }
+      } else {
+        thread = next
+      }
+    }
+    return { thread, bytes, enriched: enriched(), focusReads: m.postService.getPostById.mock.calls.length, absentProofs: m.provenAbsent.mock.calls.length }
+  }
+
+  beforeEach(() => {
+    m.topology = { hasFlatThreads: true, repliesOutliveTheirParent: true }
+    m.postService.getPostById.mockResolvedValue(post('Root', 1))
+    m.provenAbsent.mockResolvedValue(new Set())
+    m.replyService.getManyOrThrow.mockResolvedValue([])
+    pagedThread()
+  })
+
+  it('enriches each reply once and reads the focus once, and merges to the thread a whole read gives', async () => {
+    let started = performance.now()
+    const whole = await pageThrough(false)
+    const wholeMs = performance.now() - started
+    started = performance.now()
+    const merged = await pageThrough(true)
+    const deltaMs = performance.now() - started
+    console.info(`[MARCH-5] ${PAGES} pages x ${PAGE} replies. Cumulative: enriched ${whole.enriched} posts, ${whole.focusReads} focus reads, `
+      + `${whole.absentProofs} absence proofs, ${(whole.bytes / 1024).toFixed(0)} KiB sent, ${wholeMs.toFixed(1)} ms. `
+      + `Delta: enriched ${merged.enriched}, ${merged.focusReads} focus reads, ${merged.absentProofs} absence proofs, `
+      + `${(merged.bytes / 1024).toFixed(0)} KiB sent, ${deltaMs.toFixed(1)} ms`)
+
+    // Each shown reply once (past the rendered depth they are only counted), plus the focus.
+    expect(merged.enriched).toBe(1 + whole.thread.replies.items.length)
+    expect(whole.enriched).toBeGreaterThan(4 * merged.enriched)
+    expect(merged.focusReads).toBe(1)
+    expect(merged.thread.replies.items).toEqual(whole.thread.replies.items)
+    expect(merged.thread.replies.items.map(item => item.depth)).toContain(1)
+    expect(merged.thread.replies.items[0].isAuthorThread).toBe(true)
+    // Each reply's DTO is sent once; only the small layout is resent.
+    expect(merged.bytes * 2).toBeLessThan(whole.bytes)
+  })
+
+  it('reads a refresh of the page already served whole, and so a delta the engine cannot continue', async () => {
+    const first = await posts.thread(id('Root'))
+    const second = await posts.thread(id('Root'), first.replies.cursor, { delta: true })
+    expect(second.layout).toHaveLength(2 * PAGE)
+    // A refresh asks for the same page again.
+    const refreshed = await posts.thread(id('Root'), first.replies.cursor, { delta: true })
+    expect(refreshed.layout).toBeUndefined()
+    expect(refreshed.replies.items).toHaveLength(2 * PAGE)
+    // Another account holds no session of this one's.
+    m.viewer = id('Other')
+    const other = await posts.thread(id('Root'), refreshed.replies.cursor, { delta: true })
+    expect(other.layout).toBeUndefined()
+    expect(other.replies.items).toHaveLength(3 * PAGE)
+  })
+})

@@ -1,4 +1,4 @@
-import type { PostDTO, ThreadDTO } from '@engine/api/dto';
+import type { PostDTO, ThreadDTO, ThreadReplyDTO } from '@engine/api/dto';
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 
 import { queryKeys } from '~/data/keys';
@@ -22,25 +22,63 @@ export class FocusUnavailableError extends Error {
   }
 }
 
-/** Whether this device already holds the thread with its focused post. */
-function hasLoadedFocus(id: string): boolean {
+/** The thread this device holds: the latest cumulative page. */
+function heldThread(id: string): ThreadDTO | undefined {
   const pages = queryClient.getQueryData<InfiniteData<ThreadDTO>>(queryKeys.post.thread(id))?.pages;
-  return Boolean(pages?.[pages.length - 1]?.focus);
+  return pages?.[pages.length - 1];
+}
+
+/**
+ * `page` merged into the thread `held` (MARCH-5). A delta continuation
+ * (`layout` set) brings only its new replies: the rest come from `held`,
+ * with whatever marks this device put on them since (a like), and the focus
+ * and ancestors stay as held. A reply keeps its object unless the layout
+ * moved it. `null` when `held` lacks a reply the layout places; any other
+ * page is the whole thread already.
+ */
+export function mergeThreadPage(held: ThreadDTO, page: ThreadDTO): ThreadDTO | null {
+  const { layout, ...whole } = page;
+  if (!layout) return page;
+  const known = new Map(held.replies.items.map((reply) => [reply.id, reply]));
+  for (const reply of page.replies.items) known.set(reply.id, reply);
+  const items: ThreadReplyDTO[] = [];
+  for (const slot of layout) {
+    const reply = known.get(slot.id);
+    if (!reply) return null;
+    const moved = reply.depth !== slot.depth || reply.isAuthorThread !== slot.isAuthorThread || reply.hiddenReplyCount !== slot.hiddenReplyCount;
+    items.push(moved ? { ...reply, ...slot } : reply);
+  }
+  return {
+    ...whole,
+    focus: held.focus ?? whole.focus,
+    ancestors: held.ancestors,
+    removedAncestorIds: held.removedAncestorIds,
+    replies: { ...whole.replies, items },
+  };
 }
 
 /**
  * A post's thread (`posts.thread`). Its pages are cumulative: each one holds
  * the whole thread loaded so far, re-nested, so the query keeps only the
- * latest page (`maxPages: 1`). A refresh re-reads that page through its own
- * cursor, so the replies already loaded stay loaded. Persisted, so a thread
- * opened before paints at once on the next launch.
+ * latest page (`maxPages: 1`). "More replies" asks the engine for a delta,
+ * which reads and hydrates only the new page, and merges it here
+ * ({@link mergeThreadPage}). A refresh re-reads the latest page whole through
+ * its own cursor, so the replies already loaded stay loaded. Persisted, so a
+ * thread opened before paints at once on the next launch.
  */
 export function useThread(id: string) {
   const query = useInfiniteQuery<ThreadDTO, Error, InfiniteData<ThreadDTO>, readonly unknown[], string | null>({
     ...persistedQuery,
     queryKey: queryKeys.post.thread(id),
     queryFn: async ({ pageParam }) => {
-      const read = () => engine.api.posts.thread(id, pageParam);
+      const read = async () => {
+        const held = pageParam === null ? undefined : heldThread(id);
+        if (held) {
+          const merged = mergeThreadPage(held, await engine.api.posts.thread(id, pageParam, { delta: true }));
+          if (merged) return merged;
+        }
+        return engine.api.posts.thread(id, pageParam);
+      };
       const first = await read();
       if (first.focus) return first;
       // lib answers a failed single read as "absent" (on sakura, often a proof miss that clears in
@@ -51,7 +89,7 @@ export function useThread(id: string) {
       // A thread already shown (or a later page, which only exists once the focus was read) keeps its
       // replies on screen: the read fails, the query keeps its data, and the screen marks the focus
       // unavailable (FocusUnavailableError).
-      if (pageParam !== null || hasLoadedFocus(id)) throw new FocusUnavailableError();
+      if (pageParam !== null || heldThread(id)?.focus) throw new FocusUnavailableError();
       return second;
     },
     initialPageParam: null,

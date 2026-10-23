@@ -196,9 +196,22 @@ export interface ThreadDTO {
   /**
    * Cumulative: each page holds the whole thread loaded so far, re-nested,
    * because a later page can nest under an earlier one. Render the last page.
+   * A delta continuation (with `layout`) holds only the replies new on it.
    */
   replies: Page<ThreadReplyDTO>
+  /**
+   * Set on a continuation asked for as a delta (`posts.thread(id, cursor,
+   * { delta: true })`) when the engine still has the pages before it: only
+   * the new page was read and hydrated, `replies.items` holds its replies,
+   * and `layout` places every reply loaded so far, in order. The caller
+   * merges it with the replies it holds (MARCH-5). Without it, the page is
+   * the whole thread, as on a first load or a refresh.
+   */
+  layout?: ThreadSlotDTO[]
 }
+
+/** Where a reply sits in its thread: `ThreadReplyDTO`'s placement. */
+export type ThreadSlotDTO = Pick<ThreadReplyDTO, 'id' | 'depth' | 'isAuthorThread' | 'hiddenReplyCount'>
 
 /** A profile Replies-tab row: the reply with the post or reply it answers. */
 export interface ProfileReplyDTO extends PostDTO {

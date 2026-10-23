@@ -353,9 +353,58 @@ describe('ThreadScreen', () => {
     await act(async () => {});
     await act(async () => {});
 
-    // Looking for the ?reply= target reads the next page on its own.
-    expect(fakeEngine.method('posts.thread')).toHaveBeenLastCalledWith('root', 'next');
+    // Looking for the ?reply= target reads the next page on its own, as a delta; an engine that answers
+    // with the whole thread (no `layout`) is taken as it is.
+    expect(fakeEngine.method('posts.thread')).toHaveBeenLastCalledWith('root', 'next', { delta: true });
     expect(screen.getAllByText('Page one')).toHaveLength(1);
+    expect(screen.getByText('Page two')).toBeTruthy();
+  });
+
+  it('merges a delta page into the replies it holds, keeping their marks (MARCH-5)', async () => {
+    // As held: any mark this device put on it since (a like) stays.
+    const liked = reply('r1', 'Page one');
+    fakeEngine
+      .method('posts.thread')
+      .mockResolvedValueOnce(threadOf([liked], {}, true))
+      // Only the new reply, nested under the held one, with the layout of both.
+      .mockResolvedValueOnce(threadOf([reply('r2', 'Page two', { depth: 1 })], {
+        focus: { ...root, content: 'stale root' },
+        layout: [
+          { id: 'r1', depth: 0, isAuthorThread: false, hiddenReplyCount: 0 },
+          { id: 'r2', depth: 1, isAuthorThread: false, hiddenReplyCount: 0 },
+        ],
+      }));
+    renderThread('root', 'r2');
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(fakeEngine.method('posts.thread')).toHaveBeenCalledTimes(2);
+    const held = queryClient.getQueryData<{ pages: ThreadDTO[] }>(queryKeys.post.thread('root'))!.pages[0];
+    expect(held.layout).toBeUndefined();
+    expect(held.replies.items.map((item) => [item.id, item.depth])).toEqual([['r1', 0], ['r2', 1]]);
+    // The held reply is the same object, like and all; the held focus stays.
+    expect(held.replies.items[0]).toBe(liked);
+    expect(held.focus).toBe(root);
+    expect(screen.getByText('Page two')).toBeTruthy();
+  });
+
+  it('reads the whole page when a delta places a reply it does not hold (MARCH-5)', async () => {
+    fakeEngine
+      .method('posts.thread')
+      .mockResolvedValueOnce(threadOf([reply('r1', 'Page one')], {}, true))
+      .mockResolvedValueOnce(threadOf([reply('r2', 'Page two')], {
+        layout: [
+          { id: 'r0', depth: 0, isAuthorThread: false, hiddenReplyCount: 0 },
+          { id: 'r2', depth: 0, isAuthorThread: false, hiddenReplyCount: 0 },
+        ],
+      }))
+      .mockResolvedValueOnce(threadOf([reply('r0', 'Page zero'), reply('r1', 'Page one'), reply('r2', 'Page two')]));
+    renderThread('root', 'r2');
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(fakeEngine.method('posts.thread')).toHaveBeenLastCalledWith('root', 'next');
+    expect(screen.getByText('Page zero')).toBeTruthy();
     expect(screen.getByText('Page two')).toBeTruthy();
   });
 
