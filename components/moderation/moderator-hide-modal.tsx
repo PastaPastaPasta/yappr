@@ -11,6 +11,7 @@ import { useModeratorHideModal, type ModeratorHideAction, type ModeratorHideOutc
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { labelOptions, type LabelOption } from '@/lib/moderation-labels'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
+import { outcomeWhenAlready } from '@/lib/moderation-view'
 import { moderationServiceFor, type ModerationReasonInput, type ModerationResult } from '@/lib/services/moderation-service'
 import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
@@ -174,10 +175,11 @@ export function ModeratorHideModal() {
       finish()
       return
     }
-    // Already the way it was asked for (another moderator, or an earlier attempt): what was asked for holds.
+    // Already the way it was asked for (another moderator, or an earlier attempt): this tab changed
+    // nothing, so it claims no change of its own (no author, label or clock): the state shows until the next read.
     if (result.errorCode === 'NOTHING_TO_CHANGE' || result.errorCode === 'ALREADY_RESTRICTED' || result.errorCode === 'NOT_RESTRICTED') {
       toast(result.error ?? 'Already done', { duration: 6000 })
-      onDone?.(outcome)
+      onDone?.(outcomeWhenAlready(outcome))
       finish()
       return
     }

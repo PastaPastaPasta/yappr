@@ -298,7 +298,7 @@ function PostCardView({
   // Recorded for every card on screen, from this card's menu or a bulk run (hooks/use-recent-moderation.ts):
   // the last change wins, until a read carries a later one.
   const recordModeration = useRecentModeration((state) => state.record)
-  const moderation = useShownModeration(post.id, post.moderation)
+  const moderation = useShownModeration(post.id, post.moderation, post.readVersion)
   const hiddenByModerators = isHidden(moderation)
   // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
   const hiddenOnThisBuild = hiddenByModerators && !archivalBuild()
@@ -432,7 +432,7 @@ function PostCardView({
       if (outcome.restricted !== undefined) setAuthorRestrictedHere(outcome.restricted)
       // The shown marks keep the post's restriction flag from its read (useShownModeration).
       if (outcome.moderation !== undefined) {
-        recordModeration(post.id, outcome.moderation, { proved: !outcome.unconfirmed, at: outcome.at, basis: post.moderation })
+        recordModeration(post.id, outcome.moderation, { proved: !outcome.unconfirmed, at: outcome.at, basis: post.readVersion })
       }
     })
   }

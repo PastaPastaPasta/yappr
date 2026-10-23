@@ -138,6 +138,8 @@ export interface Post {
   feed?: number                  // Which of the author's private feeds encrypted it (social v17)
   /** v18: hidden by the moderators or written while restricted; see {@link PostModeration}. */
   moderation?: PostModeration
+  /** Which read of the document built this (`nextReadVersion`), copied along with it; see `isNewRead`. */
+  readVersion?: number
 }
 
 /** A reply to a post or another reply */
@@ -180,6 +182,8 @@ export interface Reply {
   feed?: number
   /** v18: hidden by the moderators or written while restricted (see Post.moderation). */
   moderation?: PostModeration
+  /** Which read of the document built this (see Post.readVersion). */
+  readVersion?: number
 }
 
 /** Reply thread structure for threaded post display */

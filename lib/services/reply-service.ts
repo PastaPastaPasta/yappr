@@ -13,6 +13,7 @@ import { profileDataByOwnerId } from './post-enrichment-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
+import { nextReadVersion } from '@/lib/moderation-view';
 import { readNotificationWindow } from './notification-windows';
 import {
   deletesAreTombstones,
@@ -156,6 +157,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       nonce,
       feed,
       ...(moderation ? { moderation } : {}),
+      readVersion: nextReadVersion(),
     };
 
     return reply;
