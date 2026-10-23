@@ -467,7 +467,16 @@ describe('a proposal link', () => {
     Object.assign(sdk, { moderationCharters: { submittedCharter: read } })
     await expect(charterService.getProposal('not-an-id')).resolves.toBeNull()
     await expect(charterService.getProposal('7xT3qbogus000000000000000000000000000000000')).resolves.toBeNull()
+    // Base58, but not 32 bytes.
+    await expect(charterService.getProposal('abc')).resolves.toBeNull()
     expect(read).not.toHaveBeenCalled()
+  })
+
+  it('reads an identifier from the chain', async () => {
+    const read = vi.fn().mockResolvedValue(null)
+    Object.assign(sdk, { moderationCharters: { submittedCharter: read } })
+    await expect(charterService.getProposal('J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv')).resolves.toBeNull()
+    expect(read).toHaveBeenCalledWith('J8G2WCSAd5gFqgK2HyTwyhPqYcshcFxWjAm5av3hC6Nv')
   })
 })
 
@@ -579,6 +588,24 @@ describe('the signing key from the shared step-up', () => {
     }
   })
 
+  it('closes its open sheet and signs nothing when the view that asked is left', async () => {
+    wallet.appConnect = true
+    builders.exists.mockResolvedValue(true)
+    let asked = 0
+    const unsubscribe = sharedKeys.subscribeCriticalKeyRequests(() => { if (sharedKeys.currentCriticalKeyRequest()) asked++ })
+    try {
+      const adding = charterService.addMember(OWNER, seated, 'm1')
+      await vi.waitFor(() => expect(asked).toBe(1))
+      // Back to the overview with the sheet still open.
+      charterService.endActions()
+      await expect(adding).rejects.toMatchObject({ outcome: 'cancelled' })
+      expect(sharedKeys.currentCriticalKeyRequest()).toBeNull()
+      expect(builders.sign).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('refuses a key bound to another contract before it is kept, and passes a held one over for the sheet', async () => {
     wallet.appConnect = true
     keys.match.mockReturnValue({ ok: true, key: { keyId: 4, contractBounds: { id: 'other' } }, match: { keyId: 4 } })
@@ -683,7 +710,7 @@ describe('a session forgotten mid-write', () => {
   it('stops an action begun in an earlier view of the page, keeping the charter keys this tab holds', async () => {
     const { holdCharterKey, heldCharterKey } = await import('@/lib/moderation-charters/charter-keys')
     holdCharterKey(OWNER, 'member', new Uint8Array(32).fill(4))
-    // Asked to join, then went back to the overview with the prompt still open.
+    // Began in one view; that view was left before its first step.
     const session = charterService.session()
     charterService.endActions()
     await expect(charterService.requestToJoin(OWNER, 'p1', 'hello', { session })).rejects.toMatchObject({ outcome: 'cancelled' })

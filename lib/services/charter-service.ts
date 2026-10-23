@@ -277,7 +277,8 @@ function signingKeyProblem(result: MatchResult, key: IdentityPublicKey | null): 
 
 /**
  * The session an action began in: this page's key generation (bumped by
- * `forgetKeys` when the page is left) and the sign-in it ran under (the auth
+ * `endActions` when the view that began it is left, and by `forgetKeys` when
+ * the page is) and the sign-in it ran under (the auth
  * controller's epoch, moved by every sign-in and sign-out, and the identity).
  * A write checks it right before each step that signs, sends or asks for a
  * key, so leaving the page or signing out stops whatever it has not yet done.
@@ -291,14 +292,16 @@ export interface CharterSession {
 class CharterService {
   /** The write each slot has under way, so a second click joins it instead of signing again. */
   private inFlight = new Map<string, { fingerprint: string; work: Promise<string> }>()
-  /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
+  /** Bumped by `endActions` (and so `forgetKeys`): an action begun in an earlier generation goes no further. */
   private generation = 0
-  /** The MASTER-key prompt this service has open on the shared sheet, so `forgetKeys` can close it. */
+  /** Bumped by `forgetKeys` alone: a charter key unlocked or added across it is not kept. */
+  private keysGeneration = 0
+  /** The MASTER-key prompt this service has open on the shared sheet, so `endActions` can close it. */
   private openPrompt: KeyPrompt | null = null
 
   /**
    * The current session, to pass to each write of a multi-write action (key
-   * setup, reasons, then the proposal): once `forgetKeys` runs, every later
+   * setup, reasons, then the proposal): once `endActions` runs, every later
    * write of that action is refused unsigned, not only the one under way.
    */
   session(): CharterSession {
@@ -313,8 +316,12 @@ class CharterService {
    * asks a key for another account).
    */
   private isLive(session: CharterSession, ownerId: string): boolean {
-    return session.generation === this.generation && session.epoch === criticalKeySession()
-      && session.identityId === ownerId && currentIdentityId() === ownerId
+    return session.generation === this.generation && this.signInHolds(session, ownerId)
+  }
+
+  /** Whether the sign-in `session` began in is still `ownerId`'s, whatever view of the page is showing. */
+  private signInHolds(session: CharterSession, ownerId: string): boolean {
+    return session.epoch === criticalKeySession() && session.identityId === ownerId && currentIdentityId() === ownerId
   }
 
 
@@ -324,15 +331,16 @@ class CharterService {
    */
   endActions(): void {
     this.generation++
-    // The MASTER-key prompt this service opened closes with the view that asked (the sheet is app-wide). A
-    // CRITICAL-key request may be shared with another feature, so it stays; the charters write that waits on
-    // it stops on its own session check once answered.
+    // The prompts this service opened close with the view that asked (the sheet is app-wide): its MASTER-key
+    // prompt, and a CRITICAL-key request for charters, which only this service makes and every waiter on
+    // which the bump above has just ended.
     const open = this.openPrompt
-    if (open) cancelPrompt((request) => request.prompt === open)
+    cancelPrompt((request) => (open !== null && request.prompt === open) || (!request.prompt && request.use === 'charter'))
   }
 
   /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
   forgetKeys(): void {
+    this.keysGeneration++
     this.endActions()
     forgetCharterKeys()
   }
@@ -541,6 +549,7 @@ class CharterService {
    */
   async charterKey(identityId: string, role: CharterRole, { create, session }: { create: boolean; session?: CharterSession }): Promise<Uint8Array> {
     const generation = session ?? this.session()
+    const keysGeneration = this.keysGeneration
     this.assertSameSession(generation, identityId)
     const identity = await fetchIdentity(identityId)
     // Cancelled while the identity was read: the old account's MASTER key is never asked for.
@@ -609,12 +618,14 @@ class CharterService {
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
       if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key, generation)
+      // Now on the account: kept for the sign-in it was added in while this page lasts, even when the view
+      // that asked has moved on.
+      if (this.keysGeneration === keysGeneration && this.signInHolds(generation, identityId)) holdCharterKey(identityId, role, key)
       this.assertSameSession(generation, identityId)
     } catch (error) {
       key.fill(0)
       throw error
     }
-    holdCharterKey(identityId, role, key)
     return key
   }
 
