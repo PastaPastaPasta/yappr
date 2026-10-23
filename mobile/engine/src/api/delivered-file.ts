@@ -1,4 +1,5 @@
-import { base64ToBytes } from '@/lib/bytes'
+import { md5 } from '@noble/hashes/legacy.js'
+import { base64ToBytes, bytesToHex } from '@/lib/bytes'
 import { decryptDigitalFile, FILE_CIPHERTEXT_OVERHEAD } from '@/lib/crypto/digital-delivery'
 import { getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 import type { DigitalAsset } from '@/lib/types'
@@ -12,6 +13,11 @@ import type { DigitalAsset } from '@/lib/types'
  * Each IPFS gateway is tried in turn. A gateway that answers with the wrong
  * bytes fails authentication, and the next one is tried. The URL can carry
  * the seller's secret, so it is never put in an error.
+ *
+ * The plaintext never crosses the bridge whole (MARCH-1): the engine holds
+ * it ({@link holdDeliveredFile}) and the host reads it in chunks of at most
+ * {@link DELIVERED_FILE_CHUNK_BYTES}, appending each to its file, so no
+ * string the size of the file exists in the WebView, the bridge or Hermes.
  */
 
 /** No byte from a gateway for this long ends that attempt. */
@@ -28,29 +34,31 @@ async function download(url: string, maxBytes: number): Promise<Uint8Array> {
   try {
     const response = await fetch(url, { signal: controller.signal })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    if (Number(response.headers.get('content-length')) > maxBytes) throw new Error('too large')
+    const declared = Number(response.headers.get('content-length'))
+    if (declared > maxBytes) throw new Error('too large')
     if (!response.body) return new Uint8Array(await response.arrayBuffer())
     const reader = response.body.getReader()
-    const chunks: Uint8Array[] = []
+    // The declared length gets one buffer up front, so the file is not held twice to be joined at the end.
+    let bytes = new Uint8Array(Number.isSafeInteger(declared) && declared > 0 ? declared : 1 << 16)
     let received = 0
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       extend()
-      received += value.length
-      if (received > maxBytes) {
+      if (received + value.length > maxBytes) {
         await reader.cancel()
         throw new Error('too large')
       }
-      chunks.push(value)
+      if (received + value.length > bytes.length) {
+        // No length, or a wrong one: grow.
+        const grown = new Uint8Array(Math.min(maxBytes, Math.max(bytes.length * 2, received + value.length)))
+        grown.set(bytes.subarray(0, received))
+        bytes = grown
+      }
+      bytes.set(value, received)
+      received += value.length
     }
-    const bytes = new Uint8Array(received)
-    let offset = 0
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset)
-      offset += chunk.length
-    }
-    return bytes
+    return received === bytes.length ? bytes : bytes.subarray(0, received)
   } finally {
     clearTimeout(timer)
     controller.abort()
@@ -68,4 +76,73 @@ export async function fetchDeliveredFile(asset: Extract<DigitalAsset, { kind: 'f
     }
   }
   throw new Error('Could not download this file from any IPFS gateway. Try again in a few minutes.')
+}
+
+/** The most plaintext one `store.deliveredFileChunk` answer carries (about 350 KB of JSON once base64 encoded). */
+export const DELIVERED_FILE_CHUNK_BYTES = 256 * 1024
+/** A held file nobody read from for this long is dropped. */
+const HELD_IDLE_MS = 2 * 60_000
+/** Decrypted files waiting to be read at once; opening another drops the oldest. */
+const MAX_HELD = 2
+const CLOSED_MESSAGE = 'This file is no longer open. Save it again.'
+
+interface HeldFile {
+  owner: string
+  bytes: Uint8Array
+  timer: ReturnType<typeof setTimeout>
+}
+
+const held = new Map<string, HeldFile>()
+
+/** A decrypted file the engine holds for the host to read in chunks (`store.deliveredFileChunk`). */
+export interface HeldFileDTO {
+  /** Names the file to `deliveredFileChunk` and `closeDeliveredFile`. */
+  handle: string
+  name: string
+  /** Its length in bytes. */
+  size: number
+  /**
+   * Hex MD5 of the plaintext, for the host to check the file it assembled
+   * (a lost, repeated or reordered chunk). An assembly check only: the
+   * decryption's AEAD tag is what authenticated the bytes.
+   */
+  md5: string
+}
+
+export function releaseDeliveredFile(handle: string): void {
+  const file = held.get(handle)
+  if (!file) return
+  clearTimeout(file.timer)
+  held.delete(handle)
+}
+
+const idleTimer = (handle: string) => setTimeout(() => releaseDeliveredFile(handle), HELD_IDLE_MS)
+
+/** Hold `bytes` for `owner` to read in chunks. */
+export function holdDeliveredFile(owner: string, name: string, bytes: Uint8Array): HeldFileDTO {
+  while (held.size >= MAX_HELD) releaseDeliveredFile(held.keys().next().value as string)
+  const handle = bytesToHex(crypto.getRandomValues(new Uint8Array(16)))
+  held.set(handle, { owner, bytes, timer: idleTimer(handle) })
+  return { handle, name, size: bytes.length, md5: bytesToHex(md5(bytes)) }
+}
+
+/**
+ * The held file's bytes from `offset`: at most {@link DELIVERED_FILE_CHUNK_BYTES},
+ * empty at the end. The chunk that reaches the end releases the file. Only
+ * `owner`, the account that opened it, reads it; another account's read
+ * drops it.
+ */
+export function readDeliveredFileChunk(owner: string, handle: string, offset: number): Uint8Array {
+  const file = typeof handle === 'string' ? held.get(handle) : undefined
+  if (!file) throw new Error(CLOSED_MESSAGE)
+  if (file.owner !== owner) {
+    releaseDeliveredFile(handle)
+    throw new Error(CLOSED_MESSAGE)
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > file.bytes.length) throw new Error('offset is out of range')
+  const chunk = file.bytes.subarray(offset, offset + DELIVERED_FILE_CHUNK_BYTES)
+  clearTimeout(file.timer)
+  if (offset + chunk.length >= file.bytes.length) held.delete(handle)
+  else file.timer = idleTimer(handle)
+  return chunk
 }

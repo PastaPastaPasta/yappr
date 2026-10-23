@@ -9,6 +9,7 @@ import { appendLog, errorMessage } from '~/engine/logs';
 import { onEngineEvent } from '~/data/events';
 import { forgetBlogDrafts } from '~/features/blog/blog-writes';
 import { forgetDmDrafts } from '~/features/messages/drafts';
+import { forgetDeliveredFiles } from '~/features/store/delivered-files';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, holdOwnQuote, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
 import { reconcile, stopReconciling, ticketJob, useReconcileStore } from '~/data/reconcile';
@@ -1040,11 +1041,15 @@ function jobOfEntry(entry: PendingPost): string | null {
   return entry.orphaned ? orphanJob(entry.localId) : null;
 }
 
-/** Signing out deletes the account's drafts (posts and blog posts), its unsent messages and the posts it had on their way (PRD AUTH-11). */
+/**
+ * Signing out deletes the account's drafts (posts and blog posts), its unsent messages, the posts it had on their
+ * way and the delivered files it saved (PRD AUTH-11).
+ */
 function forgetAccount(identityId: string): void {
   forgetDrafts(identityId);
   forgetBlogDrafts(identityId);
   forgetDmDrafts(identityId);
+  forgetDeliveredFiles(identityId);
   for (const entry of Object.values(usePendingPosts.getState().entries)) {
     if (entry.identityId === identityId) dropEntry(entry.localId);
   }

@@ -96,10 +96,12 @@ const STORE_READS = new Set([
 ]);
 /**
  * Calls that run for minutes, never replayed: digital delivery reserves codes,
- * publishes and confirms; a kit save reconciles; a delivered file downloads
- * and decrypts (a replay after it crashed the engine would only crash it again).
+ * publishes and confirms; a kit save reconciles; opening a delivered file
+ * downloads and decrypts it (a replay after it crashed the engine would only
+ * crash it again). Its chunk reads (`store.deliveredFileChunk`) are quick and
+ * hold no state a fresh engine has, so they keep the write deadline.
  */
-const LONG_CALLS: Record<string, number> = { 'store.deliver': 180_000, 'store.deliverReady': 600_000, 'store.saveKit': 120_000, 'store.deliveredFile': 180_000 };
+const LONG_CALLS: Record<string, number> = { 'store.deliver': 180_000, 'store.deliverReady': 600_000, 'store.saveKit': 120_000, 'store.openDeliveredFile': 180_000 };
 
 export function methodKind(path: string): MethodKind {
   const module = path.slice(0, path.indexOf('.'));

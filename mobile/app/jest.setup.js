@@ -95,13 +95,73 @@ jest.mock('./modules/secure-window', () => {
     isSwitcherProtected: () => switcher,
   };
 });
-jest.mock('expo-file-system', () => ({
-  Paths: { bundle: { uri: 'file:///bundle/' } },
-  // The app bundle's engine page is there; nothing reads files in tests.
-  File: class {
-    exists = true;
-  },
-}));
+// An in-memory file system. The app bundle's files (the engine page) always exist and are never read;
+// the cache holds what the app writes (saved delivery files). `__fs` lets tests look inside.
+jest.mock('expo-file-system', () => {
+  const { createHash } = jest.requireActual('crypto');
+  const BUNDLE = 'file:///bundle/';
+  const files = new Map();
+  const dirs = new Set();
+  const uriOf = (parts) =>
+    parts
+      .map((part) => (typeof part === 'string' ? part : part.uri))
+      .join('/')
+      .replace(/\/{2,}/g, '/')
+      .replace(/^file:\//, 'file:///')
+      .replace(/(.)\/$/, '$1');
+  const under = (uri, prefix) => uri === prefix || uri.startsWith(`${prefix}/`);
+  class File {
+    constructor(...parts) {
+      this.uri = uriOf(parts);
+    }
+    get exists() {
+      return this.uri.startsWith(BUNDLE) || files.has(this.uri);
+    }
+    create(options = {}) {
+      if (files.has(this.uri) && !options.overwrite) throw new Error(`${this.uri} exists`);
+      files.set(this.uri, new Uint8Array(0));
+    }
+    write(content, options = {}) {
+      const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(content);
+      const before = options.append ? files.get(this.uri) ?? new Uint8Array(0) : new Uint8Array(0);
+      const next = new Uint8Array(before.length + bytes.length);
+      next.set(before);
+      next.set(bytes, before.length);
+      files.set(this.uri, next);
+    }
+    get size() {
+      return files.get(this.uri)?.length ?? 0;
+    }
+    get md5() {
+      const bytes = files.get(this.uri);
+      return bytes ? createHash('md5').update(bytes).digest('hex') : null;
+    }
+    delete() {
+      if (!files.delete(this.uri)) throw new Error(`${this.uri} does not exist`);
+    }
+  }
+  class Directory {
+    constructor(...parts) {
+      this.uri = uriOf(parts);
+    }
+    get exists() {
+      return dirs.has(this.uri) || [...files.keys()].some((uri) => under(uri, this.uri));
+    }
+    create() {
+      dirs.add(this.uri);
+    }
+    delete() {
+      for (const uri of [...files.keys()]) if (under(uri, this.uri)) files.delete(uri);
+      for (const uri of [...dirs]) if (under(uri, this.uri)) dirs.delete(uri);
+    }
+  }
+  return {
+    Paths: { bundle: { uri: BUNDLE }, cache: new Directory('file:///cache') },
+    File,
+    Directory,
+    __fs: { files, dirs },
+  };
+});
 // MMKV files persist by id, as on a device, and outlive the process (react-native-mmkv's own test
 // mock is a fresh, empty instance on every call). `__relaunch()` starts a new process: what it
 // opened is forgotten (a module loaded afresh with `jest.isolateModules` then has its own state,

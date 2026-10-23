@@ -1,15 +1,13 @@
 import type { DeliveryDTO, OrderPayload, OrderStatus, OrderStatusDTO } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
 import { router, useNavigation } from 'expo-router';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import * as WebBrowser from 'expo-web-browser';
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { Linking, Pressable, RefreshControl, ScrollView, View, type RefreshControlProps } from 'react-native';
 
 import { formatPrice } from '~/lib-allowlist';
-import { engine } from '~/engine';
 
+import { saveDeliveredFile } from './delivered-files';
 import { ReportLink } from './StoreReportScreen';
 import { Button } from '~/ui/Button';
 import { Card } from '~/ui/Card';
@@ -236,22 +234,12 @@ export function StatusDetail({ status }: { status: OrderStatusDTO | null }) {
   );
 }
 
-/** A file name the cache directory takes: no path separators or control characters. */
-const safeFileName = (name: string) => name.replace(/[\\/:\u0000-\u001f]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'download';
-
 /** Decrypt a delivered file in the engine, write it to the cache, and hand it to the share sheet (save, open in…). */
 function SaveFile({ orderId, deliveryId, itemIndex, assetIndex, name, size }: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number; name: string; size: number }) {
   const [busy, setBusy] = useState(false);
   const save = () => {
     setBusy(true);
-    engine.api.store.deliveredFile({ orderId, deliveryId, itemIndex, assetIndex })
-      .then(async (file) => {
-        const target = new File(Paths.cache, safeFileName(file.name));
-        if (target.exists) target.delete();
-        target.create();
-        target.write(file.base64, { encoding: 'base64' });
-        await Sharing.shareAsync(target.uri, { dialogTitle: file.name });
-      })
+    saveDeliveredFile({ orderId, deliveryId, itemIndex, assetIndex })
       .catch((error: unknown) => toast.error(errorText(error, "Couldn't save this file.")))
       .finally(() => setBusy(false));
   };

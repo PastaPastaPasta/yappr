@@ -9,7 +9,6 @@ import {
 } from '@/lib/services/digital-delivery-plan'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, newerKits, toKitPayloads } from '@/lib/services/digital-fulfillment'
 import { getPaymentVerificationUrl } from '@/lib/services/insight-api-service'
-import { bytesToBase64 } from '@/lib/bytes'
 import { itemDeliverableService, KitWriteUncertainError, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { openStatusNotesAsBuyer, openStatusNotesAsSeller, orderStatusService, StatusNoteError } from '@/lib/services/order-status-service'
@@ -30,7 +29,7 @@ import { RpcError } from '../protocol/envelope'
 import { badRequest, readFailure, requireViewer } from '../dto/hydrate'
 import { decodeCursor, encodeCursor } from '../dto/cursor'
 import type { Page } from './dto'
-import { fetchDeliveredFile } from './delivered-file'
+import { fetchDeliveredFile, holdDeliveredFile, readDeliveredFileChunk, releaseDeliveredFile, type HeldFileDTO } from './delivered-file'
 import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore } from '../writes/tickets'
 import { signer } from '../writes/handler-kit'
 import { wasConfirmed } from '../writes/lib-results'
@@ -301,13 +300,7 @@ export interface KitDTO {
  */
 export type KitReadDTO = { locked: true } | { locked: false; kit: KitDTO | null; revision: number | null }
 
-/** A delivered file, decrypted, for the host to save: the bridge carries it as base64. */
-export interface DeliveredFileDTO {
-  name: string
-  base64: string
-}
-
-/** The largest delivered file the app saves (the bridge carries it whole, as base64). */
+/** The largest delivered file the app saves: the engine holds it whole, decrypted, while the host reads it in chunks. */
 const MAX_SAVED_FILE_BYTES = 25 * 1024 * 1024
 const FILE_TOO_LARGE_MESSAGE = 'This file is too large to save on a phone. Save it from a computer instead.'
 const UNLOCK_MESSAGE = 'Unlock your encryption key on this device first.'
@@ -978,11 +971,12 @@ export function createOrderModule(tickets: TicketStore) {
     },
 
     /**
-     * One delivered file, decrypted (web's library download): the viewer
+     * Download and decrypt one delivered file (web's library download), and
+     * hold it for the host to read with `deliveredFileChunk`: the viewer
      * must be the order's buyer or its seller, with the key on this device.
      * `itemIndex` and `assetIndex` name it in the delivery as `DeliveryDTO` lists it.
      */
-    async deliveredFile(input: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number }): Promise<DeliveredFileDTO> {
+    async openDeliveredFile(input: { orderId: string; deliveryId: string; itemIndex: number; assetIndex: number }): Promise<HeldFileDTO> {
       const viewer = requireViewer('Saving a file')
       const order = await readOrder(input?.orderId)
       const key = getEncryptionKeyBytes(viewer)
@@ -1006,8 +1000,20 @@ export function createOrderModule(tickets: TicketStore) {
       if (!asset || asset.kind !== 'file') throw badRequest('This file could not be found in the delivery')
       if (asset.size > MAX_SAVED_FILE_BYTES) throw badRequest(FILE_TOO_LARGE_MESSAGE)
       // The declared size is the seller's word: the download itself stops past the cap.
-      const bytes = await fetchDeliveredFile(asset, MAX_SAVED_FILE_BYTES)
-      return { name: asset.name, base64: bytesToBase64(bytes) }
+      return holdDeliveredFile(viewer, asset.name, await fetchDeliveredFile(asset, MAX_SAVED_FILE_BYTES))
+    },
+
+    /**
+     * An opened file's bytes from `offset`: a bounded chunk, empty past the
+     * end. The chunk that reaches the end closes the file.
+     */
+    async deliveredFileChunk(handle: string, offset: number): Promise<Uint8Array> {
+      return readDeliveredFileChunk(requireViewer('Saving a file'), handle, offset)
+    },
+
+    /** Let go of an opened file whose end was not read (a save that failed or was given up). */
+    async closeDeliveredFile(handle: string): Promise<void> {
+      releaseDeliveredFile(handle)
     },
 
     /** The seller's delivery content for a digital product; `locked` without the key on this device. */
