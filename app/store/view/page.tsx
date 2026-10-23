@@ -307,7 +307,7 @@ function StoreDetailContent() {
     return totalLabel
   }, [items.length, filteredItems.length, hasMoreItems])
 
-  if (isLoading) {
+  if (isLoading && storeId) {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
@@ -321,7 +321,7 @@ function StoreDetailContent() {
     )
   }
 
-  if (!store) {
+  if (!storeId || !store) {
     return (
       <div className="min-h-[calc(100vh-40px)] flex">
         <Sidebar />
