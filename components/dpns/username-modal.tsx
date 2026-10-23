@@ -52,7 +52,12 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
     onClose()
   }
 
-  const handleDismiss = onDismiss ?? onClose
+  // Closing it is a choice too: don't ask this identity again on its own.
+  const dismiss = onDismiss ?? onClose
+  const handleDismiss = () => {
+    if (currentIdentityId) rememberUsernameSkip(currentIdentityId)
+    dismiss()
+  }
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => { if (!open) handleDismiss() }}

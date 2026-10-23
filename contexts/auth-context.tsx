@@ -5,14 +5,12 @@ import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
-import { hasSkippedUsername } from '@/lib/username-skip'
 import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { PlatformAuthController, SupersededSignInError, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
-import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
 import { keyNetwork } from '@/lib/constants'
 import { keyValidationService } from '@/lib/services/key-validation-service'
 import { useUsernameModal } from '@/hooks/use-username-modal'
@@ -377,26 +375,12 @@ export function withAuth<P extends object>(
   function AuthenticatedComponent(props: P): JSX.Element {
     const { user, isAuthRestoring } = useAuth()
     const router = useRouter()
-    const pathname = usePathname()
 
-    const skipDPNS = user ? hasSkippedUsername(user.identityId) : false
-    const needsUsername = Boolean(user && !user.dpnsUsername && !skipDPNS && !options?.optional)
-
+    // A username is optional: pages never send a signed-in user to the username step.
     useEffect(() => {
-      if (isAuthRestoring) return
-
-      if (!user) {
-        if (options?.optional) {
-          return
-        }
-        router.push('/login')
-        return
-      }
-
-      if (needsUsername) {
-        router.push(dpnsRegisterHref(currentRoute(pathname)))
-      }
-    }, [user, isAuthRestoring, router, needsUsername, pathname])
+      if (isAuthRestoring || user || options?.optional) return
+      router.push('/login')
+    }, [user, isAuthRestoring, router])
 
     if (isAuthRestoring) {
       return <AuthLoadingSpinner />
@@ -406,7 +390,7 @@ export function withAuth<P extends object>(
       return <Component {...props} />
     }
 
-    if (!user || needsUsername) {
+    if (!user) {
       return <AuthLoadingSpinner />
     }
 

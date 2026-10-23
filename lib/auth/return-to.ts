@@ -73,30 +73,12 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
   return sanitizeReturnTo(value, basePath) ?? DEFAULT_RETURN_TO
 }
 
-function withReturnTo(route: string, next: string | null | undefined): string {
-  const safe = sanitizeReturnTo(next)
-  return safe ? `${route}?${RETURN_TO_PARAM}=${encodeURIComponent(safe)}` : route
-}
-
 /**
  * Where the DPNS wizard's Continue goes: back to `next` only when the user now
- * has a username. After a failed registration they still have none, and `next`
- * is usually a username-gated page, so returning there would send them straight
- * back to /dpns/register; they go to /feed instead.
+ * has a username. After a failed registration they go to /feed instead.
  */
 export function afterRegistrationRoute(hasUsername: boolean, next?: string | null): string {
   return hasUsername ? returnToOrDefault(next) : DEFAULT_RETURN_TO
-}
-
-/** /dpns/register, carrying `next` when it is a route worth returning to. */
-export function dpnsRegisterHref(next?: string | null): string {
-  return withReturnTo(DPNS_REGISTER_ROUTE, next)
-}
-
-/** The route the user is on now: `pathname` (basePath-free) plus the live query string. */
-export function currentRoute(pathname: string): string {
-  const search = typeof window === 'undefined' ? '' : window.location.search
-  return `${pathname}${search}`
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */

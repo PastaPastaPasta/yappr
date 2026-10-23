@@ -1,9 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
-  RETURN_TO_PARAM,
   afterRegistrationRoute,
-  dpnsRegisterHref,
   returnToOrDefault,
   sanitizeReturnTo,
 } from './return-to'
@@ -88,33 +86,6 @@ describe('returnToOrDefault', () => {
 
   it('returns a safe value as is', () => {
     expect(returnToOrDefault('/messages/?conversation=x', '')).toBe('/messages/?conversation=x')
-  })
-})
-
-describe('dpnsRegisterHref', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs()
-  })
-
-  it('encodes the route into the next parameter so it round-trips', () => {
-    const route = '/post/?id=abc&reply=1#r'
-    const href = dpnsRegisterHref(route)
-    expect(href).toBe(`/dpns/register?${RETURN_TO_PARAM}=${encodeURIComponent(route)}`)
-    const next = new URL(href, 'https://app.example').searchParams.get(RETURN_TO_PARAM)
-    expect(next).toBe(route)
-    expect(returnToOrDefault(next, '')).toBe(route)
-  })
-
-  it('drops an unsafe or missing next instead of carrying it', () => {
-    expect(dpnsRegisterHref(undefined)).toBe('/dpns/register')
-    expect(dpnsRegisterHref('//evil.example')).toBe('/dpns/register')
-    expect(dpnsRegisterHref('/login/')).toBe('/dpns/register')
-  })
-
-  it('respects the deployment basePath', () => {
-    vi.stubEnv('NEXT_PUBLIC_BASE_PATH', '/testing')
-    expect(dpnsRegisterHref('/testing/post/?id=1')).toBe('/dpns/register?next=%2Fpost%2F%3Fid%3D1')
-    expect(returnToOrDefault('/testing/feed/')).toBe('/feed/')
   })
 })
 
