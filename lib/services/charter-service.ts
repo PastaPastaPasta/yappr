@@ -238,6 +238,15 @@ class CharterService {
   /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
   private generation = 0
 
+  /**
+   * The current session, to pass to each write of a multi-write action (key
+   * setup, reasons, then the proposal): once `forgetKeys` runs, every later
+   * write of that action is refused unsigned, not only the one under way.
+   */
+  session(): number {
+    return this.generation
+  }
+
   /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
   forgetKeys(): void {
     this.generation++
@@ -455,7 +464,9 @@ class CharterService {
    * charter key itself) typed in now. With `create`, an identity without one
    * gets it added, signed with that MASTER key.
    */
-  async charterKey(identityId: string, role: CharterRole, { create }: { create: boolean }): Promise<Uint8Array> {
+  async charterKey(identityId: string, role: CharterRole, { create, session }: { create: boolean; session?: number }): Promise<Uint8Array> {
+    const generation = session ?? this.generation
+    this.assertSameSession(generation)
     const identity = await fetchIdentity(identityId)
     const { purpose, documentType } = CHARTER_KEYS[role]
     const onChain = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType)).sort((a, b) => b.keyId - a.keyId)[0] ?? null
@@ -485,7 +496,6 @@ class CharterService {
         bytes.fill(0)
       }
     }
-    const generation = this.generation
     const input = await requestKeyStepUp({
       identityId,
       title: onChain ? 'Unlock your charter key' : 'Set up your charter key',
@@ -610,6 +620,8 @@ class CharterService {
     slot: string
     /** What it says, to tell a retry from a changed write. */
     fingerprint: string
+    /** The session of the action this write belongs to ({@link session}); this one's when not given. */
+    session?: number
     targetContractId?: string
     fund?: boolean
     /**
@@ -634,7 +646,7 @@ class CharterService {
   private async fileOnce(key: string, input: Parameters<CharterService['file']>[1]): Promise<string> {
     const { ownerId, type, fingerprint, targetContractId = '', fund = false } = input
     // Leaving the page, signing out or switching account cancels whatever this write has not yet signed.
-    const generation = this.generation
+    const generation = input.session ?? this.generation
     const sdk = await getEvoSdk()
     const w = await wasmModule()
     const lock = <T>(work: () => Promise<T>) => withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, work)
@@ -646,7 +658,7 @@ class CharterService {
       if (type === 'electedCharter') return null
       const outcome = await stateTransitionService.settleCreate({
         contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
-      })
+      }, { mayResend: () => generation === this.generation }) // proof only once the session is forgotten
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
     const uncertain = () => new CharterActionError(type === 'electedCharter' ? APPLICATION_MAY_STILL_LAND : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
@@ -666,8 +678,10 @@ class CharterService {
           if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
           return { kind: 'landed', id: stored.landed }
         }
-        // An older marker: the same write again is the filed one while it is proved there (proposals are
-        // never unique per target, so it is never signed twice on a guess); anything else is a new write.
+        // An older marker: the same write again is the filed one. A proposal can never be deleted and is
+        // not unique per target, so its marker stays authoritative (an absence read could be stale);
+        // anything else is proved still there first. A different write is a new one.
+        if (stored.fingerprint === fingerprint && type === 'submittedCharter') return { kind: 'landed', id: stored.landed }
         if (stored.fingerprint === fingerprint) {
           const there = await charterStepExists(w, sdk, { id: stored.landed, type, owner: ownerId }, targetContractId).catch(() => null)
           if (there === true) return { kind: 'landed', id: stored.landed }
@@ -845,10 +859,10 @@ class CharterService {
    * reason this owner already filed with the same code and text (an earlier
    * try that landed unseen) is reused.
    */
-  async fileReason(ownerId: string, reason: { code: string; label: string; description?: string }): Promise<string> {
+  async fileReason(ownerId: string, reason: { code: string; label: string; description?: string }, { session }: { session?: number } = {}): Promise<string> {
     const data = { code: reason.code, label: reason.label.trim(), ...(reason.description?.trim() ? { description: reason.description.trim() } : {}) }
     try {
-      return await this.file('reason', { ownerId, type: 'reason', data: async () => data, slot: data.code, fingerprint: JSON.stringify(data) })
+      return await this.file('reason', { ownerId, type: 'reason', data: async () => data, slot: data.code, fingerprint: JSON.stringify(data), session })
     } catch (error) {
       if (!(error instanceof CharterActionError) || error.code !== 40105) throw error
       const same = (await this.ownReasons(ownerId)).find((own) => own.code === data.code && own.label === data.label && (own.description ?? '') === (data.description ?? ''))
@@ -868,7 +882,7 @@ class CharterService {
     reasonIds: readonly string[]
     moderatorsShare: number
     rewardSplit: RewardSplit
-  }, stillOpen?: () => Promise<void>): Promise<string> {
+  }, { stillOpen, session }: { stillOpen?: () => Promise<void>; session?: number } = {}): Promise<string> {
     const w = await wasmModule()
     const data = {
       targetContractId: charterIdBytes(w, terms.targetContractId),
@@ -878,7 +892,7 @@ class CharterService {
       rewardSplit: { ...terms.rewardSplit },
     }
     const fingerprint = JSON.stringify({ ...terms, reasonIds: [...terms.reasonIds] })
-    return this.file('proposal', { ownerId, type: 'submittedCharter', data: async () => data, slot: terms.targetContractId, fingerprint, beforeSigning: stillOpen })
+    return this.file('proposal', { ownerId, type: 'submittedCharter', data: async () => data, slot: terms.targetContractId, fingerprint, beforeSigning: stillOpen, session })
   }
 
   /** Asks to join a proposal's team, with a message only its leader can read; resolves to the request's id. */

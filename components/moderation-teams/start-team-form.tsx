@@ -131,18 +131,20 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
     setTouched(true)
     // The proposal is for this tab's contract, and only on that contract's own election read.
     if (problems.length > 0 || !status || status.targetContractId !== declared.contractId) return
+    // One session for the whole submission: leaving the page stops every write not yet signed.
+    const session = charterService.session()
     const proposalId = await run(null, 'proposal', async () => {
       // Members' join messages are encrypted to the leader's charter key, so it comes first.
       if (needsKey ?? !(await charterService.hasCharterKey(me, 'leader'))) {
         setBusy('Setting up your charter key…')
-        await charterService.charterKey(me, 'leader', { create: true }).then((key) => key.fill(0))
+        await charterService.charterKey(me, 'leader', { create: true, session }).then((key) => key.fill(0))
         setNeedsKey(false)
       }
       let pendingDrafts = drafts
       const reasonIds = [...selected]
       for (const reason of drafts) {
         setBusy(`Filing reason ${reason.code}…`)
-        const id = await charterService.fileReason(me, reason)
+        const id = await charterService.fileReason(me, reason, { session })
         reasonIds.push(id)
         // A filed reason is kept as picked, so a retry never files it twice.
         pendingDrafts = pendingDrafts.filter((d) => d.code !== reason.code)
@@ -168,7 +170,7 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
         reasonIds,
         moderatorsShare: share,
         rewardSplit: split,
-      }, stillOpen)
+      }, { stillOpen, session })
     })
     if (proposalId) setFiled(proposalId)
   }

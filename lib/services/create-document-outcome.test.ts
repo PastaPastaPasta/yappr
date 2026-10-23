@@ -309,6 +309,15 @@ describe('settleCreate (a receipt for a create reported unconfirmed)', () => {
     expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
   })
 
+  it('sends nothing when the caller withdraws the re-send, leaving an undecided outcome unknown', async () => {
+    const receipt = await unconfirmedCreate()
+    sdk.identities.contractNonceWithProof.mockResolvedValue(proved(n(100), 60))
+    sdk.stateTransitions.broadcastStateTransition.mockClear()
+
+    expect(await stateTransitionService.settleCreate(receipt, { mayResend: () => false })).toBeNull()
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+  })
+
   it('leaves the outcome unknown when the reads fail, however often they are tried', async () => {
     const receipt = await unconfirmedCreate()
     sdk.identities.contractNonceWithProof.mockRejectedValue(new Error('transport error: unavailable'))

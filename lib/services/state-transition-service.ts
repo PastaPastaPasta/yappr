@@ -482,14 +482,17 @@ class StateTransitionService {
    * same signed bytes from the receipt (never from the replay cache, which
    * expires), so it either executes or its nonce goes, and an outcome can be proved.
    * `stalled` when that re-send is refused and its nonce is still free: it
-   * cannot execute now, though it might later.
+   * cannot execute now, though it might later. `mayResend`, when given, is
+   * asked right before that re-send: false keeps it proof-only (null when the
+   * proof alone does not decide).
    */
-  async settleCreate(receipt: CreateReceipt): Promise<'landed' | 'not-recorded' | 'stalled' | null> {
+  async settleCreate(receipt: CreateReceipt, { mayResend }: { mayResend?: () => boolean } = {}): Promise<'landed' | 'not-recorded' | 'stalled' | null> {
     const { contractId, documentType, ownerId, documentId, nonce } = receipt;
     const sdk = await getEvoSdk();
     const outcome = (settled: StateTransitionResult | null) => settled === null ? null : settled.success ? 'landed' : 'not-recorded';
     const settled = await this.settleUnconfirmedCreate(sdk, contractId, documentType, ownerId, documentId, nonce);
     if (settled) return outcome(settled);
+    if (mayResend && !mayResend()) return null;
     let refused = false;
     try {
       const stateTransition = StateTransition.fromBytes(receipt.transition);
