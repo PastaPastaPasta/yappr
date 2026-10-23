@@ -147,7 +147,13 @@ export const ELECTIONS_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 const CONTRACTS = new Set<string>(ORDER)
 
-function validPhase(value: unknown, nowMs: number): BannerPhase | null {
+/**
+ * A remembered phase as it stands at `nowMs`, or null when it says nothing
+ * any more: a passed application date is dropped (what came next is
+ * unknown), a passed vote is deciding, a passed opening date is waiting.
+ * Also checks the shape of a phase read back from storage.
+ */
+export function phaseAt(value: unknown, nowMs: number): BannerPhase | null {
   if (typeof value !== 'object' || value === null) return null
   const { kind, untilMs, opensAtMs } = value as Record<string, unknown>
   const future = (ms: unknown): ms is number => typeof ms === 'number' && Number.isFinite(ms) && ms > nowMs
@@ -160,7 +166,8 @@ function validPhase(value: unknown, nowMs: number): BannerPhase | null {
       return future(untilMs) && typeof applicants === 'number' && applicants > 0 ? { kind, untilMs, applicants } : null
     }
     case 'voting':
-      return untilMs === null || future(untilMs) ? { kind, untilMs } : null
+      if (untilMs === null || future(untilMs)) return { kind, untilMs }
+      return typeof untilMs === 'number' ? { kind: 'deciding' } : null
     case 'deciding':
       return { kind }
     default:
@@ -181,7 +188,7 @@ export function parseCachedElections(raw: string | null, nowMs: number): Pending
     if (typeof savedAt !== 'number' || nowMs < savedAt || nowMs - savedAt > ELECTIONS_CACHE_MAX_AGE_MS || !Array.isArray(pending)) return null
     const entries = pending.flatMap((entry: unknown): PendingElection[] => {
       const { contract, phase } = (entry ?? {}) as { contract?: unknown; phase?: unknown }
-      const valid = typeof contract === 'string' && CONTRACTS.has(contract) ? validPhase(phase, nowMs) : null
+      const valid = typeof contract === 'string' && CONTRACTS.has(contract) ? phaseAt(phase, nowMs) : null
       return valid ? [{ contract: contract as ModeratedContractKey, phase: valid }] : []
     })
     return entries.length > 0 ? entries : null
@@ -193,4 +200,48 @@ export function parseCachedElections(raw: string | null, nowMs: number): Pending
 /** The pending elections in the form {@link parseCachedElections} reads back. */
 export function serializeElections(pending: readonly PendingElection[], nowMs: number): string {
   return JSON.stringify({ savedAt: nowMs, pending })
+}
+
+/** Where the banner's answer for one contract comes from: a chain read, or what an earlier visit remembered. */
+export type ElectionSource<T> = { live: T } | { remembered: BannerPhase }
+
+/** What one read cycle got for a contract: its election, open (a team is seated), or a failed read. */
+export type ElectionAnswer<T> = T | 'open' | 'failed'
+
+/**
+ * The answers after a read cycle, per contract: this cycle's election where
+ * it read one; nothing where the contract is open or settled open (a seat is
+ * never lifted); else, where the read failed or did not run, what was there
+ * before (an earlier chain read, or the remembered phase). Pure.
+ */
+export function mergeElectionAnswers<T>(
+  candidates: readonly ModeratedContractKey[],
+  answers: ReadonlyMap<ModeratedContractKey, ElectionAnswer<T>>,
+  previous: ReadonlyMap<ModeratedContractKey, ElectionSource<T>>,
+  settledOpen: ReadonlySet<ModeratedContractKey>
+): Map<ModeratedContractKey, ElectionSource<T>> {
+  const merged = new Map<ModeratedContractKey, ElectionSource<T>>()
+  for (const contract of candidates) {
+    const answer = answers.get(contract)
+    if (settledOpen.has(contract) || answer === 'open') continue
+    if (answer !== undefined && answer !== 'failed') {
+      merged.set(contract, { live: answer })
+      continue
+    }
+    const before = previous.get(contract)
+    if (before) merged.set(contract, before)
+  }
+  return merged
+}
+
+/** The pending elections at `nowMs`: live ones through `livePhase`, remembered ones re-derived against the clock. */
+export function pendingElections<T>(
+  sources: ReadonlyMap<ModeratedContractKey, ElectionSource<T>>,
+  nowMs: number,
+  livePhase: (live: T, nowMs: number) => BannerPhase | null
+): PendingElection[] {
+  return [...sources].flatMap(([contract, source]) => {
+    const phase = 'live' in source ? livePhase(source.live, nowMs) : phaseAt(source.remembered, nowMs)
+    return phase ? [{ contract, phase }] : []
+  })
 }

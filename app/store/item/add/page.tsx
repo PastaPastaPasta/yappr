@@ -45,6 +45,7 @@ import { zoneDraftFromItem, zoneUpdateFor, zonesStranded, type ItemZoneMode } fr
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import { reportModerationRefusal } from '@/components/moderation/barred-writer-notice'
 import { ModerationClosedNotice } from '@/components/moderation/moderation-closed-notice'
+import { ElectionBannerSlot } from '@/components/moderation/election-banner'
 import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
@@ -574,8 +575,11 @@ function AddItemPage() {
     return (
       <div className="min-h-screen flex">
         <Sidebar />
-        <div className="flex-1 flex justify-center items-center">
-          <p className="text-gray-500">No store ID provided</p>
+        <div className="flex-1 flex flex-col min-w-0">
+          <ElectionBannerSlot />
+          <div className="flex flex-1 justify-center items-center">
+            <p className="text-gray-500">No store ID provided</p>
+          </div>
         </div>
         <RightSidebar />
       </div>

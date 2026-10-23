@@ -3,10 +3,16 @@ import {
   ELECTIONS_CACHE_MAX_AGE_MS,
   bannerPhase,
   electionBanner,
+  mergeElectionAnswers,
   parseCachedElections,
+  pendingElections,
+  phaseAt,
   serializeElections,
+  type ElectionAnswer,
+  type ElectionSource,
   type PendingElection,
 } from './election-banner'
+import type { ModeratedContractKey } from './moderated-contracts'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -126,5 +132,59 @@ describe('remembered elections', () => {
   it('forgets an application date of the election delay once it has passed', () => {
     const raw = serializeElections([{ contract: 'social', phase: { kind: 'waiting', opensAtMs: NOW + HOUR } }], NOW)
     expect(parseCachedElections(raw, NOW + 2 * HOUR)).toEqual([{ contract: 'social', phase: { kind: 'waiting', opensAtMs: null } }])
+  })
+})
+
+describe('phaseAt', () => {
+  it('moves a remembered phase on with the clock', () => {
+    expect(phaseAt({ kind: 'applications', untilMs: NOW + HOUR, applicants: 1 }, NOW + 2 * HOUR)).toBeNull()
+    expect(phaseAt({ kind: 'voting', untilMs: NOW + HOUR }, NOW + 2 * HOUR)).toEqual({ kind: 'deciding' })
+    expect(phaseAt({ kind: 'voting', untilMs: null }, NOW)).toEqual({ kind: 'voting', untilMs: null })
+    expect(phaseAt({ kind: 'waiting', opensAtMs: NOW + HOUR }, NOW + 2 * HOUR)).toEqual({ kind: 'waiting', opensAtMs: null })
+    expect(phaseAt({ kind: 'deciding' }, NOW)).toEqual({ kind: 'deciding' })
+    expect(phaseAt({ kind: 'nonsense' }, NOW)).toBeNull()
+  })
+})
+
+describe('mergeElectionAnswers', () => {
+  type Live = { id: string }
+  const ALL: ModeratedContractKey[] = ['social', 'storefront', 'blog']
+  const waiting: ElectionSource<Live> = { remembered: { kind: 'waiting', opensAtMs: null } }
+  const merge = (
+    answers: [ModeratedContractKey, ElectionAnswer<Live>][],
+    previous: [ModeratedContractKey, ElectionSource<Live>][],
+    settled: ModeratedContractKey[] = []
+  ) => Object.fromEntries(mergeElectionAnswers(ALL, new Map(answers), new Map(previous), new Set(settled)))
+
+  it('takes the election read this cycle over anything earlier', () => {
+    expect(merge([['social', { id: 'new' }]], [['social', { live: { id: 'old' } }]])).toEqual({ social: { live: { id: 'new' } } })
+  })
+
+  it('keeps the earlier answer, live or remembered, where the read failed', () => {
+    expect(merge([['social', 'failed'], ['blog', 'failed']], [['social', { live: { id: 'old' } }], ['blog', waiting]]))
+      .toEqual({ social: { live: { id: 'old' } }, blog: waiting })
+  })
+
+  it('drops a contract that read open in the same cycle another failed, remembered or not', () => {
+    expect(merge([['social', 'open'], ['blog', 'failed']], [['social', waiting], ['blog', waiting]], ['social'])).toEqual({ blog: waiting })
+  })
+
+  it('drops a contract settled open earlier and not read again', () => {
+    expect(merge([], [['storefront', waiting]], ['storefront'])).toEqual({})
+  })
+})
+
+describe('pendingElections', () => {
+  it('derives live phases through the reader and re-derives remembered ones against the clock', () => {
+    const sources = new Map<ModeratedContractKey, ElectionSource<string>>([
+      ['social', { live: 'x' }],
+      ['blog', { remembered: { kind: 'voting', untilMs: NOW + HOUR } }],
+      ['storefront', { remembered: { kind: 'applications', untilMs: NOW + HOUR, applicants: 2 } }],
+    ])
+    expect(pendingElections(sources, NOW + 2 * HOUR, () => ({ kind: 'deciding' }))).toEqual([
+      { contract: 'social', phase: { kind: 'deciding' } },
+      { contract: 'blog', phase: { kind: 'deciding' } },
+    ])
+    expect(pendingElections(sources, NOW, () => null).map((entry) => entry.contract)).toEqual(['blog', 'storefront'])
   })
 })

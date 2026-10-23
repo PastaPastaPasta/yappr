@@ -184,8 +184,11 @@ function InventoryPage() {
       <div className="min-h-screen flex">
         <Sidebar />
         <div className="flex-1 flex justify-center min-w-0">
-          <main className="w-full max-w-[900px] md:border-x border-gray-200 dark:border-gray-800 flex items-center justify-center">
-            <Spinner />
+          <main className="w-full max-w-[900px] md:border-x border-gray-200 dark:border-gray-800 flex flex-col">
+            <ElectionBannerSlot />
+            <div className="flex flex-1 items-center justify-center">
+              <Spinner />
+            </div>
           </main>
         </div>
         <RightSidebar />

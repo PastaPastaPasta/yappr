@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useSdk } from '@/contexts/sdk-context'
-import { bannerPhase, parseCachedElections, serializeElections, type PendingElection } from '@/lib/election-banner'
+import {
+  bannerPhase,
+  mergeElectionAnswers,
+  parseCachedElections,
+  pendingElections,
+  serializeElections,
+  type BannerPhase,
+  type ElectionAnswer,
+  type ElectionSource,
+  type PendingElection,
+} from '@/lib/election-banner'
 import { logger } from '@/lib/logger'
 import { moderatedContract, type ModeratedContractKey } from '@/lib/moderated-contracts'
 import { watchModeratedTypeOpen } from '@/lib/moderated-type-gate'
@@ -19,22 +29,18 @@ const CACHE_KEY = 'moderator-elections'
  * between; a seat shows sooner, through the team read.
  */
 const STATUS_SHARE_MS = 5 * 60_000
+/** How often a closed contract's team is re-read while the tab is visible (a hidden tab reads nothing). */
+const RECHECK_MS = 2 * 60_000
 /** How often a shown phase is re-derived from the clock (a deadline passing moves it on). */
 const TICK_MS = 30_000
 
 /** A contract still waiting for its first team: its election, and how far chain time was from this clock when read. */
 interface ClosedElection {
-  contract: ModeratedContractKey
   status: ElectionStatus
   offsetMs: number
 }
 
-interface Snapshot {
-  /** Read from the chain; null until every contract has answered once (or nothing was remembered). */
-  live: readonly ClosedElection[] | null
-  /** Remembered from an earlier visit, shown until the chain answers. */
-  remembered: readonly PendingElection[] | null
-}
+type Sources = ReadonlyMap<ModeratedContractKey, ElectionSource<ClosedElection>>
 
 /**
  * The contracts this build elects moderators for (from the committed cut;
@@ -44,34 +50,34 @@ interface Snapshot {
  */
 const CANDIDATES: readonly ModeratedContractKey[] = electedContracts()
 
-const EMPTY: Snapshot = { live: null, remembered: null }
-let snapshot: Snapshot = EMPTY
+const EMPTY: Sources = new Map()
+let sources: Sources = EMPTY
 const listeners = new Set<() => void>()
 /** Contracts read open (a team is seated): a seat is never lifted, so they are not read again. */
 const settledOpen = new Set<ModeratedContractKey>()
 const statusReads = new Map<ModeratedContractKey, { at: number; answer: Promise<ClosedElection> }>()
+/** Bumped by every read cycle: a cycle that settles after a newer one started publishes nothing. */
+let generation = 0
 let watchers = 0
 let stopWatching: (() => void) | null = null
 
-function publish(next: Snapshot) {
-  snapshot = next
+function publish(next: Sources) {
+  sources = next
   for (const listener of listeners) listener()
 }
 
-function phaseOf({ status, offsetMs }: ClosedElection, nowMs: number) {
+function livePhase({ status, offsetMs }: ClosedElection, nowMs: number): BannerPhase | null {
   const chainNow = nowMs + offsetMs
   return bannerPhase(electionStage(status, chainNow), chainNow)
 }
 
-function pendingAt(closed: readonly ClosedElection[], nowMs: number): PendingElection[] {
-  return closed.flatMap((election) => {
-    const phase = phaseOf(election, nowMs)
-    return phase ? [{ contract: election.contract, phase }] : []
+const sameSources = (a: Sources, b: Sources) =>
+  a.size === b.size && [...b].every(([contract, source]) => {
+    const before = a.get(contract)
+    if (!before) return false
+    if ('live' in source) return 'live' in before && before.live === source.live
+    return 'remembered' in before && before.remembered === source.remembered
   })
-}
-
-const sameLive = (a: readonly ClosedElection[] | null, b: readonly ClosedElection[]) =>
-  a !== null && a.length === b.length && a.every((entry, index) => entry.status === b[index].status && entry.offsetMs === b[index].offsetMs)
 
 /**
  * The election of a closed contract, shared for {@link STATUS_SHARE_MS}. A
@@ -85,8 +91,8 @@ function loadStatus(contract: ModeratedContractKey): Promise<ClosedElection> {
     at: Date.now(),
     answer: moderationElectionService.getStatus(moderatedContract(contract).contractId).then((status) => {
       if (!status) throw new Error('the contract does not elect its moderators')
-      const election = { contract, status, offsetMs: chainOffsetMs(status) }
-      if (!status.seated && phaseOf(election, Date.now()) === null) throw new Error(`incomplete read (${status.failures.join(', ')})`)
+      const election = { status, offsetMs: chainOffsetMs(status) }
+      if (!status.seated && livePhase(election, Date.now()) === null) throw new Error(`incomplete read (${status.failures.join(', ')})`)
       return election
     }),
   }
@@ -97,51 +103,51 @@ function loadStatus(contract: ModeratedContractKey): Promise<ClosedElection> {
   return entry.answer
 }
 
-/** One contract: open (nothing to announce) or its election. One cheap, cached team read first. */
-async function readContract(contract: ModeratedContractKey): Promise<ClosedElection | 'open'> {
-  const docType = Object.keys(moderatedContract(contract).elected()?.moderatedDocumentTypes ?? {})[0]
-  if (!docType || await moderationServiceFor(contract).moderatedTypeOpen(docType)) return 'open'
-  const election = await loadStatus(contract)
-  return election.status.seated ? 'open' : election
+/** One contract: open (nothing to announce), its election, or a failed read. One cheap, cached team read first. */
+async function readContract(contract: ModeratedContractKey): Promise<ElectionAnswer<ClosedElection>> {
+  try {
+    const docType = Object.keys(moderatedContract(contract).elected()?.moderatedDocumentTypes ?? {})[0]
+    if (!docType || await moderationServiceFor(contract).moderatedTypeOpen(docType)) return 'open'
+    const election = await loadStatus(contract)
+    return election.status.seated ? 'open' : election
+  } catch (error) {
+    logger.warn(`Moderator elections: the ${contract} election could not be read`, error)
+    return 'failed'
+  }
 }
 
 /**
  * Reads every contract still closed; true once all are open. A contract whose
- * read failed keeps its last answer; before the first full answer, what was
- * remembered stays up rather than a partial one.
+ * read failed keeps its last answer (or what was remembered); the cache is
+ * rewritten only after a cycle in which every read succeeded. A hidden tab
+ * reads nothing: showing it again re-checks at once.
  */
 async function readElections(): Promise<boolean> {
   const contracts = CANDIDATES.filter((contract) => !settledOpen.has(contract))
-  const results = await Promise.allSettled(contracts.map(readContract))
-  let failed = false
-  const live = contracts.flatMap((contract, index): ClosedElection[] => {
-    const result = results[index]
-    if (result.status === 'rejected') {
-      failed = true
-      logger.warn(`Moderator elections: the ${contract} election could not be read`, result.reason)
-      return (snapshot.live ?? []).filter((entry) => entry.contract === contract)
-    }
-    if (result.value === 'open') {
-      settledOpen.add(contract)
-      return []
-    }
-    return [result.value]
+  if (contracts.length === 0) return true
+  if (typeof document !== 'undefined' && document.hidden) return false
+  const mine = ++generation
+  const results = await Promise.all(contracts.map(readContract))
+  results.forEach((answer, index) => {
+    if (answer === 'open') settledOpen.add(contracts[index])
   })
-  const allOpen = contracts.every((contract) => settledOpen.has(contract))
-  if (failed && snapshot.live === null && snapshot.remembered !== null) return allOpen
-  if (!failed) {
-    const pending = pendingAt(live, Date.now())
+  const allOpen = CANDIDATES.every((contract) => settledOpen.has(contract))
+  if (mine !== generation) return allOpen
+  const answers = new Map(contracts.map((contract, index) => [contract, results[index]]))
+  const next = mergeElectionAnswers(CANDIDATES, answers, sources, settledOpen)
+  if (!results.includes('failed')) {
+    const pending = pendingElections(next, Date.now(), livePhase)
     if (pending.length > 0) writeScoped(CACHE_KEY, serializeElections(pending, Date.now()))
     else removeScoped(CACHE_KEY)
   }
-  if (!sameLive(snapshot.live, live)) publish({ live, remembered: snapshot.remembered })
+  if (!sameSources(sources, next)) publish(next)
   return allOpen
 }
 
 function watch(): () => void {
   watchers += 1
   if (watchers === 1) {
-    stopWatching = watchModeratedTypeOpen(readElections, () => undefined, { targets: [window, document] })
+    stopWatching = watchModeratedTypeOpen(readElections, () => undefined, { intervalMs: RECHECK_MS, targets: [window, document] })
   }
   return () => {
     watchers -= 1
@@ -159,7 +165,7 @@ function subscribe(listener: () => void) {
   }
 }
 
-const getSnapshot = () => snapshot
+const getSnapshot = () => sources
 const getServerSnapshot = () => EMPTY
 
 /** Paints what was remembered, then keeps the shared read going while mounted. */
@@ -167,9 +173,9 @@ function useElectionsRead() {
   const { isReady: sdkReady } = useSdk()
 
   useEffect(() => {
-    if (CANDIDATES.length === 0 || snapshot !== EMPTY) return
+    if (CANDIDATES.length === 0 || sources !== EMPTY) return
     const cached = parseCachedElections(readScoped(CACHE_KEY), Date.now())
-    if (cached) publish({ live: null, remembered: cached })
+    if (cached) publish(new Map(cached.map(({ contract, phase }) => [contract, { remembered: phase }])))
   }, [])
 
   useEffect(() => {
@@ -182,8 +188,9 @@ function useElectionsRead() {
  * The moderator elections still pending, each with its phase now, or null
  * while there is nothing to say: no contract of this build elects its
  * moderators, every one has its team, or the elections are not read yet (or
- * could not be). One shared read serves every caller and keeps asking every
- * minute (and when the window regains focus) while any contract is closed.
+ * could not be). One shared read serves every caller and keeps asking while
+ * any contract is closed (every two minutes while the tab is visible, and
+ * when it is shown or focused again).
  *
  * The last answer is remembered for a day and painted on mount, so a repeat
  * visit shows the banner in its first frame; the chain then confirms it, or
@@ -191,10 +198,10 @@ function useElectionsRead() {
  */
 export function useModeratorElections(): readonly PendingElection[] | null {
   useElectionsRead()
-  const { live, remembered } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  const current = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
   const [now, setNow] = useState(() => Date.now())
 
-  const ticking = live !== null && live.length > 0
+  const ticking = current.size > 0
   useEffect(() => {
     if (!ticking) return
     setNow(Date.now())
@@ -203,15 +210,9 @@ export function useModeratorElections(): readonly PendingElection[] | null {
   }, [ticking])
 
   return useMemo(() => {
-    const pending = live !== null ? pendingAt(live, now) : remembered
-    return pending && pending.length > 0 ? pending : null
-  }, [live, remembered, now])
-}
-
-/** Social is pending in `state`: a closed, readable election (no clock needed: every pre-seat phase is closed). */
-function socialClosed(state: Snapshot): boolean {
-  if (state.live === null) return state.remembered?.some((entry) => entry.contract === 'social') ?? false
-  return state.live.some((entry) => entry.contract === 'social')
+    const pending = pendingElections(current, now, livePhase)
+    return pending.length > 0 ? pending : null
+  }, [current, now])
 }
 
 /**
@@ -222,5 +223,5 @@ function socialClosed(state: Snapshot): boolean {
  */
 export function usePostingClosed(): boolean {
   useElectionsRead()
-  return useSyncExternalStore(subscribe, () => socialClosed(snapshot), () => false)
+  return useSyncExternalStore(subscribe, () => sources.has('social'), () => false)
 }

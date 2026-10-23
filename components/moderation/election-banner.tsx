@@ -93,7 +93,8 @@ function ElectionBanner({ content, onTeamsPage, onDismiss }: { content: Election
 
   return (
     <div
-      role="status"
+      role="region"
+      aria-label="Moderator elections"
       data-testid="election-banner"
       className="border-b border-amber-200 bg-amber-50 px-4 pb-2 pt-[var(--network-pill-height,0.5rem)] text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100"
     >
