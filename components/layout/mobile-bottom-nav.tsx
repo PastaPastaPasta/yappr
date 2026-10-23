@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRoutePath } from '@/hooks/use-route-path'
 import { useAuth } from '@/contexts/auth-context'
@@ -37,6 +37,7 @@ import type { BetaProduct } from '@/lib/feature-flags'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { LegalLinks } from './legal-links'
+import { Modal, ModalTitle } from '@/components/ui/modal'
 
 export function MobileBottomNav() {
   const pathname = useRoutePath()
@@ -47,29 +48,11 @@ export function MobileBottomNav() {
   const [isHydrated, setIsHydrated] = useState(false)
   const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenuButtonRef = useRef<HTMLButtonElement>(null)
+  const signInAfterCloseRef = useRef(false)
   const unreadNotificationCount = useVisibleUnreadNotificationCount()
   // Refreshed by the Sidebar's poll: it is hidden with CSS on mobile, not
   // unmounted, so its effect is the single source of both badge counts.
   const unreadMessageCount = useNotificationStore((s) => s.dmUnreadCount)
-
-  const closeMoreMenu = useCallback(() => {
-    setMoreMenuOpen(false)
-    moreMenuButtonRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    if (!moreMenuOpen) return
-
-    closeMenuButtonRef.current?.focus()
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closeMoreMenu()
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [moreMenuOpen, closeMoreMenu])
 
   useEffect(() => {
     setIsHydrated(true)
@@ -79,6 +62,17 @@ export function MobileBottomNav() {
   useEffect(() => {
     setMoreMenuOpen(false)
   }, [pathname])
+
+  // A sheet opened on mobile must also release its focus/scroll lock if the
+  // viewport switches to the desktop navigation.
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 768px)')
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMoreMenuOpen(false)
+    }
+    desktop.addEventListener('change', closeOnDesktop)
+    return () => desktop.removeEventListener('change', closeOnDesktop)
+  }, [])
 
   const navItems: Array<{
     name: string
@@ -165,27 +159,36 @@ export function MobileBottomNav() {
 
   return (
     <>
-      {/* Overlay */}
-      {moreMenuOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={closeMoreMenu}
-        />
-      )}
-
       {/* More Menu Sheet */}
-      {/* React 18 emits inert only as a string, while the DOM typings declare it boolean. */}
-      <div id="mobile-more-menu" aria-hidden={!moreMenuOpen} inert={moreMenuOpen ? undefined : ('' as unknown as boolean)} className={cn(
-        "fixed bottom-14 left-0 right-0 z-40 md:hidden max-h-[calc(100dvh-3.5rem)] overflow-y-auto bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 rounded-t-2xl shadow-lg transition-transform duration-300 ease-out safe-area-inset-bottom",
-        moreMenuOpen ? "translate-y-0" : "translate-y-full pointer-events-none"
-      )}>
+      <Modal
+        open={moreMenuOpen}
+        onOpenChange={setMoreMenuOpen}
+        variant="sheet"
+        inertBackground
+        overlayClassName="items-end px-0"
+        className="max-h-[100dvh] overflow-y-auto rounded-b-none border-t border-gray-200 safe-area-inset-bottom dark:border-gray-800"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          closeMenuButtonRef.current?.focus()
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          moreMenuButtonRef.current?.focus({ preventScroll: true })
+          // Open sign-in after this sheet releases its focus scope, so the
+          // login modal returns to Menu instead of a departing sheet button.
+          if (signInAfterCloseRef.current) {
+            signInAfterCloseRef.current = false
+            openLoginModal()
+          }
+        }}
+      >
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Menu</h3>
+            <ModalTitle className="mb-0 text-lg">Menu</ModalTitle>
             <button
               aria-label="Close menu"
               ref={closeMenuButtonRef}
-              onClick={closeMoreMenu}
+              onClick={() => setMoreMenuOpen(false)}
               className="p-2 -mr-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800"
             >
               <XMarkIcon className="h-5 w-5" />
@@ -236,8 +239,8 @@ export function MobileBottomNav() {
             <div className="border-t border-gray-200 dark:border-gray-800 mt-4 pt-4">
               <button
                 onClick={() => {
+                  signInAfterCloseRef.current = true
                   setMoreMenuOpen(false)
-                  openLoginModal()
                 }}
                 className="flex items-center justify-center w-full p-3 rounded-xl bg-yappr-500 text-white font-medium hover:bg-yappr-600 transition-colors"
               >
@@ -248,7 +251,7 @@ export function MobileBottomNav() {
 
           <LegalLinks className="mt-4" onNavigate={() => setMoreMenuOpen(false)} />
         </div>
-      </div>
+      </Modal>
 
       {/* Bottom Navigation Bar */}
       <nav aria-label="Mobile navigation" className="fixed bottom-0 left-0 right-0 z-50 md:hidden bg-white dark:bg-neutral-900 border-t border-gray-200 dark:border-gray-800 safe-area-inset-bottom">
@@ -283,9 +286,8 @@ export function MobileBottomNav() {
                 <button
                   aria-label="Menu"
                   aria-expanded={moreMenuOpen}
-                  aria-controls="mobile-more-menu"
                   ref={moreMenuButtonRef}
-                  onClick={() => moreMenuOpen ? closeMoreMenu() : setMoreMenuOpen(true)}
+                  onClick={() => setMoreMenuOpen(true)}
                   className="flex-1 flex items-center justify-center h-full relative"
                 >
                   <Bars3Icon className={cn(

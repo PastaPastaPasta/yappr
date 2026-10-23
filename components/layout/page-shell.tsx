@@ -12,6 +12,8 @@ interface PageShellProps {
   mainClassName?: string
   /** Hide the right column (wide-mode reading views). */
   hideRightSidebar?: boolean
+  /** Reserve the landing page's election banner slot while its state loads. */
+  reserveElectionBannerSlot?: boolean
 }
 
 /**
@@ -19,14 +21,14 @@ interface PageShellProps {
  * centre column, the right sidebar. Pages render their own content inside;
  * use {@link PageHeader} for the sticky title bar.
  */
-export function PageShell({ children, mainClassName, hideRightSidebar = false }: PageShellProps) {
+export function PageShell({ children, mainClassName, hideRightSidebar = false, reserveElectionBannerSlot = false }: PageShellProps) {
   return (
     <div className="min-h-screen flex">
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         {/* A layout class (centring, say) goes on an inner box, so the banner stays a full-width row above it. */}
         <main className={cn('w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800', mainClassName && 'flex flex-col')}>
-          <ElectionBannerSlot />
+          <ElectionBannerSlot reserve={reserveElectionBannerSlot} />
           {mainClassName ? <div className={cn('flex-1', mainClassName)}>{children}</div> : children}
         </main>
       </div>

@@ -38,10 +38,18 @@ const SlotContext = createContext<(node: HTMLDivElement | null) => void>(() => u
  * The place for the election banner at the top of a layout's centre column,
  * above its sticky header, so it scrolls away with the page and leaves the
  * sticky sidebars alone. Renders an empty element; the banner itself is
- * mounted once, by {@link ElectionBannerFrame}.
+ * mounted once, by {@link ElectionBannerFrame}. The landing page reserves a
+ * stable slot even while empty; longer notices scroll inside it instead of
+ * pushing the hero down when the election read finishes.
  */
-export function ElectionBannerSlot() {
-  return <div ref={useContext(SlotContext)} />
+export function ElectionBannerSlot({ reserve = false }: { reserve?: boolean }) {
+  return (
+    <div
+      ref={useContext(SlotContext)}
+      data-reserve-election-slot={reserve ? 'true' : undefined}
+      className={reserve ? 'h-[137px] overflow-y-auto' : undefined}
+    />
+  )
 }
 
 /**

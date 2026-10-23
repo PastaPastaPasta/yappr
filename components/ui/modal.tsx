@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -22,6 +22,8 @@ interface ModalProps {
   variant?: 'card' | 'sheet'
   /** Overlay classes; `sheet` compose uses this to top-align on tall screens. */
   overlayClassName?: string
+  /** Also prevent native focus and interaction in the page behind this modal. */
+  inertBackground?: boolean
   onOpenAutoFocus?: Dialog.DialogContentProps['onOpenAutoFocus']
   onCloseAutoFocus?: Dialog.DialogContentProps['onCloseAutoFocus']
 }
@@ -34,13 +36,38 @@ const SHEET_MOTION = {
   transition: { duration: 0.2, ease: 'easeOut' as const },
 }
 
+function InertBackground({ panelRef }: { panelRef: RefObject<HTMLDivElement> }) {
+  useEffect(() => {
+    const changed: HTMLElement[] = []
+    // Keep the overlay interactive for dismissal. Only its siblings (and
+    // siblings of its ancestors) belong to the background page.
+    let current = panelRef.current?.parentElement
+    while (current && current !== document.body) {
+      const parent = current.parentElement
+      if (!parent) break
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling instanceof HTMLElement && sibling !== current && !sibling.inert) {
+          sibling.inert = true
+          changed.push(sibling)
+        }
+      }
+      current = parent
+    }
+    return () => {
+      for (const element of changed) element.inert = false
+    }
+  }, [panelRef])
+  return null
+}
+
 /**
  * A centred dialog on a dimmed overlay: Radix for focus, escape and the
  * accessibility tree, framer-motion for the enter/exit animation. Put a
  * `<Dialog.Title>` (or `<ModalTitle>`) inside so screen readers get a name.
  */
-export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName, onOpenAutoFocus, onCloseAutoFocus }: ModalProps) {
+export function Modal({ open, onOpenChange, children, className, variant = 'card', overlayClassName, inertBackground = false, onOpenAutoFocus, onCloseAutoFocus }: ModalProps) {
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const sheet = variant === 'sheet'
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -78,6 +105,7 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                   }}
                 >
                   <motion.div
+                    ref={panelRef}
                     {...(sheet ? SHEET_MOTION : CARD_MOTION)}
                     className={cn(
                       'bg-white dark:bg-neutral-900 rounded-2xl relative',
@@ -86,6 +114,7 @@ export function Modal({ open, onOpenChange, children, className, variant = 'card
                     )}
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {inertBackground && <InertBackground panelRef={panelRef} />}
                     {children}
                   </motion.div>
                 </Dialog.Content>

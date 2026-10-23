@@ -150,7 +150,7 @@ export function PostActionBar({ postId, isOwnPost, deleted, reply, repost, like,
               like.active && 'text-red-500'
             )}
           >
-            <motion.div whileTap={{ scale: 0.8 }} transition={{ type: 'spring', stiffness: 400, damping: 17 }}>
+            <motion.div aria-hidden="true" tabIndex={-1} whileTap={{ scale: 0.8 }} transition={{ type: 'spring', stiffness: 400, damping: 17 }}>
               {like.active ? <HeartIconSolid className="h-5 w-5 text-red-500" /> : <HeartIcon className="h-5 w-5 text-gray-500 group-hover:text-red-500 transition-colors" />}
             </motion.div>
             <span className={cn('text-sm transition-colors', like.active ? 'text-red-500' : 'text-gray-500 group-hover:text-red-500')}>

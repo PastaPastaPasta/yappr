@@ -41,7 +41,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   }, [redirectAuthenticated, user, router])
 
   return (
-    <PageShell>
+    <PageShell reserveElectionBannerSlot>
       <section className="px-4 pb-8 pt-10 text-center md:pb-10 md:pt-14">
         <h1 className="mb-4 text-3xl font-bold md:text-5xl">
           Welcome to <Wordmark />
