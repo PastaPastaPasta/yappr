@@ -35,7 +35,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { base64ToBytes, bytesToBase64, requireBytes } from '@/lib/bytes'
-import { askForKey, cancelPrompt, criticalKeyFor, criticalKeySession, type KeyPrompt } from '@/lib/auth/critical-key'
+import { CriticalKeyCancelledError, askForKey, cancelPrompt, criticalKeyFor, criticalKeySession, type KeyPrompt } from '@/lib/auth/critical-key'
 import { currentIdentityId } from '@/lib/auth/active-identity'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getPrivateKey } from '@/lib/secure-storage'
@@ -49,7 +49,7 @@ import { withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
   deriveCharterKey, forgetCharterKeys, heldCharterKey, holdCharterKey, keyMatches, readPrivateKeyInput, type CharterRole,
 } from '@/lib/moderation-charters/charter-keys'
-import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
+import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, isStatelessRefusal, type CharterAction } from '@/lib/moderation-charters/refusals'
 import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
 import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
@@ -76,7 +76,15 @@ const PAGE = 100
 /** At most this many pages of join requests or reasons are read (10,000 documents). */
 const MAX_PAGES = 100
 
-const asWif = (input: string) => privateKeyToWif(readPrivateKeyInput(input), keyNetwork())
+/** What was typed, as a WIF; the bytes read from it are zeroed. */
+const asWif = (input: string) => {
+  const bytes = readPrivateKeyInput(input)
+  try {
+    return privateKeyToWif(bytes, keyNetwork())
+  } finally {
+    bytes.fill(0)
+  }
+}
 const keyData = (key: IdentityPublicKey) => requireBytes(key.data, 'identity key data')
 const keyInputError = (error: unknown) => (error instanceof Error ? error.message : 'That key could not be read.')
 /** The documents a query returned, without the holes the SDK leaves for absent ones. */
@@ -298,12 +306,15 @@ class CharterService {
   }
 
   /**
-   * Whether `session` still holds: this page has not forgotten its keys, and
-   * the sign-in it began in (auth epoch and identity) is still the one, so a
-   * sign-out ends it at once, before its key cleanup is done.
+   * Whether `session` still holds for `ownerId`'s write: this page has not
+   * forgotten its keys, the sign-in it began in (auth epoch and identity) is
+   * still the one, so a sign-out ends it at once, before its key cleanup is
+   * done, and that sign-in is `ownerId`'s (a session never signs, sends or
+   * asks a key for another account).
    */
-  private isLive(session: CharterSession): boolean {
-    return session.generation === this.generation && session.epoch === criticalKeySession() && session.identityId === currentIdentityId()
+  private isLive(session: CharterSession, ownerId: string): boolean {
+    return session.generation === this.generation && session.epoch === criticalKeySession()
+      && session.identityId === ownerId && currentIdentityId() === ownerId
   }
 
 
@@ -402,9 +413,9 @@ class CharterService {
       leaderKey.fill(0)
     }
     // Signed out or switched account while decrypting: the plaintext is dropped, never handed on.
-    if (!this.isLive(generation)) {
+    if (!this.isLive(generation, leaderId)) {
       messages.clear()
-      this.assertSameSession(generation)
+      this.assertSameSession(generation, leaderId)
     }
     return messages
   }
@@ -491,7 +502,7 @@ class CharterService {
   private async signingKey(identityId: string, generation: CharterSession = this.session()): Promise<{ wif: string; identityKey: IdentityPublicKey }> {
     const identity = await fetchIdentity(identityId)
     // An action cancelled meanwhile asks for nothing, and keeps nothing typed for it.
-    this.assertSameSession(generation)
+    this.assertSameSession(generation, identityId)
     // A wallet session must not reach past its grant to a raw key left in storage.
     const raw = hasAppConnectSession(identityId) ? null : getPrivateKey(identityId)?.trim()
     if (raw) {
@@ -500,16 +511,16 @@ class CharterService {
       })
       if (result.ok && signingKeyProblem(result, result.key) === null) return { wif: raw, identityKey: result.key }
     }
-    // A key bound to another contract can't sign charters: a held one is passed over for the sheet, an answer refused.
-    const unbound = (key: IdentityPublicKey) => !(key as { contractBounds?: unknown }).contractBounds
-    const critical = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', null, generation.epoch, unbound)
-    this.assertSameSession(generation)
+    // A key bound to another contract can't sign charters ('charter' use): a held one is passed over for the
+    // sheet, which refuses one typed in before it closes.
+    const critical = await criticalKeyFor(identityId, identity.publicKeys, 'charter', null, generation.epoch)
+    this.assertSameSession(generation, identityId)
     return { wif: critical.wif, identityKey: critical.key }
   }
 
   /** The page forgot its keys, or the sign-in it began in ended (sign-out, a switch of account) meanwhile: stop. */
-  private assertSameSession(generation: CharterSession): void {
-    if (!this.isLive(generation)) throw new CharterActionError('Nothing was sent.', 'cancelled')
+  private assertSameSession(generation: CharterSession, ownerId: string): void {
+    if (!this.isLive(generation, ownerId)) throw new CharterActionError('Nothing was sent.', 'cancelled')
   }
 
   /**
@@ -520,10 +531,10 @@ class CharterService {
    */
   async charterKey(identityId: string, role: CharterRole, { create, session }: { create: boolean; session?: CharterSession }): Promise<Uint8Array> {
     const generation = session ?? this.session()
-    this.assertSameSession(generation)
+    this.assertSameSession(generation, identityId)
     const identity = await fetchIdentity(identityId)
     // Cancelled while the identity was read: the old account's MASTER key is never asked for.
-    this.assertSameSession(generation)
+    this.assertSameSession(generation, identityId)
     const { purpose, documentType } = CHARTER_KEYS[role]
     const onChain = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType)).sort((a, b) => b.keyId - a.keyId)[0] ?? null
     const onChainData = onChain ? keyData(onChain) : null
@@ -583,12 +594,12 @@ class CharterService {
     } finally {
       if (this.openPrompt === prompt) this.openPrompt = null
     }
-    this.assertSameSession(generation)
+    this.assertSameSession(generation, identityId)
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
       if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key, generation)
-      this.assertSameSession(generation)
+      this.assertSameSession(generation, identityId)
     } catch (error) {
       key.fill(0)
       throw error
@@ -610,7 +621,7 @@ class CharterService {
       const sdk = await getEvoSdk()
       const w = await wasmModule()
       // The SDK setup awaited: a session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
-      this.assertSameSession(generation)
+      this.assertSameSession(generation, identityId)
       const { purpose, documentType } = CHARTER_KEYS[role]
       const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
       const publicKey = secp256k1.getPublicKey(charterKey, true)
@@ -721,7 +732,7 @@ class CharterService {
       if (type === 'electedCharter') return null
       const outcome = await stateTransitionService.settleCreate({
         contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
-      }, { mayResend: () => this.isLive(generation) }) // proof only once the session is over
+      }, { mayResend: () => this.isLive(generation, ownerId) }) // proof only once the session is over
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
     const uncertain = () => new CharterActionError(type === 'electedCharter' ? APPLICATION_MAY_STILL_LAND : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
@@ -775,7 +786,7 @@ class CharterService {
     /** `fresh`: these bytes are sent for the first time (a refusal is then their verdict); otherwise a resend. */
     const send = async (entry: PendingCreate, fresh: boolean): Promise<PendingCreate> => {
       // A resend waits for the lock too: a session forgotten meanwhile sends nothing (the bytes stay stored).
-      this.assertSameSession(generation)
+      this.assertSameSession(generation, ownerId)
       try {
         await sdk.stateTransitions.broadcastAndWait(w.StateTransition.fromBytes(entry.signed.bytes))
       } catch (error) {
@@ -789,7 +800,13 @@ class CharterService {
           // join requests are unique per owner, so their entry goes as before.
           // Even a first send's refusal may come after the SDK's own retries, one of which may have
           // landed, so for these it is never a verdict: the way out is the deliberate "Clear and start over".
+          // A stateless refusal (isStatelessRefusal) drops them only once their nonce is proved unused: a node
+          // of another version may refuse what another one took. A read that fails proves nothing.
           if (type === 'submittedCharter' || type === 'electedCharter') {
+            if (isStatelessRefusal(error, { fresh }) && await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).then((used) => used === false, () => false)) {
+              this.release(ownerId, key, entry, false)
+              throw error
+            }
             const reason = charterActionError(action, error).message
             throw new CharterActionError(fresh
               ? `This may still go through; the network refused it just now: ${reason}`
@@ -810,7 +827,7 @@ class CharterService {
     // through settleCreate's mayResend, and what it may rebroadcast while the session lasts, this call's
     // create or another tab's stored one, is the same signed bytes under the same nonce.)
     const first = await lock(async () => {
-      this.assertSameSession(generation)
+      this.assertSameSession(generation, ownerId)
       const slot = await resolveSlot()
       if (slot.kind === 'landed') return slot.id
       return slot.kind === 'pending' ? send(slot.entry, false) : null
@@ -822,13 +839,13 @@ class CharterService {
       const fresh = { data: await input.data(), signing: await this.signingKey(ownerId, generation) }
       const second = await lock(async () => {
         // Storage again: another tab may have signed, proved or dropped this slot meanwhile.
-        this.assertSameSession(generation)
+        this.assertSameSession(generation, ownerId)
         const slot = await resolveSlot()
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry, false)
-        this.assertSameSession(generation)
+        this.assertSameSession(generation, ownerId)
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
-        this.assertSameSession(generation)
+        this.assertSameSession(generation, ownerId)
         // The nonce read above stays this write's while the re-check reads the network: the lock holds every
         // write from this browser off it (one from another device would get this one refused, never doubled).
         // After every wait (prompts, lock, earlier transitions settling), right before the transition is built.
@@ -837,13 +854,13 @@ class CharterService {
           logger.warn('charters: the eligibility re-check failed; nothing signed', extractErrorMessage(error))
           throw new CharterActionError("Nothing was sent: the election couldn't be read. Try again in a moment.", 'refused')
         })
-        this.assertSameSession(generation)
+        this.assertSameSession(generation, ownerId)
         const privateKey = w.PrivateKey.fromWIF(fresh.signing.wif)
         let created: PendingCreate
         try {
           const signed = await signCharterCreate(w, sdk, { type, ownerId, data: fresh.data, nonce, privateKey, identityKey: fresh.signing.identityKey, fund })
           // The builder reads the network (the contest fund): nothing signed for a forgotten session is kept or sent.
-          this.assertSameSession(generation)
+          this.assertSameSession(generation, ownerId)
           created = { signed, fingerprint, reservation: reserveNonce(ownerId, CHARTERS_CONTRACT_ID, nonce, tip, key) }
         } finally {
           privateKey.free()
@@ -1066,7 +1083,10 @@ class CharterService {
       // The SDK picks this nonce itself: the coordinator holds other writes off it. Queued behind
       // another write, a session forgotten meanwhile fails the precondition: nothing reserved or sent.
       await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {
-        this.assertSameSession(generation)
+        // Past the precondition the coordinator has reserved a nonce: a session that ended since (while it
+        // refreshed the SDK's nonce) stops with the step-up's cancellation, which it releases unspent. Any
+        // other error would keep the reservation pending and hold every charters write back for its lifetime.
+        if (!this.isLive(generation, ownerId)) throw new CriticalKeyCancelledError()
         const signer = new w.IdentitySigner()
         const privateKey = w.PrivateKey.fromWIF(wif)
         try {
@@ -1078,7 +1098,7 @@ class CharterService {
           signer.free()
           privateKey.free()
         }
-      }, `${type}:${documentId}`, async () => this.isLive(generation))
+      }, `${type}:${documentId}`, async () => this.isLive(generation, ownerId))
     } catch (error) {
       if (error instanceof Error && error.message === WRITE_PRECONDITION_FAILED) throw new CharterActionError('Nothing was sent.', 'cancelled')
       throw charterActionError('undo-team-change', error)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError } from '@/lib/auth/critical-key'
-import { CharterActionError, charterActionError } from './refusals'
+import { PENDING_WRITE_ERROR } from '@/lib/error-utils'
+import { CharterActionError, charterActionError, isStatelessRefusal } from './refusals'
 
 const refusal = (code: number, message = 'refused') => Object.assign(new Error(message), { code })
 
@@ -34,5 +35,24 @@ describe('refusals in plain words', () => {
     expect(charterActionError('application', new Error(CRITICAL_KEY_REQUIRED))).toMatchObject({ outcome: 'refused' })
     const kept = new CharterActionError('as is', 'refused', 1)
     expect(charterActionError('join', kept)).toBe(kept)
+  })
+
+  it('tells a leader taking a member off what an earlier pending write holds it back on', () => {
+    expect(charterActionError('undo-team-change', new Error(PENDING_WRITE_ERROR)).message).toMatch(/Something you sent from this browser may still go through/)
+    expect(charterActionError('proposal', new Error(PENDING_WRITE_ERROR)).message).toBe(PENDING_WRITE_ERROR)
+  })
+})
+
+describe('stateless refusals', () => {
+  it('reads any basic-structure or signature code as stateless on a first send, only schema codes on a resend, state codes never', () => {
+    expect(isStatelessRefusal(refusal(10418), { fresh: true })).toBe(true)
+    expect(isStatelessRefusal(refusal(20007), { fresh: true })).toBe(true)
+    expect(isStatelessRefusal(new Error('Broadcast failed (code=10421)'), { fresh: false })).toBe(true)
+    expect(isStatelessRefusal(refusal(10101), { fresh: false })).toBe(true)
+    expect(isStatelessRefusal(refusal(10418), { fresh: false })).toBe(false)
+    expect(isStatelessRefusal(refusal(20007), { fresh: false })).toBe(false)
+    expect(isStatelessRefusal(refusal(30000), { fresh: true })).toBe(false)
+    expect(isStatelessRefusal(refusal(40112), { fresh: true })).toBe(false)
+    expect(isStatelessRefusal(new Error('Request timed out'), { fresh: true })).toBe(false)
   })
 })
