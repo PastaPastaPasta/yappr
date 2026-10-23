@@ -14,6 +14,7 @@ const m = vi.hoisted(() => ({
     getUsernameValidationError: vi.fn((label: string): string | null => (label.length < 3 ? 'Username must be at least 3 characters long' : null)),
     registerUsername: vi.fn(),
     findIdentityByName: vi.fn(),
+    quoteName: vi.fn(),
     clearCache: vi.fn(),
   },
   sdk: {
@@ -89,6 +90,12 @@ beforeEach(() => {
   m.match.mockReturnValue({ ok: true, key: { id: 1 }, match: { keyId: 1, securityLevel: 2 } })
   m.sdk.dpns.isNameAvailable.mockResolvedValue(true)
   m.sdk.dpns.isContestedUsername.mockResolvedValue(false)
+  // lib's quote: the deposit of a contested name (0.1 DASH at protocol 14) and both fees.
+  m.dpns.quoteName.mockImplementation(async (label: string) => ({
+    label,
+    contestFund: (await m.sdk.dpns.isContestedUsername()) ? { indexName: 'parentNameAndLabel', credits: 10_000_000_000n } : null,
+    fees: 70_000_000n,
+  }))
 })
 
 describe('posts.vote', () => {
@@ -209,26 +216,30 @@ describe('dpns', () => {
     expect(await dpns.check('ab')).toMatchObject({ available: false, invalid: 'Username must be at least 3 characters long' })
     m.sdk.dpns.isNameAvailable.mockResolvedValueOnce(false)
     expect(await dpns.check('alice')).toMatchObject({ available: false, invalid: null })
-    m.sdk.dpns.isContestedUsername.mockResolvedValueOnce(true)
-    // 0.1 DASH at protocol 14.
+    m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
+    // The deposit its vote takes now, as lib quotes it.
     expect(await dpns.check('bob')).toMatchObject({ available: true, contested: true, contestFundCredits: 10_000_000_000n })
+    expect(m.dpns.quoteName).toHaveBeenCalledWith('bob', VIEWER)
+    m.sdk.dpns.isContestedUsername.mockResolvedValue(false)
     m.sdk.dpns.isNameAvailable.mockRejectedValueOnce(new Error('Request timeout'))
     await expect(dpns.check('alice')).rejects.toMatchObject({ code: 'TIMEOUT' })
   })
 
   it('registers, reads the names again, and refuses a taken name or an unaffordable contest in its own words', async () => {
     const { dpns, outcome } = engine()
-    m.dpns.registerUsername.mockResolvedValue({ success: true })
+    m.dpns.registerUsername.mockResolvedValue({ state: 'registered' })
     expect(await outcome(dpns.register(' NewName '))).toMatchObject({ op: 'dpns.register', state: 'confirmed' })
-    expect(m.dpns.registerUsername).toHaveBeenCalledWith('newname', VIEWER, 'WIF')
+    expect(m.dpns.registerUsername).toHaveBeenCalledWith('newname', VIEWER, 'WIF', { contestFund: null })
     expect(m.refreshUsername).toHaveBeenCalled()
 
     m.sdk.dpns.isNameAvailable.mockResolvedValueOnce(false)
+    m.dpns.findIdentityByName.mockResolvedValueOnce('someone-else')
     expect(await outcome(dpns.register('taken'))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: 'taken is already taken.' } })
 
+    // The deposit and both fees must fit the balance: 0.1 DASH plus fees is more than 0.1 DASH.
     m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
-    m.identity.getIdentity.mockResolvedValue({ id: VIEWER, balance: 1000, publicKeys: [] })
-    expect(await outcome(dpns.register('bob'))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: expect.stringContaining('too low') } })
+    m.identity.getIdentity.mockResolvedValue({ id: VIEWER, balance: 10_000_000_000, publicKeys: [] })
+    expect(await outcome(dpns.register('bob', 10_000_000_000n))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: expect.stringContaining('too low') } })
     expect(m.dpns.registerUsername).toHaveBeenCalledTimes(1)
 
     m.appConnect = true
@@ -261,11 +272,37 @@ describe('dpns', () => {
   })
 
   it('fails a registration lib refused before sending (its own reads) as not sent, even for a contested name', async () => {
-    const { DpnsNotSentError } = await import('@/lib/services/dpns-service')
+    const { DpnsNotSentError } = await import('@/lib/services/dpns-registration')
     const { dpns, outcome } = engine()
     m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
     m.dpns.registerUsername.mockRejectedValue(new DpnsNotSentError(new Error('no available addresses to retry')))
     expect(await outcome(dpns.register('bob'))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK' } })
+  })
+
+  it('caps a contested registration at the deposit the host showed, and words a changed deposit', async () => {
+    const { DpnsNotSentError } = await import('@/lib/services/dpns-registration')
+    const { ContestFundChangedError } = await import('@/lib/dpns/registration-quote')
+    const { dpns, outcome } = engine()
+    m.sdk.dpns.isContestedUsername.mockResolvedValue(true)
+    m.dpns.registerUsername.mockResolvedValue({ state: 'joined-vote' })
+    expect(await outcome(dpns.register('bob', 10_000_000_000n))).toMatchObject({ state: 'confirmed' })
+    expect(m.dpns.registerUsername).toHaveBeenLastCalledWith('bob', VIEWER, 'WIF', { contestFund: 10_000_000_000n })
+
+    const changed = new ContestFundChangedError('bob', 10_000_000_000n, 20_000_000_000n)
+    m.dpns.registerUsername.mockRejectedValue(new DpnsNotSentError(changed))
+    expect(await outcome(dpns.register('bob', 10_000_000_000n))).toMatchObject({ state: 'failed', error: { code: 'BAD_REQUEST', userMessage: changed.message } })
+  })
+
+  it('leaves a registration lib reports pending unconfirmed, and lets a name the account already holds through', async () => {
+    const { dpns, outcome } = engine()
+    m.dpns.registerUsername.mockResolvedValue({ state: 'pending', step: 'preorder' })
+    expect(await outcome(dpns.register('newname'))).toMatchObject({ state: 'unconfirmed' })
+
+    // Its domain landed after the answer was lost: not "taken", the run reports it registered.
+    m.sdk.dpns.isNameAvailable.mockResolvedValueOnce(false)
+    m.dpns.findIdentityByName.mockResolvedValueOnce(VIEWER)
+    m.dpns.registerUsername.mockResolvedValue({ state: 'registered' })
+    expect(await outcome(dpns.register('newname'))).toMatchObject({ state: 'confirmed' })
   })
 
   it('fails a registration whose checks could not be read as not sent and retryable', async () => {

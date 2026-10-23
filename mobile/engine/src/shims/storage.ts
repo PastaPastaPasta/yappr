@@ -60,7 +60,7 @@ export interface SecureHold {
  * feed seed, path keys, cached CEKs), and the Pinata/Storacha upload
  * credentials (lib/upload/providers/*\/credential-storage).
  */
-export const SECURE_KEY_PREFIXES: readonly string[] = ['yappr_secure_', 'yappr:pf:', 'yappr_pinata_', 'yappr_storacha_']
+export const SECURE_KEY_PREFIXES: readonly string[] = ['yappr_secure_', 'yappr:pf:', 'yappr_pinata_', 'yappr_storacha_', 'yappr:dpns-registration:']
 
 const scopedSecurePrefixes = SECURE_KEY_PREFIXES.map(scopedKey)
 

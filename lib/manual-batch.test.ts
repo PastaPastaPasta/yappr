@@ -19,6 +19,7 @@ import {
   DocumentCreateTransition,
   IdentityPublicKey,
   PlatformVersion,
+  PrefundedVotingBalance,
   PrivateKey,
   StateTransition,
   TokenPaymentInfo,
@@ -127,6 +128,30 @@ describe('buildSignedCreateTransition (hand-built v9 create)', () => {
     // The placeholder `$id` ([9;32]) was replaced, not merely echoed.
     expect(document.id.toBase58()).not.toBe(placeholder)
     expect(placeholder).toBe(bs58.encode(new Uint8Array(32).fill(9)))
+  })
+
+  it('carries a contested create\'s stated contest fund (the most it pays) through the round trip', () => {
+    const privateKey = PrivateKey.fromHex(PRIVATE_KEY_HEX, 'testnet')
+    const signed = buildSignedCreateTransition({
+      document: post(),
+      ownerId: bs58.encode(OWNER),
+      identityContractNonce: NONCE,
+      prefundedVotingBalance: new PrefundedVotingBalance({ indexName: 'parentNameAndLabel', credits: BigInt(10_000_000_000) }),
+      privateKey,
+      identityKey: new IdentityPublicKey({
+        keyId: 1,
+        purpose: 'authentication',
+        securityLevel: 'high',
+        keyType: 'ecdsa_secp256k1',
+        data: privateKey.getPublicKey().toBytes(),
+      }),
+    })
+    const bytes = signed.toBytes()
+    expect(bytesToHex(StateTransition.fromBytes(bytes).toBytes())).toBe(bytesToHex(bytes))
+    const [batched] = BatchTransition.fromStateTransition(StateTransition.fromBytes(bytes)).transitions
+    const create = DocumentCreateTransition.fromDocumentTransition(batched.toTransition() as never)
+    expect(create.prefundedVotingBalance?.indexName).toBe('parentNameAndLabel')
+    expect(create.prefundedVotingBalance?.credits).toBe(BigInt(10_000_000_000))
   })
 
   it('shows why the round trip is the check: the wasm decoder ignores a suffix a beta.5 node refuses', () => {

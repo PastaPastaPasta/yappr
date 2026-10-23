@@ -19,6 +19,19 @@ export function formatDash(credits: bigint): string {
   return `${group(whole.toString())}${fraction ? `.${fraction}` : ''} DASH`;
 }
 
+/** The reference price amounts are shown at: $60 a DASH (1M credits ≈ 0.06¢). */
+const CENTS_PER_DASH = 6000;
+
+/** Credits in cents at the reference price: "about 600¢", "about 4.2¢", "under 0.1¢". */
+export function formatCents(credits: bigint): string {
+  const cents = (Number(credits) / Number(CREDITS_PER_DASH)) * CENTS_PER_DASH;
+  if (cents === 0) return '0¢';
+  if (cents < 0.1) return 'under 0.1¢';
+  if (cents >= 100) return `about ${group(Math.round(cents).toString())}¢`;
+  if (cents >= 10) return `about ${Math.round(cents)}¢`;
+  return `about ${cents.toFixed(1)}¢`;
+}
+
 /** "March 4, 2026". */
 export function formatDate(date: Date): string {
   return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });

@@ -25,6 +25,7 @@ import {
   DocumentActionFeeAgreement,
   StateTransition,
   PrivateKey,
+  PrefundedVotingBalance,
   Identifier,
   TokenPaymentInfo,
 } from '@dashevo/wasm-sdk';
@@ -618,6 +619,19 @@ class StateTransitionService {
        * (absent when cached bytes are replayed).
        */
       beforeBroadcast?: (receipt?: CreateReceipt) => void;
+      /**
+       * Signs with this key instead of the one the key ring or the stored raw
+       * key would pick: for a write only a particular key may sign (DPNS takes
+       * an unbound CRITICAL or HIGH authentication key).
+       */
+      signingKey?: SigningKey;
+      /**
+       * What a create that enters a contest pays into it, on the index it
+       * contests. From protocol 14 `credits` is the most it pays: Platform
+       * charges the fund to join, and refuses the create (charging only its
+       * fees) when that fund is more. Before 14 it must be exactly the fund.
+       */
+      prefundedVotingBalance?: { indexName: string; credits: bigint };
     }
   ): Promise<StateTransitionResult> {
     const result = await withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
@@ -652,7 +666,7 @@ class StateTransitionService {
       const feeMultiplier = declaredActionFeeFor(contractId, documentType, 'create')
         ? await currentFeeMultiplierPermille(sdk)
         : DEFAULT_FEE_MULTIPLIER_PERMILLE;
-      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'create', feeMultiplier);
+      signingKey = options?.signingKey ?? await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'create', feeMultiplier);
       const { identityKey } = signingKey;
 
       // --- The nonce comes first: the document id is derived from it ---
@@ -808,6 +822,7 @@ class StateTransitionService {
         identityContractNonce: newNonce,
         tokenPaymentInfo,
         actionFeeAgreement,
+        ...(options?.prefundedVotingBalance ? { prefundedVotingBalance: new PrefundedVotingBalance(options.prefundedVotingBalance) } : {}),
         privateKey: PrivateKey.fromWIF(signingKey.wif),
         identityKey,
       });

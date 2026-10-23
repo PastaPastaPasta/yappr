@@ -1,5 +1,12 @@
 import { create } from 'zustand'
 import type { UsernameEntry, RegistrationStep, UsernameStatus } from '@/lib/types'
+import type { DpnsQuote } from '@/lib/dpns/registration-quote'
+
+/** What the review showed registering the names costs, and the balance it was checked against. */
+export type RegistrationQuoteState =
+  | { status: 'none' }
+  | { status: 'ready'; quote: DpnsQuote; balance: bigint }
+  | { status: 'failed' }
 
 interface DpnsRegistrationStore {
   // State
@@ -7,6 +14,7 @@ interface DpnsRegistrationStore {
   usernames: UsernameEntry[]
   contestedAcknowledged: boolean
   currentRegistrationIndex: number
+  quote: RegistrationQuoteState
 
   // Actions
   setStep: (step: RegistrationStep) => void
@@ -15,7 +23,8 @@ interface DpnsRegistrationStore {
   updateUsernameLabel: (id: string, label: string) => void
   updateUsernameStatus: (id: string, status: UsernameStatus, validationError?: string) => void
   setUsernameContested: (id: string, isContested: boolean) => void
-  setUsernameRegistered: (id: string, success: boolean, error?: string) => void
+  setUsernameRegistered: (id: string, success: boolean, error?: string, pending?: boolean) => void
+  setQuote: (quote: RegistrationQuoteState) => void
   setContestedAcknowledged: (acknowledged: boolean) => void
   setCurrentRegistrationIndex: (index: number) => void
   reset: () => void
@@ -38,6 +47,7 @@ const initialState = {
   usernames: [createInitialUsername()],
   contestedAcknowledged: false,
   currentRegistrationIndex: 0,
+  quote: { status: 'none' } as RegistrationQuoteState,
 }
 
 export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => ({
@@ -78,14 +88,16 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
       ),
     })),
 
-  setUsernameRegistered: (id, success, error) =>
+  setUsernameRegistered: (id, success, error, pending) =>
     set((state) => ({
       usernames: state.usernames.map((u) =>
         u.id === id
-          ? { ...u, registered: success, registrationError: error }
+          ? { ...u, registered: success, registrationError: error, pending: pending === true }
           : u
       ),
     })),
+
+  setQuote: (quote) => set({ quote }),
 
   setContestedAcknowledged: (acknowledged) =>
     set({ contestedAcknowledged: acknowledged }),

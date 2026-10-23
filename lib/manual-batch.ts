@@ -21,6 +21,7 @@ import {
   type Document,
   type DocumentActionFeeAgreement,
   type IdentityPublicKey,
+  type PrefundedVotingBalance,
   type PrivateKey,
   type StateTransition,
   type TokenPaymentInfo,
@@ -33,6 +34,8 @@ export interface ManualCreateInput {
   identityContractNonce: bigint
   tokenPaymentInfo?: TokenPaymentInfo
   actionFeeAgreement?: DocumentActionFeeAgreement
+  /** What a contested create pays into its contest (from protocol 14, the most it pays). */
+  prefundedVotingBalance?: PrefundedVotingBalance
   privateKey: PrivateKey
   identityKey: IdentityPublicKey
 }
@@ -48,6 +51,7 @@ export function buildSignedCreateTransition(input: ManualCreateInput): StateTran
     identityContractNonce: input.identityContractNonce,
     ...(input.tokenPaymentInfo ? { tokenPaymentInfo: input.tokenPaymentInfo } : {}),
     ...(input.actionFeeAgreement ? { actionFeeAgreement: input.actionFeeAgreement } : {}),
+    ...(input.prefundedVotingBalance ? { prefundedVotingBalance: input.prefundedVotingBalance } : {}),
   })
   const batched = new BatchedTransition(createTransition.toDocumentTransition())
   const stateTransition = BatchTransition.fromBatchedTransitions([batched], input.ownerId, 0).toStateTransition()

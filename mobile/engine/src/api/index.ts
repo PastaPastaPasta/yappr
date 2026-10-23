@@ -80,7 +80,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     store: storefront.store,
     cart: storefront.cart,
     privateFeed: { ...privateFeedReads, ...createPrivateFeedWrites(tickets) },
-    dpns: createDpnsModule(tickets, controller),
+    dpns: createDpnsModule(tickets, controller, { secureDurable: runtime.secureDurable }),
     blogs: { ...blogReads, ...createBlogWrites(tickets) },
     moderation,
   }

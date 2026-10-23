@@ -10,7 +10,7 @@ import { useSession, useSessionStore } from '~/data/session';
 import { useLandingIntent, useWrite, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { formatDash } from '~/features/settings/format';
+import { formatCents, formatDash } from '~/features/settings/format';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -34,8 +34,9 @@ const copy = {
   taken: 'Already taken',
   checkFailed: "Couldn't check this name.",
   retry: 'Try again',
-  // Only where a name costs real money: short names go to a vote with a fee.
-  contested: (fund: string) => `Short names like this go to a community vote and cost at least ${fund}.`,
+  // Only where a name costs real money: a short name starts a vote and holds a deposit in it.
+  contested: (fund: string, cents: string) =>
+    `Short names like this start or join a community vote and hold a ${fund} (${cents}) deposit in it. It isn't refunded, and no more than this is paid into the vote.`,
   claim: (name: string) => (name ? `Claim @${name}` : 'Claim username'),
   registering: 'Claiming…',
   registered: (name: string) => `@${name} is yours`,
@@ -58,6 +59,8 @@ interface RegisterVars {
   label: string;
   /** It goes to a masternode vote: registering joins it rather than taking the name. */
   contested: boolean;
+  /** The deposit the screen showed for a contested name: the most the registration pays into the vote. */
+  contestFundCredits: bigint | null;
 }
 
 /** Refusals the engine words itself (taken, invalid, a contest the balance can't pay). */
@@ -65,7 +68,7 @@ const ownSentence = (code: string | undefined) => code === 'BAD_REQUEST' || code
 
 const registerWrite: WriteSpec<RegisterVars> = {
   key: ({ viewerId }) => `dpns:${viewerId}`,
-  submit: (api, { label }) => api.dpns.register(label),
+  submit: (api, { label, contestFundCredits }) => api.dpns.register(label, contestFundCredits),
   failureMessage: copy.failed,
   failureText: (ticket) => (ownSentence(ticket.error?.code) ? (ticket.error?.userMessage ?? null) : null),
   // A contested name only joins its vote (web's complete step): it is not theirs yet.
@@ -129,7 +132,9 @@ function NativeRegistration({ viewerId }: { viewerId: string }) {
 
   const register = () => {
     if (!result?.available || registering) return;
-    write.run({ viewerId, label: result.label, contested: result.contestFundCredits !== null }).catch(() => undefined);
+    write
+      .run({ viewerId, label: result.label, contested: result.contestFundCredits !== null, contestFundCredits: result.contestFundCredits })
+      .catch(() => undefined);
   };
   // Confirmed: back to where the user came from (the toast says what happened). Refused (taken
   // meanwhile, a contest the balance can't pay): the old answer no longer holds, so check again.
@@ -190,7 +195,7 @@ function NativeRegistration({ viewerId }: { viewerId: string }) {
       </View>
       {claimable && result.contestFundCredits !== null ? (
         <Text variant="subhead" tone="secondary" testID="username-contested">
-          {copy.contested(formatDash(result.contestFundCredits))}
+          {copy.contested(formatDash(result.contestFundCredits), formatCents(result.contestFundCredits))}
         </Text>
       ) : null}
       <Button
