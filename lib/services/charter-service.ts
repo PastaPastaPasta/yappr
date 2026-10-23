@@ -54,7 +54,7 @@ import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
 import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers'
+import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
 
 /** A join request as the leader's list shows it (its message is read separately). */
@@ -318,20 +318,30 @@ class CharterService {
   }
 
 
-  /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
-  forgetKeys(): void {
+  /**
+   * Stops every charters action under way, keeping the keys this tab holds (on moving to another view of the
+   * page: a proposal, the start form, another contract's tab). Nothing begun before it signs, sends or asks again.
+   */
+  endActions(): void {
     this.generation++
-    // The MASTER-key prompt this service opened closes with the page that asked (the sheet is app-wide). A
+    // The MASTER-key prompt this service opened closes with the view that asked (the sheet is app-wide). A
     // CRITICAL-key request may be shared with another feature, so it stays; the charters write that waits on
     // it stops on its own session check once answered.
     const open = this.openPrompt
     if (open) cancelPrompt((request) => request.prompt === open)
+  }
+
+  /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
+  forgetKeys(): void {
+    this.endActions()
     forgetCharterKeys()
   }
 
   // ---- reads ------------------------------------------------------------------
 
   async getProposal(id: string): Promise<CharterProposal | null> {
+    // A link with a mangled id names no proposal; it is not a failed read.
+    if (base58ToBytes(id)?.length !== 32) return null
     const sdk = await getEvoSdk()
     const doc = await sdk.moderationCharters.submittedCharter(id)
     if (!doc) return null

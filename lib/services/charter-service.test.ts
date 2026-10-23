@@ -461,6 +461,16 @@ describe('the outcome a try reports', () => {
   })
 })
 
+describe('a proposal link', () => {
+  it('names no proposal when its id is not an identifier, without reading the chain', async () => {
+    const read = vi.fn()
+    Object.assign(sdk, { moderationCharters: { submittedCharter: read } })
+    await expect(charterService.getProposal('not-an-id')).resolves.toBeNull()
+    await expect(charterService.getProposal('7xT3qbogus000000000000000000000000000000000')).resolves.toBeNull()
+    expect(read).not.toHaveBeenCalled()
+  })
+})
+
 describe('join requests', () => {
   const doc = (n: number) => ({ toObject: () => ({ $id: `j${n}`, $ownerId: `o${n}` }), id: { toBase58: () => `j${n}` }, free: () => undefined })
   const page = (from: number, count: number) => new Map(Array.from({ length: count }, (_, i) => [`j${from + i}`, doc(from + i)]))
@@ -668,6 +678,18 @@ describe('a session forgotten mid-write', () => {
     await expect(charterService.requestToJoin(OWNER, 'p1', 'hello', { session })).rejects.toMatchObject({ outcome: 'cancelled' })
     expect(builders.sign).not.toHaveBeenCalled()
     expect(sdk.stateTransitions.broadcastAndWait).not.toHaveBeenCalled()
+  })
+
+  it('stops an action begun in an earlier view of the page, keeping the charter keys this tab holds', async () => {
+    const { holdCharterKey, heldCharterKey } = await import('@/lib/moderation-charters/charter-keys')
+    holdCharterKey(OWNER, 'member', new Uint8Array(32).fill(4))
+    // Asked to join, then went back to the overview with the prompt still open.
+    const session = charterService.session()
+    charterService.endActions()
+    await expect(charterService.requestToJoin(OWNER, 'p1', 'hello', { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(keys.stepUp).not.toHaveBeenCalled()
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(heldCharterKey(OWNER, 'member')).not.toBeNull()
   })
 
   it('hands back no decrypted join message once the leader session ends during decryption', async () => {

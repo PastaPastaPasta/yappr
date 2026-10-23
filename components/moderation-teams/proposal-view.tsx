@@ -43,20 +43,25 @@ function applyBlockerText(blocker: ApplyBlocker, stage: ElectionStage): string {
   }
 }
 
-/** What happens after an application, by stage. */
-function NextSteps({ stage, status, now }: { stage: ElectionStage; status: ElectionStatus; now: number }) {
+/** What happens after an application, by stage: to its leader (`own`) or to anyone else looking at it. */
+function NextSteps({ stage, status, now, own }: { stage: ElectionStage; status: ElectionStatus; now: number; own: boolean }) {
   const vote = masternodeVoteUrl(status.targetContractId, CHARTERS_CONTRACT_ID)
   return (
     <div className="space-y-2 text-sm" data-testid="next-steps">
       <h3 className="font-semibold">What happens next</h3>
       <ul className="list-disc ml-5 space-y-1">
-        {stage.kind === 'joining' && (
+        {stage.kind === 'joining' && (stage.contenders > 1 ? (
+          <>
+            <li>{stage.contenders} teams have applied. Others can still apply until <strong>{formatWhen(stage.joinClosesAtMs)}</strong> (in {formatDuration(stage.joinClosesAtMs - now)}).</li>
+            <li>Then masternodes vote until {formatWhen(stage.votingEndsAtMs)}. A tie goes to the team that applied first.</li>
+          </>
+        ) : (
           <>
             <li>Other teams can apply until <strong>{formatWhen(stage.joinClosesAtMs)}</strong> (in {formatDuration(stage.joinClosesAtMs - now)}).</li>
-            <li>If no other team applies, yours is seated when that window closes, without a vote.</li>
+            <li>If no other team applies, {own ? 'yours' : 'this team'} is seated when that window closes, without a vote.</li>
             <li>If another team applies, masternodes vote until {formatWhen(stage.votingEndsAtMs)}. A tie goes to the team that applied first.</li>
           </>
-        )}
+        ))}
         {stage.kind === 'voting' && (
           <li>Masternodes are voting{stage.votingEndsAtMs ? <> until <strong>{formatWhen(stage.votingEndsAtMs)}</strong></> : null}. A tie goes to the team that applied first.</li>
         )}
@@ -68,7 +73,7 @@ function NextSteps({ stage, status, now }: { stage: ElectionStage; status: Elect
         <a href={vote} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-yappr-700 dark:text-yappr-400 hover:underline">
           EvoVote <ArrowTopRightOnSquareIcon className="h-4 w-4" />
         </a>
-        . Share your charter with them.
+        .{own && ' Share your charter with them.'}
       </p>
     </div>
   )
@@ -93,6 +98,9 @@ export function ProposalView({ contract, proposalId, election }: {
   const declared = moderatedContract(contract)
 
   const [proposal, setProposal] = useState<CharterProposal | null | undefined>(undefined)
+  /** The proposal read failed (as opposed to answering that there is none); moving it on reads again. */
+  const [readFailed, setReadFailed] = useState(false)
+  const [readAttempt, setReadAttempt] = useState(0)
   const [reasons, setReasons] = useState<CharterReason[] | null>(null)
   const [requests, setRequests] = useState<JoinRequest[] | null>(null)
   const [requestsFailed, setRequestsFailed] = useState(false)
@@ -125,17 +133,18 @@ export function ProposalView({ contract, proposalId, election }: {
   useEffect(() => {
     let live = true
     setProposal(undefined)
+    setReadFailed(false)
     charterService.getProposal(proposalId).then((read) => {
       if (!live) return
       setProposal(read)
       if (read) moderationElectionService.getReasons(read.reasonIds).then((list) => { if (live) setReasons(list) }).catch(() => { if (live) setReasons([]) })
     }).catch((readError: unknown) => {
       logger.warn('Moderation teams: proposal could not be read', readError)
-      if (live) setProposal(null)
+      if (live) setReadFailed(true)
     })
     loadRequests().catch(() => { /* handled inside */ })
     return () => { live = false }
-  }, [proposalId, loadRequests])
+  }, [proposalId, loadRequests, readAttempt])
 
   const requested = useMemo(() => (requests ? new Set(requests.map((r) => r.ownerId)) : null), [requests])
   // An application sent from this browser whose outcome is still unknown (read again after each try or clear).
@@ -146,6 +155,17 @@ export function ProposalView({ contract, proposalId, election }: {
   }, [me, declared.contractId])
   useEffect(recheckPending, [recheckPending])
 
+  if (readFailed) {
+    return (
+      <Section>
+        <Notice tone="error" testId="proposal-read-error">
+          This proposal couldn&apos;t be read.{' '}
+          <Button variant="outline" size="sm" className="ml-2" onClick={() => setReadAttempt((n) => n + 1)}>Try again</Button>
+        </Notice>
+        <Link href={teamsHref(contract)} className="text-sm hover:underline">Back to {declared.label} moderation</Link>
+      </Section>
+    )
+  }
   if (proposal === undefined) return <Section><p className="text-gray-500">Loading the proposal…</p></Section>
   // Checked against the page's own contract, whether or not the election has been read.
   if (proposal === null || proposal.targetContractId !== declared.contractId) {
@@ -346,7 +366,7 @@ export function ProposalView({ contract, proposalId, election }: {
       {isLeader && status && stage && !seatedHere && (
         <Section title={myApplication ? 'Your application' : 'Apply'} testId="apply-panel">
           {myApplication ? (
-            <NextSteps stage={stage} status={status} now={now} />
+            <NextSteps stage={stage} status={status} now={now} own />
           ) : (
             <>
               <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -401,7 +421,7 @@ export function ProposalView({ contract, proposalId, election }: {
 
       {!isLeader && myApplication && status && stage && (
         <Section title="Application" testId="application-status">
-          <NextSteps stage={stage} status={status} now={now} />
+          <NextSteps stage={stage} status={status} now={now} own={false} />
         </Section>
       )}
 
