@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import {
   answerCriticalKeyRequest,
   cancelCriticalKeyRequest,
+  criticalKeyRefusal,
   currentCriticalKeyRequest,
   subscribeCriticalKeyRequests,
   type CriticalKeyRequest,
@@ -27,6 +28,10 @@ const COPY = {
     title: 'Confirm with your CRITICAL key',
     why: 'Moderation actions need your account\'s highest-level key. It stays on this tab only.',
   },
+  charter: {
+    title: 'Confirm with your CRITICAL key',
+    why: 'Moderation team documents are signed with your account\'s highest-level key. It stays on this tab only.',
+  },
   token: {
     title: 'Confirm with your highest-security key',
     why: 'This needs your account\'s highest-security key. It stays on this tab only.',
@@ -35,10 +40,10 @@ const COPY = {
 
 /**
  * The one sheet every action that needs the account's CRITICAL key asks with
- * (lib/auth/critical-key.ts): moderation, the starter claim, YAPP tips and
- * purchases. It opens once the action is confirmed and the session holds no
+ * (lib/auth/critical-key.ts): moderation, moderation team documents, the
+ * starter claim, YAPP tips and purchases. It opens once the action is confirmed and the session holds no
  * such key. The key (pasted as WIF or hex), a recovery phrase it is derived
- * from, or, for moderation, a passkey that holds it, is checked against the
+ * from, or, for anything but a token transition, a passkey that holds it, is checked against the
  * account's keys read fresh before the action goes on. Closing the sheet stops
  * the action. Nothing typed here is stored; with "Keep for this tab" on, the
  * key is held in this tab's memory until sign-out.
@@ -67,7 +72,7 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
 
   // A passkey's CRITICAL key moderates, but never signs a token transition (docs/PASSKEY_VAULT.md, V2).
   useEffect(() => {
-    if (prompt || use !== 'moderation' || !passkeysOffered()) return
+    if (prompt || use === 'token' || !passkeysOffered()) return
     let cancelled = false
     hasCriticalKeyPasskey(identityId)
       .then((found) => { if (!cancelled) setPasskey(found) })
@@ -90,12 +95,17 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
     // Read fresh: a key disabled moments ago must not sign.
     const identity = await identityService.getIdentity(identityId, { fresh: true })
     if (!identity) return { ok: false, error: 'Your account couldn\'t be read. Try again in a moment.' }
-    if (!looksLikeRecoveryPhrase(typed)) return criticalKeyFromPrivateKey(typed, identity.publicKeys, network)
+    // A key that matches but can't sign this action (say, bound to another contract) is refused here, before the sheet closes.
+    const fits = (result: CriticalKeyInput): CriticalKeyInput => {
+      const refusal = result.ok ? criticalKeyRefusal(use, result.wif, identity.publicKeys) : null
+      return refusal ? { ok: false, error: refusal } : result
+    }
+    if (!looksLikeRecoveryPhrase(typed)) return fits(criticalKeyFromPrivateKey(typed, identity.publicKeys, network))
     if (!phraseAllowed) return { ok: false, error: 'Paste your private key instead.' }
     const { openRecoveryPhrase, PhraseSignInError } = await import('@/lib/auth/recovery-phrase-sign-in')
     try {
       const wallet = await openRecoveryPhrase(typed)
-      return await criticalKeyFromPhrase(wallet, identity.publicKeys, network, (hash) => identityService.getIdentityIdByPublicKeyHash(hash))
+      return fits(await criticalKeyFromPhrase(wallet, identity.publicKeys, network, (hash) => identityService.getIdentityIdByPublicKeyHash(hash)))
     } catch (failure) {
       if (failure instanceof PhraseSignInError) return { ok: false, error: failure.message }
       throw failure
@@ -139,6 +149,13 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
     setError(null)
     try {
       const wif = await unlockCriticalKeyWithPasskey(identityId)
+      // Only a charters document narrows which CRITICAL key may sign: no other action reads the account again here.
+      const identity = use === 'charter' ? await identityService.getIdentity(identityId, { fresh: true }) : null
+      const refusal = identity ? criticalKeyRefusal(use, wif, identity.publicKeys) : null
+      if (refusal) {
+        setError(refusal)
+        return
+      }
       clearField()
       answerCriticalKeyRequest(request, { wif, source: 'passkey', keep })
     } catch (failure) {

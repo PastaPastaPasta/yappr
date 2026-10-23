@@ -15,6 +15,7 @@ import {
   bindCriticalKeySession,
   criticalKeySession,
   cancelCriticalKeyRequest,
+  criticalKeyRefusal,
   criticalKeyFor,
   currentCriticalKeyRequest,
   forgetCriticalKey,
@@ -163,6 +164,43 @@ describe('criticalKeyFor', () => {
     const { asked } = mount(() => null)
     expect((await criticalKeyFor(A, KEYS, 'token', HIGH, 0)).wif).toBe(CRITICAL)
     expect(asked).toEqual([])
+  })
+
+  it('a charters document takes no key bound to another contract, from the session, the tab or the sheet; other uses do', async () => {
+    const bound = [key(1, 1, SecurityLevel.CRITICAL, { contractBounds: { id: 'other' } }), key(2, 2, SecurityLevel.HIGH)]
+    expect(availableCriticalKey(A, bound, 'charter', CRITICAL)).toBeNull()
+    expect(availableCriticalKey(A, bound, 'moderation', CRITICAL)?.wif).toBe(CRITICAL)
+    holdCriticalKey(A, CRITICAL, 'typed')
+    expect(availableCriticalKey(A, bound, 'charter', null)).toBeNull()
+    // Passed over, not dropped: another feature may still sign with it.
+    expect(availableCriticalKey(A, bound, 'moderation', null)?.wif).toBe(CRITICAL)
+    forgetCriticalKey(A)
+    mount(() => ({ wif: CRITICAL, source: 'typed', keep: true }))
+    await expect(criticalKeyFor(A, bound, 'charter', null, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    expect(availableCriticalKey(A, bound, 'moderation', null)).toBeNull()
+  })
+
+  it('the sheet refuses a bound key for a charters document before it closes, and nothing else', () => {
+    const bound = [key(1, 1, SecurityLevel.CRITICAL, { contractBounds: { id: 'other' } })]
+    expect(criticalKeyRefusal('charter', CRITICAL, bound)).toMatch(/only signs for another app/)
+    expect(criticalKeyRefusal('charter', CRITICAL, KEYS)).toBeNull()
+    expect(criticalKeyRefusal('moderation', CRITICAL, bound)).toBeNull()
+    expect(criticalKeyRefusal('token', CRITICAL, bound)).toBeNull()
+  })
+
+  it('a passkey\'s CRITICAL key signs a charters document, as it moderates', () => {
+    holdCriticalKey(A, CRITICAL, 'passkey')
+    expect(availableCriticalKey(A, KEYS, 'charter', null)?.wif).toBe(CRITICAL)
+  })
+
+  it('a charters request never shares a sheet with a moderation one: each answer is checked for its own use', async () => {
+    const { asked } = mount(() => ({ wif: CRITICAL, source: 'typed', keep: false }))
+    const charter = criticalKeyFor(A, KEYS, 'charter', null, 0)
+    const moderation = criticalKeyFor(A, KEYS, 'moderation', null, 0)
+    // The second request replaces the first, which stops unsigned rather than taking the other's answer.
+    await expect(charter).rejects.toBeInstanceOf(CriticalKeyCancelledError)
+    expect((await moderation).wif).toBe(CRITICAL)
+    expect(asked.map((request) => request.use)).toEqual(['charter', 'moderation'])
   })
 
   it('two actions waiting at once share one sheet', async () => {

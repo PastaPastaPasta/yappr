@@ -32,7 +32,12 @@ const sdkLocks = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
 
-const hooks = vi.hoisted(() => ({ onSdk: undefined as (() => void) | undefined, onAwaitNonce: undefined as (() => void) | undefined }))
+const sdkWriteErrors = vi.hoisted(() => [] as unknown[])
+const hooks = vi.hoisted(() => ({
+  onSdk: undefined as (() => void) | undefined,
+  onAwaitNonce: undefined as (() => void) | undefined,
+  afterReserve: undefined as (() => void) | undefined,
+}))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => { hooks.onSdk?.(); return sdk } }))
 vi.mock('@dashevo/wasm-sdk', () => ({
   PrivateKey: { fromWIF: () => ({ free: () => undefined }) },
@@ -59,7 +64,14 @@ vi.mock('./identity-nonce', () => ({
     sdkPreconditions.push(precondition)
     await sdkLocks()
     if (precondition && !(await precondition())) throw new Error('This was not sent: what it depended on changed.')
-    return write()
+    // The real coordinator reserves a nonce here, then awaits the SDK's nonce refresh before the write.
+    hooks.afterReserve?.()
+    try {
+      return await write()
+    } catch (error) {
+      sdkWriteErrors.push(error)
+      throw error
+    }
   },
 }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: keys.match }))
@@ -121,6 +133,8 @@ beforeEach(() => {
   auth.epoch = 1
   hooks.onSdk = undefined
   hooks.onAwaitNonce = undefined
+  hooks.afterReserve = undefined
+  sdkWriteErrors.length = 0
   keys.match.mockReset().mockReturnValue({ ok: true, key: { keyId: 1 }, match: { keyId: 1 } })
   vi.clearAllMocks()
   storage.clear()
@@ -217,6 +231,63 @@ describe('a refusal', () => {
     await expect(first).rejects.toThrow('This may still go through; the network refused it just now')
     expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
     expect(nonces.release).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['basic structure', 10421],
+    ['signature', 20007],
+  ])('drops a proposal whose first send is refused for its %s once its nonce is proved unused, so nothing stays pending', async (_kind, code) => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code }))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code })
+    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), undefined)
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(false)
+  })
+
+  it.each([
+    ['its nonce was taken (another node may have run the first copy)', () => builders.consumed.mockResolvedValue(true)],
+    ['the nonce cannot be read', () => builders.consumed.mockRejectedValue(new Error('Quorum not found in cache'))],
+  ])('keeps a proposal refused for its structure when %s', async (_when, nonceRead) => {
+    nonceRead()
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 10421 }))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(true)
+    expect(nonces.release).not.toHaveBeenCalled()
+  })
+
+  it('drops an application whose first send is refused for its structure, and keeps one refused for the state it met', async () => {
+    const proposal = { id: 'p1' } as Parameters<typeof charterService.fileApplication>[1]
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 10422 }))
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-a', ['m1'])).rejects.toMatchObject({ outcome: 'refused', code: 10422 })
+    expect(charterService.hasPendingApplication(OWNER, 'target-a')).toBe(false)
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40112 }))
+    await expect(charterService.fileApplication(OWNER, proposal, 'target-b', ['m1'])).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(charterService.hasPendingApplication(OWNER, 'target-b')).toBe(true)
+  })
+
+  it.each([
+    ['its signature: the key may have changed since it landed', 20007],
+    ['a version-dependent structure rule', 10418],
+  ])('keeps an uncertain proposal when its resend is refused for %s', async (_why, code) => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code }))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(true)
+    expect(nonces.release).not.toHaveBeenCalled()
+  })
+
+  it('drops an uncertain proposal when its resend fails the schema and its nonce is proved unused', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 10422 }))
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 10422 })
+    expect(charterService.hasPendingProposal(OWNER, TERMS.targetContractId)).toBe(false)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), undefined)
   })
 
   it('counts the nonce spent when Platform refused it at execution (paid)', async () => {
@@ -492,7 +563,7 @@ describe('the signing key from the shared step-up', () => {
     try {
       await expect(charterService.addMember(OWNER, seated, 'm1')).rejects.toMatchObject({ outcome: 'cancelled' })
       expect(builders.sign).not.toHaveBeenCalled()
-      expect(sharedKeys.availableCriticalKey(OWNER, [], 'moderation', null)).toBeNull()
+      expect(sharedKeys.availableCriticalKey(OWNER, [], 'charter', null)).toBeNull()
     } finally {
       sheet.unsubscribe()
     }
@@ -511,6 +582,24 @@ describe('the signing key from the shared step-up', () => {
       expect(sheet.asked()).toBe(2)
     } finally {
       sheet.unsubscribe()
+    }
+  })
+
+  it("asks with the charters sheet, not moderation's, so a member filing a join request isn't told it moderates", async () => {
+    wallet.appConnect = true
+    builders.exists.mockResolvedValue(true)
+    const uses: string[] = []
+    const watch = sharedKeys.subscribeCriticalKeyRequests(() => {
+      const request = sharedKeys.currentCriticalKeyRequest()
+      if (request) uses.push(request.use)
+    })
+    const sheet = mountSheet(() => ({ wif: 'critical-wif', source: 'typed', keep: false }))
+    try {
+      await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+      expect(uses).toEqual(['charter'])
+    } finally {
+      sheet.unsubscribe()
+      watch()
     }
   })
 
@@ -553,6 +642,19 @@ describe('a sign-out (the auth epoch moves on before any cleanup finishes)', () 
     auth.epoch++
     expect(heldCharterKey(OWNER, 'leader')).toBeNull()
     expect(builders.sign).not.toHaveBeenCalled()
+  })
+})
+
+describe("another account's write", () => {
+  it('is never signed, sent or asked a key for from this session', async () => {
+    const session = charterService.session()
+    await expect(charterService.submitProposal('someone-else', TERMS, { session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    await expect(charterService.charterKey('someone-else', 'member', { create: true, session })).rejects.toMatchObject({ outcome: 'cancelled' })
+    await expect(charterService.undoTeamChange('someone-else', 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e9', memberId: 'm1' }))
+      .rejects.toMatchObject({ outcome: 'cancelled' })
+    expect(builders.sign).not.toHaveBeenCalled()
+    expect(keys.stepUp).not.toHaveBeenCalled()
+    expect(sdk.documents.delete).not.toHaveBeenCalled()
   })
 })
 
@@ -663,6 +765,24 @@ describe('a session forgotten mid-write', () => {
     await expect(undoing).rejects.toMatchObject({ outcome: 'cancelled', message: 'Nothing was sent.' })
     expect(sdk.documents.delete).not.toHaveBeenCalled()
     expect(stored('addedModerator', 'e2:m1')).toMatchObject({ landed: 'doc-1' })
+  })
+
+  it.each([
+    ['the page is left', () => charterService.forgetKeys()],
+    ['a sign-out', () => { auth.epoch++ }],
+  ])('frees the nonce reservation of a team-change delete when %s after its precondition', async (_when, end) => {
+    const seated = { electedCharterId: 'e3', submittedCharterId: 'p1' }
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+    // Ended while the coordinator, its nonce reserved, refreshed the SDK's nonce.
+    hooks.afterReserve = end
+    await expect(charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e3', memberId: 'm1' }))
+      .rejects.toMatchObject({ outcome: 'cancelled', message: 'Nothing was sent.' })
+    expect(sdk.documents.delete).not.toHaveBeenCalled()
+    // Only the step-up's cancellation tells the coordinator nothing went out, so it frees the reservation unspent.
+    expect(sdkWriteErrors).toHaveLength(1)
+    expect(sdkWriteErrors[0]).toBeInstanceOf(sharedKeys.CriticalKeyCancelledError)
+    expect(stored('addedModerator', 'e3:m1')).toMatchObject({ landed: 'doc-1' })
   })
 })
 

@@ -23,6 +23,7 @@ export const CHARTER_UNCERTAIN_MESSAGE = "The network didn't confirm this in tim
 const GENERIC = "That didn't go through. Please try again in a moment."
 const WRONG_SIGNING_KEY = "That key can't sign this. Use your CRITICAL or HIGH key."
 const LOW_BALANCE = "Your balance is too low for this. Top up your account's credits and try again."
+const UNDO_WAITS_FOR_PENDING = 'Something you sent from this browser may still go through. Check it, then try again.'
 const HAS_CHARTER_KEY = 'This account already has a charter key. Enter that key instead.'
 
 /** Messages that depend on the action, then the ones that do not. */
@@ -88,6 +89,8 @@ export function charterActionError(action: CharterAction, error: unknown): Chart
   const plain = extractErrorMessage(error)
   if (plain === CRITICAL_KEY_REQUIRED) return new CharterActionError("That key can't sign this. Use your account's CRITICAL key.", 'refused')
   if (plain === KEY_SHEET_MISSING) return new CharterActionError('Your key could not be asked for here. Reload the page, then try again.', 'refused')
+  // Taking a member off or putting one back waits for every charters write this browser sent to settle: say which.
+  if (plain === PENDING_WRITE_ERROR && action === 'undo-team-change') return new CharterActionError(UNDO_WAITS_FOR_PENDING, 'refused')
   if (plain === PENDING_WRITE_ERROR || plain === NONCE_STORE_ERROR) return new CharterActionError(plain, 'refused')
   const code = consensusCodeOf(error) ?? codeInMessage(error)
   if (code !== null) {
@@ -96,6 +99,24 @@ export function charterActionError(action: CharterAction, error: unknown): Chart
   }
   if (isOutcomeUnknownError(error)) return new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain', code)
   return new CharterActionError(GENERIC, 'refused', code)
+}
+
+/** Schema refusals (JsonSchemaError, the description's and the split's own rules): the same bytes fail them on any node. */
+const SCHEMA_CODES = new Set([10101, 10419, 10421, 10422])
+
+/**
+ * Whether Platform refused `error`'s transition for what its bytes are, not
+ * for the state it met: on a `fresh` first send any basic-structure or
+ * signature code (10000-29999), on a resend only the schema codes, since a
+ * resend's other checks run against a node's version and the keys as they
+ * are now (a key disabled after the first send landed, say). Not a verdict
+ * on its own: some of these codes still depend on a node's version, so the
+ * caller drops the bytes only once their nonce is proved unused.
+ */
+export function isStatelessRefusal(error: unknown, { fresh }: { fresh: boolean }): boolean {
+  const code = consensusCodeOf(error) ?? codeInMessage(error)
+  if (code === null) return false
+  return fresh ? code >= 10000 && code < 30000 : SCHEMA_CODES.has(code)
 }
 
 /** A refusal flattened into a message keeps its code as `code=40105` or `code: 40105`. */
