@@ -249,7 +249,7 @@ export function Sidebar() {
         const [result] = await Promise.all([
           isInitial
             ? notificationService.getInitialNotifications(userId, readIds)
-            : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds),
+            : notificationService.pollNewNotifications(userId, store.lastFetchTimestamp, readIds, store.windowCursor),
           (dmV5 ? Promise.resolve(null) : directMessageService.getUnreadTotal(userId)).then((total) => {
             // `null` is "could not tell": hold the previous badge rather than
             // blinking it off for 30s and reading as "all caught up".
@@ -265,7 +265,7 @@ export function Sidebar() {
         } else if (result.notifications.length > 0) {
           store.addNotifications(result.notifications)
         }
-        store.setLastFetchTimestamp(result.latestTimestamp)
+        store.setLastFetchTimestamp(result.latestTimestamp, result.windowCursor)
         notificationsFetched = { userId, at: Date.now() }
 
         // Blocks change without a new notification (following a block list,

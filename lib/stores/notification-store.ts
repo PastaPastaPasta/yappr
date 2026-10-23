@@ -4,6 +4,7 @@ import { Notification } from '../types';
 import { scopedKey } from '@/lib/storage-scope';
 import { isNotificationEnabled } from '@/lib/notification-preferences';
 import type { NotificationSettings } from '@/lib/store';
+import type { NotificationWindowCursor } from '@/lib/services/notification-windows';
 
 // Maximum number of read IDs to store in localStorage
 // At ~44 chars per base58 ID, 1000 IDs ≈ 44KB, well under localStorage limits
@@ -64,6 +65,12 @@ interface NotificationState {
   // Data
   notifications: Notification[];
   lastFetchTimestamp: number;
+  /**
+   * The notification windows the last kept fetch left to continue, for the
+   * next poll from `lastFetchTimestamp` (`NotificationResult.windowCursor`).
+   * Not persisted: a reload starts those windows over.
+   */
+  windowCursor?: NotificationWindowCursor;
 
   /**
    * Unread direct messages across every conversation, for the Messages nav
@@ -124,7 +131,8 @@ interface NotificationState {
    */
   markAllAsRead: (settings: NotificationSettings) => void;
   setLoading: (loading: boolean) => void;
-  setLastFetchTimestamp: (timestamp: number) => void;
+  /** A kept fetch's watermark and window cursor (undefined: none), always set together. */
+  setLastFetchTimestamp: (timestamp: number, windowCursor: NotificationWindowCursor | undefined) => void;
   setHasFetchedOnce: (fetched: boolean) => void;
   setDmUnreadCount: (count: number) => void;
   clearNotifications: () => void;
@@ -241,7 +249,7 @@ export const useNotificationStore = create<NotificationState>()(
 
       setLoading: (isLoading) => set({ isLoading }),
 
-      setLastFetchTimestamp: (timestamp) => set({ lastFetchTimestamp: timestamp }),
+      setLastFetchTimestamp: (timestamp, windowCursor) => set({ lastFetchTimestamp: timestamp, windowCursor }),
 
       setHasFetchedOnce: (fetched) => set({ hasFetchedOnce: fetched }),
 
@@ -250,6 +258,7 @@ export const useNotificationStore = create<NotificationState>()(
       clearNotifications: () => set({
         notifications: [],
         lastFetchTimestamp: 0,
+        windowCursor: undefined,
         blockedActors: [],
         dmUnreadCount: 0
       }),

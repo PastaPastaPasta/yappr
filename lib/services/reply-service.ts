@@ -14,7 +14,7 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
 import { nextReadVersion } from '@/lib/moderation-view';
-import { readNotificationWindow } from './notification-windows';
+import { readNotificationWindowDocuments, type WindowSession } from './notification-windows';
 import {
   deletesAreTombstones,
   hasFlatThreads,
@@ -427,30 +427,32 @@ class ReplyService extends BaseDocumentService<Reply> {
    * Get replies where user's content was replied to - for notifications.
    * Uses the parentOwnerAndTime index: [parentOwnerId, $createdAt], limited
    * to the 100 most recent replies. On v10 it is the two open
-   * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read whole (paged)
-   * and since-filtered client-side (see readNotificationWindow).
+   * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read paged (a
+   * window past one poll's page budget continues on the next) and
+   * since-filtered client-side (see readNotificationWindow).
    *
    * On v14 a reply names no owner, so the answer is two sources
    * ({@link repliesToMeOnV14}): the nested replies to the user's replies, and
    * the top-level replies of the user's threads.
    *
    * Rejects when the read fails: an empty answer would let the notification
-   * watermark move past the replies it missed.
+   * watermark move past the replies it missed. Window reads continue the
+   * passes of `windows` and report to it (see WindowSession).
    *
    * @param userId - Identity ID of the content owner
    * @param since - Only return replies created after this timestamp (optional)
    */
-  async getRepliesToMyContent(userId: string, since?: Date, preloaded?: Record<string, unknown>[]): Promise<Reply[]> {
+  async getRepliesToMyContent(userId: string, since?: Date, preloaded?: Record<string, unknown>[], windows?: WindowSession): Promise<Reply[]> {
     const { getEvoSdk } = await import('./evo-sdk-service');
     const sdk = await getEvoSdk();
 
     const sinceTimestamp = since?.getTime() || 0;
 
-    if (!preloaded && replyOwnersAreDerived()) return this.repliesToMeOnV14(userId, sinceTimestamp);
+    if (!preloaded && replyOwnersAreDerived()) return this.repliesToMeOnV14(userId, sinceTimestamp, windows);
 
     const window = notificationWindowFor('reply');
     const response = preloaded ?? (window
-      ? await readNotificationWindow(window, userId, sinceTimestamp)
+      ? await readNotificationWindowDocuments(window, userId, sinceTimestamp, windows)
       : await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'reply',
@@ -482,17 +484,17 @@ class ReplyService extends BaseDocumentService<Reply> {
    * can be forged and no root needs re-reading. A failed read rejects.
    *
    * The root window holds every reply of the user's threads, so a busy thread
-   * fills it: each window read stops at `NOTIFICATION_WINDOW_MAX_PAGES` pages
-   * (notification-windows.ts), in id order, and past that top-level replies
-   * can be missed (docs/archive/SOCIAL_V14.md).
+   * fills it: a window read past `NOTIFICATION_WINDOW_MAX_PAGES` pages
+   * (notification-windows.ts) continues on the next poll, and holds the
+   * notification watermark back until it has read the rest.
    */
-  private async repliesToMeOnV14(userId: string, since: number): Promise<Reply[]> {
+  private async repliesToMeOnV14(userId: string, since: number, windows?: WindowSession): Promise<Reply[]> {
     const toMyReplies = notificationWindowFor('reply');
     const inMyThreads = notificationWindowFor('threadReply');
     if (!toMyReplies || !inMyThreads) throw new Error('v14 reads replies off rootOwnerRecent and parentOwnerRecent');
     const [nested, thread] = await Promise.all([
-      readNotificationWindow(toMyReplies, userId, since),
-      readNotificationWindow(inMyThreads, userId, since),
+      readNotificationWindowDocuments(toMyReplies, userId, since, windows),
+      readNotificationWindowDocuments(inMyThreads, userId, since, windows),
     ]);
     const toMe = [
       ...nested.map((doc) => this.transformDocument(doc)),

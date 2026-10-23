@@ -183,7 +183,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       localStorage, useNotificationStore.persist.getOptions().name ?? '', {})
     const readIds = Array.isArray(stored.state?.readIds) ? stored.state.readIds.filter((id): id is string => typeof id === 'string') : []
     const lastFetchTimestamp = typeof stored.state?.lastFetchTimestamp === 'number' ? stored.state.lastFetchTimestamp : 0
-    useNotificationStore.setState({ readIds, lastFetchTimestamp })
+    useNotificationStore.setState({ readIds, lastFetchTimestamp, windowCursor: undefined })
   }
 
   /** The sidebar's first fetch (`getInitialNotifications`, 7 days) for this account. */
@@ -208,7 +208,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       // the failed source's window again (lib keeps the watermark).
       if (result.failure !== undefined && result.notifications.length === 0) throw readFailure(result.failure)
       store().setNotifications(result.notifications)
-      store().setLastFetchTimestamp(result.latestTimestamp)
+      store().setLastFetchTimestamp(result.latestTimestamp, result.windowCursor)
       store().setHasFetchedOnce(true)
       // lib already left out the actors blocked now, so nothing held is hidden yet;
       // `refreshBlocked` picks up blocks and unblocks made after this fetch.
@@ -279,11 +279,11 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
         await ensureLoaded(viewer)
         return { added: store().notifications.length - before, unread: unreadCount(), blockedChanged: false }
       }
-      const result = await notificationService.pollNewNotifications(viewer, store().lastFetchTimestamp, store().getReadIdsSet())
+      const result = await notificationService.pollNewNotifications(viewer, store().lastFetchTimestamp, store().getReadIdsSet(), store().windowCursor)
       if (viewerId() !== viewer) return { added: 0, unread: 0, blockedChanged: false }
       const before = store().notifications.length
       if (result.notifications.length > 0) store().addNotifications(result.notifications)
-      store().setLastFetchTimestamp(result.latestTimestamp)
+      store().setLastFetchTimestamp(result.latestTimestamp, result.windowCursor)
       const added = store().notifications.length - before
       // A block or unblock since the last poll changes the list and the badge too.
       const blockedChanged = await refreshBlocked(viewer)

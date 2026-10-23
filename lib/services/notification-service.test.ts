@@ -20,6 +20,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+type Sdk = Awaited<ReturnType<typeof import('./evo-sdk-service').getEvoSdk>>
+
+/** An SDK answering plain reads and proved ones (the notification windows, block time `timeMs`) from `query`. */
+function sdkOver(query: (q: never) => Promise<unknown>, timeMs = () => Date.now()): Sdk {
+  return {
+    documents: { query, queryWithProof: async (q: never) => ({ data: await query(q), metadata: { timeMs: timeMs() } }) },
+  } as unknown as Sdk
+}
+
 // The first test pays the cold import of the service graph, slow on a loaded runner.
 describe('notification sources', { timeout: 20_000 }, () => {
   it('reads each source newest first, so a busy source keeps its latest events', async () => {
@@ -82,7 +91,7 @@ describe('failed notification sources', { timeout: 20_000 }, () => {
       return []
     })
     const { getEvoSdk } = await import('./evo-sdk-service')
-    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    vi.mocked(getEvoSdk).mockResolvedValue(sdkOver(query))
     const { loadIdentityBatch } = await import('./identity-batch')
     vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
     bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((q) => q.documentTypeName === 'follow'
@@ -98,6 +107,101 @@ describe('failed notification sources', { timeout: 20_000 }, () => {
     expect(polled.failure).toBe(quorum)
     // Not the follow's 1_500: the replies between 1_000 and 1_500 are read again next poll.
     expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  describe('a reply window past one poll\'s page budget', () => {
+    const STEP_MS = 302_400_000
+    // A quarter into window k; Date alone is faked, so promises still run.
+    const WINDOW_START = 5_920 * STEP_MS
+    const NOW = WINDOW_START + STEP_MS / 4
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(NOW)
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    type WindowQuery = QueryDocumentsOptions & { timeRange?: [{ selector: string; startMs?: number }] }
+
+    /**
+     * 1,050 replies in the current window, served in id order (their times are
+     * unrelated to their ids), a follow newer than all of them, and the block
+     * time `chain.ms`. `refuse` fails the window reads it matches.
+     */
+    async function setUp(topology: string, refuse: (q: WindowQuery) => boolean = () => false) {
+      vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+      vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+      const replies = Array.from({ length: 1_050 }, (_, n) => ({
+        $id: `reply-${String(n).padStart(5, '0')}`, $ownerId: 'bob', $createdAt: WINDOW_START + ((n * 7_919) % 1_000),
+        parentOwnerId: 'viewer', replyToReplyId: 'Parent1', rootPostId: 'Root1', content: 'hi',
+      }))
+      const chain = { ms: WINDOW_START + 2_000 }
+      const reads: Array<{ selector: string; startAfter?: string }> = []
+      const query = vi.fn().mockImplementation(async (q: WindowQuery) => {
+        if (q.documentTypeName !== 'reply' || !q.timeRange) return []
+        if (refuse(q)) throw new Error('DAPI unavailable')
+        const pick = q.timeRange[0]
+        reads.push({ selector: pick.selector, startAfter: q.startAfter })
+        // Only the current window holds anything; a continuation names it by its start.
+        if (pick.selector === 'byStart' && pick.startMs !== WINDOW_START) return []
+        const from = q.startAfter ? replies.findIndex((reply) => reply.$id === q.startAfter) + 1 : 0
+        return replies.slice(from, from + (q.limit ?? 100))
+      })
+      const { getEvoSdk } = await import('./evo-sdk-service')
+      vi.mocked(getEvoSdk).mockResolvedValue(sdkOver(query, () => chain.ms))
+      const { loadIdentityBatch } = await import('./identity-batch')
+      vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
+      // Newer than every reply: the watermark must still not jump to it.
+      bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((q) => q.documentTypeName === 'follow'
+        ? [{ $id: 'follow-1', $ownerId: 'carol', $createdAt: WINDOW_START + 5_000, followingId: 'viewer' }]
+        : []))
+      const { notificationService } = await import('./notification-service')
+      vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+      vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+      vi.spyOn(notificationService, 'getLikeNotifications').mockResolvedValue([])
+      return { notificationService, replies, chain, reads }
+    }
+
+    it('v10: holds the watermark and hands back a cursor; the poll given it continues, notifies the rest, then moves on to the block time the pass began at', async () => {
+      const { notificationService, replies, chain, reads } = await setUp('v10')
+
+      const first = await notificationService.pollNewNotifications('viewer', 1_000)
+      expect(first.failure).toBeUndefined()
+      expect(first.latestTimestamp).toBe(1_000)
+      expect(first.windowCursor).toHaveLength(1)
+
+      reads.length = 0
+      chain.ms = WINDOW_START + 3_000
+      const second = await notificationService.pollNewNotifications('viewer', first.latestTimestamp, new Set(), first.windowCursor)
+      expect(second.failure).toBeUndefined()
+      expect(second.windowCursor).toBeUndefined()
+      // It continued after the last id the first one read.
+      expect(reads.filter((read) => read.startAfter)).toEqual([{ selector: 'byStart', startAfter: 'reply-00999' }])
+      // Between them the two polls notified every reply, the newest by time included.
+      const seen = new Set([...first.notifications, ...second.notifications].map((n) => n.id))
+      expect(replies.filter((reply) => !seen.has(`reply-${reply.$id}`))).toEqual([])
+      // Not the follow's time: the block time of the pass's first pages.
+      expect(second.latestTimestamp).toBe(WINDOW_START + 2_000)
+    })
+
+    it('v10: a poll not given the cursor (its result was thrown away) reads the window from the start again', async () => {
+      const { notificationService, reads } = await setUp('v10')
+      await notificationService.pollNewNotifications('viewer', 1_000)
+      reads.length = 0
+      const again = await notificationService.pollNewNotifications('viewer', 1_000)
+      expect(reads.filter((read) => read.selector === 'newest')[0].startAfter).toBeUndefined()
+      expect(again.latestTimestamp).toBe(1_000)
+      expect(again.windowCursor).toHaveLength(1)
+    })
+
+    it('v14: a reply source whose other window failed leaves no cursor, so the window it did read starts over', async () => {
+      const { notificationService } = await setUp('v14', (q) => q.where?.[0]?.[0] === 'rootPostId.$ownerId')
+      const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+      expect(polled.failure).toMatchObject({ message: 'DAPI unavailable' })
+      expect(polled.windowCursor).toBeUndefined()
+      expect(polled.latestTimestamp).toBe(1_000)
+    })
   })
 
   it('count a failed read of the blogs the user follows', async () => {
@@ -160,7 +264,7 @@ describe('v10 windowed notification sources', () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
     const query = vi.fn().mockResolvedValue([])
     const { getEvoSdk } = await import('./evo-sdk-service')
-    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    vi.mocked(getEvoSdk).mockResolvedValue(sdkOver(query))
     const { notificationService } = await import('./notification-service')
     vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
     vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
@@ -201,7 +305,7 @@ describe('v10 windowed notification sources', () => {
       ? [{ $id: 'new', $ownerId: 'bob', $createdAt: 1_100, mentionedUserId: 'viewer' }]
       : [])
     const { getEvoSdk } = await import('./evo-sdk-service')
-    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    vi.mocked(getEvoSdk).mockResolvedValue(sdkOver(query))
     const { notificationService } = await import('./notification-service')
 
     expect(await notificationService.getNewMentions('viewer', 1_000)).toEqual([
@@ -266,7 +370,7 @@ describe('v10 windowed notification sources', () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
     const query = vi.fn().mockResolvedValue([])
     const { getEvoSdk } = await import('./evo-sdk-service')
-    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    vi.mocked(getEvoSdk).mockResolvedValue(sdkOver(query))
     const { loadIdentityBatch } = await import('./identity-batch')
     vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
     const { notificationService } = await import('./notification-service')

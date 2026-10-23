@@ -300,6 +300,23 @@ export async function queryDocuments(
   sdk: EvoSDK,
   options: QueryDocumentsOptions
 ): Promise<Record<string, unknown>[]> {
+  return mapToDocumentArray(await sdk.documents.query(documentsQuery(options)));
+}
+
+/**
+ * {@link queryDocuments} read with its proof, plus the block time (ms) of the
+ * Platform state the answer was proved against: every document created in a
+ * later block has a later `$createdAt`. NaN when the response carries none.
+ */
+export async function queryDocumentsWithBlockTime(
+  sdk: EvoSDK,
+  options: QueryDocumentsOptions
+): Promise<{ documents: Record<string, unknown>[]; blockTimeMs: number }> {
+  const response = await sdk.documents.queryWithProof(documentsQuery(options));
+  return { documents: mapToDocumentArray(response.data), blockTimeMs: Number(response.metadata?.timeMs) };
+}
+
+function documentsQuery(options: QueryDocumentsOptions): DocumentsQuery {
   const query: DocumentsQuery = {
     dataContractId: options.dataContractId,
     documentTypeName: options.documentTypeName,
@@ -323,10 +340,7 @@ export async function queryDocuments(
   if (options.timeRange) {
     query.timeRange = options.timeRange;
   }
-
-  const response = await sdk.documents.query(query);
-
-  return mapToDocumentArray(response);
+  return query;
 }
 
 /**
