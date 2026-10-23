@@ -1,4 +1,4 @@
-import type { SessionDTO } from '@engine/api';
+import type { BuyerOrderDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -6,9 +6,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { formatOrderId } from '~/lib-allowlist';
 import { queryClient } from '~/state/query-client';
 
-import { OrdersScreen } from './OrdersScreen';
+import { OrdersScreen, orderRowLabel } from './OrdersScreen';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('expo-router', () => ({
@@ -78,6 +79,51 @@ describe('OrdersScreen signed out (MUX-8)', () => {
     expect(screen.queryByText('Sign in to see your orders')).toBeNull();
     expect(screen.getByTestId('orders-tabs')).toBeTruthy();
     expect(screen.getByText('No orders yet')).toBeTruthy();
+  });
+});
+
+describe('order rows for screen readers (MUX-14)', () => {
+  const base: BuyerOrderDTO = {
+    id: '3Kq9yTn2LmXz5WvRb7HdFg8PsJc4AeUo6NiBt1ZkDhQw',
+    storeId: 'store1',
+    sellerId: 'seller',
+    buyerId: 'viewer',
+    createdAt: new Date(2026, 9, 20),
+    payload: null,
+    locked: false,
+    status: null,
+    digital: false,
+    deliveries: [],
+    storeName: 'Alice Goods',
+    reviewed: false,
+  };
+  const payload = {
+    items: [{ itemId: 'mug', title: 'Mug', itemTitle: 'Mug', quantity: 2, price: 1200 }],
+    subtotal: 2400,
+    shippingCost: 0,
+    total: 2400,
+    currency: 'USD',
+    paymentUri: 'dash:y',
+  } as unknown as NonNullable<BuyerOrderDTO['payload']>;
+  const delivered = { status: 'delivered', label: 'Delivered' } as BuyerOrderDTO['status'];
+
+  it('names the store, status, date, order, total, lines and digital marker in one label', () => {
+    const label = orderRowLabel({ ...base, payload, status: delivered, digital: true }, 'Alice Goods');
+    expect(label).toBe(`Alice Goods, Delivered, ${base.createdAt.toLocaleDateString()}, order ${formatOrderId(base.id)}, $24.00, 2 × Mug, Digital`);
+  });
+
+  it('says a locked order is locked, and an unreadable one could not be read', () => {
+    expect(orderRowLabel({ ...base, locked: true }, 'Alice Goods')).toBe(
+      `Alice Goods, Pending, ${base.createdAt.toLocaleDateString()}, order ${formatOrderId(base.id)}, Locked. Unlock to see this order`,
+    );
+    expect(orderRowLabel(base, 'From a buyer')).toContain("Details couldn't be read");
+  });
+
+  it('is the accessible name of the row', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    fakeEngine.method('store.myOrders').mockResolvedValue({ items: [{ ...base, payload, status: delivered }], cursor: null, hasMore: false });
+    await renderOrders();
+    expect(screen.getByTestId(`order-${base.id}`)).toHaveAccessibleName(orderRowLabel({ ...base, payload, status: delivered }, 'Alice Goods'));
   });
 });
 

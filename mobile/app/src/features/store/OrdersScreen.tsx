@@ -20,9 +20,31 @@ import { DeliveryList, Loading, Notice, price, StatusPill, useRefreshControl } f
 
 type OrderDTO = BuyerOrderDTO | SellerOrderDTO;
 
+/**
+ * What a screen reader says for an order row, in the order the row reads:
+ * the seller or buyer, status, date, order number, total, what it holds, and
+ * whether it is digital or locked. A labelled button hides its children from
+ * the reader, so the label has to carry them.
+ */
+export function orderRowLabel(order: OrderDTO, title: string): string {
+  const parts = [
+    title,
+    order.status?.label ?? 'Pending',
+    order.createdAt.toLocaleDateString(),
+    `order ${formatOrderId(order.id)}`,
+  ];
+  if (order.payload) {
+    parts.push(price(order.payload.total, order.payload.currency));
+    parts.push(order.payload.items.map((line) => `${line.quantity} × ${line.itemTitle}`).join(', '));
+  }
+  if (order.digital) parts.push('Digital');
+  if (!order.payload) parts.push(order.locked ? 'Locked. Unlock to see this order' : "Details couldn't be read");
+  return parts.join(', ');
+}
+
 export function OrderRow({ order, title }: { order: OrderDTO; title: string }) {
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`Open order ${formatOrderId(order.id)}`} testID={`order-${order.id}`} onPress={() => router.push(`/orders/${order.id}`)}>
+    <Pressable accessibilityRole="button" accessibilityLabel={orderRowLabel(order, title)} accessibilityHint="Opens the order" testID={`order-${order.id}`} onPress={() => router.push(`/orders/${order.id}`)}>
       <Card className="mx-4 mb-3 gap-1 p-4">
         <View className="flex-row items-center justify-between gap-3">
           <Text variant="bodyStrong" className="flex-1" numberOfLines={1}>{title}</Text>
