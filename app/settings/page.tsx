@@ -22,7 +22,9 @@ import {
   NoSymbolIcon,
   CommandLineIcon,
   ClipboardDocumentIcon,
+  ScaleIcon,
 } from '@heroicons/react/24/outline'
+import { electedContracts, teamsHref } from '@/lib/moderation-charters/links'
 import { Lockup } from '@/components/brand/brand'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
@@ -131,6 +133,8 @@ function SettingsPage() {
   const moderatedContracts = useModeratedContracts()
   const isContractModerator = moderatedContracts.length > 0
   const canModerate = isAuthority || isContractModerator
+  // The first contract this build serves whose moderators are elected, for the Moderation teams link.
+  const electedContract = electedContracts()[0]
   const baseSections = privateFeedClientSupported() ? settingsSections : settingsSections.filter((section) => section.id !== 'privateFeed')
   const visibleSections = canModerate ? [...baseSections, MODERATION_SECTION] : baseSections
   // Developer tools are reachable from About (and by URL), not listed in everyone's menu.
@@ -260,6 +264,22 @@ function SettingsPage() {
           <ChevronRightIcon className="h-5 w-5 text-gray-400" />
         </button>
       ))}
+      {electedContract && (
+        <Link
+          href={teamsHref(electedContract)}
+          data-testid="settings-moderation-teams"
+          className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors flex items-center gap-4"
+        >
+          <div className="p-2 bg-gray-100 dark:bg-gray-900 rounded-lg">
+            <ScaleIcon className="h-5 w-5" />
+          </div>
+          <div className="flex-1 text-left">
+            <p className="font-medium">Moderation teams</p>
+            <p className="text-sm text-gray-500">Who moderates, and how to stand for election or join a team</p>
+          </div>
+          <ChevronRightIcon className="h-5 w-5 text-gray-400" />
+        </Link>
+      )}
     </div>
   )
 

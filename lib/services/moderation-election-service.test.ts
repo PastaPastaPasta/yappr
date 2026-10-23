@@ -31,12 +31,12 @@ describe('moderation election mappers', () => {
 
   it('maps a submittedCharter, including reasons given as bytes', () => {
     const proposal = toProposal({
-      $id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', $ownerId: leader, $createdAt: 5,
+      $id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', $ownerId: leader, $createdAt: 5, targetContractId: new Uint8Array(32).fill(2),
       description: 'We moderate spam', reasons: [new Uint8Array(32).fill(2)],
       moderatorsShare: 80, rewardSplit: { leader: 20, equal: 30, actions: 50 },
     });
     expect(proposal).toEqual({
-      id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', leaderId: leader, description: 'We moderate spam',
+      id: 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', leaderId: leader, targetContractId: reasonA, description: 'We moderate spam',
       reasonIds: [reasonA], moderatorsShare: 80, rewardSplit: { leader: 20, equal: 30, actions: 50 }, createdAt: 5,
     });
     expect(toProposal({ $id: leader, $ownerId: leader }).moderatorsShare).toBeNull();
@@ -106,6 +106,49 @@ describe('reading the contest', () => {
     // cut short, passing its bigint back as is (wasm-sdk beta.7, platform#5139).
     expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).not.toHaveProperty('startTimeMs');
     expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).toMatchObject({ startTimeMs: 1099n, startTimeIncluded: true });
+  });
+
+  it('reads every contender, not only the first page of 100', async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => bs58.encode(new Uint8Array(32).fill(i + 10)));
+    const first = state(ids.slice(0, 100).map((identityId) => ({ identityId, voteTally: 0 })));
+    const second = state([{ identityId: ids[100], voteTally: 0 }]);
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([entry(5000, target)]);
+    const { contest } = await moderationElectionService.getContest(target);
+    expect(contest?.contenders.map((c) => c.identityId).sort()).toEqual([...ids].sort());
+    expect(sdk.voting.contestedResourceVoteState).toHaveBeenCalledTimes(2);
+    expect(sdk.voting.contestedResourceVoteState.mock.calls[1][0]).toMatchObject({ startAtContenderId: ids[99], startAtIncluded: false, limit: 100 });
+    expect(first.free).toHaveBeenCalled();
+    expect(second.free).toHaveBeenCalled();
+  });
+
+  it('anchors the end-date walk to the proved chain time, not this device clock', async () => {
+    const chain = 1_790_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(chain - 3_600_000);
+    try {
+      sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 1 }]));
+      sdk.voting.votePollsByEndDate.mockResolvedValueOnce([entry(chain + 1000, target)]);
+      const declaration = { joinWindowSeconds: 86_400, voteWindowSeconds: 86_400 } as unknown as Parameters<typeof moderationElectionService.getContest>[1];
+      const { contest } = await moderationElectionService.getContest(target, declaration, chain);
+      expect(contest?.endsAtMs).toBe(chain + 1000);
+      expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toMatchObject({
+        startTimeMs: BigInt(chain - 600_000), startTimeIncluded: true, endTimeMs: chain + 172_800_000 + 600_000,
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('reads again from the start for an undecided contest past its end that a stalled chain has not closed', async () => {
+    const chain = 1_790_000_000_000;
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 2 }]));
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([]).mockResolvedValueOnce([entry(chain - 3_600_000, target)]);
+    const declaration = { joinWindowSeconds: 86_400, voteWindowSeconds: 86_400 } as unknown as Parameters<typeof moderationElectionService.getContest>[1];
+    const { contest, endTimeFailed } = await moderationElectionService.getContest(target, declaration, chain);
+    expect(contest?.endsAtMs).toBe(chain - 3_600_000);
+    expect(endTimeFailed).toBe(false);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toHaveProperty('startTimeMs');
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).not.toHaveProperty('startTimeMs');
   });
 
   it('counts polls, not timestamp groups, when deciding a page was full', async () => {
@@ -213,6 +256,12 @@ describe('registered election declarations', () => {
     await expect(moderationElectionService.getStatus(target)).rejects.toThrow('offline');
     sdk.contracts.fetch.mockResolvedValueOnce(null);
     await expect(moderationElectionService.getStatus(target)).rejects.toThrow('could not be read');
+  });
+
+  it("opens applications at the contract JSON's creation time plus the registered delay", async () => {
+    sdk.contracts.fetch.mockResolvedValueOnce({ config: { moderation: { moderators: { ...registered.moderators, electionDelay: 1500 } } },
+      toJSON: () => ({ createdAt: 1_792_697_540_319 }), free: vi.fn() });
+    expect((await moderationElectionService.getStatus(target))?.electionOpensAtMs).toBe(1_792_697_540_319 + 1_500_000);
   });
 
   it('returns null for a registered contract without elected moderation', async () => {

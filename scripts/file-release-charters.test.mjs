@@ -9,6 +9,8 @@ vi.mock('./sdk-env.mjs', () => ({ connectSdk: connected.connect, keyNetwork: () 
 vi.mock('@dashevo/evo-sdk', async (original) => { const actual = await original(); return { ...actual, Document: { fromBytes: connected.document, fromObject: actual.Document.fromObject }, StateTransition: { fromBytes: connected.decoded } }; });
 import { assertRegistered, electionOpensAtMs, existsStep, importNonceFloors, nextNonce, manifestHash, balancesFor, charterOptions, commitStep, main, validateManifest, watchContract, writeCheckpoint } from './file-release-charters.mjs';
 import { APP_CONNECT_ENTRIES, contractFilePath } from './app-connect-set.mjs';
+import { DEFAULT_MODERATORS_SHARE, DEFAULT_REWARD_SPLIT, charterTermsProblems } from '../lib/moderation-charters/rules.mjs';
+import { charterStepExists } from '../lib/moderation-charters/transitions.mjs';
 
 const id = (n) => bs58.encode(new Uint8Array(32).fill(n));
 const actor = (n) => ({ identityId: id(n), keyFile: `/missing/actor-${n}.json`, keyId: 1, masterKeyFile: `/missing/actor-${n}.json`, masterKeyId: 0 });
@@ -267,6 +269,33 @@ describe('journaled create recovery', () => {
   }, 10000);
 });
 
+
+describe('rules and builders shared with the app (lib/moderation-charters)', () => {
+  it('refuses the charter terms the Moderation teams form refuses, and accepts what it accepts', () => {
+    const cases = [
+      [{}, true],
+      [{ rewardSplit: { leader: 50, equal: 30, actions: 30 } }, false],
+      [{ rewardSplit: { leader: 100, equal: 0, actions: 0 } }, true],
+      [{ moderatorsShare: 101 }, false],
+      [{ moderatorsShare: 0 }, true],
+      [{ description: 'a'.repeat(4096) }, true],
+      [{ description: '🙂'.repeat(1025) }, false],
+    ];
+    for (const [change, accepted] of cases) {
+      const input = { ...manifest(), ...change };
+      const terms = { description: input.description, reasons: input.reasons.map((r) => r.code), moderatorsShare: input.moderatorsShare ?? DEFAULT_MODERATORS_SHARE, rewardSplit: input.rewardSplit ?? DEFAULT_REWARD_SPLIT };
+      expect(charterTermsProblems(terms).length === 0).toBe(accepted);
+      if (accepted) expect(() => validateManifest(input)).not.toThrow();
+      else expect(() => validateManifest(input)).toThrow();
+    }
+  });
+  it('proves a create through the shared check the app uses', async () => {
+    const sdk = { documents: { get: vi.fn().mockResolvedValue({}) } };
+    const step = { id: id(8), owner: id(2), type: 'submittedCharter' };
+    expect(await existsStep(sdk, step, id(1))).toBe(await charterStepExists(await import('@dashevo/evo-sdk'), sdk, step, id(1)));
+    expect(sdk.documents.get).toHaveBeenCalledWith('EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88', 'submittedCharter', id(8));
+  });
+});
 
 describe('read-only seated election watch', () => {
   it.each([['joining', 0], ['voting', 2_000_000]])('bounds a contested %s phase search by chain time and registered windows', async (phase, offset) => {

@@ -1,5 +1,7 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
+import { Document, PlatformVersion, type DataContract } from '@dashevo/wasm-sdk';
+import { CHARTERS_CONTRACT_ID } from '@/lib/moderation-charters/rules.mjs';
 import { YAPPR_CONTRACT_ID } from '@/lib/constants';
 import type { ElectedModerationDeclaration } from '@/lib/contract-topology';
 import { electedDeclarationOf } from '@/lib/moderated-contracts';
@@ -28,12 +30,15 @@ import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
  */
 
 /** The moderation charters system contract (SystemDataContract::ModerationCharters). */
-export const MODERATION_CHARTERS_CONTRACT_ID = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
+export const MODERATION_CHARTERS_CONTRACT_ID = CHARTERS_CONTRACT_ID;
 const ELECTED_CHARTER = 'electedCharter';
 /** How many pages of vote polls to walk looking for the contest's end. */
 const MAX_END_DATE_PAGES = 10;
 /** Vote polls per end-date page: the node's limit counts polls, not timestamps. */
 const END_DATE_PAGE_POLLS = 100;
+/** Contenders per vote-state page, and at most this many pages: the 1,000 contenders Platform allows. */
+const CONTENDER_PAGE = 100;
+const MAX_CONTENDER_PAGES = 10;
 /** Clock skew allowed past the latest end a live contest can have. */
 const END_DATE_SLACK_MS = 10 * 60 * 1000;
 const CONTEST_INDEX = 'byTargetContract';
@@ -50,6 +55,8 @@ export interface CharterReason {
 export interface CharterProposal {
   id: string;
   leaderId: string;
+  /** The contract the team would moderate; null when the document did not say. */
+  targetContractId: string | null;
   description: string;
   reasonIds: string[];
   /** Percent of each declared moderators fee the team charges; null = the full amount. */
@@ -63,6 +70,10 @@ export interface ElectionContender {
   /** The contender's identity: the charter's leader. */
   identityId: string;
   votes: number | null;
+  /** The proposal its application runs on, when the application could be read. */
+  submittedCharterId?: string;
+  /** The members its application names, when the application could be read. */
+  members?: string[];
 }
 
 /** The contest for the contract's moderation seat, as the vote poll reports it now. */
@@ -81,7 +92,10 @@ export interface SeatedTeam {
   electedCharterId: string;
   submittedCharterId: string;
   leaderId: string;
+  /** The team besides the leader as it is now: elected and added members, less removed ones. */
   members: string[];
+  /** The members the election seated, removed since or not (each holds a seat). */
+  electedMembers?: string[];
 }
 
 /** A part of the election status that could not be read. */
@@ -127,6 +141,7 @@ export function toProposal(doc: Record<string, unknown>): CharterProposal {
   return {
     id: identifierToBase58(doc.$id ?? doc.id) ?? '',
     leaderId: identifierToBase58(doc.$ownerId ?? doc.ownerId) ?? '',
+    targetContractId: identifierToBase58(doc.targetContractId),
     description: typeof doc.description === 'string' ? doc.description : '',
     reasonIds: idList(doc.reasons),
     moderatorsShare: asNumber(doc.moderatorsShare),
@@ -183,12 +198,16 @@ export function contestEndFromPolls(
 
 type VoteState = Awaited<ReturnType<EvoSDK['voting']['contestedResourceVoteState']>>;
 
-function toContest(state: VoteState, endsAtMs: number | null): ElectionContest {
+/** What a contender's application says, read from its serialized document. */
+type ApplicationReader = (serialized: Uint8Array) => Pick<ElectionContender, 'submittedCharterId' | 'members'> | null;
+
+function toContest(state: VoteState, endsAtMs: number | null, readApplication: ApplicationReader | null = null, laterPages: readonly VoteState[] = []): ElectionContest {
   try {
-    const contenders: ElectionContender[] = (state.contenders ?? []).map((contender: {
-      identityId?: unknown; voteTally?: number | undefined; free?: () => void
+    const contenders: ElectionContender[] = [state, ...laterPages].flatMap((page) => page.contenders ?? []).map((contender: {
+      identityId?: unknown; voteTally?: number | undefined; serializedDocument?: Uint8Array; free?: () => void
     }) => {
-      const mapped = { identityId: identifierToBase58(contender.identityId) ?? '', votes: contender.voteTally ?? null };
+      const application = contender.serializedDocument && readApplication ? readApplication(contender.serializedDocument) : null;
+      const mapped = { identityId: identifierToBase58(contender.identityId) ?? '', votes: contender.voteTally ?? null, ...application };
       contender.free?.();
       return mapped;
     });
@@ -208,6 +227,24 @@ function toContest(state: VoteState, endsAtMs: number | null): ElectionContest {
     };
   } finally {
     state.free();
+    for (const page of laterPages) page.free();
+  }
+}
+
+/** The proposal and members a contender's application names; null when its bytes cannot be read. */
+function readApplication(charters: DataContract, serialized: Uint8Array): Pick<ElectionContender, 'submittedCharterId' | 'members'> | null {
+  try {
+    const doc = Document.fromBytes(serialized, charters, ELECTED_CHARTER, PlatformVersion.latest());
+    try {
+      const data = documentToPlainObject(doc);
+      const submittedCharterId = identifierToBase58(data.submittedCharterId);
+      return submittedCharterId ? { submittedCharterId, members: idList(data.members) } : null;
+    } finally {
+      doc.free();
+    }
+  } catch (error) {
+    logger.warn('moderationElection: an application could not be read', error);
+    return null;
   }
 }
 
@@ -223,6 +260,7 @@ class ModerationElectionService {
         submittedCharterId: team.submittedCharterId.toBase58(),
         leaderId: team.leaderId.toBase58(),
         members: team.members.map((id) => id.toBase58()),
+        ...(team.electedMembers ? { electedMembers: team.electedMembers.map((id) => id.toBase58()) } : {}),
       };
     } finally {
       team.free();
@@ -278,22 +316,59 @@ class ModerationElectionService {
    * A failed vote-state read THROWS; a failed end-time read leaves `endsAtMs`
    * null and is reported in `endTimeFailed`.
    */
-  async getContest(targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
+  async getContest(
+    targetContractId = YAPPR_CONTRACT_ID, declaration: ElectedModerationDeclaration | null = null, chainTimeMs: number | null = null,
+  ): Promise<{ contest: ElectionContest | null; endTimeFailed: boolean }> {
     const sdk = await getEvoSdk();
-    const state = await sdk.voting.contestedResourceVoteState({
-      ...contestVotePoll(targetContractId),
-      resultType: 'documentsAndVoteTally',
-      includeLockedAndAbstaining: true,
-      limit: 100,
-    });
+    const poll = { ...contestVotePoll(targetContractId), resultType: 'documentsAndVoteTally' as const, limit: CONTENDER_PAGE };
+    const state = await sdk.voting.contestedResourceVoteState({ ...poll, includeLockedAndAbstaining: true });
+    // Every contender, not the first page: an application guard must see them all (Platform allows 1,000).
+    const laterPages: VoteState[] = [];
+    try {
+      for (let page = state.contenders ?? []; page.length === CONTENDER_PAGE && laterPages.length < MAX_CONTENDER_PAGES - 1;) {
+        // The getter hands back a fresh wasm Identifier: freed once read.
+        const lastId = page[page.length - 1].identityId;
+        let startAtContenderId: string | null;
+        try {
+          startAtContenderId = identifierToBase58(lastId);
+        } finally {
+          lastId?.free?.();
+        }
+        if (!startAtContenderId) throw new Error('a contender without an identity id');
+        const next = await sdk.voting.contestedResourceVoteState({ ...poll, startAtContenderId, startAtIncluded: false });
+        laterPages.push(next);
+        page = next.contenders ?? [];
+      }
+      if (laterPages.length === MAX_CONTENDER_PAGES - 1 && (laterPages[laterPages.length - 1].contenders?.length ?? 0) === CONTENDER_PAGE) {
+        logger.warn('moderationElection: the contest filled every contender page; later contenders were not read');
+      }
+    } catch (error) {
+      state.free();
+      for (const page of laterPages) page.free();
+      throw error;
+    }
     let endTimeFailed = false;
-    const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration).catch((error: unknown) => {
+    const readEnd = (lookback: boolean) => this.contestEnd(sdk, targetContractId, declaration, chainTimeMs, lookback).catch((error: unknown) => {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       endTimeFailed = true;
       return null;
     });
-    const contest = toContest(state, endsAtMs);
+    let endsAtMs = await readEnd(true);
+    const charters = [state, ...laterPages].some((page) => page.contenders?.some((contender: { serializedDocument?: Uint8Array }) => contender.serializedDocument))
+      ? await sdk.contracts.fetch(MODERATION_CHARTERS_CONTRACT_ID).catch(() => undefined)
+      : undefined;
+    let contest: ElectionContest;
+    try {
+      contest = toContest(state, endsAtMs, charters ? (serialized) => readApplication(charters, serialized) : null, laterPages);
+    } finally {
+      charters?.free?.();
+    }
     if (contest.contenders.length === 0 && !contest.winner) return { contest: null, endTimeFailed: false };
+    // A contest past its end that a stalled chain has not closed lies before the lookback: read again from the start.
+    if (endsAtMs === null && !endTimeFailed && chainTimeMs !== null && !contest.winner) {
+      endsAtMs = await readEnd(false);
+      contest = { ...contest, endsAtMs };
+    }
     return { contest, endTimeFailed };
   }
 
@@ -306,20 +381,30 @@ class ModerationElectionService {
    * platform#5139; beta.5 and beta.6 refused every time bound).
    *
    * The walk stops at the latest time a live contest can end: the join and
-   * vote windows from now, plus {@link END_DATE_SLACK_MS} for clock skew. So
-   * polls that end later, such as DPNS name contests weeks out, are not paged
-   * through when this contract has no contest. The lower end stays open: a
-   * poll whose end has passed but that a stalled chain has not yet closed is
-   * still this contract's contest.
+   * vote windows from now (the proved chain time when known), plus
+   * {@link END_DATE_SLACK_MS} for clock skew. So polls that end later, such as
+   * DPNS name contests weeks out, are not paged through when this contract has
+   * no contest. With chain time and `lookback`, the walk starts that slack
+   * before it, skipping long-ended polls; a poll whose end has passed but that
+   * a stalled chain has not yet closed is still this contract's contest, so
+   * {@link getContest} reads again with the lower end open when that first
+   * walk finds nothing for an undecided contest.
    */
-  private async contestEnd(sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null): Promise<number | null> {
+  private async contestEnd(
+    sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null, chainTimeMs: number | null, lookback: boolean,
+  ): Promise<number | null> {
+    // Anchored to the proved chain time when there is one (a device clock can be off), else this device's.
+    const now = chainTimeMs ?? Date.now();
     const upper = declaration
       ? {
-        endTimeMs: Date.now() + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
+        endTimeMs: now + (declaration.joinWindowSeconds + declaration.voteWindowSeconds) * 1000 + END_DATE_SLACK_MS,
         endTimeIncluded: true,
       }
       : {};
-    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = null;
+    // With chain time, polls that ended more than the slack ago are skipped (they would only use up the page budget).
+    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = chainTimeMs === null || !lookback
+      ? null
+      : { startTimeMs: BigInt(Math.max(0, Math.floor(chainTimeMs - END_DATE_SLACK_MS))), startTimeIncluded: true };
     for (let page = 0; page < MAX_END_DATE_PAGES; page++) {
       const entries = await sdk.voting.votePollsByEndDate({ ...lower, ...upper, orderAscending: true, limit: END_DATE_PAGE_POLLS });
       let first: bigint | null = null;
@@ -364,7 +449,9 @@ class ModerationElectionService {
     const contract = fetched?.data;
     if (!contract) throw new Error('The election contract could not be read.');
     const contractWithTime = contract as unknown as { createdAt?: unknown; $createdAt?: unknown };
-    const rawCreated = contractWithTime.createdAt ?? contractWithTime.$createdAt ?? contract.toJSON?.()?.$createdAt;
+    // rc.4 has no getter for it; the contract's JSON carries `createdAt` (the creation block's time).
+    const json = contract.toJSON?.() as { createdAt?: unknown; $createdAt?: unknown } | undefined;
+    const rawCreated = contractWithTime.createdAt ?? contractWithTime.$createdAt ?? json?.createdAt ?? json?.$createdAt;
     let createdAtMs = rawCreated === undefined ? null : Number(rawCreated);
     const chainTimeMs = Number(fetched?.metadata?.timeMs ?? NaN);
     if (!Number.isFinite(createdAtMs) && sdk.contracts.getHistoryWithProof) {
@@ -395,7 +482,7 @@ class ModerationElectionService {
       });
     const [proposals, contestRead, seated] = await Promise.all([
       attempt('proposals', this.getProposals(targetContractId), [] as CharterProposal[]),
-      attempt('contest', this.getContest(targetContractId, declaration), { contest: null, endTimeFailed: false }),
+      attempt('contest', this.getContest(targetContractId, declaration, Number.isFinite(chainTimeMs) ? chainTimeMs : null), { contest: null, endTimeFailed: false }),
       attempt('seatedTeam', this.getSeatedTeam(targetContractId), null as SeatedTeam | null),
     ]);
     if (contestRead.endTimeFailed) failures.push('contestEnd');

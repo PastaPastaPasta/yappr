@@ -2,6 +2,9 @@
  * Prepare and file one release charter. NETWORK is mandatory. See the charter
  * section of docs/TESTNET_RELEASE.md for the manifest and registration sequence.
  * --plan is offline; --dry-run and --watch only read; only --live broadcasts.
+ *
+ * The charter rules and the signed creates are shared with the app's
+ * Moderation teams page (lib/moderation-charters/), so both file alike.
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -13,15 +16,21 @@ import * as w from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, keyNetwork } from './sdk-env.mjs';
 import { directoryProblem, formatCredits, keyFileProblem, requireNetwork } from './registration-policy.mjs';
 import { resolveKeyFileOwner } from './owner-keys.mjs';
+import {
+  CHARTERS_CONTRACT_ID as CHARTERS, CONTEST_FUND_CREDITS as FUND, DEFAULT_MODERATORS_SHARE, DEFAULT_REWARD_SPLIT,
+  LEADER_MINIMUM_CREDITS as LEADER_MINIMUM, MEMBER_MINIMUM_CREDITS as MEMBER_MINIMUM,
+  charterTermsProblems, contestPhase, electionOpensAtMs, isCharterKey, joinClosesAtMs, messageProblem, reasonProblem, redactSecrets,
+} from '../lib/moderation-charters/rules.mjs';
+import {
+  charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, nextCharterNonce, signCharterCreate,
+} from '../lib/moderation-charters/transitions.mjs';
 
-const CHARTERS = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
-const FUND = 50_000_000_000n;
-const LEADER_MINIMUM = 51_000_000_000n;
-const MEMBER_MINIMUM = 100_000_000n;
+export { electionOpensAtMs };
+
 const NONCE_MASK = (1n << 40n) - 1n;
 const json = (value) => JSON.stringify(value, (_key, v) => typeof v === 'bigint' ? String(v) : v, 2) + '\n';
 const hash = (value) => createHash('sha256').update(json(value)).digest('hex');
-const idBytes = (id) => w.Identifier.fromBase58(id).toBytes();
+const idBytes = (id) => charterIdBytes(w, id);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 function identityId(value) {
@@ -43,22 +52,29 @@ export function validateManifest(input) {
     if (!actor.keyFile || !Number.isSafeInteger(actor.keyId) || actor.keyId < 0) throw new Error('every actor needs keyFile and a nonnegative keyId');
     if (!actor.masterKeyFile || !Number.isSafeInteger(actor.masterKeyId) || actor.masterKeyId < 0) throw new Error('every actor needs masterKeyFile and a nonnegative masterKeyId for preparation');
   }
-  for (const member of input.members) if (member.message !== undefined && (typeof member.message !== 'string' || Buffer.byteLength(member.message) > 1023)) throw new Error('member message must be at most 1023 bytes');
+  for (const member of input.members) if (member.message !== undefined && messageProblem(member.message)) throw new Error('member message must be at most 1023 bytes');
   if (!Array.isArray(expected.documentTypes) || !expected.documentTypes.length || expected.documentTypes.some((type) => typeof type !== 'string' || !type.length)) throw new Error('expected.documentTypes must list the moderated document types');
   if (new Set(actors.map((a) => a.identityId)).size !== actors.length) throw new Error('leader and members must all be distinct');
   if (!Array.isArray(input.reasons) || !input.reasons.length || input.reasons.length > 16) throw new Error('provide 1 to 16 reasons');
   for (const reason of input.reasons) {
-    if (!/^[A-Z]{3}$/.test(reason.code) || typeof reason.label !== 'string' || !reason.label.trim() || [...reason.label].length > 64) throw new Error('every reason needs a three-uppercase-letter code and a label');
+    const problem = reasonProblem(reason);
+    if (problem) throw new Error(problem.field === 'description' ? 'reason description must be 1 to 1024 characters' : 'every reason needs a three-uppercase-letter code and a label');
   }
-  for (const reason of input.reasons) if (reason.description !== undefined && (typeof reason.description !== 'string' || !reason.description.length || [...reason.description].length > 1024)) throw new Error('reason description must be 1 to 1024 characters');
   if (new Set(input.reasons.map((r) => r.code)).size !== input.reasons.length) throw new Error('reason codes must be unique');
-  const split = input.rewardSplit ?? { leader: 40, equal: 30, actions: 30 };
-  if (!['leader', 'equal', 'actions'].every((key) => Number.isInteger(split[key]) && split[key] >= 0 && split[key] <= 100) || split.leader + split.equal + split.actions !== 100) throw new Error('rewardSplit percentages must sum to 100');
-  const share = input.moderatorsShare ?? 60;
-  if (!Number.isInteger(share) || share < 0 || share > 100) throw new Error('moderatorsShare must be 0 to 100');
-  if (typeof input.description !== 'string' || !input.description.trim() || Buffer.byteLength(input.description) > 4096) throw new Error('provide a charter description');
-  return { ...input, rewardSplit: split, moderatorsShare: share };
+  const terms = { description: input.description, reasons: input.reasons.map((r) => r.code),
+    rewardSplit: input.rewardSplit ?? { ...DEFAULT_REWARD_SPLIT }, moderatorsShare: input.moderatorsShare ?? DEFAULT_MODERATORS_SHARE };
+  const [problem] = charterTermsProblems(terms);
+  if (problem) throw new Error(MANIFEST_TERMS_ERRORS[problem.field]);
+  return { ...input, rewardSplit: terms.rewardSplit, moderatorsShare: terms.moderatorsShare };
 }
+
+/** The manifest field a charter-terms problem names, as the CLI reports it. */
+const MANIFEST_TERMS_ERRORS = {
+  description: 'provide a charter description of at most 4096 bytes',
+  reasons: 'provide 1 to 16 reasons',
+  moderatorsShare: 'moderatorsShare must be 0 to 100',
+  rewardSplit: 'rewardSplit percentages must sum to 100',
+};
 
 export function charterOptions(argv, env = process.env) {
   const { values } = parseArgs({ args: argv, options: {
@@ -121,11 +137,6 @@ function prepareDirectory(path) {
 }
 
 function enabled(key) { return key.disabledAt === undefined || key.disabledAt === null; }
-function boundKey(key, purpose, type) {
-  const bounds = key.contractBounds?.toJSON();
-  return enabled(key) && key.purpose === purpose && key.securityLevel === 'MEDIUM' && key.keyType === 'ECDSA_SECP256K1'
-    && bounds?.$type === 'documentType' && bounds.id === CHARTERS && bounds.documentTypeName === type;
-}
 
 function assertKey(key, pk, security) {
   if (!key || !enabled(key) || key.purpose !== 'AUTHENTICATION' || key.securityLevel !== security || key.contractBounds) throw new Error(`need an enabled, unbound ${security} AUTHENTICATION key`);
@@ -149,11 +160,6 @@ async function actorFor(sdk, actor) {
     assertKey(identity.getPublicKeyById(actor.masterKeyId), master, 'MASTER');
     return master;
   } };
-}
-
-function document(type, owner, data) {
-  return w.Document.fromObject({ $formatVersion: '0', $id: new Uint8Array(32), $ownerId: idBytes(owner),
-    $dataContractId: idBytes(CHARTERS), $type: type, $revision: 1n, $entropy: randomBytes(32), ...data }, w.PlatformVersion.latest());
 }
 
 function verifiedNonceFloors(state) {
@@ -181,56 +187,18 @@ export function importNonceFloors(state, prior) {
 }
 
 /** Never allocate below a proved write, including imported prior target journals. */
-export async function nextNonce(sdk, state, owner) {
-  const floor = BigInt(verifiedNonceFloors(state)[owner] ?? 0);
-  for (let attempt = 0; attempt <= 12; attempt++) {
-    const raw = await sdk.wasm.getIdentityContractNonce(owner, CHARTERS);
-    const current = BigInt(raw ?? 0) & NONCE_MASK;
-    if (current >= floor) return current + 1n;
-    if (attempt < 12) await sleep(5000);
-  }
-  throw new Error('nonce reads remain behind this journal’s proved writes; retry after the node catches up (no new transition prepared)');
+export function nextNonce(sdk, state, owner) {
+  return nextCharterNonce(sdk, owner, BigInt(verifiedNonceFloors(state)[owner] ?? 0));
 }
 
 async function createStep(sdk, state, actor, type, data, fund = false) {
   const nonce = await nextNonce(sdk, state, actor.identityId);
-  const doc = document(type, actor.identityId, data);
-  if (fund) {
-    const required = await sdk.documents.contestFundToJoin(doc);
-    try { if (!required || BigInt(required.credits) !== FUND) throw new Error('contest fund differs from the reviewed 0.5 DASH budget; stop and review'); }
-    finally { required?.free(); }
-  }
-  const create = new w.DocumentCreateTransition({ document: doc, identityContractNonce: nonce,
-    ...(fund ? { prefundedVotingBalance: new w.PrefundedVotingBalance({ indexName: 'byTargetContract', credits: FUND }) } : {}) });
-  const id = create.base.id.toBase58();
-  const batch = w.BatchTransition.fromBatchedTransitions([new w.BatchedTransition(create.toDocumentTransition())], actor.identityId, 0);
-  const st = batch.toStateTransition();
-  st.setIdentityContractNonce(nonce);
-  st.sign(actor.pk, actor.identityKey);
-  return { id, type, owner: actor.identityId, nonce: String(nonce), bytes: Buffer.from(st.toBytes()).toString('base64'), hash: st.hash(false), state: 'prepared' };
+  const step = await signCharterCreate(w, sdk, { type, ownerId: actor.identityId, data, nonce, privateKey: actor.pk, identityKey: actor.identityKey, fund });
+  return { ...step, bytes: Buffer.from(step.bytes).toString('base64'), state: 'prepared' };
 }
 
-export async function existsStep(sdk, step, target) {
-  if (step.type === 'electedCharter') {
-    const state = await sdk.voting.contestedResourceVoteState({ dataContractId: CHARTERS, documentTypeName: 'electedCharter', indexName: 'byTargetContract',
-      indexValues: [target], resultType: 'documentsAndVoteTally', includeLockedAndAbstaining: true,
-      startAtContenderId: step.owner, startAtIncluded: true, limit: 1 });
-    try {
-      const contender = state.contenders.find((c) => c.identityId.toBase58() === step.owner);
-      if (contender?.serializedDocument) {
-        const contract = await sdk.contracts.fetch(CHARTERS);
-        try {
-          const doc = w.Document.fromBytes(contender.serializedDocument, contract, 'electedCharter', w.PlatformVersion.latest());
-          try { return doc.id.toBase58() === step.id && doc.ownerId.toBase58() === step.owner; }
-          finally { doc.free(); }
-        } finally { contract.free(); }
-      }
-      const seated = await sdk.moderationCharters.seatedCharter(target);
-      try { return seated?.id.toBase58() === step.id && seated?.ownerId.toBase58() === step.owner; }
-      finally { seated?.free(); }
-    } finally { state.free(); }
-  }
-  return Boolean(await sdk.documents.get(CHARTERS, step.type, step.id));
+export function existsStep(sdk, step, target) {
+  return charterStepExists(w, sdk, step, target);
 }
 
 async function waitForStep(sdk, step, target) {
@@ -253,8 +221,7 @@ export async function commitStep(sdk, state, name, save, make) {
   // Never build a fresh transition/nonce to retry an ambiguous create.
   if (step.state === 'verified') throw new Error(`${name}: previously verified document is missing; reconcile the journal`);
   if (step.nonce) {
-    const current = BigInt(await sdk.wasm.getIdentityContractNonce(step.owner, CHARTERS) ?? 0) & NONCE_MASK;
-    if (current >= BigInt(step.nonce)) {
+    if (await charterNonceConsumed(sdk, step.owner, step.nonce)) {
       if (await waitForStep(sdk, step, state.targetContractId)) { step.state = 'verified'; save(); console.log(`${name}: ${step.id} (proved after nonce advance)`); return step; }
       throw new Error(`${name}: nonce already consumed but document not proved; reconcile the saved transition hash and document before continuing; never discard uncertain signed bytes`);
     }
@@ -280,7 +247,7 @@ async function prepareBoundKey(sdk, actor, purpose, type, state, dir, save, prep
   const name = `${actor.identityId}-${purpose.toLowerCase()}`;
   const file = resolve(dir, `${name}.json`);
   let identity = await sdk.identities.fetch(actor.identityId);
-  let onChain = identity.publicKeys.find((k) => boundKey(k, purpose, type));
+  let onChain = identity.publicKeys.find((k) => isCharterKey(k, purpose, type));
   if (!existsSync(file)) {
     if (!prepare) throw new Error(`${name}: missing prepared key file; run --live --prepare before registration`);
     if (onChain) throw new Error(`${name}: a bound key exists; supply its private half at ${file} before continuing`);
@@ -295,19 +262,18 @@ async function prepareBoundKey(sdk, actor, purpose, type, state, dir, save, prep
   if (owner.ownerId !== actor.identityId) throw new Error('bound key file belongs to another identity');
   const pk = w.PrivateKey.fromWIF(owner.wif);
   const byId = identity.getPublicKeyById(keyId);
-  if (byId && (!boundKey(byId, purpose, type) || byId.getPublicKeyHash() !== pk.getPublicKeyHash())) throw new Error(`${name}: bound key id was occupied by a different key`);
+  if (byId && (!isCharterKey(byId, purpose, type) || byId.getPublicKeyHash() !== pk.getPublicKeyHash())) throw new Error(`${name}: bound key id was occupied by a different key`);
   onChain = byId;
   if (!onChain) {
     if (!prepare) throw new Error(`${name}: key not proved; finish --live --prepare before filing`);
     const previous = state.keys[name];
     if (previous?.state === 'broadcasting') throw new Error(`${name}: identity update outcome unknown; inspect the proved identity before retrying (no automatic new nonce)`);
-    const key = new w.IdentityPublicKeyInCreation({ keyId, purpose, securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', isReadOnly: false,
-      data: pk.getPublicKey().toBytes(), contractBounds: w.ContractBounds.SingleContractDocumentType(CHARTERS, type) });
+    const key = charterKeyInCreation(w, { keyId, purpose, documentType: type, publicKey: pk.getPublicKey().toBytes() });
     const signer = new w.IdentitySigner(); signer.addKey(actor.loadMaster()); signer.addKey(pk);
     state.keys[name] = { keyId, file, state: 'broadcasting' }; save();
     await sdk.identities.update({ identity, addPublicKeys: [key], signer });
     identity = await sdk.identities.fetch(actor.identityId);
-    if (!identity.publicKeys.some((k) => k.keyId === keyId && boundKey(k, purpose, type) && k.getPublicKeyHash() === pk.getPublicKeyHash())) throw new Error(`${name}: new bound key could not be proved`);
+    if (!identity.publicKeys.some((k) => k.keyId === keyId && isCharterKey(k, purpose, type) && k.getPublicKeyHash() === pk.getPublicKeyHash())) throw new Error(`${name}: new bound key could not be proved`);
   }
   state.keys[name] = { keyId, file, state: 'verified' }; save();
   return pk;
@@ -335,17 +301,13 @@ export function assertRegistered(contract, expected) {
   if (moderators.interim?.$type !== expected.interim) throw new Error('registered interim disagrees with expected declaration');
 }
 
-/** Pure timing rule: Platform opens the first charter at creation block time + delay. */
-export function electionOpensAtMs(creationTimeMs, delaySeconds) {
-  if (!Number.isFinite(Number(creationTimeMs)) || !Number.isSafeInteger(Number(delaySeconds)) || Number(delaySeconds) < 0) return null;
-  return Number(creationTimeMs) + Number(delaySeconds) * 1000;
-}
-
 function contractCreationTimeMs(contract, metadata) {
-  const value = contract?.createdAt ?? contract?.$createdAt ?? contract?.toJSON?.()?.$createdAt;
-  if (value !== undefined && Number.isFinite(Number(value))) return Number(value);
-  // rc.4 exposes no creation field; the proved registration read's block time
-  // is a conservative chain-time anchor immediately after registration.
+  // rc.4 has no getter for it, but the contract's JSON carries `createdAt` (as the app reads it).
+  const json = contract?.toJSON?.();
+  const value = contract?.createdAt ?? contract?.$createdAt ?? json?.createdAt ?? json?.$createdAt;
+  if (value !== undefined && value !== null && Number.isFinite(Number(value))) return Number(value);
+  // Otherwise the proved registration read's block time is a conservative
+  // chain-time anchor immediately after registration.
   return Number.isFinite(Number(metadata?.timeMs)) ? Number(metadata.timeMs) : null;
 }
 
@@ -391,6 +353,9 @@ async function registered(sdk, target, waitSeconds, expected) {
   throw new Error('target is not registered; prepare before registration, then re-run --live immediately after it (or --wait-registration <seconds>)');
 }
 
+/** The watch output's names for the shared contest phases. */
+const WATCH_PHASES = { seated: 'seated', decided: 'decided', none: 'no election', unknown: 'open (phase time unavailable)', joining: 'joining', voting: 'voting' };
+
 /** One read-only snapshot. Invoke again to refresh; never loads signing keys. */
 export async function watchContract(sdk, name, target) {
   const contract = await sdk.contracts.fetch(target);
@@ -429,11 +394,11 @@ export async function watchContract(sdk, name, target) {
       lower = { startTimeMs: last, startTimeIncluded: first !== last };
     }
     // The poll end moves from join-close to final-close when a second contender enters.
-    const joinClosesAtMs = endsAtMs === null ? null : endsAtMs - (contenders.length > 1 ? declaration.voteWindow * 1000 : 0);
-    const phase = team ? 'seated' : state.winner ? 'decided' : contenders.length === 0 ? 'no election' : joinClosesAtMs === null || !Number.isFinite(chainMs) ? 'open (phase time unavailable)' : chainMs < joinClosesAtMs ? 'joining' : 'voting';
+    const closes = joinClosesAtMs(endsAtMs, contenders.length, declaration.voteWindow);
+    const phase = WATCH_PHASES[contestPhase({ seated: Boolean(team), decided: Boolean(state.winner), contenders: contenders.length, joinClosesAtMs: closes, chainTimeMs: chainMs })];
     return { contract: name, targetContractId: target, phase, declaration: { joinWindow: declaration.joinWindow, voteWindow: declaration.voteWindow, interim: declaration.interim.$type },
       proposals: [...proposals.values()].filter(Boolean).map((d) => ({ id: d.id.toBase58(), leaderId: d.ownerId.toBase58() })),
-      contenders, abstain: state.abstainVoteTally ?? null, lock: state.lockVoteTally ?? null, joinClosesAtMs, endsAtMs,
+      contenders, abstain: state.abstainVoteTally ?? null, lock: state.lockVoteTally ?? null, joinClosesAtMs: closes, endsAtMs,
       winner: state.winner ? { kind: state.winner.kind, identityId: state.winner.identityId?.toBase58() ?? null,
         block: { height: String(state.winner.block.height), timeMs: String(state.winner.block.timeMs) } } : null,
       team: team ? { electedCharterId: team.electedCharterId.toBase58(), submittedCharterId: team.submittedCharterId.toBase58(),
@@ -534,7 +499,7 @@ async function live(sdk, manifest, options) {
 }
 
 function safeError(error) {
-  return String(error?.message ?? error).replace(/\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g, '[redacted key]').replace(/\b[0-9a-f]{64}\b/gi, '[redacted hex]');
+  return redactSecrets(error?.message ?? error);
 }
 
 export async function main(argv = process.argv.slice(2)) {
