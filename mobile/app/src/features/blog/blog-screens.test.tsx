@@ -15,6 +15,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { BlogPostScreen } from './BlogPostScreen';
 import { BlogScreen } from './BlogScreen';
+import { EditBlogScreen } from './BlogSettingsScreen';
 import { ManageBlogsScreen } from './ManageBlogsScreen';
 import { EditPostScreen, NewPostScreen } from './PostEditorScreen';
 import { draftKey } from './blog-writes';
@@ -184,6 +185,8 @@ beforeEach(() => {
   fakeEngine.method('blogs.info').mockResolvedValue(INFO);
   fakeEngine.method('blogs.get').mockResolvedValue(blog);
   fakeEngine.method('blogs.postBySlug').mockResolvedValue(post);
+  fakeEngine.method('blogs.manage').mockResolvedValue(blog);
+  fakeEngine.method('blogs.managePost').mockResolvedValue(post);
   fakeEngine.method('blogs.followState').mockResolvedValue({ following: false, followers: 3 });
   fakeEngine.method('blogs.comments').mockResolvedValue([]);
 });
@@ -679,6 +682,50 @@ describe('moderation (blog v10)', () => {
     expect(screen.getByText('This blog is hidden by moderators.')).toBeTruthy();
     expect(fakeEngine.method('blogs.posts')).not.toHaveBeenCalled();
     expect(fakeEngine.method('blogs.followState')).not.toHaveBeenCalled();
+  });
+
+  describe("the author's own hidden blog", () => {
+    // What `blogs.manage` / `blogs.managePost` answer the owner: whole, labelled. The public read is withheld.
+    const ownHidden: BlogDTO = { ...blog, moderation: LABEL };
+    beforeEach(() => {
+      useSessionStore.setState({ status: 'signed-in', session: session(AUTHOR), accounts: [] });
+      fakeEngine.method('blogs.get').mockResolvedValue({ ...blog, name: '', description: null, commentsEnabledDefault: false, moderation: WITHHELD });
+      fakeEngine.method('blogs.postBySlug').mockResolvedValue(withheldPost);
+      fakeEngine.method('blogs.manage').mockResolvedValue(ownHidden);
+      fakeEngine.method('blogs.managePost').mockResolvedValue({ ...post, moderation: LABEL });
+    });
+
+    it('opens its settings with its real details', async () => {
+      mockParams.current = { id: BLOG };
+      fakeEngine.method('blogs.info').mockResolvedValue({ ...INFO, presets: [{ id: 'default', name: 'Default', description: '', theme: THEME }] });
+      renderScreen(<EditBlogScreen />);
+      await settle();
+
+      expect(fakeEngine.method('blogs.manage')).toHaveBeenCalledWith(BLOG);
+      expect(fakeEngine.method('blogs.get')).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue('Field Journal')).toBeTruthy();
+      expect(screen.getByDisplayValue('Notes')).toBeTruthy();
+    });
+
+    it('writes a new post on it, named and with its comments default', async () => {
+      mockParams.current = { id: BLOG };
+      renderScreen(<NewPostScreen />);
+      await settle();
+
+      expect(fakeEngine.method('blogs.get')).not.toHaveBeenCalled();
+      expect(screen.getByText('In Field Journal')).toBeTruthy();
+      expect(screen.getByTestId('blog-editor-comments').props.accessibilityState).toMatchObject({ checked: true });
+    });
+
+    it('edits a hidden post with its real content', async () => {
+      mockParams.current = { id: BLOG, slug: 'field-notes' };
+      renderScreen(<EditPostScreen />);
+      await settle();
+
+      expect(fakeEngine.method('blogs.managePost')).toHaveBeenCalledWith(BLOG, 'field-notes');
+      expect(fakeEngine.method('blogs.postBySlug')).not.toHaveBeenCalled();
+      expect(screen.getByDisplayValue('Field notes')).toBeTruthy();
+    });
   });
 
   it("labels the author's own hidden blog and hidden or restricted posts in Your blogs", async () => {

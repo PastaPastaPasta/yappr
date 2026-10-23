@@ -1,10 +1,12 @@
+import { Stack } from 'expo-router';
 import { Text as RNText, View } from 'react-native';
 import { EyeSlashIcon } from 'react-native-heroicons/outline';
 
-/** What the moderators hid, in the words web's stub uses ("This blog post is hidden by moderators."). */
-export type HiddenNoun = 'blog' | 'blog post' | 'comment';
+import { Screen } from '~/ui/Screen';
+import { useColors } from '~/ui/tokens';
 
-export const hiddenText = (noun: HiddenNoun) => `This ${noun} is hidden by moderators.`;
+/** What the moderators hid, in the words web's stub uses ("This blog post is hidden by moderators."). */
+type HiddenNoun = 'blog' | 'blog post' | 'comment';
 
 /**
  * What a blog, post or comment the moderators hid shows on the official apps
@@ -12,11 +14,24 @@ export const hiddenText = (noun: HiddenNoun) => `This ${noun} is hidden by moder
  * nothing to act on. Hiding never deletes: it is still on the network.
  */
 export function BlogHiddenStub({ noun, color, testID }: { noun: HiddenNoun; color: string; testID?: string }) {
-  const text = hiddenText(noun);
+  const text = `This ${noun} is hidden by moderators.`;
   return (
-    <View accessible accessibilityLabel={text} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 }} testID={testID ?? `blog-hidden-${noun.replace(' ', '-')}`}>
+    <View accessible accessibilityLabel={text} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 12 }} testID={testID}>
       <EyeSlashIcon size={16} color={color} />
       <RNText style={{ flexShrink: 1, color, fontSize: 15, fontStyle: 'italic' }}>{text}</RNText>
     </View>
+  );
+}
+
+/** A whole screen given over to the stub: a hidden blog's home, or a hidden post (or a post in a hidden blog). */
+export function BlogHiddenScreen({ title, noun }: { title: string; noun: HiddenNoun }) {
+  const c = useColors();
+  return (
+    <Screen>
+      <Stack.Screen options={{ title }} />
+      <View className="px-4">
+        <BlogHiddenStub noun={noun} color={c.textSecondary} />
+      </View>
+    </Screen>
   );
 }

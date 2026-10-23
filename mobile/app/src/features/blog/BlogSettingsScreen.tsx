@@ -553,7 +553,8 @@ export function EditBlogScreen() {
   const { status, identityId } = useSession();
   const signedIn = status === 'signed-in';
   const info = useEngineQuery(queryKeys.blog.info, (api) => api.blogs.info());
-  const blog = useEngineQuery(queryKeys.blog.detail(id), (api) => api.blogs.get(id), { enabled: id !== '' });
+  // The owner's copy: a blog the moderators hid still opens with its real details (blog v10).
+  const blog = useEngineQuery(queryKeys.blog.manage(id), (api) => api.blogs.manage(id), { enabled: id !== '' && signedIn });
 
   const owned = blog.data && blog.data.ownerId === identityId ? blog.data : null;
   // Kept once the form has opened: deleting the blog makes the read come back empty in the render

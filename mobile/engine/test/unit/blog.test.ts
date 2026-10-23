@@ -301,6 +301,31 @@ describe('blog v10 moderation', () => {
     })
   })
 
+  describe("the author's management reads (settings, the editor)", () => {
+    it("reads the author's own hidden blog and post whole, labelled", async () => {
+      m.blogService.getBlog.mockResolvedValue(libBlog(hide()))
+      expect(await blogReads.manage(BLOG)).toMatchObject({ name: 'My blog', description: 'About things', moderation: { restricted: false, ...label } })
+      m.blogPostService.getPostBySlug.mockResolvedValue(v10Post({ live: 2, ...hide() }))
+      expect(await blogReads.managePost(BLOG, 'title')).toMatchObject({
+        title: 'Title', content: [{ type: 'paragraph', content: 'Hello there' }], moderation: { restricted: true, ...label },
+      })
+    })
+
+    it("reads anyone else's hidden blog and post as the public does, withheld", async () => {
+      m.viewer = 'READER'
+      m.blogService.getBlog.mockResolvedValue(libBlog(hide()))
+      expect(await blogReads.manage(BLOG)).toMatchObject({ ownerId: AUTHOR, name: '', moderation: { withheld: true } })
+      m.blogPostService.getPostBySlug.mockResolvedValue(v10Post(hide()))
+      expect(await blogReads.managePost(BLOG, 'title')).toMatchObject(withheldPost)
+    })
+
+    it('needs a signed-in viewer', async () => {
+      m.viewer = null
+      await expect(blogReads.manage(BLOG)).rejects.toBeTruthy()
+      await expect(blogReads.managePost(BLOG, 'title')).rejects.toBeTruthy()
+    })
+  })
+
   describe('on an archival build (every lane)', () => {
     beforeEach(() => {
       vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')

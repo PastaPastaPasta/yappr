@@ -319,16 +319,17 @@ async function withBlogReasons<T extends { moderation?: ModerationDTO }>(dtos: T
   return dtos
 }
 
-async function toPostDTO(post: LibPost): Promise<BlogPostDTO> {
-  const summary = toSummary(post)
+async function toPostDTO(post: LibPost, audience: Audience = 'public'): Promise<BlogPostDTO> {
+  const summary = toSummary(post, null, audience)
   if (summary.moderation?.withheld) return { ...summary, content: [], summaryText: '', summaryHidden: false, revision: post.$revision ?? 1 }
   const { text, hidden } = decodeSummary(post.subtitle)
-  const [dto] = await withBlogReasons([{ ...summary, content: post.content, summaryText: text, summaryHidden: hidden, revision: post.$revision ?? 1 }])
+  const dto: BlogPostDTO = { ...summary, content: post.content, summaryText: text, summaryHidden: hidden, revision: post.$revision ?? 1 }
+  await withReasons('blog', [dto.moderation])
   return dto
 }
 
 async function toCommentDTOs(comments: LibComment[]): Promise<BlogCommentDTO[]> {
-  const shown = comments.map(comment => ({ comment, moderation: moderationDTO(comment.moderation, false, moderationViewAll('blog')) }))
+  const shown = comments.map(comment => ({ comment, moderation: moderationDTO(comment.moderation, false, seesAll('public')) }))
   const authors = await authorsOf(shown.filter(({ moderation }) => !moderation?.withheld).map(({ comment }) => comment.ownerId))
   return withBlogReasons(shown.map(({ comment, moderation }): BlogCommentDTO => ({
     id: comment.id,
@@ -466,6 +467,30 @@ export const blogReads = {
     assertId(id, 'id')
     const post = await read(() => blogPostService.getOrThrow(id))
     return readable(post) ? toPostDTO(post) : null
+  },
+
+  /**
+   * The viewer's own blog as its management screens (settings, the editor)
+   * need it: whole even when the moderators hid it, labelled. Anyone else's
+   * blog reads as `get` does, so those screens still see it isn't theirs.
+   * Kept apart from `get` so the public read (and its cache) never holds an
+   * owner-only copy.
+   */
+  async manage(id: string): Promise<BlogDTO | null> {
+    assertId(id, 'id')
+    const viewer = requireViewer('Your blog')
+    const blog = await read(() => blogService.getBlog(id, { throwOnError: true }))
+    return blog ? (await toBlogDTOs([blog], blog.ownerId === viewer ? 'owner' : 'public'))[0] : null
+  },
+
+  /** The viewer's own post by its address, for the editor: whole even when hidden, labelled (see `manage`). */
+  async managePost(blogId: string, slug: string): Promise<BlogPostDTO | null> {
+    assertId(blogId, 'blogId')
+    if (typeof slug !== 'string' || !slug || slug.length > 63) throw badRequest('slug must be a post address')
+    const viewer = requireViewer('Your post')
+    const post = await read(() => blogPostService.getPostBySlug(blogId, slug))
+    if (!readable(post)) return null
+    return toPostDTO(post, post.ownerId === viewer ? 'owner' : 'public')
   },
 
   /**

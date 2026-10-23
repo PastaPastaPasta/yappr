@@ -18,11 +18,11 @@ import { useMediaUrls } from '~/ui/media-url';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { ModerationLabel } from '~/ui/post/ModerationLabel';
-import { MIN_TARGET, useColors } from '~/ui/tokens';
+import { MIN_TARGET } from '~/ui/tokens';
 
 import { BlogAvatar, postMeta } from './BlogCards';
 import { BlogMenu, BlogStatusBar, FollowBlogButton, blogHeaderOptions, useBlogFollow } from './BlogChrome';
-import { BlogHiddenStub } from './BlogHidden';
+import { BlogHiddenScreen } from './BlogHidden';
 import { blogWebUrl, openBlogPost, shareLink } from './blog-navigation';
 import { BlogReportSheet } from './BlogReportSheet';
 import { blogPalette, fontStyle, onColor, type BlogPalette } from './blog-theme';
@@ -134,30 +134,21 @@ function BlogHeader({ blog, palette, followCount, follow }: { blog: BlogDTO; pal
  */
 export function BlogScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const c = useColors();
   const viewerId = useViewerId();
   const offline = useOffline();
   const [reporting, setReporting] = useState(false);
   const info = useEngineQuery(queryKeys.blog.info, (api) => api.blogs.info(), { staleTime: Infinity });
   const blog = useEngineQuery(queryKeys.blog.detail(id), (api) => api.blogs.get(id), { persist: true });
   const withheld = blog.data?.moderation?.withheld === true;
+  const shown = Boolean(blog.data) && !withheld;
   const posts = useEngineInfiniteQuery(queryKeys.blog.posts(id), (api, cursor) => api.blogs.posts(id, cursor), {
     persist: true,
-    enabled: Boolean(blog.data) && !withheld,
+    enabled: shown,
   });
-  const follow = useBlogFollow(id, Boolean(blog.data) && !withheld);
+  const follow = useBlogFollow(id, shown);
   const [refreshing, setRefreshing] = useState(false);
 
-  if (withheld) {
-    return (
-      <Screen>
-        <Stack.Screen options={{ title: 'Blog' }} />
-        <View className="px-4">
-          <BlogHiddenStub noun="blog" color={c.textSecondary} />
-        </View>
-      </Screen>
-    );
-  }
+  if (withheld) return <BlogHiddenScreen title="Blog" noun="blog" />;
 
   if (!blog.data) {
     return (

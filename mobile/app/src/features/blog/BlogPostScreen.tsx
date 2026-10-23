@@ -24,14 +24,14 @@ import { FilterChips, SegmentedControl } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { ModerationLabel } from '~/ui/post/ModerationLabel';
-import { MIN_TARGET, useColors } from '~/ui/tokens';
+import { MIN_TARGET } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
 import { BlogAvatar } from './BlogCards';
 import { BlogMenu, BlogStatusBar, FollowBlogButton, blogHeaderOptions, useBlogFollow } from './BlogChrome';
 import { BlogComments } from './BlogComments';
 import { BlogContent } from './BlogContent';
-import { BlogHiddenStub } from './BlogHidden';
+import { BlogHiddenScreen } from './BlogHidden';
 import { blocksOf } from './blocks';
 import { blogPostWebUrl, openBlog, shareLink } from './blog-navigation';
 import { BlogReportSheet } from './BlogReportSheet';
@@ -201,7 +201,6 @@ function usePostDeletion(postId: string | undefined, blogId: string, gone: boole
  */
 export function BlogPostScreen() {
   const { id: blogId, slug } = useLocalSearchParams<{ id: string; slug: string }>();
-  const c = useColors();
   const viewerId = useViewerId();
   const offline = useOffline();
   const urls = useMediaUrls();
@@ -269,17 +268,8 @@ export function BlogPostScreen() {
   const b = view.blog;
   const p = view.post;
   // Web's stub covers a hidden blog's posts as well as a hidden post.
-  const hidden = b.moderation?.withheld ? 'blog' : p.moderation?.withheld ? 'blog post' : null;
-  if (hidden) {
-    return (
-      <Screen>
-        <Stack.Screen options={{ title: 'Post' }} />
-        <View className="px-4">
-          <BlogHiddenStub noun={hidden} color={c.textSecondary} />
-        </View>
-      </Screen>
-    );
-  }
+  if (b.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog" />;
+  if (p.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog post" />;
 
   const palette = blogPalette(b.theme, mode);
   const scale = FONT_SCALES[size];

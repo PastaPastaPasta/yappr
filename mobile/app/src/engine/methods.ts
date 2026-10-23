@@ -83,6 +83,8 @@ const READS = new Set([
   'blogs.ownReport',
   'blogs.publishAddressFree',
   'blogs.publishOutcome',
+  'blogs.manage',
+  'blogs.managePost',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 /**
