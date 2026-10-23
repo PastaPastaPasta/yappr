@@ -92,6 +92,12 @@ describe('paginateFetchAll', () => {
     expect(query).toHaveBeenCalledTimes(1)
   })
 
+  it('a short first page of an `in` walk is the whole answer (only continuations come back short)', async () => {
+    const { sdk, query } = pagedSdk(37, { shortContinuations: true })
+    expect((await paginateFetchAll(sdk, build, doc => doc.$id, { inClause: true })).documents).toHaveLength(37)
+    expect(query).toHaveBeenCalledTimes(1)
+  })
+
   it('throws instead of looping when the cursor does not advance', async () => {
     const page = new Map(Array.from({ length: 100 }, (_, i) => [`x${i}`, { $id: 'same' }]))
     const sdk = { documents: { query: vi.fn(async () => page), count: vi.fn() } }

@@ -70,7 +70,11 @@ export interface DmChain {
   now(): number
   /** Messages at any of `tags`, whatever their owner. Callers filter by `$ownerId`. */
   messagesByTags(tags: Uint8Array[]): Promise<ChainMessage[]>
-  /** Every invite in `buckets` created at or after `since`, all pages. */
+  /**
+   * Every invite in `buckets` created at or after `since`, all pages of every
+   * bucket, or a rejection: the scan moves its cursor on this answer, so a
+   * partial one would put invites of a later bucket behind it for good.
+   */
   invitesSince(buckets: number[], since: number): Promise<ChainInvite[]>
   /** One newest-first page of `bucket`, for lost-state recovery (§9). */
   invitesNewestFirst(bucket: number, startAfter: string | null): Promise<InvitePage>
