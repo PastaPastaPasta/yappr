@@ -23,9 +23,10 @@ export interface PaginateOptions {
   /** Page size per query. Default: 100 */
   pageSize?: number;
   /**
-   * The query has an `in` clause. Its continuation pages can come back a row
-   * short of `pageSize`, so only an empty page proves the end (one extra
-   * query per walk that found anything).
+   * The query has an `in` clause. Its continuation pages (after `startAfter`)
+   * can come back a row short of `pageSize`, so past the first page only an
+   * empty page proves the end (one extra query per walk that went past it).
+   * A short first page is the whole answer.
    */
   inClause?: boolean;
 }
@@ -438,6 +439,14 @@ export async function queryOwnedPostIds(
   }
 }
 
+/** One page of a query, as plain documents. */
+type PageFetcher = (query: Record<string, unknown>) => Promise<Record<string, unknown>[]>;
+
+/** The plain `documents.query` page reader of the SDK-taking helpers below. */
+function sdkPages(sdk: SDK): PageFetcher {
+  return async (query) => normalizeSDKResponse(await sdk.documents.query(query));
+}
+
 /**
  * Walk a query's pages with `startAfter` (the last document's `$id`), handing
  * each page to `onPage`, until the documents run out or `maxResults` have been
@@ -446,7 +455,7 @@ export async function queryOwnedPostIds(
  * list never passes for the whole one unnoticed.
  */
 async function walkPages(
-  sdk: SDK,
+  fetchPage: PageFetcher,
   queryBuilder: (startAfter?: string) => Record<string, unknown>,
   options: PaginateOptions,
   onPage: (documents: Record<string, unknown>[]) => void
@@ -464,7 +473,7 @@ async function walkPages(
     query.limit = limit;
     if (startAfter) query.startAfter = startAfter;
 
-    const page = normalizeSDKResponse(await sdk.documents.query(query));
+    const page = await fetchPage(query);
     if (page.length > remaining) {
       onPage(page.slice(0, remaining));
       logger.warn('pagination: stopped at the result cap; the list is incomplete', {
@@ -476,9 +485,10 @@ async function walkPages(
     onPage(page);
     read += page.length;
 
-    // A short page is the end of the list, except for an `in` query, whose
-    // continuation pages can come back a row short: only an empty page ends it.
-    if (page.length === 0 || (page.length < limit && !inClause)) return false;
+    // A short page is the end of the list, except for a continuation page of an
+    // `in` query (one sent with a cursor, the builder's own included), which can
+    // come back a row short: only an empty one ends it.
+    if (page.length === 0 || (page.length < limit && (!inClause || !query.startAfter))) return false;
 
     const next = page[page.length - 1].$id as string | undefined;
     if (!next || next === startAfter) {
@@ -513,7 +523,7 @@ export async function paginateCount(
   options: PaginateOptions = {}
 ): Promise<PaginateCountResult> {
   let count = 0;
-  const reachedLimit = await walkPages(sdk, queryBuilder, options, (documents) => {
+  const reachedLimit = await walkPages(sdkPages(sdk), queryBuilder, options, (documents) => {
     count += documents.length;
   });
   return { count, reachedLimit };
@@ -554,8 +564,22 @@ export async function paginateFetchAll<T>(
   transformFn: (doc: Record<string, unknown>) => T,
   options: PaginateOptions = {}
 ): Promise<PaginateFetchResult<T>> {
+  return paginateFetchAllWith(sdkPages(sdk), queryBuilder, transformFn, options);
+}
+
+/**
+ * {@link paginateFetchAll} over the caller's own page reader, for a caller
+ * that reads pages another way (the DM chain adapter reads with proof, for
+ * the response's block time) but needs the same end-of-list and `in` rules.
+ */
+export async function paginateFetchAllWith<T>(
+  fetchPage: PageFetcher,
+  queryBuilder: (startAfter?: string) => Record<string, unknown>,
+  transformFn: (doc: Record<string, unknown>) => T,
+  options: PaginateOptions = {}
+): Promise<PaginateFetchResult<T>> {
   const documents: T[] = [];
-  const reachedLimit = await walkPages(sdk, queryBuilder, options, (page) => {
+  const reachedLimit = await walkPages(fetchPage, queryBuilder, options, (page) => {
     documents.push(...page.map(transformFn));
   });
   return { documents, reachedLimit };

@@ -27,7 +27,7 @@ import { settlePendingWrites } from '../identity-nonce'
 import { identityService } from '../identity-service'
 import { followService } from '../follow-service'
 import { bytesToBase64QueryOperand, documentToPlainObject, type DocumentWhereClause, type DocumentOrderByClause } from '../sdk-helpers'
-import { chunk } from '../pagination-utils'
+import { chunk, paginateFetchAllWith } from '../pagination-utils'
 import { classifyWriteFailure } from './write-failure'
 import type {
   BroadcastOptions,
@@ -129,16 +129,20 @@ export class SdkDmChain implements DmChain {
       .map((doc) => documentToPlainObject(doc))
   }
 
-  /** Every page of `query`, continuing after the last document id. */
-  private async queryAll(query: Query): Promise<Raw[]> {
-    const out: Raw[] = []
-    let startAfter: string | undefined
-    for (;;) {
-      const page = await this.query({ ...query, limit: PAGE, ...(startAfter ? { startAfter } : {}) })
-      out.push(...page)
-      if (page.length < PAGE) return out
-      startAfter = String(page[page.length - 1].$id)
-    }
+  /**
+   * Every page of an `in` query, continuing after the last document id, with
+   * the shared walker's rules: an `in` continuation page can come back a row
+   * short while more remains, so only an empty page ends the walk. There is
+   * no cap: a caller that moves a cursor on the answer must have all of it.
+   */
+  private async queryAllIn(query: Query): Promise<Raw[]> {
+    const { documents } = await paginateFetchAllWith(
+      ({ limit, startAfter }) => this.query({ ...query, limit: Number(limit), ...(startAfter ? { startAfter: String(startAfter) } : {}) }),
+      () => ({ ...query }),
+      (doc) => doc,
+      { maxResults: Infinity, inClause: true }
+    )
+    return documents
   }
 
   async messagesByTags(tags: Uint8Array[]): Promise<ChainMessage[]> {
@@ -160,7 +164,7 @@ export class SdkDmChain implements DmChain {
   }
 
   async invitesSince(buckets: number[], since: number): Promise<ChainInvite[]> {
-    const docs = await this.queryAll({
+    const docs = await this.queryAllIn({
       documentTypeName: 'dmInvite',
       where: [['bucket', 'in', buckets], ['$createdAt', '>=', since]],
       orderBy: [['bucket', 'asc'], ['$createdAt', 'asc']],
