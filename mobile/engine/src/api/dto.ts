@@ -4,7 +4,7 @@ import { DEFAULT_AVATAR_STYLE, DICEBEAR_STYLES } from '@/lib/services/unified-pr
 import { isImageAvatar } from '@/lib/profile/v10-profile'
 import { isBareRepost } from '@/lib/feed/quote-reposts'
 import { findPollrPollLink, getEmbeddedPollId } from '@/lib/poll-embed'
-import { isHidden, moderationViewAll } from '@/lib/moderation-view'
+import { isHidden, moderationViewAll, type ModerationMarks } from '@/lib/moderation-view'
 import { rememberPrivatePost } from '../dto/private-content'
 
 /**
@@ -522,26 +522,29 @@ function pollOf(post: Post): PostDTO['poll'] {
 export const BLANK_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
 /**
- * The moderators' marks as the host shows them. A hidden post is withheld on a
- * build that lists only the listed lane (the official apps), whatever lib
- * hands over, and labelled on an archival one; a restricted author's post is
- * labelled on archival builds only.
+ * The moderators' marks as the host shows them. A hidden document is withheld
+ * from a viewer who does not see everything (`seesAll`: an archival build,
+ * and for blogs the author's own management lists), whatever lib hands over:
+ * `withheld`, with no label. Whoever sees everything gets the marks to label
+ * it with, and `restricted` (written while its author was restricted) too.
  */
-function moderationOfPost(post: Post): ModerationDTO | undefined {
-  const marks = post.moderation
-  if (!marks) return undefined
+export function moderationDTO(marks: ModerationMarks | undefined, restricted: boolean, seesAll: boolean): ModerationDTO | undefined {
   const hidden = isHidden(marks)
-  const archival = moderationViewAll()
-  if (hidden && !archival) return { hidden: true, restricted: false, withheld: true }
-  const restricted = archival && marks.restricted === true
-  if (!hidden && !restricted) return undefined
+  if (hidden && !seesAll) return { hidden: true, restricted: false, withheld: true }
+  const shownRestricted = seesAll && restricted
+  if (!hidden && !shownRestricted) return undefined
   return omitUndefined<ModerationDTO>({
     hidden,
-    restricted,
-    label: marks.modLabel,
-    by: marks.moderatedBy,
-    at: marks.moderatedAt === undefined ? undefined : new Date(marks.moderatedAt),
+    restricted: shownRestricted,
+    label: marks?.modLabel,
+    by: marks?.moderatedBy,
+    at: marks?.moderatedAt === undefined ? undefined : new Date(marks.moderatedAt),
   })
+}
+
+/** A post's marks: withheld on a build that lists only the listed lane (the official apps), labelled on an archival one. */
+function moderationOfPost(post: Post): ModerationDTO | undefined {
+  return moderationDTO(post.moderation, post.moderation?.restricted === true, moderationViewAll())
 }
 
 /** What a hidden post becomes on an official build: its place in a list or thread, and none of its content. */

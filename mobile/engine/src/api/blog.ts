@@ -24,6 +24,7 @@ import {
 } from '@/lib/blog/theme-types'
 import { fieldLimits } from '@/lib/field-limits'
 import { moderatedContract } from '@/lib/moderated-contracts'
+import { moderationViewAll } from '@/lib/moderation-view'
 import { isReportResolvedError, reportStatusLabel, withdrawFailureMessage } from '@/lib/reports'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { compressContent } from '@/lib/utils/compression'
@@ -34,20 +35,30 @@ import { blogPostService, PrePublishRateLimitError, type UpdateBlogPostData } fr
 import { blogService, type CreateBlogData, type UpdateBlogData } from '@/lib/services/blog-service'
 import { contractReportProblem, contractReportService, type ContractReport, type ContractReportTarget } from '@/lib/services/contract-report-service'
 import { moderationServiceFor } from '@/lib/services/moderation-service'
-import { badRequest, loadUserSummaries, readFailure, requireViewer, viewerId } from '../dto/hydrate'
+import { badRequest, loadUserSummaries, readFailure, requireViewer, viewerId, withReasons } from '../dto/hydrate'
 import { onePage, pageAfter } from '../dto/paging'
 import { assertId, characters, relationProbe, signer } from '../writes/handler-kit'
 import { fromDeleteBoolean, fromTransitionResult, wasConfirmed, createdDocument } from '../writes/lib-results'
 import { NotSentError, type TicketStore, type WriteHandler, type WriteResult, type WriteRunContext } from '../writes/tickets'
 import { RpcError } from '../protocol/envelope'
 import type { BlogTargetRef, TicketDocument, WriteTicket } from '../writes/types'
-import type { AuthorDTO, Page } from './dto'
+import { moderationDTO, type AuthorDTO, type ModerationDTO, type Page } from './dto'
 
 /**
  * Blogs (`app/blog/page.tsx`, `components/blog/**`) on the configured blog
  * cut, through web's own services: reads answer DTOs, every write is a
  * ticket (ENGINE.md §7). Post content stays the web's BlockNote JSON, passed
  * through untouched so a post edited on either client round-trips.
+ *
+ * Moderation (blog v10, "hide, don't delete"): every blog, post and comment
+ * carries its `moderation` (`ModerationDTO`). Listings read the listed lane,
+ * but a read by id or slug, like web's, returns a hidden document too: on the
+ * official apps it comes back withheld (its place, none of its content), and
+ * the screen shows "This blog post is hidden by moderators." as web's stub
+ * does. An archival build gets it whole, labelled, with `restricted` for a
+ * post written while its author was restricted. The author's own management
+ * lists (`mine`, `myPosts`) include their hidden blogs and posts, labelled,
+ * so they can find them and see why one is not listed.
  */
 
 const BLOG_PAGE = 20
@@ -106,6 +117,8 @@ export interface BlogDTO {
   defaultTheme: boolean
   commentsEnabledDefault: boolean
   labels: string[]
+  /** Hidden by the moderators (see the module note); withheld: no name, description, images or labels. */
+  moderation?: ModerationDTO
 }
 
 export interface BlogPostSummaryDTO {
@@ -132,6 +145,11 @@ export interface BlogPostSummaryDTO {
   commentsEnabled: boolean
   /** The author deleted it (a tombstone). */
   deleted: boolean
+  /**
+   * Hidden by the moderators, or written while its author was restricted
+   * (see the module note); withheld: no title, summary, cover, labels or content.
+   */
+  moderation?: ModerationDTO
 }
 
 export interface BlogPostDTO extends BlogPostSummaryDTO {
@@ -150,6 +168,8 @@ export interface BlogCommentDTO {
   postId: string
   createdAt: Date
   content: string
+  /** Hidden by the moderators (see the module note); withheld: no author and no content. */
+  moderation?: ModerationDTO
 }
 
 export interface BlogFollowDTO {
@@ -222,76 +242,128 @@ async function authorsOf(ids: string[]): Promise<Map<string, AuthorDTO>> {
   }
 }
 
-async function toBlogDTOs(blogs: LibBlog[]): Promise<BlogDTO[]> {
-  const owners = await authorsOf(blogs.map(blog => blog.ownerId))
-  return blogs.map(blog => ({
-    id: blog.id,
-    ownerId: blog.ownerId,
-    owner: owners.get(blog.ownerId) ?? null,
-    createdAt: blog.createdAt,
-    name: blog.name,
-    description: blog.description || null,
-    avatar: blog.avatar || null,
-    headerImage: blog.headerImage || null,
-    theme: themeDTO(blog.themeConfig),
-    defaultTheme: !blog.themeConfig,
-    commentsEnabledDefault: blog.commentsEnabledDefault ?? true,
-    labels: blog.labels ?? [],
+/**
+ * Who a read is for: `public`, every reader (a hidden document is withheld
+ * unless the build shows every lane); `owner`, the author's own management
+ * lists, which always show their hidden documents, labelled.
+ */
+type Audience = 'public' | 'owner'
+
+const seesAll = (audience: Audience) => audience === 'owner' || moderationViewAll('blog')
+
+async function toBlogDTOs(blogs: LibBlog[], audience: Audience = 'public'): Promise<BlogDTO[]> {
+  const shown = blogs.map(blog => ({ blog, moderation: moderationDTO(blog.moderation, false, seesAll(audience)) }))
+  const owners = await authorsOf(shown.filter(({ moderation }) => !moderation?.withheld).map(({ blog }) => blog.ownerId))
+  return withBlogReasons(shown.map(({ blog, moderation }): BlogDTO => {
+    if (moderation?.withheld) {
+      return {
+        id: blog.id, ownerId: blog.ownerId, owner: null, createdAt: blog.createdAt, name: '', description: null, avatar: null, headerImage: null,
+        theme: themeDTO(undefined), defaultTheme: true, commentsEnabledDefault: false, labels: [], moderation,
+      }
+    }
+    return {
+      id: blog.id,
+      ownerId: blog.ownerId,
+      owner: owners.get(blog.ownerId) ?? null,
+      createdAt: blog.createdAt,
+      name: blog.name,
+      description: blog.description || null,
+      avatar: blog.avatar || null,
+      headerImage: blog.headerImage || null,
+      theme: themeDTO(blog.themeConfig),
+      defaultTheme: !blog.themeConfig,
+      commentsEnabledDefault: blog.commentsEnabledDefault ?? true,
+      labels: blog.labels ?? [],
+      ...(moderation ? { moderation } : {}),
+    }
   }))
 }
 
-function toSummary(post: LibPost, blogName: string | null = null): BlogPostSummaryDTO {
-  const { text, hidden } = decodeSummary(post.subtitle)
-  return {
+/** A post's marks: hidden, and `live == 2` (written while its author was restricted, v10). */
+const postModeration = (post: LibPost, audience: Audience) => moderationDTO(post.moderation, post.live === 2, seesAll(audience))
+
+function toSummary(post: LibPost, blogName: string | null = null, audience: Audience = 'public'): BlogPostSummaryDTO {
+  const moderation = postModeration(post, audience)
+  const base = {
     id: post.id,
     ownerId: post.ownerId,
     blogId: post.blogId,
     blogName,
     slug: post.slug,
+    publishedAt: post.publishedAt !== undefined ? new Date(post.publishedAt) : null,
+    date: blogPostDate(post),
+    createdAt: post.createdAt,
+    edited: (post.$revision ?? 1) > 1,
+    deleted: isBlogPostTombstone(post),
+  }
+  if (moderation?.withheld) {
+    return { ...base, title: '', summary: null, excerpt: '', coverImage: null, labels: [], readingMinutes: 0, commentsEnabled: false, moderation }
+  }
+  const { text, hidden } = decodeSummary(post.subtitle)
+  return {
+    ...base,
     title: post.title,
     summary: text && !hidden ? text : null,
     excerpt: getPostExcerpt(post),
     coverImage: post.coverImage || null,
     labels: post.labels ?? [],
-    publishedAt: post.publishedAt !== undefined ? new Date(post.publishedAt) : null,
-    date: blogPostDate(post),
-    createdAt: post.createdAt,
-    edited: (post.$revision ?? 1) > 1,
     readingMinutes: estimateReadingTime(post.content),
     commentsEnabled: commentsAreEnabled(post),
-    deleted: isBlogPostTombstone(post),
+    ...(moderation ? { moderation } : {}),
   }
 }
 
-function toPostDTO(post: LibPost): BlogPostDTO {
+/** Sets each labelled DTO's `reason` from the blog charter, and hands the DTOs back. */
+async function withBlogReasons<T extends { moderation?: ModerationDTO }>(dtos: T[]): Promise<T[]> {
+  await withReasons('blog', dtos.map(dto => dto.moderation))
+  return dtos
+}
+
+async function toPostDTO(post: LibPost): Promise<BlogPostDTO> {
+  const summary = toSummary(post)
+  if (summary.moderation?.withheld) return { ...summary, content: [], summaryText: '', summaryHidden: false, revision: post.$revision ?? 1 }
   const { text, hidden } = decodeSummary(post.subtitle)
-  return { ...toSummary(post), content: post.content, summaryText: text, summaryHidden: hidden, revision: post.$revision ?? 1 }
+  const [dto] = await withBlogReasons([{ ...summary, content: post.content, summaryText: text, summaryHidden: hidden, revision: post.$revision ?? 1 }])
+  return dto
 }
 
 async function toCommentDTOs(comments: LibComment[]): Promise<BlogCommentDTO[]> {
-  const authors = await authorsOf(comments.map(comment => comment.ownerId))
-  return comments.map(comment => ({
+  const shown = comments.map(comment => ({ comment, moderation: moderationDTO(comment.moderation, false, moderationViewAll('blog')) }))
+  const authors = await authorsOf(shown.filter(({ moderation }) => !moderation?.withheld).map(({ comment }) => comment.ownerId))
+  return withBlogReasons(shown.map(({ comment, moderation }): BlogCommentDTO => ({
     id: comment.id,
     ownerId: comment.ownerId,
-    author: authors.get(comment.ownerId) ?? null,
+    author: moderation?.withheld ? null : authors.get(comment.ownerId) ?? null,
     postId: comment.blogPostId,
     createdAt: comment.createdAt,
-    content: comment.content,
-  }))
+    content: moderation?.withheld ? '' : comment.content,
+    ...(moderation ? { moderation } : {}),
+  })))
 }
 
 /** A draft is readable by its owner only, as on web. */
 const readable = (post: LibPost | null): post is LibPost =>
   post !== null && (isPublishedBlogPost(post) || isBlogPostTombstone(post) || post.ownerId === viewerId())
 
-/** Each blog's name, for posts listed across blogs; a post whose blog is gone is dropped (web's `enrichBlogPostsWithBlogNames`). */
-async function withBlogNames(posts: LibPost[], keepOrphans = false): Promise<BlogPostSummaryDTO[]> {
+/** Each blog's name, for posts listed across blogs; a post whose blog is gone (or hidden: `getMany` drops it) is dropped (web's `enrichBlogPostsWithBlogNames`). */
+async function withBlogNames(posts: LibPost[]): Promise<BlogPostSummaryDTO[]> {
   if (posts.length === 0) return []
   const blogs = new Map((await blogService.getMany([...new Set(posts.map(post => post.blogId))], { throwOnError: true })).map(blog => [blog.id, blog.name]))
-  return posts.flatMap(post => {
+  return withBlogReasons(posts.flatMap(post => {
     const name = blogs.get(post.blogId)
-    return name !== undefined || keepOrphans ? [toSummary(post, name ?? null)] : []
-  })
+    return name !== undefined ? [toSummary(post, name)] : []
+  }))
+}
+
+/**
+ * The author's posts with their blog's name, from the author's own blogs
+ * (only a blog's owner posts to it), hidden ones included; a post whose blog
+ * was deleted keeps a `null` name. Labelled for the author.
+ */
+async function ownPostsWithBlogNames(viewer: string, posts: LibPost[]): Promise<BlogPostSummaryDTO[]> {
+  if (posts.length === 0) return []
+  const blogs = new Map((await blogService.getBlogsByOwner(viewer, { includeHidden: true })).map(blog => [blog.id, blog.name]))
+  return withBlogReasons(posts.map(post => toSummary(post, blogs.get(post.blogId) ?? null, 'owner')))
 }
 
 async function read<T>(run: () => Promise<T>): Promise<T> {
@@ -362,13 +434,13 @@ export const blogReads = {
     return toBlogDTOs(await read(() => blogService.getMany(ids, { throwOnError: true })))
   },
 
-  /** The viewer's own blogs. */
+  /** The viewer's own blogs, a hidden one included and labelled (web's `my-blogs-list.tsx`). */
   async mine(): Promise<BlogDTO[]> {
     const viewer = requireViewer('Your blogs')
-    return toBlogDTOs(await read(() => blogService.getBlogsByOwner(viewer)))
+    return toBlogDTOs(await read(() => blogService.getBlogsByOwner(viewer, { includeHidden: true })), 'owner')
   },
 
-  /** One blog, or `null` when it does not exist or was deleted. */
+  /** One blog, or `null` when it does not exist or was deleted. A hidden one is withheld (see the module note). */
   async get(id: string): Promise<BlogDTO | null> {
     assertId(id, 'id')
     const blog = await read(() => blogService.getBlog(id, { throwOnError: true }))
@@ -384,12 +456,12 @@ export const blogReads = {
     assertId(blogId, 'blogId')
     const viewer = viewerId()
     return pageAfter('blogPosts', cursor, after => read(() => blogPostService.getPostsByBlog(blogId, { limit: POST_PAGE, startAfter: after })), async posts => ({
-      items: posts.filter(post => !isBlogPostTombstone(post) && (isPublishedBlogPost(post) || post.ownerId === viewer)).map(post => toSummary(post)),
+      items: await withBlogReasons(posts.filter(post => !isBlogPostTombstone(post) && (isPublishedBlogPost(post) || post.ownerId === viewer)).map(post => toSummary(post))),
       next: posts.length >= POST_PAGE ? posts[posts.length - 1].id : null,
     }))
   },
 
-  /** One post with its content; `null` when it does not exist, or is someone else's draft. */
+  /** One post with its content; `null` when it does not exist, or is someone else's draft. A hidden one is withheld (see the module note). */
   async post(id: string): Promise<BlogPostDTO | null> {
     assertId(id, 'id')
     const post = await read(() => blogPostService.getOrThrow(id))
@@ -430,7 +502,7 @@ export const blogReads = {
     return post.ownerId === viewer && post.createdAt.getTime() >= since - 5 * 60_000 ? 'published' : 'unknown'
   },
 
-  /** A post by its web address (`/blog?blog=<id>&post=<slug>`). */
+  /** A post by its web address (`/blog?blog=<id>&post=<slug>`). A hidden one is withheld (see the module note). */
   async postBySlug(blogId: string, slug: string): Promise<BlogPostDTO | null> {
     assertId(blogId, 'blogId')
     if (typeof slug !== 'string' || !slug || slug.length > 63) throw badRequest('slug must be a post address')
@@ -455,12 +527,16 @@ export const blogReads = {
     return { following, followers }
   },
 
-  /** The viewer's posts across their blogs, drafts included (v9's owner index; reachable after a blog is deleted). */
+  /**
+   * The viewer's posts across their blogs (v9's owner index; reachable after a
+   * blog is deleted). On v10 both `live` lanes, hidden posts included, each
+   * labelled hidden or restricted for its author.
+   */
   async myPosts(cursor?: string | null): Promise<Page<BlogPostSummaryDTO>> {
     const viewer = requireViewer('Your posts')
     if (!blogIsV9()) return onePage([])
     return pageAfter('myBlogPosts', cursor, after => read(() => blogPostService.getOwnerPostsPage(viewer, { limit: POST_PAGE, startAfter: after })), async page => ({
-      items: await read(() => withBlogNames(page.posts, true)),
+      items: await read(() => ownPostsWithBlogNames(viewer, page.posts)),
       next: page.nextCursor,
     }))
   },

@@ -17,6 +17,7 @@ import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
@@ -64,6 +65,8 @@ const BlogRow = memo(function BlogRow({ blog }: { blog: BlogDTO }) {
           ) : null}
         </View>
       </Pressable>
+      {/* Blog v10: the author's own hidden blog is listed here, labelled (it is not listed anywhere else). */}
+      <ModerationLabel moderation={blog.moderation} testID={`manage-blog-moderation-${blog.id}`} />
       <View className="flex-row items-center gap-2">
         <Button
           label="Write"
@@ -115,6 +118,8 @@ const PostRow = memo(function PostRow({ post }: { post: BlogPostSummaryDTO }) {
         <Text variant="subhead" tone="secondary" numberOfLines={1}>
           {subtitle}
         </Text>
+        {/* Blog v10: hidden, or written while restricted, so not listed in discovery. */}
+        <ModerationLabel moderation={post.moderation} testID={`manage-post-moderation-${post.id}`} />
       </Pressable>
       <IconButton
         icon={TrashIcon}

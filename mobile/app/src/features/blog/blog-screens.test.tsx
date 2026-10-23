@@ -1,4 +1,4 @@
-import type { BlogDTO, BlogInfoDTO, BlogPostDTO, SessionDTO } from '@engine/api';
+import type { BlogCommentDTO, BlogDTO, BlogInfoDTO, BlogPostDTO, BlogPostSummaryDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -14,6 +14,8 @@ import { syncStorage } from '~/state/storage';
 import { useToastStore } from '~/ui/toast';
 
 import { BlogPostScreen } from './BlogPostScreen';
+import { BlogScreen } from './BlogScreen';
+import { ManageBlogsScreen } from './ManageBlogsScreen';
 import { EditPostScreen, NewPostScreen } from './PostEditorScreen';
 import { draftKey } from './blog-writes';
 
@@ -600,3 +602,107 @@ describe('post reader', () => {
     expect(screen.queryByText('1 comment')).toBeNull();
   });
 });
+
+/**
+ * Blog v10 ("hide, don't delete"): the engine withholds what the moderators
+ * hid on the official apps, labels it on an archival build, and labels the
+ * author's own hidden or restricted blogs and posts in "Your blogs".
+ */
+describe('moderation (blog v10)', () => {
+  const WITHHELD = { hidden: true, restricted: false, withheld: true } as const;
+  const HIDDEN_AT = new Date(2026, 9, 21);
+  const LABEL = { hidden: true, restricted: false, label: 3, reason: 'Spam or scam', at: HIDDEN_AT };
+  const withheldPost: BlogPostDTO = {
+    ...post, title: '', summary: null, excerpt: '', coverImage: null, labels: [], readingMinutes: 0, commentsEnabled: false,
+    content: [], summaryText: '', summaryHidden: false, moderation: WITHHELD,
+  };
+  const comment = (id: string, extra: Partial<BlogCommentDTO> = {}): BlogCommentDTO => ({
+    id, ownerId: READER, author: null, postId: POST, createdAt: new Date(2026, 9, 3), content: `comment ${id}`, ...extra,
+  });
+
+  beforeEach(() => {
+    useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+  });
+
+  it('shows a hidden post reached by its address as a stub, with none of it and no comments', async () => {
+    fakeEngine.method('blogs.postBySlug').mockResolvedValue(withheldPost);
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    expect(screen.getByText('This blog post is hidden by moderators.')).toBeTruthy();
+    expect(screen.queryByTestId('blog-post-title')).toBeNull();
+    expect(screen.queryByTestId('blog-comment-input')).toBeNull();
+    expect(fakeEngine.method('blogs.comments')).not.toHaveBeenCalled();
+  });
+
+  it("covers a hidden blog's posts with the blog's stub", async () => {
+    fakeEngine.method('blogs.get').mockResolvedValue({ ...blog, name: '', description: null, moderation: WITHHELD });
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    expect(screen.getByText('This blog is hidden by moderators.')).toBeTruthy();
+    expect(screen.queryByTestId('blog-post-title')).toBeNull();
+  });
+
+  it('labels a hidden post, and a restricted author\'s, on an archival build', async () => {
+    fakeEngine.method('blogs.postBySlug').mockResolvedValue({ ...post, moderation: { ...LABEL, restricted: true } });
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    expect(screen.getByTestId('blog-post-title')).toHaveTextContent('Field notes');
+    expect(screen.getByTestId('blog-post-moderation-label')).toHaveTextContent(/^Hidden · Spam or scam · .+ · Restricted account$/);
+  });
+
+  it('shows a hidden comment as a stub and labels one an archival build shows', async () => {
+    fakeEngine.method('blogs.comments').mockResolvedValue([
+      comment('C1'),
+      comment('C2', { content: '', moderation: WITHHELD }),
+      comment('C3', { moderation: LABEL }),
+    ]);
+    renderScreen(<BlogPostScreen />);
+    await settle();
+
+    expect(screen.getByText('comment C1')).toBeTruthy();
+    expect(screen.getByTestId('blog-comment-hidden-C2')).toHaveTextContent('This comment is hidden by moderators.');
+    expect(screen.queryByTestId('blog-comment-C2')).toBeNull();
+    expect(screen.getByTestId('blog-comment-moderation-C3')).toHaveTextContent(/^Hidden · Spam or scam/);
+    expect(screen.getByText('comment C3')).toBeTruthy();
+  });
+
+  it("shows a hidden blog's home as a stub and does not read its posts", async () => {
+    mockParams.current = { id: BLOG };
+    fakeEngine.method('blogs.get').mockResolvedValue({ ...blog, name: '', description: null, moderation: WITHHELD });
+    renderScreen(<BlogScreen />);
+    await settle();
+
+    expect(screen.getByText('This blog is hidden by moderators.')).toBeTruthy();
+    expect(fakeEngine.method('blogs.posts')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('blogs.followState')).not.toHaveBeenCalled();
+  });
+
+  it("labels the author's own hidden blog and hidden or restricted posts in Your blogs", async () => {
+    useSessionStore.setState({ status: 'signed-in', session: session(AUTHOR), accounts: [] });
+    const HIDDEN_BLOG = 'H'.repeat(44);
+    const summary = (id: string, extra: Partial<BlogPostSummaryDTO> = {}): BlogPostSummaryDTO => ({
+      id, ownerId: AUTHOR, blogId: BLOG, blogName: 'Field Journal', slug: id, title: `Post ${id}`, summary: null, excerpt: '', coverImage: null, labels: [],
+      publishedAt: post.publishedAt, date: post.date, createdAt: post.createdAt, edited: false, readingMinutes: 1, commentsEnabled: true, deleted: false, ...extra,
+    });
+    fakeEngine.method('blogs.mine').mockResolvedValue([blog, { ...blog, id: HIDDEN_BLOG, name: 'Quiet blog', moderation: LABEL }]);
+    fakeEngine.method('blogs.myPosts').mockResolvedValue({
+      items: [summary('P1'), summary('P2', { moderation: LABEL }), summary('P3', { moderation: { hidden: false, restricted: true } })],
+      cursor: null,
+      hasMore: false,
+    });
+    renderScreen(<ManageBlogsScreen />);
+    await settle();
+
+    expect(screen.getByText('Quiet blog')).toBeTruthy();
+    expect(screen.queryByTestId(`manage-blog-moderation-${BLOG}`)).toBeNull();
+    expect(screen.getByTestId(`manage-blog-moderation-${HIDDEN_BLOG}`)).toHaveTextContent(/^Hidden · Spam or scam/);
+    expect(screen.queryByTestId('manage-post-moderation-P1')).toBeNull();
+    expect(screen.getByTestId('manage-post-moderation-P2')).toHaveTextContent(/^Hidden · Spam or scam/);
+    expect(screen.getByTestId('manage-post-moderation-P3')).toHaveTextContent('Restricted account');
+  });
+});
+

@@ -2,7 +2,7 @@
  * Blogs (`api/blog.ts`) with lib's blog services mocked: the reads' DTOs and
  * the writes' input checks, the lib calls each ticket makes, and the probes.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const m = vi.hoisted(() => ({
   viewer: 'AUTHOR' as string | null,
@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   blogCommentService: { getCommentsByPost: vi.fn(), createComment: vi.fn(), deleteComment: vi.fn() },
   blogFollowService: { isFollowingBlog: vi.fn(), countBlogFollowers: vi.fn(async () => 2), followBlog: vi.fn(), unfollowBlog: vi.fn(), getFollowedBlogIds: vi.fn() },
   contractReportService: { own: vi.fn(), file: vi.fn(), withdraw: vi.fn() },
+  charterReasonText: vi.fn(async (_contract: string, label: number | undefined) => (label === 3 ? 'Spam or scam' : null)),
 }))
 
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -27,7 +28,9 @@ vi.mock('@/lib/services/blog-comment-service', async (load) => ({ ...await load<
 vi.mock('@/lib/services/blog-follow-service', () => ({ blogFollowService: m.blogFollowService }))
 vi.mock('@/lib/services/contract-report-service', async (load) => ({ ...await load<object>(), contractReportService: m.contractReportService }))
 vi.mock('../../src/dto/hydrate', async (load) => ({ ...await load<object>(), loadUserSummaries: vi.fn(async () => new Map()) }))
+vi.mock('@/lib/services/charter-reasons', async (load) => ({ ...await load<object>(), charterReasonText: m.charterReasonText }))
 
+import { moderationFieldOf } from '@/lib/services/moderation-carry'
 import { blogReads, createBlogWrites } from '../../src/api/blog'
 import type { WriteHandler, TicketStore } from '../../src/writes/tickets'
 import type { WriteTicket } from '../../src/writes/types'
@@ -197,5 +200,124 @@ describe('blog writes', () => {
     m.viewer = 'R'.repeat(44)
     await writes.report({ docType: 'blogComment', targetId: POST, ownerId: AUTHOR }, 0, 'spam')
     expect(submitted[0]).toMatchObject({ op: 'blog.report', target: { blog: { type: 'blogComment', id: POST } } })
+  })
+})
+
+/**
+ * Blog v10 ("hide, don't delete"): what a moderator's hide (`mod`, `modLabel`,
+ * `$moderatedBy`, `$moderatedAt`) and a restricted author's `live: 2` look
+ * like once lib has read them (its `moderationFieldOf`, as every blog service
+ * transform carries them).
+ */
+describe('blog v10 moderation', () => {
+  const MODERATOR = '9yQpMwZMJkRbBQwhZbthsWKPEXKowCnywxGoKek16qjg'
+  const HIDDEN_AT = 1_790_000_100_000
+  const hide = (mod = 1) => moderationFieldOf({ mod, modLabel: 3, $moderatedBy: MODERATOR, $moderatedAt: HIDDEN_AT })
+  const v10Post = (overrides: Record<string, unknown> = {}) => libPost({ live: 1, ...overrides })
+  const libBlog = (overrides: Record<string, unknown> = {}) => ({
+    id: BLOG, ownerId: AUTHOR, name: 'My blog', description: 'About things', avatar: 'ipfs://avatar', labels: ['x'], createdAt: new Date(1_780_000_000_000), ...overrides,
+  })
+  const withheldPost = { title: '', summary: null, summaryText: '', excerpt: '', coverImage: null, labels: [], content: [], commentsEnabled: false, moderation: { hidden: true, restricted: false, withheld: true } }
+  const label = { hidden: true, label: 3, reason: 'Spam or scam', by: MODERATOR, at: new Date(HIDDEN_AT) }
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  describe('on the official apps (the listed lane only)', () => {
+    it('withholds a hidden post read by id, its author included', async () => {
+      m.blogPostService.getOrThrow.mockResolvedValue(v10Post(hide()))
+      expect(await blogReads.post(POST)).toMatchObject({ id: POST, blogId: BLOG, slug: 'title', ...withheldPost })
+      m.viewer = 'READER'
+      expect(await blogReads.post(POST)).toMatchObject(withheldPost)
+      expect(m.charterReasonText).not.toHaveBeenCalled()
+    })
+
+    it('withholds a hidden post read by its address, and one on legal hold', async () => {
+      m.blogPostService.getPostBySlug.mockResolvedValue(v10Post(hide()))
+      expect(await blogReads.postBySlug(BLOG, 'title')).toMatchObject(withheldPost)
+      m.blogPostService.getPostBySlug.mockResolvedValue(v10Post(hide(2)))
+      expect(await blogReads.postBySlug(BLOG, 'title')).toMatchObject(withheldPost)
+    })
+
+    it('shows a restricted author\'s post reached by id in full, without a label', async () => {
+      m.blogPostService.getOrThrow.mockResolvedValue(v10Post({ live: 2 }))
+      const post = await blogReads.post(POST)
+      expect(post).toMatchObject({ title: 'Title', content: [{ type: 'paragraph', content: 'Hello there' }] })
+      expect(post?.moderation).toBeUndefined()
+    })
+
+    it('withholds a hidden blog read by id', async () => {
+      m.blogService.getBlog.mockResolvedValue(libBlog(hide()))
+      expect(await blogReads.get(BLOG)).toMatchObject({
+        id: BLOG, ownerId: AUTHOR, owner: null, name: '', description: null, avatar: null, labels: [], moderation: { hidden: true, restricted: false, withheld: true },
+      })
+    })
+
+    it('withholds a hidden comment\'s author and text', async () => {
+      m.blogCommentService.getCommentsByPost.mockResolvedValue([
+        { id: 'C1', ownerId: AUTHOR, blogPostId: POST, createdAt: new Date(1), content: 'shown' },
+        { id: 'C2', ownerId: AUTHOR, blogPostId: POST, createdAt: new Date(2), content: 'spam', ...hide() },
+      ])
+      const comments = await blogReads.comments(POST)
+      expect(comments[0]).toMatchObject({ content: 'shown' })
+      expect(comments[0].moderation).toBeUndefined()
+      expect(comments[1]).toMatchObject({ author: null, content: '', moderation: { hidden: true, withheld: true } })
+    })
+
+    it('lists the author\'s own blogs with a hidden one, labelled', async () => {
+      m.blogService.getBlogsByOwner.mockResolvedValue([libBlog(), libBlog({ id: 'H'.repeat(44), name: 'Hidden blog', ...hide() })])
+      const blogs = await blogReads.mine()
+      expect(m.blogService.getBlogsByOwner).toHaveBeenCalledWith(AUTHOR, { includeHidden: true })
+      expect(blogs.map(blog => blog.name)).toEqual(['My blog', 'Hidden blog'])
+      expect(blogs[0].moderation).toBeUndefined()
+      expect(blogs[1].moderation).toEqual({ restricted: false, ...label })
+    })
+
+    it('lists the author\'s own posts across both lanes, hidden and restricted ones labelled, with their blog\'s name', async () => {
+      const HIDDEN_BLOG = 'H'.repeat(44)
+      m.blogService.getBlogsByOwner.mockResolvedValue([libBlog(), libBlog({ id: HIDDEN_BLOG, name: 'Hidden blog', ...hide() })])
+      m.blogPostService.getOwnerPostsPage.mockResolvedValue({
+        posts: [
+          v10Post(),
+          v10Post({ id: 'P2'.padEnd(44, 'x'), live: 2 }),
+          v10Post({ id: 'P3'.padEnd(44, 'x'), ...hide() }),
+          v10Post({ id: 'P4'.padEnd(44, 'x'), blogId: HIDDEN_BLOG }),
+          v10Post({ id: 'P5'.padEnd(44, 'x'), blogId: 'G'.repeat(44) }),
+        ],
+        nextCursor: undefined,
+      })
+      const { items } = await blogReads.myPosts()
+      expect(m.blogService.getBlogsByOwner).toHaveBeenCalledWith(AUTHOR, { includeHidden: true })
+      expect(m.blogService.getMany).not.toHaveBeenCalled()
+      expect(items.map(post => [post.title, post.blogName, post.moderation])).toEqual([
+        ['Title', 'My blog', undefined],
+        ['Title', 'My blog', { hidden: false, restricted: true }],
+        ['Title', 'My blog', { restricted: false, ...label }],
+        // A hidden blog's post is still the author's to find; a deleted blog's keeps no name.
+        ['Title', 'Hidden blog', undefined],
+        ['Title', null, undefined],
+      ])
+    })
+  })
+
+  describe('on an archival build (every lane)', () => {
+    beforeEach(() => {
+      vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    })
+
+    it('shows a hidden post read by id or address in full, labelled, and marks a restricted author\'s post', async () => {
+      m.blogPostService.getOrThrow.mockResolvedValue(v10Post({ live: 2, ...hide() }))
+      expect(await blogReads.post(POST)).toMatchObject({ title: 'Title', content: [{ type: 'paragraph', content: 'Hello there' }], moderation: { restricted: true, ...label } })
+      m.blogPostService.getPostBySlug.mockResolvedValue(v10Post({ live: 2 }))
+      expect((await blogReads.postBySlug(BLOG, 'title'))?.moderation).toEqual({ hidden: false, restricted: true })
+    })
+
+    it('labels a hidden blog and comment instead of withholding them', async () => {
+      m.blogService.getBlog.mockResolvedValue(libBlog(hide()))
+      expect(await blogReads.get(BLOG)).toMatchObject({ name: 'My blog', moderation: { restricted: false, ...label } })
+      m.blogCommentService.getCommentsByPost.mockResolvedValue([{ id: 'C2', ownerId: AUTHOR, blogPostId: POST, createdAt: new Date(2), content: 'spam', ...hide() }])
+      expect((await blogReads.comments(POST))[0]).toMatchObject({ content: 'spam', moderation: { restricted: false, ...label } })
+    })
   })
 })
