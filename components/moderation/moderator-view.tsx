@@ -47,13 +47,15 @@ export function ModeratorViewHold() {
 
 /**
  * The slim notice shown while the view is on, floating above the page (it
- * takes no room in it), with a way to turn it off.
+ * takes no room in it), with a way to turn it off. It stays under the mobile
+ * menu sheet and its backdrop (z-40), which it would otherwise cover, Sign out
+ * included.
  */
 export function ModeratorViewBar() {
   const { active, setEnabled } = useModeratorView()
   if (!active) return null
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-20 z-40 flex justify-center px-4 md:bottom-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-20 z-30 flex justify-center px-4 md:bottom-4">
       <div
         role="status"
         data-testid="moderator-view-bar"
