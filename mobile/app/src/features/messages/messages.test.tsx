@@ -561,6 +561,36 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
   });
 
+  it('says so when older messages fail to load, keeps the loaded ones, and retries on request (MUX-12)', async () => {
+    const older = dmMessage('m0', { text: 'earlier on', at: new Date(Date.now() - 3_600_000) });
+    await openConversation();
+    fakeEngine.method('dm.messages').mockReset();
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValueOnce({ items: [theirs], cursor: 'older', hasMore: true })
+      .mockRejectedValue(new Error('offline'));
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.dm.messages(KEY) });
+    });
+    expect(screen.queryByTestId('dm-older-error')).toBeNull();
+
+    // Reaching the top asks for the older page, which fails (once more after TanStack's retry).
+    await act(async () => fireEvent(screen.getByTestId('dm-messages'), 'startReached'));
+    expect(await screen.findByText("Couldn't load older messages", undefined, { timeout: 4000 })).toBeTruthy();
+    expect(screen.getByText('hey, coming?')).toBeTruthy();
+
+    // Reaching the top again doesn't retry by itself; Retry does.
+    const reads = fakeEngine.method('dm.messages').mock.calls.length;
+    await act(async () => fireEvent(screen.getByTestId('dm-messages'), 'startReached'));
+    expect(fakeEngine.method('dm.messages').mock.calls).toHaveLength(reads);
+
+    fakeEngine.method('dm.messages').mockReset();
+    fakeEngine.method('dm.messages').mockResolvedValue({ items: [older], cursor: null, hasMore: false });
+    await act(async () => fireEvent.press(screen.getByTestId('dm-older-retry')));
+    expect(screen.queryByTestId('dm-older-error')).toBeNull();
+    expect(screen.getByText('earlier on')).toBeTruthy();
+  });
+
   it('marks messages that arrive in the background read only once the app is back (SR-19)', async () => {
     const listeners: ((state: AppStateStatus) => void)[] = [];
     // Swapped, not spied: jest-expo's AppState is a mock whose restore would drop its implementation.
