@@ -13,6 +13,7 @@ import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { useRemovedPosts } from '~/data/optimistic';
+import { draftKey, holdPublish, publishHeld } from '~/features/blog/blog-writes';
 import { resetWriteTracking } from '~/data/writes';
 
 import { deleteDraft, holdDraftSlot, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
@@ -1161,12 +1162,17 @@ it("signing out deletes the account's drafts and pending posts", async () => {
   publish(['Hello']);
   await settle();
   saveDraft(VIEWER_ID, { context: POST, parts: parts('Draft'), sensitive: false, mediaUrl: '', updatedAt: Date.now() });
+  // A blog post's draft, and a publish of another it still holds (MARCH-3).
+  syncStorage.setItem(draftKey(VIEWER_ID, 'blog-a'), '{"title":"Unpublished thoughts","content":[]}');
+  holdPublish(VIEWER_ID, 'blog-b', 'Sent');
   fakeEngine.method('session.accounts').mockResolvedValue([]);
 
   act(() => fakeEngine.emit('session.changed', { session: null, reason: 'signed-out' }));
   await settle();
   expect(usePendingPosts.getState().entries).toEqual({});
   expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+  expect(syncStorage.getItem(draftKey(VIEWER_ID, 'blog-a'))).toBeNull();
+  expect(publishHeld(VIEWER_ID, 'blog-b')).toBe(false);
 });
 
 it("signing out another account deletes that account's drafts and pending posts (SR-09, AUTH-11)", async () => {
@@ -1196,6 +1202,8 @@ it("signing out another account deletes that account's drafts and pending posts 
   await settle();
   saveDraft(OTHER, draft('SR-draft'));
   saveDraft(VIEWER_ID, draft('Mine'));
+  syncStorage.setItem(draftKey(OTHER, 'blog-a'), '{"title":"Theirs","content":[]}');
+  syncStorage.setItem(draftKey(VIEWER_ID, 'blog-a'), '{"title":"Mine","content":[]}');
   act(() => useSessionStore.setState({ accounts: [account(VIEWER_ID, true), account(OTHER, false)] }));
   expect(Object.values(usePendingPosts.getState().entries).map((e) => e.identityId)).toEqual([OTHER]);
 
@@ -1205,6 +1213,10 @@ it("signing out another account deletes that account's drafts and pending posts 
   expect(loadDraft(OTHER, POST)).toBeNull();
   expect(usePendingPosts.getState().entries).toEqual({});
   expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Mine');
+  // Blog drafts are per account: only the account that left loses its own.
+  expect(syncStorage.getItem(draftKey(OTHER, 'blog-a'))).toBeNull();
+  expect(syncStorage.getItem(draftKey(VIEWER_ID, 'blog-a'))).toContain('Mine');
+  syncStorage.removeItem(draftKey(VIEWER_ID, 'blog-a'));
 });
 
 it('a post deleted while pinned does not come back with the pin', async () => {

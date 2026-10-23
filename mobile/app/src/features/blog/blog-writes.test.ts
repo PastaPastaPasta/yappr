@@ -2,7 +2,7 @@ import { fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { engine } from '~/engine';
 import { syncStorage } from '~/state/storage';
 
-import { draftKey, holdPublish, publishHeld, publishPostWrite, resolveHeldPublish } from './blog-writes';
+import { draftKey, forgetBlogDrafts, holdPublish, publishHeld, publishPostWrite, resolveHeldPublish } from './blog-writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 
@@ -59,5 +59,25 @@ describe('a held publish', () => {
     expect(fakeEngine.method('blogs.publish')).toHaveBeenCalledWith(BLOG, INPUT);
     fakeEngine.method('writes.list').mockResolvedValue([]);
     expect(await resolveHeldPublish(VIEWER, BLOG)).toEqual({ state: 'held', ticketId: null });
+  });
+});
+
+describe('forgetBlogDrafts', () => {
+  const OTHER_VIEWER = '8u9pqhrG1RbkuWvbqQ5WwFgaW2yGkVx2AYBnQ3j5vT1A';
+  const OTHER_BLOG = '7mVtG4R4ZMTZ3veA95Y7fai8zDvX4HB6tPUGExyMZaVj';
+
+  it("deletes every draft and held publish of the account, and nobody else's", () => {
+    syncStorage.setItem(draftKey(VIEWER, BLOG), '{"title":"One"}');
+    syncStorage.setItem(draftKey(VIEWER, OTHER_BLOG), '{"title":"Two"}');
+    holdPublish(VIEWER, BLOG, 'One');
+    syncStorage.setItem(draftKey(OTHER_VIEWER, BLOG), '{"title":"Theirs"}');
+
+    forgetBlogDrafts(VIEWER);
+
+    expect(syncStorage.getItem(draftKey(VIEWER, BLOG))).toBeNull();
+    expect(syncStorage.getItem(draftKey(VIEWER, OTHER_BLOG))).toBeNull();
+    expect(publishHeld(VIEWER, BLOG)).toBe(false);
+    expect(syncStorage.getItem(draftKey(OTHER_VIEWER, BLOG))).toBe('{"title":"Theirs"}');
+    syncStorage.removeItem(draftKey(OTHER_VIEWER, BLOG));
   });
 });

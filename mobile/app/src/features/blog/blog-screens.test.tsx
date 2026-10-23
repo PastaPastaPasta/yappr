@@ -1,24 +1,61 @@
 import type { BlogDTO, BlogInfoDTO, BlogPostDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import type { ReactElement } from 'react';
+import { ActionSheetIOS, Alert, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useSessionStore } from '~/data/session';
 import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
+import { useToastStore } from '~/ui/toast';
 
 import { BlogPostScreen } from './BlogPostScreen';
 import { EditPostScreen, NewPostScreen } from './PostEditorScreen';
+import { draftKey } from './blog-writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 const mockParams: { current: Record<string, string> } = { current: {} };
+/** The latest options a screen gave its header (`gestureEnabled`). */
+const mockOptions: { current: { gestureEnabled?: boolean } } = { current: {} };
+/** Whether the screen is the one in front, as `navigation.isFocused()` answers. */
+const mockFocused = { current: true };
+const mockNavigation = { addListener: jest.fn(() => () => undefined), dispatch: jest.fn(), isFocused: () => mockFocused.current };
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn() },
-  Stack: { Screen: () => null },
+  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: jest.fn(() => true) },
+  // Stack.Screen renders its header's right side here, so the tests can press it.
+  Stack: {
+    Screen: ({ options }: { options?: { gestureEnabled?: boolean; headerRight?: () => ReactElement } }) => {
+      if (options && 'gestureEnabled' in options) mockOptions.current = options;
+      return options?.headerRight?.() ?? null;
+    },
+  },
   useLocalSearchParams: () => mockParams.current,
+  useNavigation: () => mockNavigation,
 }));
+// The leave guard: the latest callback the screen registered, as the stack calls it on Back or a swipe.
+let mockPreventRemove: ((options: { data: { action: { type: string } } }) => void) | null = null;
+jest.mock('expo-router/react-navigation', () => ({
+  ...jest.requireActual('expo-router/react-navigation'),
+  usePreventRemove: (prevent: boolean, callback: typeof mockPreventRemove) => {
+    mockPreventRemove = prevent ? callback : null;
+  },
+}));
+// The post's "…" menu: every item as a button, as the native menu would offer it.
+jest.mock('~/ui/ContextMenu', () => {
+  const { Pressable, Text } = jest.requireActual('react-native');
+  return {
+    ContextMenu: ({ items, onSelect, testID }: { items: { id: string; title: string }[]; onSelect: (id: string) => void; testID: string }) =>
+      items.map((item) => (
+        <Pressable key={item.id} onPress={() => onSelect(item.id)} testID={`${testID}-${item.id}`}>
+          <Text>{item.title}</Text>
+        </Pressable>
+      )),
+  };
+});
 jest.mock('@gorhom/bottom-sheet', () => jest.requireActual('@gorhom/bottom-sheet/mock'));
 
 const AUTHOR = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF';
@@ -114,8 +151,28 @@ const settle = () => act(async () => {});
 beforeAll(() => notifyManager.setScheduler((callback) => callback()));
 afterAll(() => queryClient.clear());
 
+/** The open alert, or null. */
+let alert: { title: string; press: (text: string) => void } | null = null;
+/** The open action sheet, or null. */
+let sheet: { options: string[]; choose: (label: string) => void } | null = null;
+const GO_BACK = { data: { action: { type: 'GO_BACK' } } };
+
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFocused.current = true;
+  mockOptions.current = {};
+  mockPreventRemove = null;
+  alert = null;
+  sheet = null;
+  useToastStore.setState({ current: null });
+  syncStorage.removeItem(draftKey(AUTHOR, BLOG));
+  syncStorage.removeItem(`${draftKey(AUTHOR, BLOG)}:sent`);
+  jest.spyOn(Alert, 'alert').mockImplementation((title, _message, buttons?: AlertButton[]) => {
+    alert = { title, press: (text) => buttons?.find((b) => b.text === text)?.onPress?.() };
+  });
+  jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation((options, callback) => {
+    sheet = { options: options.options, choose: (label) => callback(options.options.indexOf(label)) };
+  });
   fakeEngine.reset();
   queryClient.clear();
   // A comment left pending by an earlier test would queue the next one behind it (one per post at a time).
@@ -175,6 +232,256 @@ describe('post editor', () => {
     renderScreen(<NewPostScreen />);
     await settle();
     expect(screen.getByText('You can only write on your own blogs')).toBeTruthy();
+  });
+});
+
+describe('leaving the editor (MUX-3)', () => {
+  const title = () => screen.getByTestId('blog-editor-title');
+
+  it('asks before an edited post is left, and lets an unedited one go', async () => {
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    renderScreen(<EditPostScreen />);
+    await settle();
+    expect(mockPreventRemove).toBeNull();
+    expect(mockOptions.current.gestureEnabled).toBe(true);
+
+    fireEvent.changeText(title(), 'Field notes, revised');
+    // The swipe is off, and Back (or Android's back) asks first.
+    expect(mockOptions.current.gestureEnabled).toBe(false);
+    act(() => mockPreventRemove?.(GO_BACK));
+    expect(alert?.title).toBe('Discard changes?');
+    await act(async () => alert?.press('Keep editing'));
+    expect(mockNavigation.dispatch).not.toHaveBeenCalled();
+
+    act(() => mockPreventRemove?.(GO_BACK));
+    await act(async () => alert?.press('Discard'));
+    expect(mockNavigation.dispatch).toHaveBeenCalledWith({ type: 'GO_BACK' });
+
+    // Typed back to what it was: nothing to lose, nothing asked.
+    fireEvent.changeText(title(), 'Field notes');
+    expect(mockPreventRemove).toBeNull();
+  });
+
+  it("keeps or deletes a new post's draft when it is left", async () => {
+    mockParams.current = { id: BLOG };
+    const first = renderScreen(<NewPostScreen />);
+    await settle();
+    expect(mockPreventRemove).toBeNull();
+
+    fireEvent.changeText(title(), 'Unfinished');
+    act(() => mockPreventRemove?.(GO_BACK));
+    expect(sheet?.options).toEqual(['Save draft', 'Delete draft', 'Cancel']);
+    act(() => sheet?.choose('Save draft'));
+    expect(mockNavigation.dispatch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(syncStorage.getItem(draftKey(AUTHOR, BLOG)) ?? '{}').title).toBe('Unfinished');
+    first.unmount();
+
+    // Reopened, the draft is back as it was left: leaving asks nothing until it changes.
+    renderScreen(<NewPostScreen />);
+    await settle();
+    expect(screen.getByDisplayValue('Unfinished')).toBeTruthy();
+    expect(mockPreventRemove).toBeNull();
+    fireEvent.changeText(title(), 'Unfinished, then changed');
+    act(() => mockPreventRemove?.(GO_BACK));
+    act(() => sheet?.choose('Delete draft'));
+    expect(mockNavigation.dispatch).toHaveBeenCalledTimes(2);
+    expect(syncStorage.getItem(draftKey(AUTHOR, BLOG))).toBeNull();
+  });
+
+  it("lets the account's stack reset take a dirty editor without asking, and saves nothing for it", async () => {
+    mockParams.current = { id: BLOG };
+    renderScreen(<NewPostScreen />);
+    await settle();
+    fireEvent.changeText(title(), 'Unfinished');
+    const guard = mockPreventRemove;
+    expect(guard).not.toBeNull();
+
+    // A switch pops the tab stacks from the session store's listener, before the editor re-renders.
+    act(() => {
+      useSessionStore.setState({ status: 'signed-in', session: session(READER), accounts: [] });
+      guard?.(GO_BACK);
+    });
+    expect(mockNavigation.dispatch).toHaveBeenCalledWith({ type: 'GO_BACK' });
+    expect(alert).toBeNull();
+    expect(sheet).toBeNull();
+    expect(syncStorage.getItem(draftKey(AUTHOR, BLOG))).toBeNull();
+  });
+
+  it('closes a confirmed edit that is still in front, without asking', async () => {
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    const sent = ticket({ op: 'blogPost.update' });
+    fakeEngine.method('blogs.edit').mockResolvedValue(sent);
+    renderScreen(<EditPostScreen />);
+    await settle();
+    fireEvent.changeText(title(), 'Field notes, revised');
+    fireEvent.press(screen.getByTestId('blog-editor-submit'));
+    await settle();
+    // On its way: leaving discards nothing, so nothing asks.
+    expect(mockPreventRemove).toBeNull();
+    expect(router.back).not.toHaveBeenCalled();
+
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+    await settle();
+    expect(useToastStore.getState().current?.message).toBe('Post saved');
+    expect(router.back).toHaveBeenCalledTimes(1);
+  });
+
+  it('pops nothing when an edit is confirmed after the writer moved on', async () => {
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    const sent = ticket({ op: 'blogPost.update' });
+    fakeEngine.method('blogs.edit').mockResolvedValue(sent);
+    renderScreen(<EditPostScreen />);
+    await settle();
+    fireEvent.changeText(title(), 'Field notes, revised');
+    fireEvent.press(screen.getByTestId('blog-editor-submit'));
+    await settle();
+
+    mockFocused.current = false;
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+    await settle();
+    expect(useToastStore.getState().current?.message).toBe('Post saved');
+    expect(router.back).not.toHaveBeenCalled();
+    // Back on it, the form is the saved one, editable, and leaving it asks nothing.
+    expect(title().props.editable).toBe(true);
+    expect(screen.getByDisplayValue('Field notes, revised')).toBeTruthy();
+    expect(mockPreventRemove).toBeNull();
+  });
+});
+
+describe('deleting a post (MUX-11)', () => {
+  async function deletePost() {
+    mockParams.current = { id: BLOG, slug: 'field-notes' };
+    renderScreen(<BlogPostScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('blog-post-menu-delete'));
+    expect(alert?.title).toBe('Delete this post?');
+    await act(async () => alert?.press('Delete'));
+    await settle();
+  }
+
+  it('says it is deleting until the ticket confirms, and only then deleted', async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+
+    expect(fakeEngine.method('blogs.deletePost')).toHaveBeenCalledWith(POST);
+    expect(screen.getByText('Deleting this post…')).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+    expect(router.back).not.toHaveBeenCalled();
+    // Not offered again while it is on its way.
+    expect(screen.queryByTestId('blog-post-menu-delete')).toBeNull();
+    expect(screen.queryByTestId('blog-post-menu-edit')).toBeNull();
+
+    // The read after it finds the post deleted; the screen still shows it while it leaves.
+    fakeEngine.method('blogs.postBySlug').mockResolvedValue({ ...post, deleted: true });
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+    await settle();
+    expect(useToastStore.getState().current?.message).toBe('Post deleted');
+    expect(router.back).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('blogs.postBySlug')).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('blog-post-title')).toHaveTextContent('Field notes');
+    expect(screen.queryByText('This post was deleted by its author.')).toBeNull();
+  });
+
+  it('keeps an unconfirmed delete on screen until a read proves the post deleted', async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'unconfirmed', retryable: false })));
+    await settle();
+
+    expect(screen.getByText(/Deleting this post was sent but isn't confirmed yet/)).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+    expect(router.back).not.toHaveBeenCalled();
+
+    fakeEngine.method('blogs.postBySlug').mockResolvedValue({ ...post, deleted: true });
+    fireEvent.press(screen.getByTestId('blog-post-deletion-check'));
+    await settle();
+    expect(useToastStore.getState().current?.message).toBe('Post deleted');
+    expect(router.back).toHaveBeenCalledTimes(1);
+  });
+
+  it('says a failed delete failed, and offers it again', async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+    act(() => {
+      fakeEngine.emit('write.status', advance(sent, {
+        state: 'failed',
+        retryable: true,
+        error: { code: 'NETWORK', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Network trouble.' },
+      }));
+    });
+    await settle();
+
+    expect(screen.getByText("This post wasn't deleted.")).toBeTruthy();
+    expect(useToastStore.getState().current?.message).not.toBe('Post deleted');
+    expect(router.back).not.toHaveBeenCalled();
+    expect(screen.getByTestId('blog-post-menu-delete')).toBeTruthy();
+  });
+
+  it("says a retry whose answer was lost may still land, whatever the earlier one's outcome", async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+    act(() => {
+      fakeEngine.emit('write.status', advance(sent, {
+        state: 'failed',
+        retryable: true,
+        error: { code: 'NETWORK', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Network trouble.' },
+      }));
+    });
+    await settle();
+
+    fakeEngine.method('blogs.deletePost').mockRejectedValue(Object.assign(new Error('Timed out'), { code: 'RPC_TIMEOUT' }));
+    fireEvent.press(screen.getByTestId('blog-post-menu-delete'));
+    await act(async () => alert?.press('Delete'));
+    await settle();
+    expect(screen.getByText(/Deleting this post was sent but isn't confirmed yet/)).toBeTruthy();
+    expect(screen.queryByText("This post wasn't deleted.")).toBeNull();
+  });
+
+  it('offers to delete again once a read after a lost answer finds the post still there', async () => {
+    fakeEngine.method('blogs.deletePost').mockRejectedValue(Object.assign(new Error('Timed out'), { code: 'RPC_TIMEOUT' }));
+    await deletePost();
+    expect(screen.getByText(/Deleting this post was sent but isn't confirmed yet/)).toBeTruthy();
+    expect(screen.queryByTestId('blog-post-deletion-again')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('blog-post-deletion-check'));
+    await settle();
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    fireEvent.press(screen.getByTestId('blog-post-deletion-again'));
+    await settle();
+    expect(fakeEngine.method('blogs.deletePost')).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Deleting this post…')).toBeTruthy();
+  });
+
+  it('is still deleting while its call runs past the deadline', async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+    act(() => {
+      fakeEngine.emit('write.status', advance(sent, {
+        state: 'unconfirmed',
+        retryable: false,
+        error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'Still sending.' },
+      }));
+    });
+    await settle();
+    expect(screen.getByText('Deleting this post…')).toBeTruthy();
+    expect(screen.queryByTestId('blog-post-deletion-check')).toBeNull();
+  });
+
+  it('never pops another screen when the delete confirms after the reader left', async () => {
+    const sent = ticket({ op: 'blogPost.delete' });
+    fakeEngine.method('blogs.deletePost').mockResolvedValue(sent);
+    await deletePost();
+    mockFocused.current = false;
+    act(() => fakeEngine.emit('write.status', advance(sent, { state: 'confirmed' })));
+    await settle();
+    expect(useToastStore.getState().current?.message).toBe('Post deleted');
+    expect(router.back).not.toHaveBeenCalled();
   });
 });
 

@@ -1,17 +1,20 @@
 import type { BlogDTO, BlogInfoDTO, BlogPostDTO, BlogPostInput } from '@engine/api';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { BookOpenIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { engineQueryOptions, useEngineQuery } from '~/data/queries';
-import { useViewerId } from '~/data/session';
+import { useSessionStore, useViewerId } from '~/data/session';
 import { checkWrite, useWrite, type WriteResult } from '~/data/writes';
 import { cn } from '~/lib-allowlist';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
+import { showActionSheet } from '~/ui/action-sheet';
 import { Button } from '~/ui/Button';
+import { confirmAlert } from '~/ui/Dialog';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { Screen } from '~/ui/Screen';
@@ -127,10 +130,19 @@ function problems(form: Form, info: BlogInfoDTO | undefined): string | null {
   return null;
 }
 
+/** Whether the form differs from its baseline (see `Editor`). */
+const formChanged = (form: Form, baseline: Form): boolean => JSON.stringify(form) !== JSON.stringify(baseline);
+
 function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null; info: BlogInfoDTO | undefined }) {
   const viewerId = useViewerId();
+  const navigation = useNavigation();
   const key = viewerId ? draftKey(viewerId, blog.id) : null;
   const [form, setForm] = useState<Form>(() => formOf(post, blog, post || !key ? null : readDraft(key)));
+  /**
+   * What leaving would lose nothing against: the form as it opened, or as it was reset to (a draft
+   * discarded or published, an edit confirmed while the writer was elsewhere).
+   */
+  const [baseline, setBaseline] = useState<Form>(form);
   const [touched, setTouched] = useState(false);
   const publish = useWrite(publishPostWrite);
   const edit = useWrite(editPostWrite);
@@ -142,6 +154,14 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
   const [lostAnswer, setLostAnswer] = useState(() => !post && viewerId !== null && publishHeld(viewerId, blog.id));
   /** The held publish's ticket, once the engine lists it ("Check again"). */
   const [heldTicket, setHeldTicket] = useState<string | null>(null);
+
+  /** The editor as a new post opens with no draft. */
+  const startAfresh = useCallback(() => {
+    const blank = formOf(null, blog, null);
+    setForm(blank);
+    setBaseline(blank);
+    setTouched(false);
+  }, [blog]);
 
   // Reopened while held: what became of it decides whether the draft comes back.
   const resolveHeld = useCallback(() => {
@@ -157,12 +177,11 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
         if (outcome.state === 'published') {
           // It went out: this draft is that post, so the editor starts afresh.
           toast.success('Your post was published');
-          setForm(formOf(null, blog, null));
-          setTouched(false);
+          startAfresh();
         }
       })
       .catch(() => undefined);
-  }, [post, viewerId, blog]);
+  }, [post, viewerId, blog.id, startAfresh]);
   const resolvedOnOpen = useRef(false);
   useEffect(() => {
     if (resolvedOnOpen.current || !lostAnswer || write.status !== 'idle') return;
@@ -171,9 +190,29 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
   }, [lostAnswer, write.status, resolveHeld]);
   // A save that may still land holds the form: sending it again could publish the post twice.
   const [starting, setStarting] = useState(false);
-  const busy = starting || lostAnswer || write.status === 'pending' || (write.status === 'unconfirmed' && write.ticket?.retryable !== true);
-  const left = useRef(false);
+  /**
+   * The ticket that confirmed while the writer was elsewhere (another tab, a
+   * screen over this one): nothing navigates for it, and the form is theirs
+   * again when they come back.
+   */
+  const [stayedFor, setStayedFor] = useState<string | null>(null);
+  // Confirmed, and closing: the form keeps its saving look until it has gone (re-enabling the
+  // fields in the render that pops it crashes Android, mobile/CLAUDE.md "Native view structure").
+  const closing = write.status === 'confirmed' && write.ticket?.id !== stayedFor;
+  const busy =
+    starting || closing || lostAnswer || write.status === 'pending' || (write.status === 'unconfirmed' && write.ticket?.retryable !== true);
+  // Its call still runs past the engine's deadline (a slow network): its own answer settles it, so
+  // there is nothing to check yet (as on Edit profile).
+  const stillSending = write.status === 'unconfirmed' && write.ticket?.error?.code === 'STILL_SENDING';
+  /** The confirmed ticket already acted on. */
+  const handled = useRef<string | null>(null);
   const sending = useRef(false);
+  /** Leaving was chosen (or needs no asking): the guard lets it through, and nothing autosaves after it. */
+  const leaving = useRef(false);
+  // Changed from the baseline. While a save may still land (busy), leaving discards nothing: the
+  // edit is on its way, and a new post's draft was kept and is held until it settles.
+  const dirty = useMemo(() => formChanged(form, baseline), [form, baseline]);
+  const guarded = dirty && !busy;
 
   const saveDraft = (current: Form) => {
     if (post || !key) return;
@@ -189,35 +228,103 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
   // A new post's work is kept on the device as the writer goes (web autosaves its draft).
   useEffect(() => {
     // Not while a publish may land, nor once it has (confirmed, the draft is removed). A refused one is editable again.
-    if (post || !key || !touched || busy || write.status === 'confirmed') return;
-    const timer = setTimeout(() => saveDraft(form), 600);
+    if (post || !key || !touched || busy) return;
+    const timer = setTimeout(() => {
+      // Never for an account that has just left (its drafts are being deleted).
+      if (!leaving.current && useSessionStore.getState().session?.identityId === viewerId) saveDraft(form);
+    }, 600);
     return () => clearTimeout(timer);
   });
 
-  // Confirmed: the new post opens; an edit goes back to it.
+  /**
+   * Leaving with unsaved work asks first (Back, the swipe, Android's back):
+   * an edit is "Discard changes?", a new post keeps or deletes its draft
+   * (compose's choice, PRD COMP-09).
+   */
+  const askToLeave = (leave: () => void) => {
+    const go = () => {
+      leaving.current = true;
+      leave();
+    };
+    if (post) {
+      confirmAlert({ title: 'Discard changes?', confirmText: 'Discard', cancelText: 'Keep editing', destructive: true })
+        .then((discard) => {
+          if (discard) go();
+        })
+        .catch(() => undefined);
+      return;
+    }
+    showActionSheet({
+      actions: [
+        {
+          label: 'Save draft',
+          onPress: () => {
+            saveDraft(form);
+            go();
+          },
+        },
+        {
+          label: 'Delete draft',
+          destructive: true,
+          onPress: () => {
+            if (key) syncStorage.removeItem(key);
+            go();
+          },
+        },
+        ...(Platform.OS === 'android' ? [{ label: 'Cancel', onPress: () => undefined }] : []),
+      ],
+    });
+  };
+  usePreventRemove(guarded, ({ data }) => {
+    // The account changed (a switch, a sign-out) and the tab stacks are going back to their roots:
+    // this editor is the old account's, so it goes without asking, and saves nothing for it.
+    if (useSessionStore.getState().session?.identityId !== viewerId) leaving.current = true;
+    if (leaving.current) navigation.dispatch(data.action);
+    else askToLeave(() => navigation.dispatch(data.action));
+  });
+
+  // Confirmed: the new post opens; an edit goes back to it. Either only if the editor is still in front.
   useEffect(() => {
-    if (write.status !== 'confirmed' || left.current) return;
-    left.current = true;
+    const ticket = write.ticket;
+    if (write.status !== 'confirmed' || !ticket || handled.current === ticket.id) return;
+    handled.current = ticket.id;
+    /** Closes the editor, but only while it is still in front: a save that lands later never pops another screen. */
+    const closeIfInFront = (then?: () => void): boolean => {
+      if (!navigation.isFocused() || !router.canGoBack()) return false;
+      leaving.current = true;
+      router.back();
+      then?.();
+      return true;
+    };
+    // The writer moved on: nothing navigates, and the form is theirs again.
+    const stay = (next: Form) => {
+      setStayedFor(ticket.id);
+      setForm(next);
+      setBaseline(next);
+      setTouched(false);
+    };
     if (post) {
       toast.success('Post saved');
-      router.back();
+      if (!closeIfInFront()) stay(form);
       return;
     }
     if (key) syncStorage.removeItem(key);
     toast.success('Post published');
-    const id = createdId(write.ticket);
+    const id = createdId(ticket);
+    const blank = formOf(null, blog, null);
     if (!id) {
-      router.back();
+      if (!closeIfInFront()) stay(blank);
       return;
     }
     queryClient
       .fetchQuery(engineQueryOptions(queryKeys.blog.post(id), (api) => api.blogs.post(id)))
+      .catch(() => null)
       .then((created) => {
-        router.back();
-        if (created) openBlogPost(created.blogId, created.slug);
+        if (!closeIfInFront(() => (created ? openBlogPost(created.blogId, created.slug) : undefined))) stay(blank);
       })
-      .catch(() => router.back());
-  }, [write.status, write.ticket, post, key]);
+      .catch(() => undefined);
+    // Once per confirmed ticket (`handled`): the other values are read as they are then.
+  }, [write.status, write.ticket, post, key, blog, form, navigation]);
 
   const problem = problems(form, info);
   const locked = useMemo(
@@ -244,7 +351,9 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
     if (post) {
       const patch = changes(post, input);
       if (Object.keys(patch).length === 0) {
+        // Nothing to save (only spaces the save trims changed): there is nothing to lose either.
         setStarting(false);
+        leaving.current = true;
         router.back();
         return;
       }
@@ -264,8 +373,7 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
 
   const discardDraft = () => {
     if (key) syncStorage.removeItem(key);
-    setTouched(false);
-    setForm(formOf(null, blog, null));
+    startAfresh();
   };
 
   // A held draft whose publish can't be traced: dropping it (never sending it again) is always safe.
@@ -282,6 +390,8 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
       <Stack.Screen
         options={{
           title: post ? 'Edit post' : 'New post',
+          // The swipe back would drop unsaved work without asking.
+          gestureEnabled: !guarded,
           headerRight: () => (
             <Pressable
               onPress={save}
@@ -303,8 +413,10 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
           {write.status === 'unconfirmed' || lostAnswer ? (
             <View className={cn('gap-2 rounded-xl border p-3', tw.border)}>
               <Text variant="bodyStrong">{post ? 'Your changes were sent' : 'Your post was sent'}</Text>
-              <Text variant="subhead" tone="secondary">{"It isn't confirmed yet. It usually shows up within a minute or two."}</Text>
-              {write.ticket ? (
+              <Text variant="subhead" tone="secondary">
+                {stillSending ? 'Still sending on a slow connection…' : "It isn't confirmed yet. It usually shows up within a minute or two."}
+              </Text>
+              {stillSending ? null : write.ticket ? (
                 <Button label="Check again" variant="outline" size="sm" onPress={() => { write.check().catch(() => undefined); }} testID="blog-editor-check" />
               ) : lostAnswer && !post ? (
                 <View className="flex-row gap-2">

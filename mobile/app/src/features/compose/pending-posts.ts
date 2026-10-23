@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { engine, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { onEngineEvent } from '~/data/events';
+import { forgetBlogDrafts } from '~/features/blog/blog-writes';
 import { forgetDmDrafts } from '~/features/messages/drafts';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, holdOwnQuote, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
@@ -1039,9 +1040,10 @@ function jobOfEntry(entry: PendingPost): string | null {
   return entry.orphaned ? orphanJob(entry.localId) : null;
 }
 
-/** Signing out deletes the account's drafts, its unsent messages and the posts it had on their way (PRD AUTH-11). */
+/** Signing out deletes the account's drafts (posts and blog posts), its unsent messages and the posts it had on their way (PRD AUTH-11). */
 function forgetAccount(identityId: string): void {
   forgetDrafts(identityId);
+  forgetBlogDrafts(identityId);
   forgetDmDrafts(identityId);
   for (const entry of Object.values(usePendingPosts.getState().entries)) {
     if (entry.identityId === identityId) dropEntry(entry.localId);

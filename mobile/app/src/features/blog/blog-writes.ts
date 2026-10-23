@@ -4,7 +4,7 @@ import { queryKeys } from '~/data/keys';
 import { engine } from '~/engine';
 import type { WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
-import { syncStorage } from '~/state/storage';
+import { removeKeysWithPrefix, syncStorage } from '~/state/storage';
 
 /**
  * The blog writes (web's `components/blog/**`): each is one engine ticket.
@@ -56,8 +56,15 @@ export const deleteBlogWrite: WriteSpec<{ blogId: string }> = {
   failureMessage: "Couldn't delete this blog. Try again.",
 };
 
-/** A new post's draft on this device, per account and blog (web's `yappr:blog-draft:…:new`). */
-export const draftKey = (viewerId: string, blogId: string) => `yappr.blog.draft:${viewerId}:${blogId}`;
+const DRAFT_PREFIX = 'yappr.blog.draft:';
+
+/**
+ * A new post's draft on this device, per account and blog (web's `yappr:blog-draft:…:new`).
+ * It sits in the app's MMKV, which is not encrypted, as compose drafts do: what it holds is
+ * written to be published. Only its own account reads it, and signing out deletes it
+ * (`forgetBlogDrafts`, PRD AUTH-11).
+ */
+export const draftKey = (viewerId: string, blogId: string) => `${DRAFT_PREFIX}${viewerId}:${blogId}`;
 const heldKey = (viewerId: string, blogId: string) => `${draftKey(viewerId, blogId)}:sent`;
 
 interface HeldPublish {
@@ -102,6 +109,11 @@ export const publishHeld = (viewerId: string, blogId: string): boolean => heldPu
 export function releasePublish(viewerId: string, blogId: string, published: boolean): void {
   syncStorage.removeItem(heldKey(viewerId, blogId));
   if (published) syncStorage.removeItem(draftKey(viewerId, blogId));
+}
+
+/** The account signed out: its blog drafts, and the publishes they held, leave the device (PRD AUTH-11). */
+export function forgetBlogDrafts(viewerId: string): void {
+  removeKeysWithPrefix(`${DRAFT_PREFIX}${viewerId}:`);
 }
 
 const publishesTo = (ticket: WriteTicket, blogId: string) => names(ticket, 'blogPost.publish', blogId);
