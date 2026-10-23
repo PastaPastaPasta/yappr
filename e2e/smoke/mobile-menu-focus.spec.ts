@@ -69,7 +69,7 @@ test('a menu link leaves the page with the menu closed and unlocked', async ({ p
   await expect(page.locator('body')).not.toHaveAttribute('data-scroll-locked')
   await expect.poll(() => mainHidden(page)).toBe(false)
   // Focus is not pulled back to Menu, which would float its tooltip over the new page.
-  await expect(page.getByRole('tooltip', { name: 'Menu', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Menu', exact: true })).not.toBeFocused()
 })
 
 test('changing to desktop closes the mobile menu and releases the page', async ({ page }) => {

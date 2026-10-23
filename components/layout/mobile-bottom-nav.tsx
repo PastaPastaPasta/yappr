@@ -81,7 +81,9 @@ export function MobileBottomNav() {
   useEffect(() => {
     const desktop = window.matchMedia('(min-width: 768px)')
     const closeOnDesktop = () => {
-      if (desktop.matches) setMoreMenuOpen(false)
+      if (!desktop.matches) return
+      afterCloseRef.current = 'page'
+      setMoreMenuOpen(false)
     }
     desktop.addEventListener('change', closeOnDesktop)
     return () => desktop.removeEventListener('change', closeOnDesktop)
