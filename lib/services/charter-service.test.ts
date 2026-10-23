@@ -562,6 +562,19 @@ describe('a landed marker', () => {
     expect(builders.sign).not.toHaveBeenCalled()
   })
 
+  it('stays for its own retry when a different write that would replace it is refused', async () => {
+    const same = JSON.stringify({ ...TERMS, reasonIds: [...TERMS.reasonIds] })
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ landed: 'doc-old', fingerprint: same, at: Date.now() - 16 * 60_000 }))
+    // Edited terms, refused right before signing: nothing signed, the marker kept.
+    const closed = vi.fn(async () => { throw new CharterActionError('Social already has a seated team.', 'refused') })
+    await expect(charterService.submitProposal(OWNER, { ...TERMS, description: 'Edited.' }, closed)).rejects.toMatchObject({ outcome: 'refused' })
+    expect(stored('submittedCharter', TERMS.targetContractId)).toMatchObject({ landed: 'doc-old' })
+    // The original terms again: answered from the marker, never a second proposal.
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-old')
+    expect(builders.sign).not.toHaveBeenCalled()
+  })
+
   it('once older than 15 minutes gives way to a different write, or to the same one proved gone', async () => {
     storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ landed: 'doc-old', fingerprint: 'other terms', at: Date.now() - 16 * 60_000 }))
     builders.exists.mockResolvedValue(true)
@@ -570,7 +583,8 @@ describe('a landed marker', () => {
     // The same terms again, the earlier document proved gone: signed anew.
     const same = JSON.stringify({ ...TERMS, reasonIds: [...TERMS.reasonIds] })
     storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), JSON.stringify({ landed: 'doc-old', fingerprint: same, at: Date.now() - 16 * 60_000 }))
-    builders.exists.mockResolvedValueOnce(false).mockResolvedValue(true)
+    // Checked under each lock (the marker stays until the new create is signed), then the new create is proved.
+    builders.exists.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-2')
     expect(builders.sign).toHaveBeenCalledTimes(2)
   })

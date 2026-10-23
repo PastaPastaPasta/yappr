@@ -671,9 +671,10 @@ class CharterService {
         if (stored.fingerprint === fingerprint) {
           const there = await charterStepExists(w, sdk, { id: stored.landed, type, owner: ownerId }, targetContractId).catch(() => null)
           if (there === true) return { kind: 'landed', id: stored.landed }
-          if (there === null) throw new CharterActionError("Your earlier filing couldn't be checked. Try again in a moment.", 'refused')
+          if (there === null) throw new CharterActionError("Your earlier submission couldn't be checked. Try again in a moment.", 'refused')
         }
-        localStorage.removeItem(PENDING_PREFIX + key)
+        // Kept until a new create is actually signed (which overwrites it): a new write that is cancelled
+        // or refused must leave the earlier one's marker for its own retry.
         return { kind: 'empty' }
       }
       const outcome = await settle(stored.signed)
@@ -712,6 +713,8 @@ class CharterService {
 
     // One lock for a resend; a new create first leaves it for its prompts, then takes it again. Settling
     // can rebroadcast stored bytes, so a session forgotten while waiting for either lock settles nothing.
+    // (The final settle below stays unchecked: what it may rebroadcast, this call's create or another tab's
+    // stored one, is the same signed bytes under the same nonce, so it can never send anything new.)
     const first = await lock(async () => {
       this.assertSameSession(generation)
       const slot = await resolveSlot()

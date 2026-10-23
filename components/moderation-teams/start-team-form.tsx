@@ -156,7 +156,7 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
       // Read again right before a new proposal is signed: a team may have been seated while this was filled in.
       const stillOpen = async () => {
         const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
-        if (!fresh) throw new CharterActionError("The election couldn't be read. Refresh, then try again.", 'refused')
+        if (!fresh || fresh.failures.includes('seatedTeam')) throw new CharterActionError("The election couldn't be read. Refresh, then try again.", 'refused')
         const freshStage = electionStage(fresh, Date.now() + chainOffsetMs(fresh))
         if (freshStage.kind === 'seated' || freshStage.kind === 'deciding') {
           throw new CharterActionError(`${declared.label} already has a seated team, so new teams can't stand yet.`, 'refused')
