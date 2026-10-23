@@ -23,6 +23,7 @@ import { Spinner } from '~/ui/Spinner';
 import { FilterChips, SegmentedControl } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { MIN_TARGET } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
@@ -30,6 +31,7 @@ import { BlogAvatar } from './BlogCards';
 import { BlogMenu, BlogStatusBar, FollowBlogButton, blogHeaderOptions, useBlogFollow } from './BlogChrome';
 import { BlogComments } from './BlogComments';
 import { BlogContent } from './BlogContent';
+import { BlogHiddenScreen } from './BlogHidden';
 import { blocksOf } from './blocks';
 import { blogPostWebUrl, openBlog, shareLink } from './blog-navigation';
 import { BlogReportSheet } from './BlogReportSheet';
@@ -193,7 +195,9 @@ function usePostDeletion(postId: string | undefined, blogId: string, gone: boole
 /**
  * A blog post in its blog's theme (web `blog-post-view.tsx`): title,
  * summary, author, reading time, cover, the content with a working table of
- * contents, the reader's "Aa", share, report, and comments.
+ * contents, the reader's "Aa", share, report, and comments. A post (or blog)
+ * the moderators hid is a stub on the official apps, as on web (blog v10);
+ * an archival build shows it labelled.
  */
 export function BlogPostScreen() {
   const { id: blogId, slug } = useLocalSearchParams<{ id: string; slug: string }>();
@@ -263,6 +267,10 @@ export function BlogPostScreen() {
 
   const b = view.blog;
   const p = view.post;
+  // Web's stub covers a hidden blog's posts as well as a hidden post.
+  if (b.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog" />;
+  if (p.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog post" />;
+
   const palette = blogPalette(b.theme, mode);
   const scale = FONT_SCALES[size];
   const own = viewerId === p.ownerId;
@@ -375,6 +383,7 @@ export function BlogPostScreen() {
                 {p.summary ? <RNText style={{ ...bodyFont, color: palette.muted, fontSize: 18 * scale, lineHeight: 26 * scale }}>{p.summary}</RNText> : null}
               </View>
               <AuthorRow blog={b} post={p} palette={palette} follow={follow} />
+              <ModerationLabel moderation={p.moderation} testID="blog-post-moderation-label" />
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.border, paddingVertical: 10 }}>
                 <RNText style={muted}>{`${p.readingMinutes} min read`}</RNText>
                 {p.labels.length > 0 ? <RNText style={muted}>{`· ${p.labels.join(', ')}`}</RNText> : null}

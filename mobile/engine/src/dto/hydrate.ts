@@ -18,9 +18,10 @@ import { useSettingsStore } from '@/lib/store'
 import { getPrimaryUsername } from '@/lib/utils/username'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
+import type { ModeratedContractKey } from '@/lib/moderated-contracts'
 import {
   avatarFromField, toPostDTO, toUserSummaryDTO,
-  type AvatarDTO, type PostDTO, type UserSummaryDTO,
+  type AvatarDTO, type ModerationDTO, type PostDTO, type UserSummaryDTO,
 } from '../api/dto'
 
 /**
@@ -107,16 +108,22 @@ export async function toPostDTOs(posts: Post[]): Promise<PostDTO[]> {
  * resolve gets no reason: the host says "Hidden by moderators", never a number.
  */
 async function withModerationReasons(dtos: PostDTO[]): Promise<void> {
-  const labelled: NonNullable<PostDTO['moderation']>[] = []
+  const marks: (ModerationDTO | undefined)[] = []
   const collect = (dto: PostDTO | undefined) => {
     if (!dto) return
-    if (dto.moderation?.label !== undefined) labelled.push(dto.moderation)
+    marks.push(dto.moderation)
     collect(dto.quoted)
   }
   dtos.forEach(collect)
+  await withReasons('social', marks)
+}
+
+/** Sets `reason` on each of `marks` that carries a `label`, from `contract`'s seated charter (see above). */
+export async function withReasons(contract: ModeratedContractKey, marks: readonly (ModerationDTO | undefined)[]): Promise<void> {
+  const labelled = marks.filter((moderation): moderation is ModerationDTO => moderation?.label !== undefined)
   if (labelled.length === 0) return
   const labels = Array.from(new Set(labelled.flatMap(moderation => moderation.label ?? [])))
-  const texts = new Map(await Promise.all(labels.map(async label => [label, await charterReasonText('social', label)] as const)))
+  const texts = new Map(await Promise.all(labels.map(async label => [label, await charterReasonText(contract, label)] as const)))
   for (const moderation of labelled) {
     const text = moderation.label === undefined ? null : texts.get(moderation.label)
     if (text) moderation.reason = text

@@ -2,7 +2,7 @@ import type { BlogDTO, BlogPostSummaryDTO } from '@engine/api';
 import { router, Stack } from 'expo-router';
 import { memo, useMemo } from 'react';
 import { FlatList, Pressable, View } from 'react-native';
-import { DocumentTextIcon, TrashIcon } from 'react-native-heroicons/outline';
+import { DocumentTextIcon, PencilSquareIcon, TrashIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
@@ -17,6 +17,7 @@ import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
@@ -64,6 +65,8 @@ const BlogRow = memo(function BlogRow({ blog }: { blog: BlogDTO }) {
           ) : null}
         </View>
       </Pressable>
+      {/* Blog v10: the author's own hidden blog is listed here, labelled (it is not listed anywhere else). */}
+      <ModerationLabel moderation={blog.moderation} testID={`manage-blog-moderation-${blog.id}`} />
       <View className="flex-row items-center gap-2">
         <Button
           label="Write"
@@ -115,7 +118,18 @@ const PostRow = memo(function PostRow({ post }: { post: BlogPostSummaryDTO }) {
         <Text variant="subhead" tone="secondary" numberOfLines={1}>
           {subtitle}
         </Text>
+        {/* Blog v10: hidden, or written while restricted, so not listed in discovery. */}
+        <ModerationLabel moderation={post.moderation} testID={`manage-post-moderation-${post.id}`} />
       </Pressable>
+      {blogName !== null ? (
+        // The editor directly: a post (or blog) the moderators hid reads as a stub, so its menu can't get here.
+        <IconButton
+          icon={PencilSquareIcon}
+          accessibilityLabel="Edit post"
+          onPress={() => router.push({ pathname: '/blog/[id]/post/[slug]/edit', params: { id: post.blogId, slug: post.slug } })}
+          testID={`manage-post-edit-${post.id}`}
+        />
+      ) : null}
       <IconButton
         icon={TrashIcon}
         variant="danger"

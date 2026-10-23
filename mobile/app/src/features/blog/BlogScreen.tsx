@@ -17,10 +17,12 @@ import { handleOf } from '~/ui/handle';
 import { useMediaUrls } from '~/ui/media-url';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { MIN_TARGET } from '~/ui/tokens';
 
 import { BlogAvatar, postMeta } from './BlogCards';
 import { BlogMenu, BlogStatusBar, FollowBlogButton, blogHeaderOptions, useBlogFollow } from './BlogChrome';
+import { BlogHiddenScreen } from './BlogHidden';
 import { blogWebUrl, openBlogPost, shareLink } from './blog-navigation';
 import { BlogReportSheet } from './BlogReportSheet';
 import { blogPalette, fontStyle, onColor, type BlogPalette } from './blog-theme';
@@ -48,6 +50,7 @@ function ThemedPostRow({ post, palette, blog }: { post: BlogPostSummaryDTO; pale
           </RNText>
         ) : null}
         <RNText style={{ color: post.publishedAt ? palette.muted : palette.accent, fontSize: 13 }}>{postMeta(post)}</RNText>
+        <ModerationLabel moderation={post.moderation} testID={`blog-post-moderation-${post.id}`} />
       </View>
       {cover ? <Image source={{ uri: cover }} style={{ width: 80, height: 80, borderRadius: 10 }} contentFit="cover" accessibilityIgnoresInvertColors /> : null}
     </Pressable>
@@ -93,6 +96,7 @@ function BlogHeader({ blog, palette, followCount, follow }: { blog: BlogDTO; pal
         {blog.labels.length > 0 ? (
           <RNText style={{ color: palette.muted, fontSize: 14 }}>{blog.labels.join(' · ')}</RNText>
         ) : null}
+        <ModerationLabel moderation={blog.moderation} testID="blog-moderation-label" />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           {followCount !== null ? <RNText style={{ color: palette.muted, fontSize: 14 }}>{followers(followCount)}</RNText> : null}
           <View style={{ flex: 1 }} />
@@ -124,7 +128,11 @@ function BlogHeader({ blog, palette, followCount, follow }: { blog: BlogDTO; pal
   );
 }
 
-/** A blog's home page in its own theme (web `blog-home.tsx`). */
+/**
+ * A blog's home page in its own theme (web `blog-home.tsx`). A blog the
+ * moderators hid is a stub on the official apps, its posts included (blog
+ * v10); an archival build shows it labelled.
+ */
 export function BlogScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const viewerId = useViewerId();
@@ -132,12 +140,16 @@ export function BlogScreen() {
   const [reporting, setReporting] = useState(false);
   const info = useEngineQuery(queryKeys.blog.info, (api) => api.blogs.info(), { staleTime: Infinity });
   const blog = useEngineQuery(queryKeys.blog.detail(id), (api) => api.blogs.get(id), { persist: true });
+  const withheld = blog.data?.moderation?.withheld === true;
+  const shown = Boolean(blog.data) && !withheld;
   const posts = useEngineInfiniteQuery(queryKeys.blog.posts(id), (api, cursor) => api.blogs.posts(id, cursor), {
     persist: true,
-    enabled: Boolean(blog.data),
+    enabled: shown,
   });
-  const follow = useBlogFollow(id, Boolean(blog.data));
+  const follow = useBlogFollow(id, shown);
   const [refreshing, setRefreshing] = useState(false);
+
+  if (withheld) return <BlogHiddenScreen title="Blog" noun="blog" />;
 
   if (!blog.data) {
     return (

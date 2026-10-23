@@ -13,10 +13,12 @@ import { Avatar } from '~/ui/Avatar';
 import { confirmAlert } from '~/ui/Dialog';
 import { handleOf } from '~/ui/handle';
 import { Spinner } from '~/ui/Spinner';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { MIN_TARGET } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
 import { commentWrite, deleteCommentWrite, isLocalComment, isPendingComment, rereadCommentsLater } from './blog-writes';
+import { BlogHiddenStub } from './BlogHidden';
 import { onColor, type BlogPalette } from './blog-theme';
 
 function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
@@ -32,6 +34,13 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
   const handle = comment.author ? handleOf(comment.author) : null;
   const pending = isPendingComment(comment);
   const local = isLocalComment(comment);
+  if (comment.moderation?.withheld) {
+    return (
+      <View style={{ borderTopWidth: 1, borderColor: palette.border }}>
+        <BlogHiddenStub noun="comment" color={palette.muted} testID={`blog-comment-hidden-${comment.id}`} />
+      </View>
+    );
+  }
   return (
     <View style={{ flexDirection: 'row', gap: 10, paddingVertical: 12, borderTopWidth: 1, borderColor: palette.border, opacity: pending ? 0.6 : 1 }} testID={`blog-comment-${comment.id}`}>
       <Avatar avatar={comment.author?.avatar} identityId={comment.ownerId} size="sm" name={name} onPress={() => openUser(comment.ownerId)} />
@@ -40,6 +49,7 @@ function CommentRow({ comment, palette, own, canReport, onReport, onDelete }: {
           <RNText style={{ color: palette.heading, fontWeight: '600' }}>{name}</RNText>
           {handle && handle !== name ? ` ${handle}` : ''} · {when}
         </RNText>
+        <ModerationLabel moderation={comment.moderation} testID={`blog-comment-moderation-${comment.id}`} />
         <RNText selectable style={{ color: palette.text, fontSize: 15, lineHeight: 21 }}>{comment.content}</RNText>
         <View style={{ flexDirection: 'row', gap: 16 }}>
           {pending ? (
