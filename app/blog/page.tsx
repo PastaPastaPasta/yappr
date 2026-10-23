@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
+import { ElectionBannerSlot } from '@/components/moderation/election-banner'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -491,6 +492,7 @@ function BlogPageContent() {
           "w-full border-gray-200 dark:border-gray-800",
           isWideMode ? "max-w-[1100px]" : "max-w-[700px] md:border-x"
         )}>
+          <ElectionBannerSlot />
           {!isComposeMode && (
             <header className="sticky top-0 z-40 border-b border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-neutral-900">
               <h1 className="flex items-center gap-2 text-xl font-bold">

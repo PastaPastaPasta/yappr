@@ -155,7 +155,7 @@ export function ElectionOverview({ contract, election }: {
           {(stage.kind === 'voting' || (stage.kind === 'joining' && stage.contenders > 1)) && (
             <a className="inline-flex items-center gap-1 text-sm text-yappr-700 dark:text-yappr-400 hover:underline"
               href={masternodeVoteUrl(status.targetContractId, CHARTERS_CONTRACT_ID)} target="_blank" rel="noopener noreferrer">
-              Masternode owners vote on vote.dashhq.org <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+              Masternode owners vote on EvoVote <ArrowTopRightOnSquareIcon className="h-4 w-4" />
             </a>
           )}
         </Section>
