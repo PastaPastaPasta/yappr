@@ -9,6 +9,7 @@ import { RecoveryModal } from '@/components/post/recovery-modal'
 import { DeleteConfirmationModal } from '@/components/post/delete-confirmation-modal'
 import { ModeratorRemoveModal } from '@/components/moderation/moderator-remove-modal'
 import { ModeratorHideModal } from '@/components/moderation/moderator-hide-modal'
+import { BulkHideModal } from '@/components/moderation/bulk-hide-modal'
 import { ReportPostModal } from '@/components/moderation/report-post-modal'
 import { DashPayContactsModal } from '@/components/contacts/dashpay-contacts-modal'
 import { EncryptionKeyModal } from '@/components/auth/encryption-key-modal'
@@ -40,6 +41,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
           <DeleteConfirmationModal />
           <ModeratorRemoveModal />
           <ModeratorHideModal />
+          <BulkHideModal />
           <ReportPostModal />
           <DashPayContactsModal />
           <EncryptionKeyModal />

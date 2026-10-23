@@ -8,9 +8,11 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useModeratorHideModal, type ModeratorHideAction, type ModeratorHideOutcome, type ModeratorHideTarget } from '@/hooks/use-moderator-hide-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { labelOptions, type LabelOption } from '@/lib/moderation-labels'
 import { forgetModeratedReads } from '@/lib/moderation-refresh'
 import { moderationServiceFor, type ModerationReasonInput, type ModerationResult } from '@/lib/services/moderation-service'
+import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
 import { CharterReasonPicker, useSeatedReasons } from './charter-reason-picker'
 
 const INPUT = 'w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500'
@@ -50,7 +52,7 @@ export function hideModalCopy(target: Pick<ModeratorHideTarget, 'action' | 'noun
     case 'restrict':
       return {
         title: 'Restrict this account?',
-        body: 'What they post from now on stays out of feeds, search and profiles until a moderator lifts the restriction. What they already posted stays as it is: hide anything that breaks the rules on its own. The restriction is public, with its reason.',
+        body: 'What they post from now on stays out of feeds, search and profiles until a moderator lifts the restriction. What they already posted stays up unless you hide it. The restriction is public, with its reason.',
         confirm: 'Restrict account',
         busy: 'Restricting…',
         done: 'Account restricted',
@@ -85,12 +87,15 @@ export function ModeratorHideModal() {
   const [reasonDocumentId, setReasonDocumentId] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [alsoHide, setAlsoHide] = useState(false)
+  const { open: openBulkHide } = useBulkHideModal()
 
   useEffect(() => {
     if (!isOpen) return
     setLabel(null)
     setReasonDocumentId('')
     setNote('')
+    setAlsoHide(false)
   }, [isOpen, target])
 
   const options: readonly LabelOption[] = useMemo(
@@ -108,8 +113,17 @@ export function ModeratorHideModal() {
     && (!needsLabel || chosen !== null)
     && (!seatedReasons.required || charterReasonId !== '')
 
+  // A restriction keeps what they post from now on out of the feeds; what they already posted can be hidden next, in bulk.
+  const offersBulkHide = action === 'restrict' && contract === 'social' && bulkHideAvailable()
+
   const handleClose = () => {
     if (!busy) close()
+  }
+
+  /** Closes, then, when asked, opens the bulk hide on the restricted account with the restriction's reason. */
+  const finish = () => {
+    close()
+    if (offersBulkHide && alsoHide) openBulkHide({ authorId: target.authorId, label: chosen?.label, note: note.trim() })
   }
 
   const run = async () => {
@@ -145,6 +159,10 @@ export function ModeratorHideModal() {
         break
     }
     setBusy(false)
+    // Ordered by the change's own block time when the proved answer gave it (hooks/use-recent-moderation.ts).
+    if (result.moderatedAt !== undefined) {
+      outcome = { ...outcome, at: result.moderatedAt, ...(outcome.moderation ? { moderation: { ...outcome.moderation, moderatedAt: result.moderatedAt } } : {}) }
+    }
     // The moderator closed the key sheet: nothing was signed, so the dialog stays open.
     if (result.errorCode === 'CANCELLED') return
     if (result.errorCode === 'MAYBE_APPLIED') {
@@ -152,15 +170,15 @@ export function ModeratorHideModal() {
       // done, drop the reads that could contradict it, and say to look again.
       toast(`${copy.done}. The network hasn't confirmed it yet, so check back in a moment.`, { duration: 8000 })
       forgetModeratedReads(contract)
-      onDone?.(outcome)
-      close()
+      onDone?.({ ...outcome, unconfirmed: true })
+      finish()
       return
     }
     // Already the way it was asked for (another moderator, or an earlier attempt): what was asked for holds.
     if (result.errorCode === 'NOTHING_TO_CHANGE' || result.errorCode === 'ALREADY_RESTRICTED' || result.errorCode === 'NOT_RESTRICTED') {
       toast(result.error ?? 'Already done', { duration: 6000 })
       onDone?.(outcome)
-      close()
+      finish()
       return
     }
     if (!result.success) {
@@ -170,7 +188,7 @@ export function ModeratorHideModal() {
     toast.success(copy.done)
     forgetModeratedReads(contract)
     onDone?.(outcome)
-    close()
+    finish()
   }
 
   const Icon = action === 'hide' ? EyeSlashIcon : action === 'unhide' ? EyeIcon : action === 'restrict' ? NoSymbolIcon : LockOpenIcon
@@ -226,6 +244,21 @@ export function ModeratorHideModal() {
         onChange={(e) => setNote(e.target.value)}
         className={`${INPUT} mb-4`}
       />
+      {offersBulkHide && (
+        <label className="flex items-start gap-2 mb-4 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-yappr-600 focus:ring-yappr-500"
+            checked={alsoHide}
+            onChange={(e) => setAlsoHide(e.target.checked)}
+            data-testid="moderator-restrict-also-hide"
+          />
+          <span>
+            Also hide this account&apos;s earlier posts
+            <span className="block text-xs text-gray-500 dark:text-gray-400">Next, you pick which of their posts and replies to hide.</span>
+          </span>
+        </label>
+      )}
       <div className="flex flex-col gap-3">
         <Button data-testid="moderator-hide-confirm" onClick={() => { run().catch(() => { /* reported inside */ }) }} disabled={!ready} className="w-full">
           {busy ? copy.busy : copy.confirm}

@@ -3,13 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { ArrowPathIcon, ChatBubbleOvalLeftIcon, EllipsisHorizontalIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon, FlagIcon, LockOpenIcon, NoSymbolIcon, QueueListIcon, ShieldExclamationIcon, TrashIcon } from '@heroicons/react/24/outline'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import toast from 'react-hot-toast'
-import type { Post, PostModeration } from '@/lib/types'
+import type { Post } from '@/lib/types'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import { postHideTarget, useModeratorHideModal, type ModeratorHideAction } from '@/hooks/use-moderator-hide-modal'
+import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
+import { useRecentModeration, useShownModeration } from '@/hooks/use-recent-moderation'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
 import { archivalBuild, isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
@@ -54,6 +56,7 @@ import { SensitiveContentGate } from './sensitive-content-gate'
 import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from './embedded-post-card'
 import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderationService } from '@/lib/services/moderation-service'
+import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -292,8 +295,10 @@ function PostCardView({
   // v10: the author deleted it from this card, and the document is gone too.
   const [locallyDeleted, setLocallyDeleted] = useState(false)
   // v18: a moderator hid or unhid it from this card; undefined until then.
-  const [localModeration, setLocalModeration] = useState<PostModeration | null | undefined>(undefined)
-  const moderation = localModeration === undefined ? post.moderation : localModeration ?? undefined
+  // Recorded for every card on screen, from this card's menu or a bulk run (hooks/use-recent-moderation.ts):
+  // the last change wins, until a read carries a later one.
+  const recordModeration = useRecentModeration((state) => state.record)
+  const moderation = useShownModeration(post.id, post.moderation)
   const hiddenByModerators = isHidden(moderation)
   // A default build offers nothing to build on a hidden post (reply, repost, quote), even to the moderators who read it; an archival build keeps them.
   const hiddenOnThisBuild = hiddenByModerators && !archivalBuild()
@@ -413,14 +418,10 @@ function PostCardView({
   const canModerate = isModerator && !isOwnPost && !protectedIds.has(post.author.id)
     && (hides ? moderationService.canHide(targetKind) : moderatorDeletableTypes().includes(targetKind))
   const { open: openModeratorHideModal } = useModeratorHideModal()
+  const { open: openBulkHide } = useBulkHideModal()
   const authorRestrictedRead = useAuthorRestricted('social', post.author.id, canModerate && hides && menuPrimed && moderationService.canRestrict())
   const [authorRestrictedHere, setAuthorRestrictedHere] = useState<boolean | null>(null)
   const authorRestricted = authorRestrictedHere ?? authorRestrictedRead
-  // What this card set locally belongs to the post it was set on: a new post,
-  // or new marks from a re-read, replace it.
-  useEffect(() => {
-    setLocalModeration(undefined)
-  }, [post.id, post.moderation])
   useEffect(() => {
     setAuthorRestrictedHere(null)
   }, [post.id, post.author.id])
@@ -429,10 +430,9 @@ function PostCardView({
   const openHideAction = (action: ModeratorHideAction) => {
     openModeratorHideModal(postHideTarget(post, action), (outcome) => {
       if (outcome.restricted !== undefined) setAuthorRestrictedHere(outcome.restricted)
+      // The shown marks keep the post's restriction flag from its read (useShownModeration).
       if (outcome.moderation !== undefined) {
-        setLocalModeration(outcome.moderation
-          ? { ...outcome.moderation, ...(moderation?.restricted ? { restricted: true } : {}) }
-          : moderation?.restricted ? { restricted: true } : null)
+        recordModeration(post.id, outcome.moderation, { proved: !outcome.unconfirmed, at: outcome.at, basis: post.moderation })
       }
     })
   }
@@ -784,6 +784,19 @@ function PostCardView({
                           >
                             {authorRestricted ? <LockOpenIcon className="h-4 w-4" /> : <NoSymbolIcon className="h-4 w-4" />}
                             {authorRestricted ? `Lift ${authorLabel}'s restriction` : `Restrict ${authorLabel}`}
+                          </DropdownMenu.Item>
+                        )}
+                        {bulkHideAvailable() && (
+                          <DropdownMenu.Item
+                            data-testid={`moderator-bulk-hide-${post.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openBulkHide({ authorId: post.author.id, ...(usernameState ? { authorName: `@${usernameState}` } : {}) })
+                            }}
+                            className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
+                          >
+                            <QueueListIcon className="h-4 w-4" />
+                            Hide posts by {authorLabel}…
                           </DropdownMenu.Item>
                         )}
                         {moderationService.canWarn() && (

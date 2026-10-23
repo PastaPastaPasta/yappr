@@ -174,3 +174,45 @@ export function moderationMarksOf(doc: Record<string, unknown>): ModerationMarks
   if (Number.isFinite(atMs) && atMs > 0) marks.moderatedAt = atMs
   return marks
 }
+
+/**
+ * A hide or unhide this tab made (marks null once unhidden), when it recorded
+ * it (ms), and whether its transition came back proved (a gateway timeout
+ * leaves it unproved: it may not have landed).
+ */
+export interface RecordedMarks {
+  marks: MarksWithRestriction | null
+  at: number
+  proved: boolean
+  /** An unproved change: the read on screen when it was made. Any other read, on this mount or a later one, supersedes it. */
+  basis?: MarksWithRestriction
+}
+
+/** True when `read` supersedes `recorded` ({@link shownMarks}): the record can be dropped. */
+export function readSupersedes(read: ModerationMarks | undefined, recorded: RecordedMarks, readIsNew: boolean): boolean {
+  return recorded.proved
+    ? read?.moderatedAt !== undefined && read.moderatedAt > recorded.at
+    : readIsNew
+}
+
+/** Marks with the restriction flag a read may carry (`live: 2`, which no moderator change alters); a post's `PostModeration`. */
+export interface MarksWithRestriction extends ModerationMarks {
+  restricted?: boolean
+}
+
+/**
+ * The marks to show for a document, given its `read` and a change this tab
+ * recorded for it:
+ * - a proved change shows unless the read carries a moderator change stamped
+ *   after it (`$moderatedAt`: a later hide, unhide or legal hold by anyone);
+ *   an older read predates it, and a read of the change itself shows the same;
+ * - an unproved one shows only until a new read arrives (`readIsNew`), which
+ *   is the truth either way.
+ * The read's restriction flag is kept, since a hide or unhide never changes it.
+ */
+export function shownMarks(read: MarksWithRestriction | undefined, recorded: RecordedMarks | undefined, readIsNew: boolean): MarksWithRestriction | undefined {
+  if (!recorded || readSupersedes(read, recorded, readIsNew)) return read
+  const restricted = read?.restricted ? { restricted: true } : {}
+  if (recorded.marks) return { ...recorded.marks, ...restricted }
+  return read?.restricted ? { restricted: true } : undefined
+}
