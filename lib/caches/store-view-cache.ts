@@ -8,6 +8,7 @@
 
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '../types'
 import { scopedKey } from '@/lib/storage-scope'
+import { moderationViewAll } from '@/lib/moderation-view'
 
 const CACHE_KEY_PREFIX = scopedKey('yappr_store_view_')
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
@@ -31,8 +32,12 @@ export interface StoreViewCacheData {
   timestamp: number
 }
 
+/**
+ * A view saved under the storefront moderator view holds hidden listings and
+ * reviews: it is kept apart, and only restored under that view.
+ */
 function getCacheKey(storeId: string): string {
-  return `${CACHE_KEY_PREFIX}${storeId}`
+  return `${CACHE_KEY_PREFIX}${moderationViewAll('storefront') ? 'all-lanes:' : ''}${storeId}`
 }
 
 /**

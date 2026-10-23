@@ -23,6 +23,7 @@ import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { usePostingClosed } from '@/hooks/use-posting-opening'
+import { ModeratorViewChip } from '@/components/moderation/moderator-view'
 
 const PAGE_SIZE = 50
 
@@ -279,6 +280,7 @@ function HashtagPageContent() {
                   {formatNumber(postCount)}{hasMore ? '+' : ''} {postCount === 1 && !hasMore ? 'post' : 'posts'}
                 </p>
               </div>
+              <ModeratorViewChip className="ml-auto" />
             </div>
           </PageHeader>
 

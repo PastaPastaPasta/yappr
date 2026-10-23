@@ -1,5 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dropsHidden, isHidden, isHiddenItem, moderationLogEnabled, moderationMarksOf, moderationViewAll, readSupersedes, shownMarks, withoutHiddenItems } from './moderation-view'
+import {
+  actionsBlockedByHide,
+  archivalBuild,
+  dropsHidden,
+  isHidden,
+  isHiddenItem,
+  moderationLogEnabled,
+  moderationMarksOf,
+  moderationViewAll,
+  moderatorViewHolds,
+  moderatorViewScope,
+  readSupersedes,
+  setModeratorViewContracts,
+  shownMarks,
+  viewerChangeReloads,
+  withoutHiddenItems,
+} from './moderation-view'
 
 afterEach(() => vi.unstubAllEnvs())
 
@@ -118,5 +134,108 @@ describe('shownMarks', () => {
   it('keeps the read\'s restriction flag, which no hide or unhide changes', () => {
     expect(shownMarks({ restricted: true }, proved, false)).toEqual({ ...hidden, restricted: true })
     expect(shownMarks({ mod: 1, restricted: true }, { marks: null, at: 2_000, proved: true }, false)).toEqual({ restricted: true })
+  })
+})
+
+describe('the moderator view', () => {
+  afterEach(() => {
+    setModeratorViewContracts([])
+  })
+
+  it('is off until set, and then only for the contracts it was set for', () => {
+    expect(moderationViewAll()).toBe(false)
+    expect(moderationViewAll('blog')).toBe(false)
+    setModeratorViewContracts(['social'])
+    expect(moderationViewAll()).toBe(true)
+    expect(moderationViewAll('social')).toBe(true)
+    expect(moderationViewAll('blog')).toBe(false)
+    expect(moderationViewAll('storefront')).toBe(false)
+    setModeratorViewContracts([])
+    expect(moderationViewAll()).toBe(false)
+  })
+
+  it('keeps a hidden item of its contract and drops one of another', () => {
+    const hidden = { id: 'b', moderation: { mod: 1 } }
+    setModeratorViewContracts(['social'])
+    expect(withoutHiddenItems([hidden])).toEqual([hidden])
+    expect(withoutHiddenItems([hidden], 'blog')).toEqual([])
+    expect(dropsHidden({ mod: 1 }, 'storefront')).toBe(true)
+  })
+
+  it('unlocks no action on hidden content: only an archival build does', () => {
+    const hidden = { moderation: { mod: 1 } }
+    setModeratorViewContracts(['social', 'blog', 'storefront'])
+    expect(actionsBlockedByHide(hidden)).toBe(true)
+    expect(actionsBlockedByHide({ moderation: {} })).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', 'all')
+    expect(actionsBlockedByHide(hidden)).toBe(false)
+  })
+
+  it('does not turn the build flags on', () => {
+    setModeratorViewContracts(['social', 'blog', 'storefront'])
+    expect(archivalBuild()).toBe(false)
+    expect(moderationLogEnabled()).toBe(false)
+  })
+
+})
+
+describe('moderatorViewHolds: nothing mounts or reads before the view is applied', () => {
+  const state = (overrides: Partial<Parameters<typeof moderatorViewHolds>[0]> = {}) =>
+    ({ booted: true, viewer: 'alice', enabledFor: 'alice', seatedFor: null, ...overrides })
+
+  it('never holds a tab where the view is off', () => {
+    expect(moderatorViewHolds(state({ enabledFor: null, booted: false }))).toBe(false)
+    expect(moderatorViewHolds(state({ enabledFor: null }))).toBe(false)
+  })
+
+  it('holds a tab where it is on until the session is restored and the seats are read', () => {
+    expect(moderatorViewHolds(state({ booted: false, viewer: null }))).toBe(true)
+    expect(moderatorViewHolds(state())).toBe(true)
+    expect(moderatorViewHolds(state({ seatedFor: 'alice' }))).toBe(false)
+  })
+
+  it('releases at once for anyone but the identity that turned it on', () => {
+    expect(moderatorViewHolds(state({ viewer: null }))).toBe(false)
+    expect(moderatorViewHolds(state({ viewer: 'mallory' }))).toBe(false)
+  })
+})
+
+describe('viewerChangeReloads: a change of view after load is always a reload', () => {
+  it('reloads when a moderator session with the view on signs out or switches', () => {
+    expect(viewerChangeReloads({ activeContracts: 1, enabledFor: 'alice', nextViewer: null })).toBe(true)
+    expect(viewerChangeReloads({ activeContracts: 2, enabledFor: 'alice', nextViewer: 'bob' })).toBe(true)
+  })
+
+  it('reloads when the identity that turned it on in this tab signs back in', () => {
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: 'alice', nextViewer: 'alice' })).toBe(true)
+  })
+
+  it('leaves everyone else alone', () => {
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: null, nextViewer: 'alice' })).toBe(false)
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: 'alice', nextViewer: 'bob' })).toBe(false)
+    expect(viewerChangeReloads({ activeContracts: 0, enabledFor: null, nextViewer: null })).toBe(false)
+  })
+})
+
+describe('moderatorViewScope', () => {
+  const state = (overrides: Partial<Parameters<typeof moderatorViewScope>[0]> = {}) =>
+    ({ viewer: 'alice', seatedFor: 'alice', seated: ['social', 'blog'] as const, enabled: true, ...overrides })
+
+  it('covers the viewer\'s verified seats once they turned it on', () => {
+    expect(moderatorViewScope(state())).toEqual(['social', 'blog'])
+  })
+
+  it('is empty for anyone who is not a verified seated moderator', () => {
+    // Signed out.
+    expect(moderatorViewScope(state({ viewer: null }))).toEqual([])
+    // Seats not read yet, or read for someone else (a switch of account).
+    expect(moderatorViewScope(state({ seatedFor: null }))).toEqual([])
+    expect(moderatorViewScope(state({ viewer: 'mallory' }))).toEqual([])
+    // On no seated team: the switch alone turns nothing on.
+    expect(moderatorViewScope(state({ seated: [] }))).toEqual([])
+  })
+
+  it('is empty while the switch is off', () => {
+    expect(moderatorViewScope(state({ enabled: false }))).toEqual([])
   })
 })

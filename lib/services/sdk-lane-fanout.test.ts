@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EvoSDK } from '@dashevo/evo-sdk'
 import bs58 from 'bs58'
+import { setModeratorViewContracts } from '@/lib/moderation-view'
 import { installLaneFanout, resetLaneCursorsForTests } from './sdk-lane-fanout'
 
 type Where = [string, string, unknown]
@@ -16,6 +17,8 @@ interface FakeDoc {
 /** A valid 32-byte identifier in base58, distinct per seed. */
 const identifier = (seed: number) => bs58.encode(new Uint8Array(32).fill(seed))
 const hexOf = (id: string) => Buffer.from(bs58.decode(id)).toString('hex')
+const SOCIAL = identifier(201)
+const BLOG = identifier(202)
 
 const laneOf = (where: Where[] | undefined) => ({
   live: where?.find((clause) => clause[0] === 'live')?.[2],
@@ -67,15 +70,126 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('installLaneFanout, flag off', () => {
-  it('shadows nothing: the facade keeps its own methods and reads go straight through', async () => {
+  afterEach(() => {
+    setModeratorViewContracts([])
+  })
+
+  it('hands every read to the SDK untouched', async () => {
     vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
-    const { documents, sdk } = fakeSdk()
-    const before = { ...documents }
+    const { spies, sdk } = fakeSdk()
     installLaneFanout(sdk)
-    expect(documents).toEqual(before)
-    for (const name of Object.keys(before) as (keyof typeof before)[]) expect(documents[name]).toBe(before[name])
-    await sdk.documents.query({ dataContractId: 'c', documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 5 } as never)
-    expect(documents.query).toHaveBeenCalledTimes(1)
+    const request = { dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 5 }
+    await sdk.documents.query(request as never)
+    await sdk.documents.count({ dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED } as never)
+    await sdk.documents.ranked({ dataContractId: SOCIAL, documentTypeName: 'post', where: LISTED, groupBy: '$ownerId', aggregate: { type: 'count' }, limit: 5 } as never)
+    expect(spies.query.mock.calls).toEqual([[request]])
+    expect(spies.query.mock.calls[0][0]).toBe(request)
+    expect(spies.count).toHaveBeenCalledTimes(1)
+    expect(spies.ranked).toHaveBeenCalledTimes(1)
+  })
+
+  it('fans out only the contracts the moderator view is on for', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_CONTRACT_ID', SOCIAL)
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', BLOG)
+    vi.resetModules()
+    const view = await import('@/lib/moderation-view')
+    const { installLaneFanout: install } = await import('./sdk-lane-fanout')
+    const { spies, sdk } = fakeSdk()
+    install(sdk)
+    const read = (dataContractId: string) => sdk.documents.query({ dataContractId, documentTypeName: 'post', where: LISTED, orderBy: NEWEST_FIRST, limit: 10 } as never)
+
+    view.setModeratorViewContracts(['social'])
+    await read(SOCIAL)
+    expect(spies.query).toHaveBeenCalledTimes(6)
+    spies.query.mockClear()
+    // A read naming one unlisted lane gets exactly that lane, never the others mixed in under its limit.
+    const restricted = await sdk.documents.query({
+      dataContractId: SOCIAL, documentTypeName: 'post', where: [['live', '==', 2], ['mod', '==', null], ['$createdAt', '>', 0]], orderBy: NEWEST_FIRST, limit: 10,
+    } as never)
+    expect(spies.query).toHaveBeenCalledTimes(1)
+    expect(Array.from(restricted.keys())).toEqual([STORE[1].$id])
+    spies.query.mockClear()
+    // Another moderated contract, and any other contract, read the listed lane only.
+    await read(BLOG)
+    await read(identifier(77))
+    expect(spies.query).toHaveBeenCalledTimes(2)
+    spies.query.mockClear()
+
+    view.setModeratorViewContracts([])
+    await read(SOCIAL)
+    expect(spies.query).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a sibling bundle member by member, each with its own lanes, even when the first comes back empty', async () => {
+    vi.stubEnv('NEXT_PUBLIC_MODERATION_VIEW', '')
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_CONTRACT_ID', SOCIAL)
+    vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', BLOG)
+    vi.resetModules()
+    const view = await import('@/lib/moderation-view')
+    const { installLaneFanout: install } = await import('./sdk-lane-fanout')
+    const { spies, sdk } = fakeSdk()
+    install(sdk)
+    view.setModeratorViewContracts(['social'])
+    // As queryDocumentBundle sends it: a page and unbound sibling reads.
+    const owner = (seed: number): Where[] => [['live', '==', 1], ['mod', '==', null], ['$ownerId', '==', identifier(seed)]]
+    spies.query.mockImplementation(async (request: { where?: Where[]; limit?: number }) => {
+      const ownerId = request.where?.find((clause) => clause[0] === '$ownerId')?.[2]
+      const scoped = readLane(request)
+      return new Map(Array.from(scoped).filter(([, doc]) => doc.$ownerId === ownerId))
+    })
+    const result = await sdk.documents.composite({
+      dataContractId: SOCIAL, documentType: 'post', where: owner(99), orderBy: NEWEST_FIRST, limit: 10,
+      subQueries: [{ documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 10 }],
+    } as never)
+    expect(spies.composite).not.toHaveBeenCalled()
+    expect(result.pageDocuments).toEqual([])
+    // The sibling read every lane of its own: owner 90's listed, restricted and hidden posts.
+    const sibling = result.subResults[0] as unknown as { kind: string; documents: FakeDoc[] }
+    expect(sibling.kind).toBe('documents')
+    expect(sibling.documents.map((doc) => doc.$id)).toEqual([STORE[0].$id, STORE[1].$id, STORE[4].$id, STORE[6].$id])
+
+    // Each member gets its own contract's decision: a page on a contract the view is off for reads its listed lane once.
+    spies.query.mockClear()
+    await sdk.documents.composite({
+      dataContractId: BLOG, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 3,
+      subQueries: [{ dataContractId: SOCIAL, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 4 }],
+    } as never)
+    const calls = spies.query.mock.calls.map(([request]) => request as { dataContractId: string; limit?: number })
+    expect(calls.filter((call) => call.dataContractId === BLOG)).toHaveLength(1)
+    expect(calls.filter((call) => call.dataContractId === SOCIAL)).toHaveLength(6)
+    expect(calls.every((call) => call.limit === (call.dataContractId === BLOG ? 3 : 4))).toBe(true)
+
+    // A page on another contract (a profile) binding a social count: the count fans out by its own contract.
+    spies.composite.mockReset()
+    spies.count.mockClear()
+    view.setModeratorViewContracts(['social'])
+    spies.composite.mockImplementation(async () => ({
+      pageDocuments: [{ $id: identifier(50), $ownerId: identifier(90) }],
+      subResults: [{ kind: 'counts', counts: new Map([[identifier(90), 2n]]) }],
+    }))
+    spies.count.mockImplementation(async (request: { where?: Where[] }) => {
+      const lane = laneOf(request.where)
+      return lane.live === 1 && lane.mod === 1 ? new Map([[hexOf(identifier(90)), 3n]]) : new Map<string, bigint>()
+    })
+    const profileRooted = await sdk.documents.composite({
+      dataContractId: identifier(77), documentType: 'profile', where: [['$ownerId', '==', identifier(90)]], limit: 1,
+      subQueries: [{ dataContractId: SOCIAL, documentType: 'post', kind: 'counts', where: [['live', '==', 1], ['mod', '==', null]], bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
+    } as never)
+    expect(spies.composite).toHaveBeenCalledTimes(1)
+    expect(spies.count).toHaveBeenCalledTimes(5)
+    expect(spies.count.mock.calls.every(([request]) => (request as { dataContractId: string }).dataContractId === SOCIAL)).toBe(true)
+    expect((profileRooted.subResults[0] as { counts: Map<string, bigint> }).counts.get(identifier(90))).toBe(5n)
+    spies.composite.mockReset()
+
+    // A bundle where no member fans out goes to the SDK's composite, untouched.
+    view.setModeratorViewContracts([])
+    const bundle = {
+      dataContractId: SOCIAL, documentType: 'post', where: owner(90), orderBy: NEWEST_FIRST, limit: 3,
+      subQueries: [{ documentType: 'post', where: owner(91), orderBy: NEWEST_FIRST, limit: 3 }],
+    }
+    await sdk.documents.composite(bundle as never)
+    expect(spies.composite.mock.calls).toEqual([[bundle]])
   })
 })
 

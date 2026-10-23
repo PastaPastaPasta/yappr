@@ -350,7 +350,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
 
   /** Posts reached by id for a public list (a ranking, a notification): a hidden one is dropped, except on an archival build. */
   async getMany(postIds: string[], options: { throwOnError?: boolean } = {}): Promise<BlogPost[]> {
-    return withoutHiddenItems(await super.getMany(postIds, options))
+    return withoutHiddenItems(await super.getMany(postIds, options), 'blog')
   }
 
   async getPostBySlug(blogId: string, slug: string): Promise<BlogPost | null> {

@@ -15,9 +15,11 @@ import {
   ModerationLogReader,
   actionText,
   availableLogContracts,
+  isHiddenOrRestrictedSource,
   reasonText,
   type LogContract,
   type LogRow,
+  type LogSource,
 } from '@/lib/services/moderation-log-service'
 
 /**
@@ -41,6 +43,42 @@ function useRowReason(contract: LogContract, row: Pick<LogRow, 'reasonCode' | 'r
 }
 
 const CONTRACT_LABELS: Record<LogContract, string> = { social: 'Social', blog: 'Blogs', storefront: 'Stores' }
+
+/**
+ * What a view of the log lists: the whole log (`/moderation-log`, archival
+ * builds), or what is hidden and restricted now (`/moderation?view=hidden`,
+ * the seated moderators' list).
+ */
+type LogVariant = 'log' | 'hidden'
+
+interface VariantCopy {
+  title: string
+  intro: string
+  failed: string
+  unavailable: string
+  /** The page's address, ready for `contract=`. */
+  path: string
+  /** The sources it reads; every source when absent. */
+  only?: (source: LogSource) => boolean
+}
+
+const VARIANTS: Record<LogVariant, VariantCopy> = {
+  log: {
+    title: 'Moderation log',
+    intro: 'Posts and replies moderators have hidden, and accounts they’ve restricted or warned, newest first. Unhidden items drop off the list.',
+    failed: 'Couldn’t load the log.',
+    unavailable: 'The moderation log isn’t available for this network.',
+    path: '/moderation-log?',
+  },
+  hidden: {
+    title: 'Hidden & restricted',
+    intro: 'What moderators have hidden, and the accounts that are restricted now, newest first. Unhidden items and lifted restrictions drop off the list.',
+    failed: 'Couldn’t load the list.',
+    unavailable: 'Nothing to show for this network.',
+    path: '/moderation?view=hidden&',
+    only: isHiddenOrRestrictedSource,
+  },
+}
 /** One row's height. Skeleton rows and real rows share it, so the list does not jump when the page loads. */
 const ROW_CLASS = 'block min-h-[88px] border-b border-gray-200 px-4 py-3 dark:border-gray-800'
 const SKELETON_ROWS = 6
@@ -114,9 +152,9 @@ interface LogState {
 }
 
 /** One contract's log: the first page on mount, the next on "Load more", names filled in as they resolve. */
-function ContractLog({ contract }: { contract: LogContract }) {
+function ContractLog({ contract, variant }: { contract: LogContract; variant: LogVariant }) {
   const { isReady: sdkReady, error: sdkError } = useSdk()
-  const reader = useMemo(() => new ModerationLogReader(contract), [contract])
+  const reader = useMemo(() => new ModerationLogReader(contract, VARIANTS[variant].only), [contract, variant])
   const [state, setState] = useState<LogState>({ rows: [], cursors: [], more: false, loading: true, loadingMore: false, failed: false })
   const [names, setNames] = useState<Names>(new Map())
   // The newest request wins: a retry or a contract switch must not be overwritten by a slow older answer.
@@ -167,7 +205,7 @@ function ContractLog({ contract }: { contract: LogContract }) {
   return (
     <div data-testid="moderation-log">
       <p className="border-b border-gray-200 px-4 py-3 text-sm text-gray-600 dark:border-gray-800 dark:text-gray-400">
-        Posts and replies moderators have hidden, and accounts they&apos;ve restricted or warned, newest first. Unhidden items drop off the list.
+        {VARIANTS[variant].intro}
       </p>
       {!stuck && (state.loading || !sdkReady) && state.rows.length === 0 && <SkeletonRows />}
       {state.rows.map((row) => <LogRowItem key={row.key} contract={contract} row={row} names={names} />)}
@@ -176,7 +214,7 @@ function ContractLog({ contract }: { contract: LogContract }) {
       )}
       {(state.failed || stuck) && (
         <div role="alert" className="m-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 p-3 text-sm text-red-700 dark:border-red-900 dark:text-red-300">
-          <span>Couldn&apos;t load the log.</span>
+          <span>{VARIANTS[variant].failed}</span>
           <Button variant="outline" size="sm" onClick={retry} disabled={stuck}>Try again</Button>
         </div>
       )}
@@ -193,14 +231,17 @@ function ContractLog({ contract }: { contract: LogContract }) {
 
 /**
  * The moderation log (`/moderation-log`, built only with
- * `NEXT_PUBLIC_MODERATION_LOG=1`; docs/ARCHIVE_FRONTEND.md): one tab per
- * contract this build can read the log of (`?contract=social|blog|storefront`).
- * On a build whose contracts predate the log, it says so.
+ * `NEXT_PUBLIC_MODERATION_LOG=1`; docs/ARCHIVE_FRONTEND.md), or the seated
+ * moderators' "Hidden & restricted" list (`variant="hidden"`, limited to
+ * `contracts`): one tab per contract this build can read the log of
+ * (`?contract=social|blog|storefront`). On a build whose contracts predate
+ * the log, it says so.
  */
-export function ModerationLogView() {
+export function ModerationLogView({ variant = 'log', contracts }: { variant?: LogVariant; contracts?: readonly LogContract[] }) {
   const router = useRouter()
   const params = useSearchParams()
-  const available = useMemo(availableLogContracts, [])
+  const available = useMemo(() => availableLogContracts().filter((key) => !contracts || contracts.includes(key)), [contracts])
+  const { title, path, unavailable } = VARIANTS[variant]
   const requested = params.get('contract')
   const contract = available.find((candidate) => candidate === requested) ?? available[0] ?? null
 
@@ -213,22 +254,22 @@ export function ModerationLogView() {
           </Link>
           <h1 className="flex items-center gap-2 text-xl font-bold">
             <ClipboardDocumentListIcon className="h-5 w-5 text-yappr-500" aria-hidden="true" />
-            Moderation log
+            {title}
           </h1>
         </div>
         {available.length > 1 && contract && (
           <ScrollTabs
-            ariaLabel="Moderation log"
+            ariaLabel={title}
             testIdPrefix="moderation-log-tab"
             tabs={available.map((key) => ({ key, label: CONTRACT_LABELS[key] }))}
             active={contract}
-            onSelect={(key) => router.replace(`/moderation-log?contract=${key}`)}
+            onSelect={(key) => router.replace(`${path}contract=${key}`)}
           />
         )}
       </PageHeader>
       {contract
-        ? <ContractLog key={contract} contract={contract} />
-        : <p data-testid="moderation-log-unavailable" className="px-4 py-10 text-center text-gray-500">The moderation log isn&apos;t available for this network.</p>}
+        ? <ContractLog key={contract} contract={contract} variant={variant} />
+        : <p data-testid="moderation-log-unavailable" className="px-4 py-10 text-center text-gray-500">{unavailable}</p>}
     </PageShell>
   )
 }

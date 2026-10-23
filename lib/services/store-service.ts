@@ -281,7 +281,7 @@ class StoreService extends BaseDocumentService<Store> {
         ? await storeStatsService.topRatedStores(limit, { throwOnError: true })
         : await storeStatsService.mostOrderedStores(limit, { throwOnError: true });
       // A ranking reaches stores by id, so a hidden one is dropped here (an archival build keeps it).
-      const byId = new Map(withoutHiddenItems(await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true })).map((store) => [store.id, store]));
+      const byId = new Map(withoutHiddenItems(await this.getMany(ranked.map((entry) => entry.id), { throwOnError: true }), 'storefront').map((store) => [store.id, store]));
       const stores = ranked.flatMap((entry) => {
         const store = byId.get(entry.id);
         return store?.status === 'active' ? [store] : [];

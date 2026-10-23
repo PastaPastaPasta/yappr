@@ -6,6 +6,7 @@ import { Post } from '@/lib/types'
 import { useSdk } from '@/contexts/sdk-context'
 import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
+import { moderationViewAll } from '@/lib/moderation-view'
 
 export type TopUser = HomepageTopUser
 
@@ -39,7 +40,9 @@ export interface HomepageData {
 
 // One snapshot feeds all three slices: the loader proves the featured posts,
 // their authors and the top contributors together (see lib/home/load-homepage).
-let cache: { data: HomepageSnapshot; timestamp: number } | null = null
+// `allLanes`: read under the moderator view, so it holds hidden and restricted
+// posts; only a load under the same view may reuse it.
+let cache: { data: HomepageSnapshot; timestamp: number; allLanes: boolean } | null = null
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
 /**
@@ -89,7 +92,8 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
   }, [])
 
   const load = useCallback(async (forceRefresh = false) => {
-    if (!forceRefresh && cache && Date.now() - cache.timestamp < CACHE_TTL) {
+    const allLanes = moderationViewAll()
+    if (!forceRefresh && cache && cache.allLanes === allLanes && Date.now() - cache.timestamp < CACHE_TTL) {
       applySnapshot(cache.data)
       return
     }
@@ -102,7 +106,7 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
       // The featured cards render as soon as they are proved; the stats and
       // contributors follow with the full snapshot.
       const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
-      cache = { data: snapshot, timestamp: Date.now() }
+      cache = { data: snapshot, timestamp: Date.now(), allLanes }
       applySnapshot(snapshot)
     } catch (error) {
       logger.error('Error loading homepage:', error)
