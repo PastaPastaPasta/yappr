@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageHeader, PageShell } from '@/components/layout/page-shell'
+import { Button } from '@/components/ui/button'
 import { TooltipButton } from '@/components/ui/tooltip-button'
 import { useAuth } from '@/contexts/auth-context'
+import { useSdk } from '@/contexts/sdk-context'
 import { cn } from '@/lib/utils'
 import { moderatedContract } from '@/lib/moderated-contracts'
 import { charterService } from '@/lib/services/charter-service'
@@ -26,6 +28,7 @@ export function ModerationTeamsView() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useAuth()
+  const { isReady: sdkReady, error: sdkError } = useSdk()
   const contracts = electedContracts()
   const contract = contractFromParam(searchParams.get('contract'))
   const active = contract && contracts.includes(contract) ? contract : contracts[0]
@@ -36,6 +39,8 @@ export function ModerationTeamsView() {
   // Keys typed in for charters live while this page does, and only for the account that gave them.
   useEffect(() => () => charterService.forgetKeys(), [])
   useEffect(() => { charterService.forgetKeys() }, [user?.identityId])
+  // Moving to another view of the page (Back from a proposal, another tab) ends what the last one began, its prompt included.
+  useEffect(() => () => charterService.endActions(), [active, proposalId, starting])
 
   return (
     <PageShell>
@@ -70,6 +75,16 @@ export function ModerationTeamsView() {
 
       {!active ? (
         <Section><Notice>No contract on this site elects its moderators.</Notice></Section>
+      ) : !sdkReady ? (
+        // Every view reads the chain as it mounts: an invite link opened cold waits for the connection.
+        <Section>
+          {sdkError ? (
+            <Notice tone="error" testId="election-read-error">
+              The network couldn&apos;t be reached. Check your connection, then try again.{' '}
+              <Button variant="outline" size="sm" className="ml-2" onClick={() => window.location.reload()}>Try again</Button>
+            </Notice>
+          ) : <p className="text-gray-500">Connecting…</p>}
+        </Section>
       ) : election.notElected ? (
         <Section><Notice>{moderatedContract(active).label} does not elect its moderators.</Notice></Section>
       ) : proposalId ? (
