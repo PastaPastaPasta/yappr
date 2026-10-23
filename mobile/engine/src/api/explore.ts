@@ -4,6 +4,7 @@ import { hashtagService } from '@/lib/services/hashtag-service'
 import { postService } from '@/lib/services/post-service'
 import { mostFollowedUsers, topCreatorsByLikes, topLikedPostsHydrated, type RankedGroupCount } from '@/lib/services/ranked-likes'
 import { listToDTOs, loadUserSummaries, notSupported, searchUserSummaries, visibleDTOs, withLoadingAuthor } from '../dto/hydrate'
+import { callSignal, throwIfCancelled } from '../rpc/call-signal'
 import type { PostDTO, RankedUserDTO, RankingWindow, TagDTO, UserSummaryDTO } from './dto'
 
 /**
@@ -80,6 +81,8 @@ export const explore = {
 
   /** Trending tags containing the query, with the exact tag first when it has posts but is not trending. */
   async searchHashtags(query: string): Promise<TagDTO[]> {
+    // A search the host stopped waiting for (the query changed) stops between its reads (MARCH-4).
+    const signal = callSignal()
     const text = query.trim()
     if (text.length < SEARCH_MIN_LENGTH) return []
     const needle = text.replace(/^#/, '').toLowerCase()
@@ -87,6 +90,7 @@ export const explore = {
     const results = (await trendingTags(50))
       .filter(trend => trend.hashtag.includes(needle))
       .map(trend => toTagDTO(trend.hashtag, trend.postCount, countKind))
+    throwIfCancelled(signal)
     if (STORAGE_TAG.test(needle) && !results.some(result => result.tag === needle)) {
       const postCount = await hashtagService.getPostCountByHashtag(needle)
       if (postCount > 0) results.unshift(toTagDTO(needle, postCount, 'posts'))
@@ -100,9 +104,11 @@ export const explore = {
    * left out.
    */
   async searchPosts(query: string): Promise<PostDTO[]> {
+    const signal = callSignal()
     const needle = query.trim().toLowerCase()
     if (!needle) return []
     const { documents } = await postService.getTimeline({ limit: 100 })
+    throwIfCancelled(signal)
     const matches = documents.filter(post => !post.deleted && post.content.toLowerCase().includes(needle))
     return listToDTOs(matches.map(withLoadingAuthor))
   },

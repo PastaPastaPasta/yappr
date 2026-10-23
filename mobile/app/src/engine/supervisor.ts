@@ -1,5 +1,5 @@
 import type { EngineApi, EngineInfo } from '@engine/api';
-import { LOG_LEVELS, RpcError, RpcErrorCode, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
+import { LOG_LEVELS, RpcError, RpcErrorCode, abortedError, type EngineHello, type LogLevel } from '@engine/protocol/envelope';
 import { createEngineClient, type EngineClient, type StorageBatch } from '@engine/rpc/client';
 
 import { errorMessage } from './logs';
@@ -150,12 +150,25 @@ export const EngineErrorCode = {
   Unavailable: 'ENGINE_UNAVAILABLE',
   Restarted: RpcErrorCode.Restarted,
   Timeout: RpcErrorCode.Timeout,
+  Aborted: RpcErrorCode.Aborted,
 } as const;
+
+export interface CallOptions {
+  /**
+   * The caller gave up (TanStack's query signal: the screen left, the key
+   * changed). A queued call is dropped; a read the engine runs is cancelled
+   * there too. Writes only stop being waited for: they reconcile.
+   */
+  signal?: AbortSignal;
+}
 
 interface Job {
   path: string;
   args: unknown[];
   kind: MethodKind;
+  signal?: AbortSignal;
+  /** Set while queued: stops watching `signal` for a give-up once the job leaves the queue. */
+  dequeued?: () => void;
   resolve(value: unknown): void;
   reject(error: unknown): void;
   replayed: boolean;
@@ -169,12 +182,6 @@ const errorCode = (error: unknown) =>
 
 /** Status fields that belong to one epoch, cleared on every (re)mount. */
 const FRESH_EPOCH = { reason: null, unsupported: null, hello: null, info: null, caps: null, timings: null } as const;
-
-/** Call `path` on a client's proxy (`client.api.feed.home(...)`). */
-function invoke(client: EngineClient<EngineApi>, path: string, args: unknown[]): Promise<unknown> {
-  const method = path.split('.').reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], client.api);
-  return (method as (...a: unknown[]) => Promise<unknown>)(...args);
-}
 
 export function parseChromeMajor(userAgent: string): number | null {
   const match = /Chrome\/(\d+)\./.exec(userAgent);
@@ -686,9 +693,9 @@ export class EngineSupervisor<Load = unknown> {
   // ── calls ────────────────────────────────────────────────────────────────
 
   /** Call an engine method by path. Queued until the engine boots; reads survive one restart. */
-  call(path: string, args: unknown[]): Promise<unknown> {
+  call(path: string, args: unknown[], options: CallOptions = {}): Promise<unknown> {
     return new Promise((resolve, reject) => {
-      this.dispatch({ path, args, kind: methodKind(path), resolve, reject, replayed: false });
+      this.dispatch({ path, args, kind: methodKind(path), signal: options.signal, resolve, reject, replayed: false });
     });
   }
 
@@ -698,15 +705,30 @@ export class EngineSupervisor<Load = unknown> {
       job.reject(new RpcError(this.status.reason ?? 'The engine is unavailable', EngineErrorCode.Unavailable));
       return;
     }
+    if (job.signal?.aborted) {
+      job.reject(abortedError(job.path));
+      return;
+    }
     if (this.accepting && this.client && (this.booted || job.kind === 'control')) {
       this.send(this.client, job);
       return;
     }
+    // A call given up while it waits for the engine leaves the queue.
+    const giveUp = () => {
+      const index = this.queue.indexOf(job);
+      if (index < 0) return;
+      this.queue.splice(index, 1);
+      job.reject(abortedError(job.path));
+      this.update({});
+    };
+    job.signal?.addEventListener('abort', giveUp, { once: true });
+    job.dequeued = () => job.signal?.removeEventListener('abort', giveUp);
     this.queue.push(job);
     if (this.queue.length > this.options.queueCap) {
       const oldestRead = this.queue.findIndex((queued) => queued.kind === 'read');
       if (oldestRead >= 0) {
         const [dropped] = this.queue.splice(oldestRead, 1);
+        dropped.dequeued?.();
         this.failCall(dropped, new RpcError('Too many calls waiting for the engine', EngineErrorCode.Busy));
       }
     }
@@ -717,23 +739,35 @@ export class EngineSupervisor<Load = unknown> {
     const jobs = this.queue;
     this.queue = [];
     this.update({});
-    for (const job of jobs) this.dispatch(job);
+    for (const job of jobs) {
+      job.dequeued?.();
+      this.dispatch(job);
+    }
   }
 
   private failQueue(error: Error) {
     const jobs = this.queue;
     this.queue = [];
-    for (const job of jobs) job.reject(error);
+    for (const job of jobs) {
+      job.dequeued?.();
+      job.reject(error);
+    }
     this.update({});
   }
 
   private send(client: EngineClient<EngineApi>, job: Job) {
     const started = this.now();
     const epoch = this.status.epoch;
+    // Ends the client's wait on a deadline or when the caller gives up. A read is cancelled in the engine
+    // too (ENGINE.md §4.6); a write or session call keeps running there and reconciles.
+    const stop = new AbortController();
+    const giveUp = () => stop.abort();
+    job.signal?.addEventListener('abort', giveUp, { once: true });
     let settled = false;
     /** True for the first outcome only (response, failure or deadline). */
     const settle = () => {
       clearTimeout(timer);
+      job.signal?.removeEventListener('abort', giveUp);
       if (settled) return false;
       settled = true;
       return true;
@@ -742,10 +776,11 @@ export class EngineSupervisor<Load = unknown> {
     const timer = setTimeout(() => {
       if (settle()) {
         this.failCall(job, new RpcError(`Engine call ${job.path} timed out after ${timeoutMs} ms`, EngineErrorCode.Timeout));
+        stop.abort();
       }
     }, timeoutMs);
 
-    invoke(client, job.path, job.args).then(
+    client.call(job.path, job.args, { signal: stop.signal, cancelRemote: job.kind === 'read' }).then(
       (value) => {
         if (!settle()) return;
         if (job.kind !== 'control') this.recordFirstCall(epoch, job.path, started);
@@ -753,7 +788,10 @@ export class EngineSupervisor<Load = unknown> {
       },
       (error: unknown) => {
         if (!settle()) return;
-        if (!ENGINE_GONE.has(String(errorCode(error)))) {
+        if (errorCode(error) === EngineErrorCode.Aborted) {
+          // The caller gave up: not a failure to list in diagnostics.
+          job.reject(error);
+        } else if (!ENGINE_GONE.has(String(errorCode(error)))) {
           this.failCall(job, error);
         } else if (job.kind === 'read' && !job.replayed) {
           this.log('info', `Replaying ${job.path} on the restarted engine`);

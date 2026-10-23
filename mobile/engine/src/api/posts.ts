@@ -18,13 +18,14 @@ import { moderationFieldOf } from '@/lib/services/moderation-carry'
 import { repostService } from '@/lib/services/repost-service'
 import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
-import { cursorInt, decodeCursor } from '../dto/cursor'
+import { cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import {
   enrichToDTOs, loadUserSummaries, notSupported, quoteTargetIds, readFailure, requireViewer, rereadQuotedPosts, searchUserSummaries, toPostDTOs,
   viewerId, withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
+import { callSignal, throwIfCancelled } from '../rpc/call-signal'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, isHiddenStub, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { pollVoting } from '../dto/capabilities'
@@ -223,13 +224,25 @@ async function replyPage(rootId: string, startAfter: string | undefined, fresh: 
   return page
 }
 
+/** A reply whose parent the page lacks keeps its place under the parent's tombstone or a stub; both reads reject. */
+const missingParentReads = {
+  // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
+  getMany: (ids: string[]) => replyService.getManyOrThrow(ids),
+  provenAbsent: (ids: string[]) => provenAbsent('reply', ids, { throwOnError: true }),
+}
+
+/** A flat thread's replies nested for display: the focus author's own thread first, one indent level. */
+const layoutFlat = (focus: Post, replies: Reply[]) =>
+  flattenThreads(assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply: targetKindOf(focus) === 'reply' }, replies))
+
 /**
- * A flat thread's first `pages` reply pages, re-nested. A focused reply
- * deep in a long thread may sit past the loaded pages, so its subtree is
- * also fetched level by level, and replies under a missing parent keep
- * their place under its tombstone or a stub (`usePostDetail` `loadPost`).
+ * A flat thread's first `pages` reply pages, raw. A focused reply deep in a
+ * long thread may sit past the loaded pages, so its subtree is also fetched
+ * level by level, and replies under a missing parent keep their place under
+ * its tombstone or a stub (`usePostDetail` `loadPost`). `next`: the raw
+ * cursor of the page after them.
  */
-async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: FlatReply[]; hasMore: boolean }> {
+async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: Reply[]; next: string | undefined }> {
   const rootId = threadRootIdOf(focus)
   const isReply = targetKindOf(focus) === 'reply'
   const byId = new Map<string, Reply>()
@@ -258,13 +271,94 @@ async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: F
   // tombstone, read by id where `repliesOf` does not list tombstones, or
   // under a stub for a parent proved gone, as on web. Both reads reject, so
   // a failed one fails the page rather than dropping the replies under it.
-  replies = await withMissingReplyParents(replies, {
-    // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
-    getMany: ids => replyService.getManyOrThrow(ids),
-    provenAbsent: ids => provenAbsent('reply', ids, { throwOnError: true }),
+  return { replies: await withMissingReplyParents(replies, missingParentReads), next }
+}
+
+/**
+ * What a flat thread's continuation needs from the pages before it (MARCH-5),
+ * per viewer, thread and paging session (the cursor's `s`): the replies read
+ * so far, raw, to re-nest the thread with the next page, and where that page
+ * starts. The host keeps the DTOs it already has (with its optimistic marks).
+ */
+interface ThreadSession {
+  focus: Post
+  /** Pages read (the first page is 1). */
+  pages: number
+  next: string | undefined
+  /** Every reply read so far, stubs included. */
+  replies: Reply[]
+  /** The replies the caller was sent (a reply with no DTO is left out of the thread). */
+  shown: Set<string>
+  view: Pick<ThreadDTO, 'focus' | 'ancestors' | 'removedAncestorIds'>
+}
+
+const threadSessions = new TtlMap<string, ThreadSession>(10 * 60_000)
+/** Names a paging session: a first page starts one, its cursors carry it. */
+const newThreadSession = () => Math.random().toString(36).slice(2, 10)
+
+const isStubReply = (reply: Reply) => reply.deletedStub === true || isHiddenStub(reply)
+
+/** DTOs for `posts` and `replies`, in one enrichment batch; deleted-reply stubs are not documents and skip it. */
+async function hydrateThread(posts: Post[], replies: Reply[]): Promise<Map<string, PostDTO>> {
+  const batch = [...posts, ...replies.filter(reply => !isStubReply(reply)).map(replyToPost)]
+  // This page's own quote targets, read again: a quote of a post deleted
+  // since the last load must not keep showing the text it had (RC16-I-04).
+  rereadQuotedPosts(quoteTargetIds(batch))
+  const enriched = await postService.enrichPostsBatch(batch.map(withLoadingAuthor))
+  // Stub authors have id '', which the avatar read skips; the stub's author is blanked in `threadItems`.
+  // A hidden reply's stand-in is withheld like a hidden post (`moderationOfPost`); a deleted one is a tombstone.
+  const stubs = replies.filter(isStubReply).map(reply => ({
+    ...replyToPost(reply),
+    ...(isHiddenStub(reply) ? { moderation: { mod: 1 } } : { deleted: true }),
+  }))
+  return new Map((await toPostDTOs([...enriched, ...stubs])).map(dto => [dto.id, dto]))
+}
+
+/** The thread rows for `replies`, in their order; a reply without a DTO is left out. */
+const threadItems = (replies: FlatReply[], dtos: Map<string, PostDTO>) =>
+  replies.flatMap(({ reply, depth, isAuthorThread, hiddenReplyCount }): ThreadReplyDTO[] => {
+    const dto = dtos.get(reply.id)
+    if (!dto) return []
+    if (reply.deletedStub) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, deletedStub: true }]
+    if (isHiddenStub(reply)) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, hiddenStub: true }]
+    return [{ ...dto, depth, isAuthorThread, hiddenReplyCount }]
   })
-  const threads = assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply }, replies)
-  return { replies: flattenThreads(threads), hasMore: next !== undefined }
+
+/**
+ * The next page of a thread `held` paged so far: only its replies (and the
+ * stubs they need) are read and hydrated; `layout` places the whole thread,
+ * re-nested, for the caller to merge with the replies it holds.
+ */
+async function continueThread(kind: string, key: string, session: string, held: ThreadSession, signal: AbortSignal): Promise<ThreadDTO> {
+  const page = await replyPage(threadRootIdOf(held.focus), held.next, false)
+  throwIfCancelled(signal)
+  const known = new Set(held.replies.map(reply => reply.id))
+  const added = await withMissingReplyParents(page.documents.filter(reply => !known.has(reply.id)), missingParentReads, known)
+  throwIfCancelled(signal)
+  const replies = [...held.replies, ...added]
+  const flat = layoutFlat(held.focus, replies)
+  // The rows the caller lacks: this page's, as nested (past the rendered depth they are only counted).
+  const unsent = flat.filter(entry => !held.shown.has(entry.reply.id))
+  const items = threadItems(unsent, await hydrateThread([], unsent.map(entry => entry.reply)))
+  // A cancelled call never moves the session on: the caller, holding the page before, may ask again.
+  throwIfCancelled(signal)
+  const shown = new Set([...held.shown, ...items.map(item => item.id)])
+  const layout = flat
+    .filter(entry => shown.has(entry.reply.id))
+    .map(({ reply, depth, isAuthorThread, hiddenReplyCount }) => ({ id: reply.id, depth, isAuthorThread, hiddenReplyCount }))
+  const state = { ...held, pages: held.pages + 1, next: page.nextCursor, replies, shown }
+  return { ...pageThread(kind, key, session, state, items), layout }
+}
+
+/**
+ * A thread page answering `state`: kept for a continuation while there is a
+ * next page, forgotten at the end, with the cursor that continues it.
+ */
+function pageThread(kind: string, key: string, session: string, state: ThreadSession, items: ThreadReplyDTO[]): ThreadDTO {
+  threadSessions.prune()
+  if (state.next !== undefined) threadSessions.set(key, state)
+  else threadSessions.delete(key)
+  return { ...state.view, replies: nextPage(items, kind, state.next !== undefined ? { pages: state.pages, s: session } : null) }
 }
 
 async function loadV2Replies(focus: Post): Promise<FlatReply[]> {
@@ -446,50 +540,47 @@ export const posts = {
    * continuation, as web does. `focus: null` only when the post is proved
    * missing; a failed read of the focus or of a thread root rejects, as
    * `get` does (a root reported in `removedAncestorIds` was proved absent).
+   *
+   * `delta`: the caller holds the page before `cursor` and merges. A
+   * continuation then reads and hydrates only its new page, and answers with
+   * `layout` (MARCH-5); without the earlier pages here (an engine restart,
+   * a session past its ten minutes) it answers the whole thread as before.
+   * Asking for the page already served (a refresh) always reads it whole.
    */
-  // TODO(post-1.0): each continuation redoes the whole thread so far (enrichment, the
-  // focused reply's subtree walk, provenAbsent) and resends it; cache those per root
-  // alongside replyPages if long threads get slow.
-  async thread(id: string, cursor?: string | null): Promise<ThreadDTO> {
-    const pages = 1 + (cursorInt(decodeCursor<{ pages: number }>(cursor, `thread:${id}`)?.pages ?? 0))
+  async thread(id: string, cursor?: string | null, options?: { delta?: boolean }): Promise<ThreadDTO> {
+    // A thread the host stopped waiting for stops between its reads (MARCH-4).
+    const signal = callSignal()
+    const kind = `thread:${id}`
+    const fields = decodeCursor<{ pages: number; s?: string }>(cursor, kind)
+    const pages = 1 + cursorInt(fields?.pages ?? 0)
+    const session = fields?.s === undefined ? newThreadSession() : cursorString(fields.s)
+    const sessionKey = `${viewerId() ?? ''}:${kind}:${session}`
+    const held = threadSessions.get(sessionKey)
+    if (options?.delta === true && held && held.pages === pages - 1) return continueThread(kind, sessionKey, session, held, signal)
+
     const focus = await loadFocus(id)
     if (!focus) return { focus: null, ancestors: [], removedAncestorIds: [], replies: emptyPage() }
+    throwIfCancelled(signal)
 
     const isReply = targetKindOf(focus) === 'reply'
-    const [{ chain, removed }, { replies, hasMore }] = await Promise.all([
+    const [{ chain, removed }, read] = await Promise.all([
       isReply ? loadAncestors(focus) : { chain: [], removed: [] },
-      hasFlatThreads() ? loadFlatReplies(focus, pages) : loadV2Replies(focus).then(replies => ({ replies, hasMore: false })),
+      hasFlatThreads()
+        ? loadFlatReplies(focus, pages).then(({ replies, next }) => ({ raw: replies, next, replies: layoutFlat(focus, replies) }))
+        : loadV2Replies(focus).then(replies => ({ raw: [], next: undefined, replies })),
     ])
+    throwIfCancelled(signal)
 
-    // One enrichment batch for the page; deleted-reply stubs are not documents and skip it.
-    const isStub = (reply: Reply) => reply.deletedStub === true || isHiddenStub(reply)
-    const live = replies.filter(entry => !isStub(entry.reply))
-    const batch = [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))]
-    // This page's own quote targets, read again: a quote of a post deleted
-    // since the last load must not keep showing the text it had (RC16-I-04).
-    rereadQuotedPosts(quoteTargetIds(batch))
-    const enriched = await postService.enrichPostsBatch(batch.map(withLoadingAuthor))
-    // Stub authors have id '', which the avatar read skips; the stub's author is blanked below.
-    // A hidden reply's stand-in is withheld like a hidden post (`moderationOfPost`); a deleted one is a tombstone.
-    const stubs = replies.filter(entry => isStub(entry.reply)).map(entry => ({
-      ...replyToPost(entry.reply),
-      ...(isHiddenStub(entry.reply) ? { moderation: { mod: 1 } } : { deleted: true }),
-    }))
-    const dtos = new Map((await toPostDTOs([...enriched, ...stubs])).map(dto => [dto.id, dto]))
-
-    const items = replies.flatMap(({ reply, depth, isAuthorThread, hiddenReplyCount }): ThreadReplyDTO[] => {
-      const dto = dtos.get(reply.id)
-      if (!dto) return []
-      if (reply.deletedStub) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, deletedStub: true }]
-      if (isHiddenStub(reply)) return [{ ...dto, author: BLANK_AUTHOR, depth, isAuthorThread, hiddenReplyCount, hiddenStub: true }]
-      return [{ ...dto, depth, isAuthorThread, hiddenReplyCount }]
-    })
-    return {
+    const dtos = await hydrateThread([focus, ...chain], read.replies.map(entry => entry.reply))
+    throwIfCancelled(signal)
+    const items = threadItems(read.replies, dtos)
+    const view = {
       focus: dtos.get(focus.id) ?? null,
       ancestors: chain.flatMap(post => dtos.get(post.id) ?? []),
       removedAncestorIds: removed,
-      replies: nextPage(items, `thread:${id}`, hasMore ? { pages } : null),
     }
+    const state = { focus, pages, next: read.next, replies: read.raw, view, shown: new Set(items.map(item => item.id)) }
+    return pageThread(kind, sessionKey, session, state, items)
   },
 
   /**

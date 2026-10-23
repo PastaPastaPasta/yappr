@@ -2,9 +2,8 @@ import type { TagDTO, UserSummaryDTO } from '@engine/api';
 import { useEffect, useState } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { engineQueryOptions, useEngineQuery, type EngineRemote } from '~/data/queries';
+import { fetchEngineQuery, useEngineQuery, type EngineRemote } from '~/data/queries';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { queryClient } from '~/state/query-client';
 
 import { readFollowStatus, withFollowStatus } from './FollowableUserRow';
 import { tagFromParam } from './tags';
@@ -106,11 +105,9 @@ async function searchTags(api: EngineRemote, q: string): Promise<TagDTO[]> {
  */
 async function searchTrendingTags(needle: string): Promise<TagDTO[]> {
   const text = needle.replace(/^#/, '').toLowerCase();
-  const trending = await queryClient.fetchQuery(
-    engineQueryOptions(queryKeys.explore.trending('all'), (api) => api.explore.trending({ window: 'all' }), {
-      persist: true,
-    }),
-  );
+  const trending = await fetchEngineQuery(queryKeys.explore.trending('all'), (api) => api.explore.trending({ window: 'all' }), {
+    persist: true,
+  });
   return trending.filter((tag) => tag.display.slice(1).toLowerCase().includes(text));
 }
 

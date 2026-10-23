@@ -3,6 +3,7 @@ import type { Page } from '@engine/api/dto';
 import type { Remote } from '@engine/rpc/client';
 import {
   hashKey,
+  isCancelledError,
   queryOptions,
   useInfiniteQuery,
   type FetchNextPageOptions,
@@ -17,7 +18,7 @@ import {
 import { useCallback, useMemo, useRef } from 'react';
 
 import { engine } from '~/engine';
-import { cancelRetriedRead, persistedQuery, retriedReadError } from '~/state/query-client';
+import { cancelRetriedRead, persistedQuery, queryClient, retriedReadError } from '~/state/query-client';
 
 /** `engine.api`, as reads receive it. */
 export type EngineRemote = Remote<EngineApi>;
@@ -49,8 +50,30 @@ export function engineQueryOptions<T, S = T>(
     ...(persist ? persistedQuery : {}),
     ...options,
     queryKey: key,
-    queryFn: () => read(engine.api),
+    // TanStack's signal cancels the read in the engine when nobody wants it any more (ENGINE.md §4.6).
+    queryFn: ({ signal }) => read(engine.withSignal(signal)),
   });
+}
+
+/**
+ * `queryClient.fetchQuery` over an engine read, outside a screen's own query.
+ * A fetch joins one in flight for the same key, and that one is cancelled
+ * when the screen that started it leaves (its signal reaches the engine,
+ * ENGINE.md §4.6): the join then rejects with a `CancelledError` though this
+ * caller still wants the answer, so it reads afresh once.
+ */
+export async function fetchEngineQuery<T>(
+  key: QueryKey,
+  read: (api: EngineRemote) => Promise<T>,
+  options?: EngineQueryOptions<T>,
+): Promise<T> {
+  const query = engineQueryOptions(key, read, options);
+  try {
+    return await queryClient.fetchQuery(query);
+  } catch (error) {
+    if (!isCancelledError(error)) throw error;
+    return queryClient.fetchQuery(query);
+  }
 }
 
 /**
@@ -153,7 +176,7 @@ export function useEngineInfiniteQuery<T>(
     ...(persist ? persistedQuery : {}),
     ...options,
     queryKey: key,
-    queryFn: ({ pageParam }) => read(engine.api, pageParam),
+    queryFn: ({ pageParam, signal }) => read(engine.withSignal(signal), pageParam),
     initialPageParam: null,
     getNextPageParam: (last) => (last.hasMore && last.cursor ? last.cursor : undefined),
   });

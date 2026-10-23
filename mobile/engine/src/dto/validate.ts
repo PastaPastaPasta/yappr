@@ -140,7 +140,7 @@ export const threadDTO = object({
   ancestors: array(postDTO),
   removedAncestorIds: array(id),
   replies: page(threadReply),
-})
+}, { layout: array(object({ id, ...threadFields })) })
 
 export const profileReplyDTO = object({ ...postRequired, parentRemoved: bool }, { ...postOptional, parent: postDTO })
 

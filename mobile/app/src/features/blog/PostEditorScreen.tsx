@@ -6,11 +6,10 @@ import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { BookOpenIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
-import { engineQueryOptions, useEngineQuery } from '~/data/queries';
+import { fetchEngineQuery, useEngineQuery } from '~/data/queries';
 import { useSessionStore, useViewerId } from '~/data/session';
 import { checkWrite, useWrite, type WriteResult } from '~/data/writes';
 import { cn } from '~/lib-allowlist';
-import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { showActionSheet } from '~/ui/action-sheet';
 import { Button } from '~/ui/Button';
@@ -316,8 +315,7 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
       if (!closeIfInFront()) stay(blank);
       return;
     }
-    queryClient
-      .fetchQuery(engineQueryOptions(queryKeys.blog.post(id), (api) => api.blogs.post(id)))
+    fetchEngineQuery(queryKeys.blog.post(id), (api) => api.blogs.post(id))
       .catch(() => null)
       .then((created) => {
         if (!closeIfInFront(() => (created ? openBlogPost(created.blogId, created.slug) : undefined))) stay(blank);

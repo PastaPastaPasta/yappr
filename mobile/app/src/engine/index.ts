@@ -73,11 +73,18 @@ export interface Engine {
   api: Remote<EngineApi>;
   /** Subscribe to an engine event (ENGINE.md §8); the subscription survives restarts. */
   on(event: string, handler: (payload: unknown) => void): () => void;
+  /**
+   * `api`, with every call given up when `signal` aborts (ENGINE.md §4.6):
+   * the data layer passes TanStack's query signal, so a read whose screen
+   * left, or whose search changed, stops in the engine instead of running on.
+   */
+  withSignal(signal: AbortSignal): Remote<EngineApi>;
 }
 
 export const engine: Engine = {
   api: createRemote<EngineApi>((path, args) => engineSupervisor.call(path, args)),
   on: (event, handler) => engineSupervisor.on(event, handler),
+  withSignal: (signal) => createRemote<EngineApi>((path, args) => engineSupervisor.call(path, args, { signal })),
 };
 
 /** Diagnostics (dev): restart into a simulated Lockdown Mode or outdated WebView. */
