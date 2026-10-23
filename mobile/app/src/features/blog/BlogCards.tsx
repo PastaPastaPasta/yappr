@@ -5,6 +5,7 @@ import { Pressable, View } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { handleOf } from '~/ui/handle';
 import { useMediaUrls } from '~/ui/media-url';
 import { Text } from '~/ui/Text';
@@ -55,6 +56,7 @@ export const BlogRow = memo(function BlogRow({ blog, onPress }: { blog: BlogDTO;
         <Text variant="bodyStrong" numberOfLines={1}>{blog.name}</Text>
         {blog.description ? <Text variant="subhead" tone="secondary" numberOfLines={2}>{blog.description}</Text> : null}
         {author ? <Text variant="caption" tone="secondary" numberOfLines={1}>{author}</Text> : null}
+        <ModerationLabel moderation={blog.moderation} testID={`blog-row-moderation-${blog.id}`} />
       </View>
     </Pressable>
   );
@@ -77,6 +79,7 @@ export const PostCard = memo(function PostCard({ post, showBlog = false }: { pos
         <Text variant="bodyStrong" numberOfLines={2}>{post.title}</Text>
         {post.excerpt ? <Text variant="subhead" tone="secondary" numberOfLines={2}>{post.excerpt}</Text> : null}
         <Text variant="caption" tone="secondary">{postMeta(post)}</Text>
+        <ModerationLabel moderation={post.moderation} testID={`blog-post-moderation-${post.id}`} />
       </View>
       {cover ? (
         <Image

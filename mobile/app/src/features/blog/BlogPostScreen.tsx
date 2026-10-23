@@ -24,6 +24,7 @@ import { Spinner } from '~/ui/Spinner';
 import { FilterChips, SegmentedControl } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
+import { ModerationLabel } from '~/ui/post/ModerationLabel';
 import { MIN_TARGET } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
@@ -31,6 +32,7 @@ import { BlogAvatar } from './BlogCards';
 import { BlogMenu, BlogStatusBar, FollowBlogButton, blogHeaderOptions, useBlogFollow } from './BlogChrome';
 import { CommentRow, CommentsHeader, CommentsOff, CommentsState, useBlogComments } from './BlogComments';
 import { BlogBlock, BlogFootnotes, contentModel, type BlockRow } from './BlogContent';
+import { BlogHiddenScreen } from './BlogHidden';
 import { blocksOf } from './blocks';
 import { blogPostWebUrl, openBlog, shareLink } from './blog-navigation';
 import { BlogReportSheet } from './BlogReportSheet';
@@ -205,7 +207,9 @@ const readerRowType = (row: ReaderRow) => (row.type === 'block' ? `block:${Strin
 /**
  * The reader: a post in its blog's theme (web `blog-post-view.tsx`): title,
  * summary, author, reading time, cover, the content with a working table of
- * contents, the reader's "Aa", share, report, and comments.
+ * contents, the reader's "Aa", share, report, and comments. A post (or blog)
+ * the moderators hid is a stub on the official apps, as on web (blog v10);
+ * an archival build shows it labelled.
  *
  * One virtualized list, with a row for each block of the content and for each
  * comment, so a long post and a hundred comments mount only what is near the
@@ -354,6 +358,7 @@ function PostReader({ blog: b, post: p, info, follow, deletion, refetchAll }: {
               {p.summary ? <RNText style={{ ...bodyFont, color: palette.muted, fontSize: 18 * scale, lineHeight: 26 * scale }}>{p.summary}</RNText> : null}
             </View>
             <AuthorRow blog={b} post={p} palette={palette} follow={follow} />
+            <ModerationLabel moderation={p.moderation} testID="blog-post-moderation-label" />
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.border, paddingVertical: 10 }}>
               <RNText style={muted}>{`${p.readingMinutes} min read`}</RNText>
               {p.labels.length > 0 ? <RNText style={muted}>{`· ${p.labels.join(', ')}`}</RNText> : null}
@@ -512,6 +517,10 @@ export function BlogPostScreen() {
       </Screen>
     );
   }
+
+  // Web's stub covers a hidden blog's posts as well as a hidden post.
+  if (view.blog.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog" />;
+  if (view.post.moderation?.withheld) return <BlogHiddenScreen title="Post" noun="blog post" />;
 
   return (
     <PostReader

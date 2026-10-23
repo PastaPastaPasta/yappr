@@ -11,7 +11,7 @@ import { privateFeedClientSupported, likesAreIndexOnly, likeNotificationsAreTime
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { dropsHidden, isHiddenItem, withoutHiddenItems } from '../moderation-view';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
-import { readNotificationWindow } from './notification-windows';
+import { readNotificationWindowDocuments, type NotificationWindowCursor, type WindowRead, type WindowSession } from './notification-windows';
 import { mentionsOfUserQuery } from './mention-service';
 import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
@@ -146,6 +146,13 @@ export interface NotificationResult {
    */
   latestTimestamp: number;
   /**
+   * Set when a notification window had more pages than one poll reads: pass
+   * it to the next `pollNewNotifications` (whose `sinceTimestamp` is then this
+   * result's `latestTimestamp`, held for it) to continue those windows. Keep
+   * it with `latestTimestamp`, and only when the notifications are kept too.
+   */
+  windowCursor?: NotificationWindowCursor;
+  /**
    * Set when a source read failed (each source still fails soft to no
    * notifications): one of the errors. With nothing in `notifications`,
    * "no notifications" is then unknown, not an answer.
@@ -167,10 +174,50 @@ const REPLIES_FAILED = 'Error fetching reply notifications:';
  * carries on, and then reports a failure and keeps its watermark. Kept per
  * fetch, so a fetch running at the same time (another account's poll) never
  * makes this one look failed, or the other way round.
+ *
+ * A windowed source ({@link windowedSource}) also limits how far the
+ * watermark moves, and may leave windows to continue next poll: neither
+ * counts unless the whole source answered.
  */
 class SourceFailures {
   private count = 0;
   private last: unknown = undefined;
+  private limit = Infinity;
+  private readonly passes: WindowRead['passes'] = [];
+
+  /** `resume`: the cursor of the previous fetch's result, to continue its windows. */
+  constructor(private readonly resume: NotificationWindowCursor = []) {}
+
+  /** How far the watermark may move (Infinity when no source limits it). */
+  get watermarkLimit(): number {
+    return this.limit;
+  }
+
+  /** The windows to continue next poll, or undefined when none. */
+  get windowCursor(): NotificationWindowCursor | undefined {
+    return this.passes.length > 0 ? this.passes : undefined;
+  }
+
+  /**
+   * A source that reads notification windows: as {@link source}, and when it
+   * answers, its window reads limit the watermark and leave their passes for
+   * the next poll. A source that failed leaves nothing: its windows start over.
+   */
+  async windowedSource(message: string, read: (session: WindowSession) => Promise<RawNotification[]>): Promise<RawNotification[]> {
+    const reads: WindowRead[] = [];
+    try {
+      const notifications = await read({ resume: this.resume, report: (windowRead) => { reads.push(windowRead); } });
+      for (const windowRead of reads) {
+        this.limit = Math.min(this.limit, windowRead.watermarkLimit);
+        this.passes.push(...windowRead.passes);
+      }
+      return notifications;
+    } catch (error) {
+      logger.error(message, error);
+      this.tolerated(error);
+      return [];
+    }
+  }
 
   /** A read that failed and answered nothing (a bundle member `queryDocumentBundle` tolerated and logged). */
   readonly tolerated = (error: unknown): void => {
@@ -435,8 +482,8 @@ class NotificationService {
    * Uses the postOwnerReposts index via repostService.getRepostsOfMyPosts().
    * On v10 reposts are quote posts: see {@link getQuoteNotifications}.
    */
-  async getRepostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
-    if (repostsAreQuotes()) return this.getQuoteNotifications(userId, sinceTimestamp, preloaded);
+  async getRepostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[], windows?: WindowSession): Promise<RawNotification[]> {
+    if (repostsAreQuotes()) return this.getQuoteNotifications(userId, sinceTimestamp, preloaded, windows);
     const { repostService } = await import('./repost-service');
     const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp), preloaded);
 
@@ -457,14 +504,15 @@ class NotificationService {
    * previous `post.quotedPostOwnerRecent [$createdAt, quotedPostOwnerId]` window and
    * since-filtered client-side (see readNotificationWindow). A bare quote
    * notifies as `repost` and links to the reposted post or reply; a quote with
-   * text notifies as `quote` and links to the quote.
+   * text notifies as `quote` and links to the quote. The window reads continue
+   * the passes of `windows` and report to it (see WindowSession).
    */
-  async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+  async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[], windows?: WindowSession): Promise<RawNotification[]> {
     // Quote notifications exist only where reposts are quotes (v10), which
     // always reads the quote windows.
     const window = notificationWindowFor('quote');
     if (!window && !preloaded) return [];
-    const documents = preloaded ?? (window ? await readNotificationWindow(window, userId, sinceTimestamp) : []);
+    const documents = preloaded ?? (window ? await readNotificationWindowDocuments(window, userId, sinceTimestamp, windows) : []);
     const { transformRawPost } = await import('../feed/transform-raw-post');
     // The quote windows are not laned (v18): a hidden quote is dropped here.
     return withoutHiddenItems(documents.map((doc) => transformRawPost(doc))).flatMap((post): RawNotification[] => {
@@ -489,9 +537,9 @@ class NotificationService {
    * replyService.getRepliesToMyContent(). "Replied to your post" or "your
    * reply" follows from the reply's own linkage ({@link repliedToKind}).
    */
-  async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
+  async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[], windows?: WindowSession): Promise<RawNotification[]> {
     const { replyService } = await import('./reply-service');
-    const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded);
+    const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded, windows);
 
     // v11: a tombstoned reply keeps its parent linkage, so it stays in the
     // window; its author deleted it, and there is nothing to announce.
@@ -999,14 +1047,16 @@ class NotificationService {
 
   /**
    * Poll for new notifications since last check
-   * Used for background polling
+   * Used for background polling. `windowCursor` is the previous result's,
+   * kept with the `latestTimestamp` passed here as `sinceTimestamp`.
    */
   async pollNewNotifications(
     userId: string,
     sinceTimestamp: number,
-    readIds: Set<string> = new Set()
+    readIds: Set<string> = new Set(),
+    windowCursor?: NotificationWindowCursor
   ): Promise<NotificationResult> {
-    return this.fetchNotifications(userId, sinceTimestamp, readIds, sinceTimestamp);
+    return this.fetchNotifications(userId, sinceTimestamp, readIds, sinceTimestamp, windowCursor);
   }
 
   /**
@@ -1016,9 +1066,10 @@ class NotificationService {
     userId: string,
     sinceTimestamp: number,
     readIds: Set<string>,
-    fallbackTimestamp: number
+    fallbackTimestamp: number,
+    windowCursor?: NotificationWindowCursor
   ): Promise<NotificationResult> {
-    const failures = new SourceFailures();
+    const failures = new SourceFailures(windowCursor);
     const [sourced, blogPosts, blogComments, storeEvents, privateFeedAccess] = await Promise.all([
       notificationsAreWindowed()
         ? this.fetchWindowedSources(userId, sinceTimestamp, failures)
@@ -1056,11 +1107,24 @@ class NotificationService {
     // what that source missed must not end up behind it.
     const { failure } = failures;
     const timed = allRaw.filter(n => !n.timeless);
+    // A windowed source limits it too: to `since` while a window's pages
+    // continue next poll (its unread rows can be older than anything that came
+    // back), otherwise to the block time its pages were read at.
     let latestTimestamp = fallbackTimestamp;
     if (failure !== undefined) latestTimestamp = sinceTimestamp;
     else if (timed.length > 0) latestTimestamp = Math.max(...timed.map(n => n.createdAt));
+    const limit = failures.watermarkLimit;
+    if (limit < latestTimestamp) latestTimestamp = Math.max(sinceTimestamp, limit);
 
-    return failure !== undefined ? { notifications, latestTimestamp, failure } : { notifications, latestTimestamp };
+    // Windows to continue exist only with the watermark held at `since`, the
+    // `since` the next poll passes back with them.
+    const { windowCursor: nextCursor } = failures;
+    return {
+      notifications,
+      latestTimestamp,
+      ...(nextCursor ? { windowCursor: nextCursor } : {}),
+      ...(failure !== undefined ? { failure } : {}),
+    };
   }
 
   /**
@@ -1127,7 +1191,8 @@ class NotificationService {
    * open windows each, and `timeRange` is refused in a composite, so each
    * window is its own plain query, all in parallel: five requests a poll (seven
    * on v14, whose replies come from two windows of their own), plus a page per
-   * full window. Likes (like design C) are per recent target,
+   * full window, up to a budget per poll; a window past it continues next poll
+   * and limits the watermark meanwhile. Likes (like design C) are per recent target,
    * outside the bundle ({@link likeNotificationsPinTarget}): per kind one
    * composite plus one read (v11, v12: plus liker reads only when a count
    * moved, {@link getTimelessLikeNotifications}).
@@ -1144,8 +1209,8 @@ class NotificationService {
       failures.source(LIKES_FAILED, bundledLikeKinds.length > 0
         ? permanent.then(({ likes }) => this.getLikeNotifications(userId, sinceTimestamp, likes))
         : this.getLikeNotifications(userId, sinceTimestamp)),
-      failures.source(REPOSTS_FAILED, this.getRepostNotifications(userId, sinceTimestamp)),
-      failures.source(REPLIES_FAILED, this.getReplyNotifications(userId, sinceTimestamp)),
+      failures.windowedSource(REPOSTS_FAILED, (windows) => this.getRepostNotifications(userId, sinceTimestamp, undefined, windows)),
+      failures.windowedSource(REPLIES_FAILED, (windows) => this.getReplyNotifications(userId, sinceTimestamp, undefined, windows)),
     ]);
     return perSource.flat();
   }

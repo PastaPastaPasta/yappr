@@ -132,12 +132,16 @@ export const queryKeys = {
     detail: (id: string) => [...root, 'blogs', 'blog', id] as const,
     /** `blogs.posts`. */
     posts: (id: string) => [...root, 'blogs', 'blog', id, 'posts'] as const,
+    /** `blogs.manage`: the owner's copy, never persisted (a hidden blog is whole in it). Under `detail`, so a blog write refreshes it. */
+    manage: (id: string) => [...root, 'blogs', 'blog', id, 'manage'] as const,
     /** `blogs.followState`. */
     follow: (id: string) => [...root, 'blogs', 'blog', id, 'follow'] as const,
     /** `blogs.post`; a prefix of its comments. */
     post: (id: string) => [...root, 'blogs', 'post', id] as const,
     /** `blogs.postBySlug`. */
     postBySlug: (blogId: string, slug: string) => [...root, 'blogs', 'slug', blogId, slug] as const,
+    /** `blogs.managePost`: the owner's copy for the editor, never persisted. Under `postBySlug`, so a post write refreshes it. */
+    managePost: (blogId: string, slug: string) => [...root, 'blogs', 'slug', blogId, slug, 'manage'] as const,
     /** Every `blogs.postBySlug` of one blog: a prefix. */
     slugs: (blogId: string) => [...root, 'blogs', 'slug', blogId] as const,
     /** `blogs.comments`. */

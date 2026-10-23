@@ -1437,11 +1437,16 @@ describe('notifications', () => {
 
   it('polls from the watermark and merges what arrived', async () => {
     const notifications = createNotificationsModule(emit).api
-    m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
+    // A notification window left pages for the next poll: its cursor rides with the watermark.
+    const windowCursor = [{ owner: 'reply|parentOwnerRecent|viewer', since: 100, startMs: 0, startAfter: 'r99', readAtMs: 150 }]
+    m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100, windowCursor })
     expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [notification('b', 'follow', 200)], latestTimestamp: 200 })
     expect(await notifications.poll()).toEqual({ added: 1, unread: 2, blockedChanged: false })
-    expect(m.notificationService.pollNewNotifications).toHaveBeenCalledWith(VIEWER, 100, expect.any(Set))
+    expect(m.notificationService.pollNewNotifications).toHaveBeenLastCalledWith(VIEWER, 100, expect.any(Set), windowCursor)
+    // That poll finished the window: the next one has no cursor to pass.
+    await notifications.poll()
+    expect(m.notificationService.pollNewNotifications).toHaveBeenLastCalledWith(VIEWER, 200, expect.any(Set), undefined)
     expect(emitted.at(-1)).toEqual({ event: 'notifications.count', payload: { unread: 2 } })
     m.viewer = null
     await expect(notifications.list()).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })

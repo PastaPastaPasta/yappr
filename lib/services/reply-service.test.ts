@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 
 const { query, count } = vi.hoisted(() => ({ query: vi.fn(), count: vi.fn() }))
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query, count } }) }))
+// Notification windows read with proof for the block time; the same answers as `query`.
+vi.mock('./evo-sdk-service', () => ({
+  getEvoSdk: async () => ({
+    documents: { query, count, queryWithProof: async (q: unknown) => ({ data: await query(q), metadata: { timeMs: Date.now() } }) },
+  }),
+}))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }))
 vi.mock('./dpns-service', () => ({ dpnsService: {} }))
 vi.mock('./unified-profile-service', () => ({ unifiedProfileService: {} }))

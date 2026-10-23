@@ -485,18 +485,19 @@ function Editor({ blog, post, info }: { blog: BlogDTO; post: BlogPostDTO | null;
   );
 }
 
-function useEditorData(blogId: string, slug: string | null) {
+/** The owner's copies (`blogs.manage`, `blogs.managePost`): a blog or post the moderators hid still edits with its real content (blog v10). */
+function useEditorData(blogId: string, slug: string | null, signedIn: boolean) {
   const info = useEngineQuery(queryKeys.blog.info, (api) => api.blogs.info(), { staleTime: Infinity });
-  const blog = useEngineQuery(queryKeys.blog.detail(blogId), (api) => api.blogs.get(blogId));
-  const post = useEngineQuery(queryKeys.blog.postBySlug(blogId, slug ?? ''), (api) => api.blogs.postBySlug(blogId, slug ?? ''), {
-    enabled: slug !== null,
+  const blog = useEngineQuery(queryKeys.blog.manage(blogId), (api) => api.blogs.manage(blogId), { enabled: signedIn });
+  const post = useEngineQuery(queryKeys.blog.managePost(blogId, slug ?? ''), (api) => api.blogs.managePost(blogId, slug ?? ''), {
+    enabled: signedIn && slug !== null,
   });
   return { info, blog, post };
 }
 
 function EditorGate({ blogId, slug }: { blogId: string; slug: string | null }) {
   const viewerId = useViewerId();
-  const { info, blog, post } = useEditorData(blogId, slug);
+  const { info, blog, post } = useEditorData(blogId, slug, viewerId !== null);
   const loading = blog.isPending || (slug !== null && post.isPending);
   if (!viewerId) return <EmptyState icon={BookOpenIcon} title="Sign in to write" description="Sign in to write on your blog." />;
   if (loading) return <View className="items-center py-12"><Spinner /></View>;

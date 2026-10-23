@@ -70,3 +70,62 @@ describe('SdkDmChain writes after a lost replace answer', () => {
     expect(outcome).toMatchObject({ ok: false, failure: 'other', error: PENDING_WRITE_ERROR })
   })
 })
+
+describe('SdkDmChain.invitesSince', () => {
+  const BUCKETS = [0, 1, 2]
+  const owner = bs58.encode(Uint8Array.from({ length: 32 }, () => 3))
+  const invite = (id: string, bucket: number, createdAt: number) => ({
+    $id: id, $ownerId: owner, $createdAt: createdAt, bucket, epk: bytes(33), check: bytes(16),
+  })
+  type Page = Array<ReturnType<typeof invite>> | Error
+
+  /** Answers the reads with `pages` in call order (then empty pages), each with a block time; records the queries. */
+  async function chainServing(pages: Page[]) {
+    const queries: Array<Record<string, unknown>> = []
+    const queryWithProof = vi.fn(async (query: Record<string, unknown>) => {
+      queries.push(query)
+      const page = pages[queries.length - 1] ?? []
+      if (page instanceof Error) throw page
+      return { data: new Map(page.map((doc) => [doc.$id, doc])), metadata: { timeMs: 9_000 } }
+    })
+    const { getEvoSdk } = await import('../evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { queryWithProof } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    return { chain: new SdkDmChain(ME, CONTRACT), queries }
+  }
+
+  const busyBucket = Array.from({ length: 100 }, (_, i) => invite(`a${i}`, 0, 5_000 + i))
+
+  it('reads past a short `in` continuation page to a third page with data, and stops only at an empty page', async () => {
+    // Bucket 0 is busy with recent invites. The 99-row second page is not the
+    // end: the third holds an OLDER invite in bucket 2, which a scan cursor
+    // moved to the newest time read so far would have skipped for good.
+    const second = Array.from({ length: 99 }, (_, i) => invite(`b${i}`, i < 50 ? 0 : 1, 6_000 + i))
+    const { chain, queries } = await chainServing([busyBucket, second, [invite('late-bucket', 2, 1_500)]])
+
+    const invites = await chain.invitesSince(BUCKETS, 1_000)
+
+    expect(invites).toHaveLength(200)
+    expect(invites.at(-1)).toMatchObject({ id: 'late-bucket', bucket: 2, createdAt: 1_500 })
+    expect(queries.map((q) => q.startAfter)).toEqual([undefined, 'a99', 'b98', 'late-bucket'])
+    for (const q of queries) {
+      expect(q).toMatchObject({
+        documentTypeName: 'dmInvite',
+        where: [['bucket', 'in', BUCKETS], ['$createdAt', '>=', 1_000]],
+        orderBy: [['bucket', 'asc'], ['$createdAt', 'asc']],
+        limit: 100,
+      })
+    }
+    expect(chain.now()).toBe(9_000)
+  })
+
+  it('takes a short first page as the whole answer: one read for a quiet scan', async () => {
+    const { chain, queries } = await chainServing([[invite('only', 1, 2_000)]])
+    expect(await chain.invitesSince(BUCKETS, 1_000)).toEqual([expect.objectContaining({ id: 'only' })])
+    expect(queries).toHaveLength(1)
+  })
+
+  it('rejects when a later page fails, so no scan moves its cursor on part of the answer', async () => {
+    const { chain } = await chainServing([busyBucket, new Error('DAPI unavailable')])
+    await expect(chain.invitesSince(BUCKETS, 1_000)).rejects.toThrow('DAPI unavailable')
+  })
+})
