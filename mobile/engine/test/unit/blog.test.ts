@@ -276,7 +276,9 @@ describe('blog v10 moderation', () => {
 
     it('lists the author\'s own posts across both lanes, hidden and restricted ones labelled, with their blog\'s name', async () => {
       const HIDDEN_BLOG = 'H'.repeat(44)
-      m.blogService.getBlogsByOwner.mockResolvedValue([libBlog(), libBlog({ id: HIDDEN_BLOG, name: 'Hidden blog', ...hide() })])
+      // Each blog the page names is read by id, a hidden one kept; a deleted one reads as null.
+      const blogs = new Map([[BLOG, libBlog()], [HIDDEN_BLOG, libBlog({ id: HIDDEN_BLOG, name: 'Hidden blog', ...hide() })]])
+      m.blogService.getBlog.mockImplementation(async (id: string) => blogs.get(id) ?? null)
       m.blogPostService.getOwnerPostsPage.mockResolvedValue({
         posts: [
           v10Post(),
@@ -288,7 +290,10 @@ describe('blog v10 moderation', () => {
         nextCursor: undefined,
       })
       const { items } = await blogReads.myPosts()
-      expect(m.blogService.getBlogsByOwner).toHaveBeenCalledWith(AUTHOR, { includeHidden: true })
+      expect(m.blogService.getBlog.mock.calls.map(([id]) => id)).toEqual([BLOG, HIDDEN_BLOG, 'G'.repeat(44)])
+      expect(m.blogService.getBlog).toHaveBeenCalledWith(BLOG, { throwOnError: true })
+      // Not the owner's first page of blogs (an older blog may be past it), nor `getMany` (it drops hidden ones).
+      expect(m.blogService.getBlogsByOwner).not.toHaveBeenCalled()
       expect(m.blogService.getMany).not.toHaveBeenCalled()
       expect(items.map(post => [post.title, post.blogName, post.moderation])).toEqual([
         ['Title', 'My blog', undefined],

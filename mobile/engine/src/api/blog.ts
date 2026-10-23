@@ -357,14 +357,17 @@ async function withBlogNames(posts: LibPost[]): Promise<BlogPostSummaryDTO[]> {
 }
 
 /**
- * The author's posts with their blog's name, from the author's own blogs
- * (only a blog's owner posts to it), hidden ones included; a post whose blog
- * was deleted keeps a `null` name. Labelled for the author.
+ * The author's posts with their blog's name, labelled for the author. Each
+ * blog the page names is read by id (`getBlog`, one batched read), which keeps
+ * a hidden blog (`getMany` would drop it); only a blog that is gone leaves a
+ * `null` name.
  */
-async function ownPostsWithBlogNames(viewer: string, posts: LibPost[]): Promise<BlogPostSummaryDTO[]> {
+async function ownPostsWithBlogNames(posts: LibPost[]): Promise<BlogPostSummaryDTO[]> {
   if (posts.length === 0) return []
-  const blogs = new Map((await blogService.getBlogsByOwner(viewer, { includeHidden: true })).map(blog => [blog.id, blog.name]))
-  return withBlogReasons(posts.map(post => toSummary(post, blogs.get(post.blogId) ?? null, 'owner')))
+  const ids = [...new Set(posts.map(post => post.blogId))]
+  const blogs = await Promise.all(ids.map(id => blogService.getBlog(id, { throwOnError: true })))
+  const names = new Map(blogs.flatMap(blog => (blog ? [[blog.id, blog.name] as const] : [])))
+  return withBlogReasons(posts.map(post => toSummary(post, names.get(post.blogId) ?? null, 'owner')))
 }
 
 async function read<T>(run: () => Promise<T>): Promise<T> {
@@ -561,7 +564,7 @@ export const blogReads = {
     const viewer = requireViewer('Your posts')
     if (!blogIsV9()) return onePage([])
     return pageAfter('myBlogPosts', cursor, after => read(() => blogPostService.getOwnerPostsPage(viewer, { limit: POST_PAGE, startAfter: after })), async page => ({
-      items: await read(() => ownPostsWithBlogNames(viewer, page.posts)),
+      items: await read(() => ownPostsWithBlogNames(page.posts)),
       next: page.nextCursor,
     }))
   },

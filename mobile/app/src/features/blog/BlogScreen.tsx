@@ -50,6 +50,7 @@ function ThemedPostRow({ post, palette, blog }: { post: BlogPostSummaryDTO; pale
           </RNText>
         ) : null}
         <RNText style={{ color: post.publishedAt ? palette.muted : palette.accent, fontSize: 13 }}>{postMeta(post)}</RNText>
+        <ModerationLabel moderation={post.moderation} testID={`blog-post-moderation-${post.id}`} />
       </View>
       {cover ? <Image source={{ uri: cover }} style={{ width: 80, height: 80, borderRadius: 10 }} contentFit="cover" accessibilityIgnoresInvertColors /> : null}
     </Pressable>

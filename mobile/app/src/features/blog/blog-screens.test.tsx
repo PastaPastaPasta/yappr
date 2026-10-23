@@ -13,6 +13,7 @@ import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { useToastStore } from '~/ui/toast';
 
+import { BlogRow, PostCard } from './BlogCards';
 import { BlogPostScreen } from './BlogPostScreen';
 import { BlogScreen } from './BlogScreen';
 import { EditBlogScreen } from './BlogSettingsScreen';
@@ -750,6 +751,33 @@ describe('moderation (blog v10)', () => {
     expect(screen.queryByTestId('manage-post-moderation-P1')).toBeNull();
     expect(screen.getByTestId('manage-post-moderation-P2')).toHaveTextContent(/^Hidden · Spam or scam/);
     expect(screen.getByTestId('manage-post-moderation-P3')).toHaveTextContent('Restricted account');
+
+    // A hidden post's reader is a stub with no menu: Your blogs opens its editor directly.
+    fireEvent.press(screen.getByTestId('manage-post-edit-P2'));
+    expect(router.push).toHaveBeenCalledWith({ pathname: '/blog/[id]/post/[slug]/edit', params: { id: BLOG, slug: 'P2' } });
+  });
+
+  it('labels hidden or restricted blogs and posts in lists an archival build shows', async () => {
+    mockParams.current = { id: BLOG };
+    const summary: BlogPostSummaryDTO = {
+      id: POST, ownerId: AUTHOR, blogId: BLOG, blogName: null, slug: 'field-notes', title: 'Field notes', summary: null, excerpt: 'A summary',
+      coverImage: null, labels: [], publishedAt: post.publishedAt, date: post.date, createdAt: post.createdAt, edited: false, readingMinutes: 1,
+      commentsEnabled: true, deleted: false,
+    };
+    fakeEngine.method('blogs.posts').mockResolvedValue({ items: [{ ...summary, moderation: { hidden: false, restricted: true } }], cursor: null, hasMore: false });
+    renderScreen(<BlogScreen />);
+    await settle();
+    expect(screen.getByTestId(`blog-post-moderation-${POST}`)).toHaveTextContent('Restricted account');
+    screen.unmount();
+
+    renderScreen(
+      <>
+        <BlogRow blog={{ ...blog, moderation: LABEL }} />
+        <PostCard post={{ ...summary, moderation: LABEL }} />
+      </>,
+    );
+    expect(screen.getByTestId(`blog-row-moderation-${BLOG}`)).toHaveTextContent(/^Hidden · Spam or scam/);
+    expect(screen.getByTestId(`blog-post-moderation-${POST}`)).toHaveTextContent(/^Hidden · Spam or scam/);
   });
 });
 
