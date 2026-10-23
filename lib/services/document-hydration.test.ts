@@ -98,6 +98,42 @@ describe('strict document hydration', () => {
     expect(sdk.get).toHaveBeenCalledTimes(3);
   });
 
+  it('falls back a failed coalesced read a few ids at a time, not all at once', async () => {
+    const service = new DocumentService();
+    sdk.query.mockRejectedValue(new Error('batch offline'));
+    let active = 0;
+    let peak = 0;
+    sdk.get.mockImplementation(async (_contract, _type, id) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return { $id: id };
+    });
+    const ids = Array.from({ length: 100 }, (_, i) => `id-${i}`);
+    const reads = await Promise.all(ids.map((id) => service.getOrThrow(id)));
+    expect(reads).toEqual(ids.map((id) => ({ id })));
+    expect(sdk.get).toHaveBeenCalledTimes(100);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(5);
+  });
+
+  it('reads again only the ids of a failed chunk, keeping the chunks that were read', async () => {
+    const service = new DocumentService();
+    const ids = Array.from({ length: 150 }, (_, i) => `id-${i}`);
+    // The first chunk of 100 fails; the 50 after it are answered.
+    sdk.query.mockImplementation(async ({ where }: { where: [string, string, string[]][] }) => {
+      const part = where[0][2];
+      if (part.length === 100) throw new Error('chunk offline');
+      return new Map(part.map((id) => [id, { $id: id }]));
+    });
+    sdk.get.mockImplementation(async (_contract, _type, id) => ({ $id: id }));
+    const reads = await Promise.all(ids.map((id) => service.getOrThrow(id)));
+    expect(reads).toEqual(ids.map((id) => ({ id })));
+    expect(sdk.get.mock.calls.map((call) => call[2]).sort()).toEqual(ids.slice(0, 100).sort());
+    expect(sdk.query).toHaveBeenCalledTimes(2);
+  });
+
   it('starts a new read for a refresh made while an invalidated batch is still out', async () => {
     class VersionedService extends BaseDocumentService<{ id: string; version: unknown }> {
       constructor() { super('document', 'contract'); }
