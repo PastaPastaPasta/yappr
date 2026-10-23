@@ -47,6 +47,9 @@ const SETTLED_RULE = { windowSeconds: 604800, leaderRequired: true, approvals: 3
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+// Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
+const live = vi.hoisted(() => ({ signOutAtSigner: false, signedOut: false }))
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => (live.signedOut ? null : sdk.identities.fetch.mock.lastCall?.[0] ?? null) }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
 const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
 vi.mock('./identity-nonce', () => ({
@@ -61,7 +64,7 @@ vi.mock('./identity-nonce', () => ({
   },
 }))
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
-vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
+vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => { if (live.signOutAtSigner) live.signedOut = true; return { signer: true } } } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 const walletSession = vi.hoisted(() => ({ active: false }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => walletSession.active }))
@@ -102,6 +105,7 @@ import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
   moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
+import { answerCriticalKeyRequest, cancelCriticalKeyRequest, currentCriticalKeyRequest, subscribeCriticalKeyRequests } from '@/lib/auth/critical-key'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
 const MODERATOR = 'Mod111111111111111111111111111111111111111'
@@ -120,6 +124,8 @@ beforeEach(() => {
   }
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
   walletSession.active = false
+  live.signOutAtSigner = false
+  live.signedOut = false
   moderationService.invalidateTeam()
 })
 
@@ -130,6 +136,54 @@ describe('moderation signs only with a raw key', () => {
     const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
     expect(result).toMatchObject({ success: false, errorCode: 'NEEDS_CRITICAL_KEY' })
     expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+  })
+
+  it('sends nothing when the moderator signs out after the signer is built, before the write goes out', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    live.signOutAtSigner = true
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    expect(result).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+  })
+})
+
+describe('step-up: a wallet session asks for the CRITICAL key when the action is confirmed', () => {
+  function sheet(reply: 'key' | 'cancel') {
+    const asked: string[] = []
+    const stop = subscribeCriticalKeyRequests(() => {
+      const request = currentCriticalKeyRequest()
+      if (!request) return
+      asked.push(`${request.identityId}:${request.use}`)
+      queueMicrotask(() => {
+        if (reply === 'cancel') cancelCriticalKeyRequest(request)
+        else answerCriticalKeyRequest(request, { wif: 'critical-wif', source: 'typed', keep: false })
+      })
+    })
+    return { asked, stop }
+  }
+
+  it('asks once, then moderates with the key given', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    walletSession.active = true
+    sdk.contracts.warnUser.mockResolvedValue(undefined)
+    const { asked, stop } = sheet('key')
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    stop()
+    expect(result).toEqual({ success: true })
+    expect(asked).toEqual([`${MODERATOR}:moderation`])
+    expect(sdk.contracts.warnUser).toHaveBeenCalledTimes(1)
+  })
+
+  it('closing the sheet signs and sends nothing, and says nothing', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    walletSession.active = true
+    sdkSignedWrites.count = 0
+    const { stop } = sheet('cancel')
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    stop()
+    expect(result).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+    expect(sdkSignedWrites.count).toBe(0)
   })
 })
 

@@ -22,7 +22,7 @@ import { replyToPost } from '@/lib/services/post-service'
 import type { Post } from '@/lib/types'
 import { RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderatorsCannotDelete, referencesMayDangle, replyThreadsCarryLiveMarker, targetKindOf } from '@/lib/contract-topology'
-import { isHidden, moderationViewAll } from '@/lib/moderation-view'
+import { archivalBuild, isHidden } from '@/lib/moderation-view'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { countVisibleReplies, recordVisibleReplies } from '@/lib/feed/visible-reply-counts'
 import { useDocumentTitle } from '@/hooks/use-document-title'
@@ -97,7 +97,7 @@ function PostDetailContent() {
   // v18: a post the moderators hid is a stub for everyone else, and its moderators
   // read it with a label; on a default build nothing is built on it, so there is
   // no reply prompt for anyone. An archival build keeps them.
-  const hiddenOnThisBuild = isHidden(post?.moderation) && !moderationViewAll()
+  const hiddenOnThisBuild = isHidden(post?.moderation) && !archivalBuild()
   const replyBlockedReason = threadRootRemoved
     ? moderatorsCannotDelete()
       ? 'The post that started this thread is unavailable, so nothing in it can be replied to.'

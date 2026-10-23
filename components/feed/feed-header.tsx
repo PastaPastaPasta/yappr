@@ -4,6 +4,7 @@ import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
 import type { FeedTab } from '@/hooks/use-feed-data';
 import { PageHeader } from '@/components/layout/page-shell';
+import { ModeratorViewChip } from '@/components/moderation/moderator-view';
 
 interface FeedHeaderProps {
   activeTab: FeedTab;
@@ -17,14 +18,17 @@ export function FeedHeader({ activeTab, onTabChange, onRefresh, isLoading }: Fee
     <PageHeader borderless>
       <div className="px-4 py-3 flex items-center justify-between">
         <h1 className="text-xl font-bold">Home</h1>
-        <button
-          onClick={onRefresh}
-          disabled={isLoading}
-          aria-label="Refresh feed"
-          className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
-        >
-          <ArrowPathIcon className={cn('h-5 w-5 text-gray-500', isLoading && 'animate-spin')} />
-        </button>
+        <div className="flex items-center gap-2">
+          <ModeratorViewChip />
+          <button
+            onClick={onRefresh}
+            disabled={isLoading}
+            aria-label="Refresh feed"
+            className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+          >
+            <ArrowPathIcon className={cn('h-5 w-5 text-gray-500', isLoading && 'animate-spin')} />
+          </button>
+        </div>
       </div>
 
       <div className="flex border-b border-gray-200 dark:border-gray-800">

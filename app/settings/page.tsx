@@ -51,6 +51,7 @@ import { PinataSettings } from '@/components/settings/pinata-settings'
 import { ModerationSettings } from '@/components/settings/moderation-settings'
 import { ContractModerationSections, useModeratedContracts } from '@/components/settings/contract-moderation-sections'
 import { OwnWarningsNotice } from '@/components/moderation/own-warnings-notice'
+import { ModeratorViewSettings } from '@/components/moderation/moderator-view'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { DeveloperSettings } from '@/components/settings/developer-settings'
 import { YAPP_TOKEN_AUTHORITY_ID } from '@/lib/constants'
@@ -807,6 +808,7 @@ function SettingsPage() {
       case 'moderation':
         return canModerate ? (
           <div className="space-y-4">
+            <ModeratorViewSettings />
             {isContractModerator && <ContractModerationSections contracts={moderatedContracts} />}
             {isAuthority && <ModerationSettings />}
           </div>

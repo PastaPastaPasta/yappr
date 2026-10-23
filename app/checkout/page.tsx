@@ -19,7 +19,7 @@ import {
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { cartService, getCartCurrency, HIDDEN_STORE_MESSAGE } from '@/lib/services/cart-service'
-import { isHiddenItem } from '@/lib/moderation-view'
+import { actionsBlockedByHide } from '@/lib/moderation-view'
 import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { SHIPPING_CHECK_FAILED_MESSAGE, SHIPPING_UNAVAILABLE_MESSAGE, checkShipping, finalShippingCheck, shippingZoneService, type ShippingCheck } from '@/lib/services/shipping-zone-service'
@@ -247,8 +247,8 @@ function CheckoutPage() {
         setCheckoutReadiness(state)
         return state
       }
-      if (current?.status !== 'active' || isHiddenItem(current)) {
-        const state = blocked(isHiddenItem(current) ? 'store-hidden' : 'store-unavailable')
+      if (current?.status !== 'active' || actionsBlockedByHide(current)) {
+        const state = blocked(actionsBlockedByHide(current) ? 'store-hidden' : 'store-unavailable')
         setCheckoutReadiness(state)
         return state
       }

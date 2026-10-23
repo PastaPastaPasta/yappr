@@ -154,7 +154,7 @@ class BlogService extends BaseDocumentService<Blog> {
   async getMany(blogIds: string[], options: { throwOnError?: boolean } = {}): Promise<Blog[]> {
     if (!this.isConfigured()) return []
     const ids = blogIds.filter((id) => !useDeletedBlogs.getState().ids.has(id))
-    return withoutHiddenItems(this.withoutDeleted(await super.getMany(ids, options)))
+    return withoutHiddenItems(this.withoutDeleted(await super.getMany(ids, options)), 'blog')
   }
 
   /**
@@ -170,7 +170,7 @@ class BlogService extends BaseDocumentService<Blog> {
     }
     const result = await this.query(options)
     const blogs = this.withoutDeleted(result.documents)
-    return includeHidden ? blogs : withoutHiddenItems(blogs)
+    return includeHidden ? blogs : withoutHiddenItems(blogs, 'blog')
   }
 
   /**

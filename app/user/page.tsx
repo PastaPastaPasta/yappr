@@ -16,6 +16,8 @@ import { repostsAreQuotes } from '@/lib/contract-topology'
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
+import { useSdk } from '@/contexts/sdk-context'
+import { profileModerationReadStep } from '@/lib/profile/profile-moderation-read'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
@@ -42,6 +44,8 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 import { useDocumentTitle } from '@/hooks/use-document-title'
 import { ProfileHeader, type ProfileData } from '@/components/profile/profile-header'
 import { ProfileTabs, type ProfileBlog } from '@/components/profile/profile-tabs'
+import { ProfileModerationPanel } from '@/components/profile/profile-moderation-panel'
+import { useIsSeatedModerator } from '@/hooks/use-moderator-view'
 import { EditProfileModal } from '@/components/profile/edit-profile-modal'
 import type { ProfileDraft } from '@/components/profile/profile-edit-form'
 import { ListLimitError } from '@/lib/typed-array-codecs'
@@ -144,6 +148,8 @@ function UserProfileContent() {
   const hidesProfiles = moderationService.hidesInsteadOfDeleting() && moderationService.canHide('yapprProfile')
   const { isModerator } = useModerationRole()
   const seesHidden = moderationViewAll() || isModerator
+  // The Moderation tab: the account's hidden and restricted posts, for the social contract's seated team.
+  const seatedSocialModerator = useIsSeatedModerator('social')
   const [profileModeration, setProfileModeration] = useState<{ documentId: string; moderation: ModerationMarks } | null>(null)
   /**
    * Where that read stands. The header waits for it (the skeleton stays), so
@@ -153,13 +159,17 @@ function UserProfileContent() {
   const [profileModerationRead, setProfileModerationRead] = useState<'pending' | 'done' | 'failed'>('pending')
   const authorRestricted = useAuthorRestricted('social', userId, hidesProfiles && seesHidden)
   const [restrictedHere, setRestrictedHere] = useState<boolean | null>(null)
+  const { isReady: sdkReady, error: sdkError } = useSdk()
   useEffect(() => {
     setProfileModeration(null)
     setRestrictedHere(null)
-    if (!hidesProfiles || !userId) {
-      setProfileModerationRead('done')
+    // Waits for the SDK: a cold signed-out visit mounts before it is configured.
+    const step = profileModerationReadStep({ hidesProfiles, userId, sdkReady, sdkError })
+    if (step !== 'read') {
+      setProfileModerationRead(step.settle)
       return
     }
+    if (!userId) return
     setProfileModerationRead('pending')
     let cancelled = false
     moderationService.readProfileModeration(userId).then((read) => {
@@ -173,7 +183,7 @@ function UserProfileContent() {
     return () => {
       cancelled = true
     }
-  }, [hidesProfiles, userId])
+  }, [hidesProfiles, userId, sdkReady, sdkError])
   const profileHidden = isHidden(profileModeration?.moderation)
   const showsHiddenProfileStub = (profileHidden || profileModerationRead === 'failed') && !seesHidden
   const awaitingProfileModeration = profileModerationRead === 'pending'
@@ -717,6 +727,9 @@ function UserProfileContent() {
               top={tabs.top}
               mentions={tabs.mentions}
               blogs={{ blogs, loading: blogsLoading }}
+              moderation={seatedSocialModerator && userId ? (
+                <ProfileModerationPanel userId={userId} enrichProgressively={enrichProgressively} getPostEnrichment={getPostEnrichment} />
+              ) : undefined}
               pagination={{
                 hasMore: hasMorePosts,
                 isLoading: isLoadingMore,

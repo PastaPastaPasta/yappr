@@ -6,8 +6,6 @@ import toast from 'react-hot-toast'
 import { ArrowPathIcon, CheckIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -66,7 +64,6 @@ async function deadActions(service: ModerationService, actions: readonly TeamAct
  */
 export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social' }: { seatedReasons: SeatedReasonsState; onChanged?: () => void; contract?: ModeratedContractKey }) {
   const { user } = useAuth()
-  const canAuthorize = useModerationAuthorization()
   const service = moderationServiceFor(contract)
   const social = contract === 'social'
   const enabled = service.teamDeletesSettled()
@@ -147,10 +144,12 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
   const onTeam = !!me && !!seated && (seated.leaderId === me || seated.members.includes(me))
 
   const approve = async (action: TeamAction) => {
-    if (!canAuthorize || !me || approving) return
+    if (!me || approving) return
     setApproving(action.actionId)
     const result = await service.approveTeamAction(me, action.actionId)
     setApproving(null)
+    // The moderator closed the key sheet: nothing was signed.
+    if (result.errorCode === 'CANCELLED') return
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'Your approval may have gone through. Check again before retrying.', { duration: 8000 })
     } else if (result.errorCode === 'DOCUMENT_GONE' || result.errorCode === 'TEAM_ACTION_DOCUMENT_CHANGED') {
@@ -183,7 +182,6 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
-        <ModerationKeyNotice authorized={canAuthorize} />
         <div className="flex items-center justify-between gap-2">
           <p className="font-semibold">
             Waiting for approval{state ? ` (${state.activeTotal}${state.activeTruncated ? '+' : ''})` : ''}
@@ -256,7 +254,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged, contract = 'social'
                       {mine ? (
                         <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"><CheckIcon className="h-4 w-4" /> You approved</span>
                       ) : (
-                        <Button size="sm" variant="destructive" disabled={!canAuthorize || approving !== null || signed === undefined} onClick={() => { approve(action).catch(() => { /* reported inside */ }) }}>
+                        <Button size="sm" variant="destructive" disabled={approving !== null || signed === undefined} onClick={() => { approve(action).catch(() => { /* reported inside */ }) }}>
                           {approving === action.actionId ? 'Approving…' : 'Approve removal'}
                         </Button>
                       )}

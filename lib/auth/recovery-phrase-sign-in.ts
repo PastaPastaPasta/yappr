@@ -7,6 +7,8 @@
  *    key's hash, stopping after IDENTITY_GAP_LIMIT unused indexes in a row.
  * 2. For the one chosen, the keys it holds; the session signs with its HIGH
  *    (else CRITICAL) authentication key, as if that key had been typed in.
+ *    A CRITICAL key it also holds is kept in the tab's memory for actions
+ *    that need it (lib/auth/critical-key.ts).
  * 3. Its messaging key: the DIP-13 7' key for this build's anchor at rotation
  *    0. Used when it is current, added (MASTER-signed) when the account has
  *    none, and left alone when another wallet's key is there.
@@ -41,7 +43,7 @@ import {
   type AnchorKeyState,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
-import { masterKey, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
+import { criticalKey, masterKey, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
 
 /** After adding the messaging key: how long to wait for Platform to show it as current (the setup dialog's pattern). */
 const CONFIRM_ATTEMPTS = 6
@@ -119,6 +121,12 @@ export type PhraseMessaging =
 export interface PhraseSession {
   identityId: string
   signInWif: string
+  /**
+   * The account's CRITICAL authentication key, when the phrase holds it and
+   * `signInWif` is another key: held in this tab's memory only once the
+   * session is stored (lib/auth/critical-key.ts), never persisted.
+   */
+  criticalWif: string | null
   /** The messaging key to keep once the session is stored, when `messaging` is `ready`. */
   messagingKey: MessagingKeyDraft | null
   messaging: PhraseMessaging
@@ -171,7 +179,14 @@ export async function preparePhraseSession(
   try {
     const signIn = sessionKey(held)
     if (!signIn) throw new PhraseSignInError('This recovery phrase can\'t sign in to this account.')
-    const session = { identityId, signInWif: privateKeyToWif(signIn.privateKey, network, true) }
+    // The CRITICAL key too, when the phrase holds it and the session signs with something less:
+    // held for the tab once the session is stored, so token and moderation actions never ask for it.
+    const critical = criticalKey(held)
+    const session = {
+      identityId,
+      signInWif: privateKeyToWif(signIn.privateKey, network, true),
+      criticalWif: critical && critical !== signIn ? privateKeyToWif(critical.privateKey, network, true) : null,
+    }
 
     const anchorId = messagingAnchorId()
     if (!anchorId) return { ...session, messagingKey: null, messaging: 'unavailable' }

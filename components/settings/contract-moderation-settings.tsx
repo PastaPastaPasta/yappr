@@ -7,8 +7,6 @@ import { useModeratorHideModal } from '@/hooks/use-moderator-hide-modal'
 import { restrictionServiceFor, type Restriction } from '@/lib/services/restriction-service'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { useModerationAuthorization } from '@/hooks/use-moderation-authorization'
-import { ModerationKeyNotice } from '@/components/moderation/moderation-key-notice'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/charter-reason-picker'
@@ -143,7 +141,6 @@ function barredOwnDeleteNote(): string {
  */
 export function ContractModerationSettings({ contract = 'social', citation }: { contract?: ModeratedContractKey; citation?: ModerationCitation }) {
   const { user } = useAuth()
-  const canAuthorize = useModerationAuthorization()
   const service = moderationServiceFor(contract)
   const copy = PANEL_COPY[contract]
   const social = contract === 'social'
@@ -231,10 +228,12 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }, [refresh])
 
   const restore = async (removal: KindedRemoval) => {
-    if (!canAuthorize || !user || busy) return
+    if (!user || busy) return
     setBusy({ action: 'restore', id: removalKey(removal) })
     const result = await service.restoreDocument(user.identityId, removal.kind, removal.documentId)
     setBusy(null)
+    // The moderator closed the key sheet: nothing was signed.
+    if (result.errorCode === 'CANCELLED') return
     const what = kindLabel(removal.kind)
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(`This ${what.toLowerCase()} may have been restored — the network did not confirm in time. Check again before retrying.`, { duration: 8000 })
@@ -252,7 +251,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
   }
 
   const run = async (action: Exclude<Action, 'restore'>) => {
-    if (!canAuthorize || !user || busy || (action === 'claim' && service.moderatorsPotStatus().pending)) return
+    if (!user || busy || (action === 'claim' && service.moderatorsPotStatus().pending)) return
     const id = targetId.trim()
     if (action !== 'claim' && !id) {
       toast.error('Enter the identity ID to moderate')
@@ -315,6 +314,8 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
       }
     }
     setBusy(null)
+    // The moderator closed the key sheet: nothing was signed.
+    if (result.errorCode === 'CANCELLED') return
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'This may have been applied. Check again before retrying.', { duration: 8000 })
       refresh().catch(() => { /* reported inside */ })
@@ -387,7 +388,6 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
 
   return (
     <div className="space-y-4">
-      <ModerationKeyNotice authorized={canAuthorize} />
       <ElectionStatusPanel contract={contract} />
       {social && contractTakesReports() && <ReportQueue seatedReasons={seatedReasons} onModerateAuthor={moderateAuthor} />}
       {contract !== 'social' && moderatedContract(contract).reportsResolved() && <ContractReportQueue contract={contract} seatedReasons={seatedReasons} />}
@@ -455,40 +455,40 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
               Check status
             </Button>
             {canRestrict && (shownRestriction?.state === 1 ? (
-              <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => restrictAction('lift')} className="gap-2">
+              <Button variant="outline" disabled={busy !== null} onClick={() => restrictAction('lift')} className="gap-2">
                 <LockOpenIcon className="h-4 w-4" /> Lift restriction
               </Button>
             ) : (
-              <Button variant="destructive" disabled={!canAuthorize || busy !== null || !targetId.trim()} onClick={() => restrictAction('restrict')} className="gap-2">
+              <Button variant="destructive" disabled={busy !== null || !targetId.trim()} onClick={() => restrictAction('restrict')} className="gap-2">
                 <NoSymbolIcon className="h-4 w-4" /> Restrict
               </Button>
             ))}
             {canBan && (
               <>
-                <Button variant="destructive" disabled={!canAuthorize || busy !== null} onClick={() => run('ban')} className="gap-2">
+                <Button variant="destructive" disabled={busy !== null} onClick={() => run('ban')} className="gap-2">
                   <NoSymbolIcon className="h-4 w-4" /> {busy?.action === 'ban' ? 'Banning…' : 'Ban'}
                 </Button>
-                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unban')} className="gap-2">
+                <Button variant="outline" disabled={busy !== null} onClick={() => run('unban')} className="gap-2">
                   <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unban' ? 'Unbanning…' : 'Unban'}
                 </Button>
               </>
             )}
             {canSuspend && (
               <>
-                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('suspend')} className="gap-2">
+                <Button variant="outline" disabled={busy !== null} onClick={() => run('suspend')} className="gap-2">
                   <ClockIcon className="h-4 w-4" /> {busy?.action === 'suspend' ? 'Suspending…' : 'Suspend'}
                 </Button>
-                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('unsuspend')} className="gap-2">
+                <Button variant="outline" disabled={busy !== null} onClick={() => run('unsuspend')} className="gap-2">
                   <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'unsuspend' ? 'Lifting…' : 'Unsuspend'}
                 </Button>
               </>
             )}
             {canWarn && (
               <>
-                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('warn')} className="gap-2">
+                <Button variant="outline" disabled={busy !== null} onClick={() => run('warn')} className="gap-2">
                   <ExclamationTriangleIcon className="h-4 w-4" /> {busy?.action === 'warn' ? 'Warning…' : 'Warn'}
                 </Button>
-                <Button variant="outline" disabled={!canAuthorize || busy !== null} onClick={() => run('clearWarnings')} className="gap-2">
+                <Button variant="outline" disabled={busy !== null} onClick={() => run('clearWarnings')} className="gap-2">
                   <ArrowUturnLeftIcon className="h-4 w-4" /> {busy?.action === 'clearWarnings' ? 'Clearing…' : 'Clear warnings'}
                 </Button>
               </>
@@ -516,7 +516,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
                 : `Last claimed in epoch ${pot.lastClaimEpoch}${pot.lastClaimantId ? ` by ${pot.lastClaimantId.slice(0, 8)}…` : ''}`}
             </p>
           </div>
-          <Button variant="outline" disabled={!canAuthorize || busy !== null || claimPending || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
+          <Button variant="outline" disabled={busy !== null || claimPending || !pot || pot.credits === BigInt(0)} onClick={() => run('claim')} className="gap-2">
             <BanknotesIcon className="h-4 w-4" /> {busy?.action === 'claim' ? 'Claiming…' : 'Claim for the team'}
           </Button>
           {claimPending && <Button variant="outline" size="sm" onClick={() => refresh()} disabled={busy !== null}>Refresh payout</Button>}
@@ -551,7 +551,7 @@ export function ContractModerationSettings({ contract = 'social', citation }: { 
         )}
         onPick={(removal) => setTargetId(removal.documentOwnerId)}
         action={(removal) => restorable.has(removalKey(removal)) && (
-          <Button variant="outline" size="sm" disabled={!canAuthorize || busy !== null} onClick={() => restore(removal)} className="shrink-0">
+          <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => restore(removal)} className="shrink-0">
             {busy?.action === 'restore' && busy.id === removalKey(removal) ? 'Restoring…' : 'Restore'}
           </Button>
         )} />}

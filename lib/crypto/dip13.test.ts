@@ -82,6 +82,15 @@ describe('DIP-13 keys from a recovery phrase', () => {
   })
 })
 
+describe('opening a phrase', () => {
+  it('reads a mixed-case, oddly spaced phrase as the wallet does (the step-up sheet passes it as typed)', async () => {
+    const typed = `  ${TEST_PHRASE.toUpperCase().split(' ').join('\t ')}\n`
+    const path = appEncryptionKeyPath('testnet', ascending, descending)
+    const fromTyped = bytesToHex((await openDip13Wallet(typed, 'testnet')).derive(path).publicKey)
+    expect(fromTyped).toBe(bytesToHex((await openDip13Wallet(TEST_PHRASE, 'testnet')).derive(path).publicKey))
+  })
+})
+
 describe('normalizeRecoveryPhrase', () => {
   it('lower-cases and collapses whitespace', () => {
     expect(normalizeRecoveryPhrase('  Abandon\tABANDON\n about  ')).toBe('abandon abandon about')

@@ -916,7 +916,7 @@ async function unlockRawKey(identityId: string, bundle: VaultBundle): Promise<Pa
  * entry is read, opened with the passkey's PRF output and checked on chain.
  * Nothing is stored here; the caller signs in with the result.
  */
-export async function unlockWithPasskey(): Promise<PasskeyUnlock> {
+export async function unlockWithPasskey(expectedIdentityId?: string): Promise<PasskeyUnlock> {
   const { rp, contractId } = requireSetup()
   const assertion = await ceremony(() => getPasskeyPrf({ rpId: rp.id, prfInput: prfInput(contractId) }))
   const prf = assertion.prfOutput
@@ -927,6 +927,8 @@ export async function unlockWithPasskey(): Promise<PasskeyUnlock> {
     if (!owner) throw new PasskeyVaultError(assertion.userHandle.length === 64 ? 'not-set-up' : 'not-yappr')
     if (!prf || prf.length !== 32) throw new PasskeyVaultError('no-prf')
     const identityId = bs58.encode(owner)
+    // Step-up for one account: another account's passkey is refused before its entry is read or opened.
+    if (expectedIdentityId !== undefined && identityId !== expectedIdentityId) throw new PasskeyVaultError('not-eligible', 'the passkey is another account\'s')
     const entry = await passkeyVaultService.find(identityId, assertion.credentialId)
     if (!entry) throw new PasskeyVaultError('not-set-up')
     let bundle: VaultBundle
@@ -952,6 +954,44 @@ export async function unlockWithPasskey(): Promise<PasskeyUnlock> {
   } finally {
     prf?.fill(0)
   }
+}
+
+/**
+ * Whether one of `identityId`'s passkeys holds its CRITICAL key now: an entry
+ * whose sign-in key is an enabled, unbound CRITICAL authentication key (a
+ * moderator's raw key, V2). Reads chain; false on any failure, which only
+ * hides the passkey choice in the step-up sheet.
+ */
+export async function hasCriticalKeyPasskey(identityId: string): Promise<boolean> {
+  if (!setup()) return false
+  try {
+    const [entries, keys] = await Promise.all([passkeyVaultService.list(identityId), freshKeys(identityId)])
+    return entries.some((entry) => keys.some((key) => key.id === entry.authKeyId
+      && key.purpose === KeyPurpose.AUTHENTICATION
+      && key.securityLevel === KeySecurityLevel.CRITICAL
+      && key.disabledAt === undefined
+      // A wallet's group key heads a key-ring entry: that passkey signs in, it holds no raw key.
+      && key.bounds === undefined))
+  } catch (error) {
+    logger.debug('Passkey vault: could not read the passkeys for the step-up sheet', error)
+    return false
+  }
+}
+
+/**
+ * Step-up: the browser's passkey picker, then `identityId`'s CRITICAL key from
+ * the passkey picked, checked on chain as at sign-in (and, for an unbound
+ * key, the moderator check). Nothing is stored here. Throws
+ * {@link PasskeyVaultError}: `cancelled` when the picker was closed,
+ * `not-eligible` when the passkey is another account's or holds another key.
+ */
+export async function unlockCriticalKeyWithPasskey(identityId: string): Promise<string> {
+  const unlocked = await unlockWithPasskey(identityId)
+  if (unlocked.kind === 'key-ring') wipeGrant(unlocked.grant)
+  if (unlocked.kind !== 'raw-key' || unlocked.identityId !== identityId || !unlocked.critical) {
+    throw new PasskeyVaultError('not-eligible', 'the passkey does not hold this account\'s CRITICAL key')
+  }
+  return unlocked.signInWif
 }
 
 /** One passkey as Settings and the update review show it. */

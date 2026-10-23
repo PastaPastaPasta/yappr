@@ -33,8 +33,6 @@ export function StarterGrantModal() {
   const { user } = useAuth()
   const { isOpen, open, close } = useStarterGrantModal()
   const [busy, setBusy] = useState(false)
-  const [needsCritical, setNeedsCritical] = useState(false)
-  const [wif, setWif] = useState('')
   const identityId = user?.identityId
   const amount = starterGrantAmount()
   // A wallet sign-in whose group key is only HIGH cannot sign the claim: never offer it.
@@ -70,8 +68,11 @@ export function StarterGrantModal() {
       else close()
       return
     }
-    const result = await tokenService.claimStarterGrant(identityId, needsCritical ? wif : undefined)
+    // A session without the account's CRITICAL key is asked for it by the shared sheet (lib/auth/critical-key.ts).
+    const result = await tokenService.claimStarterGrant(identityId)
     setBusy(false)
+    // The sheet was closed: nothing was sent, and the offer stays open.
+    if (result.errorCode === 'CANCELLED') return
     if (result.success || result.errorCode === 'ALREADY_CLAIMED') {
       markStarterGrantClaimed(identityId)
       if (result.success) {
@@ -80,12 +81,10 @@ export function StarterGrantModal() {
       } else {
         toast.error(result.error ?? 'Already claimed')
       }
-      setWif('')
       close()
       return
     }
     if (result.errorCode === 'NEEDS_CRITICAL_KEY') {
-      setNeedsCritical(true)
       toast.error('Claiming needs your account\'s highest-security key')
       return
     }
@@ -125,24 +124,8 @@ export function StarterGrantModal() {
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
         {paused ? 'YAPP can\'t be used right now.' : 'Claim your free YAPP.'}
       </Dialog.Description>
-      {needsCritical && (
-        <div className="mb-4">
-          <label htmlFor="starter-grant-wif" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            Highest-security private key
-          </label>
-          <input
-            id="starter-grant-wif"
-            type="password"
-            value={wif}
-            onChange={(e) => setWif(e.target.value)}
-            autoComplete="off"
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-neutral-800 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
-          />
-          <p className="mt-1 text-xs text-gray-500">Claiming needs your account&apos;s highest-security key. It&apos;s used once and never saved.</p>
-        </div>
-      )}
       <div className="flex flex-col gap-3">
-        <Button data-testid="starter-grant-claim" onClick={handleClaim} disabled={busy || (needsCritical && !wif.trim())} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
+        <Button data-testid="starter-grant-claim" onClick={handleClaim} disabled={busy} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
           {busy ? 'Claiming…' : `Claim ${amount.toString()} YAPP`}
         </Button>
         <Button onClick={close} variant="outline" disabled={busy} className="w-full">

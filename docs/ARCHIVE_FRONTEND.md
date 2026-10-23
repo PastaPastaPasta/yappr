@@ -92,6 +92,10 @@ Nothing else is needed: the contracts and the Platform are the same, and the arc
 
 `scripts/release-config.test.mjs` pins each of those paths.
 
+### The moderator view is not a flag
+
+Every build, yap.pr included, also offers the same view at runtime to the members of a contract's **seated team**, and to no one else: "Show hidden & restricted" in the account menu, Settings → Moderation and a chip on the Home and tag feeds (off by default, kept for the tab). While it is on, that contract's listings read every lane and hidden or restricted items carry their label, and a slim notice says so; it unlocks no action (no reply, quote, repost or purchase on hidden content). Profiles get a **Moderation** tab listing the account's hidden and restricted posts and replies with a count per lane, and `/moderation?view=hidden` lists what is hidden and who is restricted now. Membership is read off the chain (`moderationService.isSeatedMember`) before anything turns on (`hooks/use-moderator-view.ts`, `lib/moderation-view.ts`). The view is applied once per page load, before the page mounts, and every change of it (turning it on or off, signing out of a moderator session with it on) reloads the page, so no read or cache ever spans two views. Neither build flag is involved, so the release check is unchanged. The mobile apps do not offer it yet.
+
 ## What it costs
 
 Reads, not fees: nothing about an archive changes what anyone pays to write. But every listing read multiplies by its lanes, and each is a separate proved query.

@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
+import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { hasSkippedUsername } from '@/lib/username-skip'
 import { signInDestination } from '@/lib/auth/intent-destination'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
@@ -110,7 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = controller.subscribe(setControllerState)
     // Sign-out by any route, or a switch of account: the next one's restriction standing is read fresh.
     const unwatchRestrictions = clearRestrictionsOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
-    return () => { unbind(); unsubscribe(); unwatchRestrictions() }
+    // ...and no CRITICAL key held for the tab outlives the session it was given in.
+    const unwatchCriticalKeys = forgetCriticalKeysOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
+    const unbindCriticalKeySession = bindCriticalKeySession(() => controller.sessionEpoch())
+    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession() }
   }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
@@ -255,13 +259,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [controller, signInWithGrant, signInWithKey])
 
   const loginWithRecoveryPhrase = useCallback(async (session: PhraseSession, since: number) => {
-    const { messagingKey } = session
+    const { messagingKey, criticalWif } = session
     try {
       const intent = await signInWithKey(session.identityId, session.signInWif, {
         since,
         // Stored only inside the commit that stores the sign-in key: a sign-out or another sign-in
         // meanwhile leaves nothing of this one behind.
         afterStore: () => {
+          // In this tab's memory only, like a CRITICAL key given for an action.
+          if (criticalWif) holdCriticalKey(session.identityId, criticalWif, 'phrase')
           if (!messagingKey) return
           // Never throws into the commit, which has already stored the session.
           try {

@@ -1,7 +1,9 @@
 import type { EvoSDK } from '@dashevo/evo-sdk'
 import bs58 from 'bs58'
 import { logger } from '@/lib/logger'
-import { moderationViewAll } from '@/lib/moderation-view'
+import { YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID } from '@/lib/constants'
+import type { ModeratedContractKey } from '@/lib/moderated-contracts'
+import { archivalBuild, moderationViewAll, moderatorViewContracts } from '@/lib/moderation-view'
 import {
   documentComparator,
   laneVariants,
@@ -11,6 +13,7 @@ import {
   type LaneCursor,
   type LanePage,
   type OrderClause,
+  type WhereClause,
 } from '@/lib/moderation-lanes'
 import { documentToPlainObject } from './sdk-helpers'
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils'
@@ -38,7 +41,11 @@ import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils'
  *   and fetched by id, and a laned `counts` sub-query adds the other lanes'
  *   grouped counts.
  *
- * Nothing changes when the flag is off: the shadow is never installed.
+ * The moderator view (lib/moderation-view.ts) turns the same fan-out on at
+ * runtime, for the contracts a verified seated moderator chose to see in
+ * full: a read fans out only when `moderationViewAll` holds for the contract
+ * it reads. Otherwise every read is handed to the SDK untouched, as yap.pr's
+ * always is.
  */
 
 type DocumentsFacade = EvoSDK['documents']
@@ -204,10 +211,52 @@ function boundValues(result: { pageDocuments: unknown[]; subResults: CompositeRe
   return Array.from(values)
 }
 
+/**
+ * A composite of independent siblings (`queryDocumentBundle`): every
+ * sub-query is a documents read bound to nothing, so each member stands alone.
+ */
+function isSiblingBundle(request: CompositeQuery): boolean {
+  return request.subQueries.length > 0 && request.subQueries.every((sub) => !sub.bind && (sub.kind ?? 'documents') === 'documents')
+}
+
+/**
+ * A sibling bundle with some member that fans out: every member is read on
+ * its own, as `documents.query` would read it (each with its own contract's
+ * lanes), and the answers are returned in the composite's shape.
+ */
+async function siblingLanes(originals: Originals, request: CompositeQuery): Promise<CompositeResult> {
+  const read = async (member: { dataContractId: unknown; documentType: string; where?: unknown[]; orderBy?: unknown[]; limit?: number }) => {
+    const query = {
+      dataContractId: member.dataContractId,
+      documentTypeName: member.documentType,
+      where: member.where,
+      orderBy: member.orderBy,
+      ...(member.limit !== undefined ? { limit: member.limit } : {}),
+    } as Query
+    const variants = lanesOf(query)
+    const result = variants.length > 1 ? await queryLanes(originals.query, query, variants) : await originals.query(query)
+    return Array.from(result.values()).filter((doc) => doc !== undefined)
+  }
+  const [pageDocuments, ...siblings] = await Promise.all([
+    read({ dataContractId: request.dataContractId, documentType: request.documentType, where: request.where, orderBy: request.orderBy, limit: request.limit }),
+    ...request.subQueries.map((sub) => read({ ...sub, dataContractId: sub.dataContractId ?? request.dataContractId })),
+  ])
+  return {
+    pageDocuments,
+    subResults: siblings.map((documents) => ({ kind: 'documents', documents, missingIds: [], removed: [] })),
+  } as unknown as CompositeResult
+}
+
+/** A sub-query as a read of its own contract: the page's when it names none. */
+function memberOf(query: CompositeQuery, sub: CompositeQuery['subQueries'][number]): CompositeQuery['subQueries'][number] {
+  return { ...sub, dataContractId: sub.dataContractId ?? query.dataContractId }
+}
+
 async function compositeLanes(originals: Originals, query: CompositeQuery): Promise<CompositeResult> {
   let request = query
   let order: string[] | null = null
-  const pageVariants = laneVariants(query.where)
+  // Each member fans out by its own contract: a page on one contract may bind a count on another.
+  const pageVariants = lanesOf(query)
   if (pageVariants.length > 1) {
     const page = await queryLanes(originals.query, {
       dataContractId: query.dataContractId,
@@ -233,7 +282,7 @@ async function compositeLanes(originals: Originals, query: CompositeQuery): Prom
     result.pageDocuments.sort((a, b) => (position.get(idString(a, '')) ?? 0) - (position.get(idString(b, '')) ?? 0))
   }
   await Promise.all(query.subQueries.map(async (sub, index) => {
-    const variants = laneVariants(sub.where)
+    const variants = lanesOf(memberOf(query, sub))
     const target = result.subResults[index]
     if (variants.length < 2 || sub.kind !== 'counts' || !sub.bind || target?.kind !== 'counts') return
     const values = boundValues(result, sub.bind.source, sub.bind.sourceProperty)
@@ -253,14 +302,38 @@ async function compositeLanes(originals: Originals, query: CompositeQuery): Prom
   return result
 }
 
+/** The moderated contract a read targets, or null for any other (DPNS, DMs, pollr…). */
+function contractKeyOf(contractId: unknown): ModeratedContractKey | null {
+  const id = typeof contractId === 'string' ? contractId : contractId instanceof Uint8Array ? bs58.encode(contractId) : null
+  if (!id) return null
+  if (id === YAPPR_CONTRACT_ID) return 'social'
+  if (id === YAPPR_BLOG_CONTRACT_ID) return 'blog'
+  if (id === YAPPR_STOREFRONT_CONTRACT_ID) return 'storefront'
+  return null
+}
+
+/** True when reads of `contractId` cover every lane now: on an archival build, and for a contract the moderator view is on for. */
+function fansOut(contractId: unknown): boolean {
+  if (archivalBuild()) return true
+  if (moderatorViewContracts().size === 0) return false
+  const key = contractKeyOf(contractId)
+  return key !== null && moderationViewAll(key)
+}
+
+/** The lanes a read covers: every variant of its `where` while {@link fansOut} holds for its contract, none otherwise. */
+function lanesOf<C extends WhereClause>(request: { dataContractId?: unknown; where?: readonly C[] }): C[][] {
+  return fansOut(request.dataContractId) ? laneVariants(request.where) : []
+}
+
 /**
- * Shadow `sdk.documents` so every laned read covers every lane. Installed once
- * per constructed SDK by `evo-sdk-service`, and only on an archival build.
+ * Shadow `sdk.documents` so every laned read covers every lane while
+ * {@link fansOut} holds for its contract. Installed once per constructed SDK
+ * by `evo-sdk-service`; a read it does not fan out goes straight through.
  */
 export function installLaneFanout(sdk: EvoSDK): void {
-  if (!moderationViewAll()) return
   const facade = sdk.documents
-  if (!facade) return
+  const methods = ['query', 'count', 'average', 'ranked', 'composite'] as const
+  if (!facade || methods.some((name) => typeof facade[name] !== 'function')) return
   const originals: Originals = {
     query: facade.query.bind(facade),
     count: facade.count.bind(facade),
@@ -271,33 +344,34 @@ export function installLaneFanout(sdk: EvoSDK): void {
   const shadow = <K extends keyof DocumentsFacade>(name: K, value: DocumentsFacade[K]) =>
     Object.defineProperty(facade, name, { configurable: true, writable: true, value })
 
-  shadow('query', (async (request: Query) => {
-    const variants = laneVariants(request.where)
+  // A read that does not fan out is handed to the SDK untouched.
+  shadow('query', ((request: Query) => {
+    const variants = lanesOf(request)
     return variants.length > 1 ? queryLanes(originals.query, request, variants) : originals.query(request)
   }) as DocumentsFacade['query'])
 
-  shadow('count', (async (request: Query) => {
-    const variants = laneVariants(request.where)
+  shadow('count', ((request: Query) => {
+    const variants = lanesOf(request)
     if (variants.length < 2) return originals.count(request)
-    const maps = await Promise.all(variants.map((where) => originals.count({ ...request, where })))
-    return sumLaneMaps(maps)
+    return Promise.all(variants.map((where) => originals.count({ ...request, where }))).then(sumLaneMaps)
   }) as DocumentsFacade['count'])
 
-  shadow('average', (async (request: Query, property: string) => {
-    const variants = laneVariants(request.where)
+  shadow('average', ((request: Query, property: string) => {
+    const variants = lanesOf(request)
     if (variants.length < 2) return originals.average(request, property)
-    const maps = await Promise.all(variants.map((where) => originals.average({ ...request, where }, property)))
-    return sumLaneAverages(maps)
+    return Promise.all(variants.map((where) => originals.average({ ...request, where }, property))).then(sumLaneAverages)
   }) as DocumentsFacade['average'])
 
-  shadow('ranked', (async (request: RankedQuery) => {
-    const variants = laneVariants(request.where)
+  shadow('ranked', ((request: RankedQuery) => {
+    const variants = lanesOf(request)
     return variants.length > 1 ? rankedLanes(originals, request, variants) : originals.ranked(request)
   }) as DocumentsFacade['ranked'])
 
-  shadow('composite', (async (request: CompositeQuery) => {
-    const laned = laneVariants(request.where).length > 1 || request.subQueries.some((sub) => laneVariants(sub.where).length > 1)
-    return laned ? compositeLanes(originals, request) : originals.composite(request)
+  shadow('composite', ((request: CompositeQuery) => {
+    // Fans out when any member does, each judged by its own (or inherited) contract.
+    const laned = lanesOf(request).length > 1 || request.subQueries.some((sub) => lanesOf(memberOf(request, sub)).length > 1)
+    if (!laned) return originals.composite(request)
+    return isSiblingBundle(request) ? siblingLanes(originals, request) : compositeLanes(originals, request)
   }) as DocumentsFacade['composite'])
 }
 

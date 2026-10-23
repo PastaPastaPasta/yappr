@@ -5,6 +5,7 @@ const sdk = vi.hoisted(() => ({
 }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }));
 import bs58 from 'bs58';
+import { setModeratorViewContracts } from '@/lib/moderation-view';
 import { storeStatsService } from './store-stats-service';
 
 const storeId = '11111111111111111111111111111111';
@@ -64,6 +65,21 @@ describe('store rating summary', () => {
     await storeStatsService.getStoreRatingSummary(storeId);
     expect(sdk.documents.average).toHaveBeenCalledTimes(1);
     storeStatsService.invalidateStore(storeId);
+    await storeStatsService.getStoreRatingSummary(storeId);
+    expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps summaries read under the storefront moderator view apart', async () => {
+    sdk.documents.average.mockResolvedValue(new Map([['', { count: 1n, sum: 5n }]]));
+    sdk.documents.count.mockResolvedValue(new Map());
+    await storeStatsService.getStoreRatingSummary(storeId);
+    setModeratorViewContracts(['storefront']);
+    try {
+      await storeStatsService.getStoreRatingSummary(storeId);
+      expect(sdk.documents.average).toHaveBeenCalledTimes(2);
+    } finally {
+      setModeratorViewContracts([]);
+    }
     await storeStatsService.getStoreRatingSummary(storeId);
     expect(sdk.documents.average).toHaveBeenCalledTimes(2);
   });

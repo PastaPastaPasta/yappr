@@ -610,7 +610,7 @@ class NotificationService {
     const { blogPostService } = await import('./blog-post-service');
 
     // Blog v10's comment index is not laned: a hidden comment is dropped here.
-    const comments = withoutHiddenItems(await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT));
+    const comments = withoutHiddenItems(await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT), 'blog');
     if (comments.length === 0) return [];
 
     const posts = new Map(
@@ -625,7 +625,7 @@ class NotificationService {
       // post — this drops only rows whose post did not come back (a read
       // failure), since there is no title or link to render without it, and
       // rows on a post its author has since deleted (a v7 tombstone).
-      if (!post || isBlogPostTombstone(post) || isHiddenItem(post)) return [];
+      if (!post || isBlogPostTombstone(post) || isHiddenItem(post, 'blog')) return [];
       return [{
         id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
         postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,

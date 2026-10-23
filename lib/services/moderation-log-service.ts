@@ -110,6 +110,15 @@ export function availableLogContracts(): LogContract[] {
   return LOG_CONTRACTS.filter(logAvailable)
 }
 
+/**
+ * The sources of what is hidden or restricted now: every `moderated` lane
+ * and the restrictions in force. The moderators' "Hidden & restricted" list
+ * reads only these (no warnings, no lifted restrictions).
+ */
+export function isHiddenOrRestrictedSource(source: LogSource): boolean {
+  return source.kind === 'moderated' || (source.kind === 'restriction' && source.state === 1)
+}
+
 /** Every read source of one contract's log. */
 export function logSources(contract: LogContract): LogSource[] {
   const sources: LogSource[] = LOGGED_TYPES[contract].flatMap((docType): LogSource[] =>
@@ -307,8 +316,9 @@ export class ModerationLogReader {
   readonly sources: LogSource[]
   private warnings: Promise<LogRow[]> | null = null
 
-  constructor(readonly contract: LogContract) {
-    this.sources = logSources(contract)
+  /** `only`: the sources to read, all of the contract's by default. */
+  constructor(readonly contract: LogContract, only: (source: LogSource) => boolean = () => true) {
+    this.sources = logSources(contract).filter(only)
   }
 
   /** The cursors of a first page. */

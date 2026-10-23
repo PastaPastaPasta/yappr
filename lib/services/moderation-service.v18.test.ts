@@ -39,6 +39,9 @@ const restrictions = vi.hoisted(() => ({ read: vi.fn(), refresh: vi.fn() }))
 const built = vi.hoisted(() => ({ buildDocumentForCreate: vi.fn(), buildSignedCreateTransition: vi.fn() }))
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
+// Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
+const live = vi.hoisted(() => ({ signedOut: false }))
+vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => (live.signedOut ? null : sdk.identities.fetch.mock.lastCall?.[0] ?? null) }))
 vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (_who: string, _contract: string, write: () => Promise<unknown>) => write() }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
@@ -62,6 +65,7 @@ beforeEach(() => {
   }
   for (const fn of [restrictions.read, restrictions.refresh, built.buildDocumentForCreate, built.buildSignedCreateTransition]) fn.mockReset()
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
+  live.signedOut = false
   sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
   restrictions.refresh.mockResolvedValue(null)
   built.buildDocumentForCreate.mockResolvedValue({ document: true })
@@ -184,6 +188,17 @@ describe('restrict and lift', () => {
     expect(sdk.stateTransitions.waitForResponse).toHaveBeenCalledWith({ transition: true })
     expect(restrictions.refresh).toHaveBeenCalledWith(AUTHOR)
     expect(sdk.contracts.moderatorChangeDocumentFields).not.toHaveBeenCalled()
+  })
+
+  it('signs nothing when the moderator signs out while the restriction\'s nonce is read', async () => {
+    restrictions.read.mockResolvedValue(null)
+    sdk.identities.contractNonce.mockImplementation(async () => {
+      live.signedOut = true
+      return BigInt(6)
+    })
+    expect(await moderationServiceFor('social').restrict(MODERATOR, AUTHOR, 4)).toEqual({ success: false, errorCode: 'CANCELLED' })
+    expect(built.buildSignedCreateTransition).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
   })
 
   it('re-restricts by flipping the existing document (byTarget is unique)', async () => {
