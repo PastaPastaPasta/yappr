@@ -3,6 +3,7 @@ import { identifierToBase58, normalizeBytes } from '@/lib/services/sdk-helpers';
 import { extractPostEmbedFields } from '@/lib/poll-embed';
 import { mediaFromDocument } from '@/lib/media/media-fields';
 import { inlinePostTags } from '@/lib/contract-topology';
+import { nextReadVersion } from '@/lib/moderation-view';
 import { postModerationOf } from './post-moderation';
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -168,5 +169,6 @@ export function transformRawPost(doc: Record<string, unknown>): Post {
     nonce: rawNonce ? normalizeBytes(rawNonce) ?? undefined : undefined,
     feed,
     ...(moderation ? { moderation } : {}),
+    readVersion: nextReadVersion(),
   };
 }

@@ -5,11 +5,14 @@ import {
   dropsHidden,
   isHidden,
   isHiddenItem,
+  isNewRead,
   moderationLogEnabled,
   moderationMarksOf,
   moderationViewAll,
   moderatorViewHolds,
   moderatorViewScope,
+  nextReadVersion,
+  outcomeWhenAlready,
   readSupersedes,
   setModeratorViewContracts,
   shownMarks,
@@ -134,6 +137,57 @@ describe('shownMarks', () => {
   it('keeps the read\'s restriction flag, which no hide or unhide changes', () => {
     expect(shownMarks({ restricted: true }, proved, false)).toEqual({ ...hidden, restricted: true })
     expect(shownMarks({ mod: 1, restricted: true }, { marks: null, at: 2_000, proved: true }, false)).toEqual({ restricted: true })
+  })
+})
+
+describe('read versions: which read of a document a card shows', () => {
+  it('numbers every read apart, and a copy keeps its read\'s number', () => {
+    const first = nextReadVersion()
+    const second = nextReadVersion()
+    expect(second).not.toBe(first)
+    const post = { id: 'a', readVersion: first }
+    expect({ ...post, liked: true }.readVersion).toBe(first)
+  })
+
+  it('tells a new read from the one an unproved change was made over, whatever its marks', () => {
+    const read = nextReadVersion()
+    const unproved = { marks: { mod: 1 }, at: 2_000, proved: false, basis: read }
+    // A listed post reads `undefined` marks every time; only the version tells reads apart.
+    expect(isNewRead(unproved, read)).toBe(false)
+    expect(isNewRead(unproved, nextReadVersion())).toBe(true)
+    expect(isNewRead(undefined, read)).toBe(false)
+  })
+
+  it('retires an unproved hide that never landed on the next read of a never-moderated post', () => {
+    const before = nextReadVersion()
+    const unproved = { marks: { mod: 1 }, at: 2_000, proved: false, basis: before }
+    // The card still shows the hide over the read it was made on...
+    expect(shownMarks(undefined, unproved, isNewRead(unproved, before))).toEqual({ mod: 1 })
+    // ...and the post read again, still listed, is the truth.
+    const again = nextReadVersion()
+    expect(readSupersedes(undefined, unproved, isNewRead(unproved, again))).toBe(true)
+    expect(shownMarks(undefined, unproved, isNewRead(unproved, again))).toBeUndefined()
+  })
+})
+
+describe('outcomeWhenAlready', () => {
+  it('keeps the state the answer names, unconfirmed, with no author, label or time of this tab', () => {
+    const hide = { moderation: { mod: 1, modLabel: 3, moderatedBy: 'me', moderatedAt: 5 } }
+    expect(outcomeWhenAlready(hide)).toEqual({ moderation: { mod: 1 }, unconfirmed: true })
+    expect(outcomeWhenAlready({ moderation: null })).toEqual({ moderation: null, unconfirmed: true })
+  })
+
+  it('keeps the standing the answer names for a restriction or a lift', () => {
+    expect(outcomeWhenAlready({ restricted: true })).toEqual({ restricted: true, unconfirmed: true })
+    expect(outcomeWhenAlready({ restricted: false })).toEqual({ restricted: false, unconfirmed: true })
+  })
+
+  it('shows the named state until the next read, and never outranks a later change by anyone', () => {
+    const read = nextReadVersion()
+    const out = outcomeWhenAlready({ moderation: { mod: 1, moderatedAt: 9_999_999_999_999 } })
+    const recorded = { marks: out.moderation ?? null, at: 9_999_999_999_999, proved: !out.unconfirmed, basis: read }
+    expect(shownMarks(undefined, recorded, isNewRead(recorded, read))).toEqual({ mod: 1 })
+    expect(shownMarks(undefined, recorded, isNewRead(recorded, nextReadVersion()))).toBeUndefined()
   })
 })
 

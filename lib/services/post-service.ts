@@ -15,7 +15,7 @@ import { tagLimitProblem } from '@/lib/compose/limits';
 import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
-import { withoutHiddenItems } from '@/lib/moderation-view';
+import { nextReadVersion, withoutHiddenItems } from '@/lib/moderation-view';
 import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
@@ -106,6 +106,7 @@ export function replyToPost(reply: Reply): Post {
     sensitive: reply.sensitive,
     _enrichment: reply._enrichment,
     ...(reply.moderation ? { moderation: reply.moderation } : {}),
+    readVersion: reply.readVersion,
   };
 }
 
@@ -328,6 +329,7 @@ class PostService extends BaseDocumentService<Post> {
       nonce,
       feed,
       ...(moderation ? { moderation } : {}),
+      readVersion: nextReadVersion(),
     };
 
     return post;

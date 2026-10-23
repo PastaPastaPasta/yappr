@@ -184,8 +184,41 @@ export interface RecordedMarks {
   marks: MarksWithRestriction | null
   at: number
   proved: boolean
-  /** An unproved change: the read on screen when it was made. Any other read, on this mount or a later one, supersedes it. */
-  basis?: MarksWithRestriction
+  /** An unproved change: the {@link nextReadVersion} of the read on screen when it was made. Any other read, on this mount or a later one, supersedes it. */
+  basis?: number
+}
+
+let reads = 0
+
+/**
+ * A number for one read of a document, stamped on the post or reply built from
+ * it (`readVersion`) and copied with it. Two cards show the same read exactly
+ * when their versions match, which marks cannot tell: a listed post reads
+ * `undefined` marks every time.
+ */
+export function nextReadVersion(): number {
+  return ++reads
+}
+
+/** True when a card shows another read of the document than the one an unproved change was made over ({@link RecordedMarks.basis}). */
+export function isNewRead(recorded: RecordedMarks | undefined, readVersion: number | undefined): boolean {
+  return recorded !== undefined && readVersion !== recorded.basis
+}
+
+/**
+ * What an "already that way" answer lets the view take from the outcome the
+ * moderator asked for: the state it names (hidden or not, restricted or not),
+ * as a change the network has not confirmed. This tab changed nothing, so it
+ * claims no author, label or time for the change (the answer says nothing of
+ * when or by whom the other one was made, and a stamp from this tab's clock
+ * would outrank a later change by someone else); the next read is the truth.
+ */
+export function outcomeWhenAlready(asked: { moderation?: ModerationMarks | null; restricted?: boolean }): { moderation?: ModerationMarks | null; restricted?: boolean; unconfirmed: true } {
+  return {
+    ...(asked.moderation !== undefined ? { moderation: asked.moderation && { mod: asked.moderation.mod } } : {}),
+    ...(asked.restricted !== undefined ? { restricted: asked.restricted } : {}),
+    unconfirmed: true,
+  }
 }
 
 /** True when `read` supersedes `recorded` ({@link shownMarks}): the record can be dropped. */

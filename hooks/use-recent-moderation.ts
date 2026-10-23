@@ -1,14 +1,14 @@
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import { readSupersedes, shownMarks, type MarksWithRestriction, type RecordedMarks } from '@/lib/moderation-view'
+import { isNewRead, readSupersedes, shownMarks, type MarksWithRestriction, type RecordedMarks } from '@/lib/moderation-view'
 
 interface RecordOptions {
   /** False when the network did not confirm it in time. */
   proved?: boolean
   /** The change's block time (`$moderatedAt`) when known, so a later change by anyone orders after it exactly; this tab's clock otherwise. */
   at?: number
-  /** For an unproved change: the read on screen when it was made, which only another read supersedes. */
-  basis?: MarksWithRestriction
+  /** For an unproved change: the `readVersion` of the read on screen when it was made, which only another read supersedes. */
+  basis?: number
 }
 
 interface RecentModeration {
@@ -41,12 +41,13 @@ export const useRecentModeration = create<RecentModeration>((set) => ({
 /**
  * The marks to show for `documentId` given its `read`: the recorded change
  * unless the read supersedes it, which retires the record so it never comes
- * back. An unproved change gives way to any read but the one it was made over.
+ * back. An unproved change gives way to any read but the one it was made over
+ * (`readVersion`: the same on every copy of one read, whatever its marks).
  */
-export function useShownModeration(documentId: string, read: MarksWithRestriction | undefined): MarksWithRestriction | undefined {
+export function useShownModeration(documentId: string, read: MarksWithRestriction | undefined, readVersion: number | undefined): MarksWithRestriction | undefined {
   const recorded = useRecentModeration((state) => state.marks[documentId])
   const retire = useRecentModeration((state) => state.retire)
-  const readIsNew = recorded !== undefined && read !== recorded.basis
+  const readIsNew = isNewRead(recorded, readVersion)
   const superseded = recorded !== undefined && readSupersedes(read, recorded, readIsNew)
   useEffect(() => {
     if (superseded && recorded) retire(documentId, recorded)
