@@ -25,6 +25,7 @@ import {
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
+import { callSignal, throwIfCancelled } from '../rpc/call-signal'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, isHiddenStub, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertId, assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { pollVoting } from '../dto/capabilities'
@@ -328,10 +329,12 @@ const threadItems = (replies: FlatReply[], dtos: Map<string, PostDTO>) =>
  * stubs they need) are read and hydrated; `layout` places the whole thread,
  * re-nested, for the caller to merge with the replies it holds.
  */
-async function continueThread(kind: string, key: string, session: string, held: ThreadSession): Promise<ThreadDTO> {
+async function continueThread(kind: string, key: string, session: string, held: ThreadSession, signal: AbortSignal): Promise<ThreadDTO> {
   const page = await replyPage(threadRootIdOf(held.focus), held.next, false)
+  throwIfCancelled(signal)
   const known = new Set(held.replies.map(reply => reply.id))
   const added = await withMissingReplyParents(page.documents.filter(reply => !known.has(reply.id)), missingParentReads, known)
+  throwIfCancelled(signal)
   const replies = [...held.replies, ...added]
   const flat = layoutFlat(held.focus, replies)
   // The rows the caller lacks: this page's, as nested (past the rendered depth they are only counted).
@@ -535,16 +538,19 @@ export const posts = {
    * Asking for the page already served (a refresh) always reads it whole.
    */
   async thread(id: string, cursor?: string | null, options?: { delta?: boolean }): Promise<ThreadDTO> {
+    // A thread the host stopped waiting for stops between its reads (MARCH-4).
+    const signal = callSignal()
     const kind = `thread:${id}`
     const fields = decodeCursor<{ pages: number; s?: string }>(cursor, kind)
     const pages = 1 + cursorInt(fields?.pages ?? 0)
     const session = fields?.s === undefined ? newThreadSession() : cursorString(fields.s)
     const sessionKey = `${viewerId() ?? ''}:${kind}:${session}`
     const held = threadSessions.get(sessionKey)
-    if (options?.delta === true && held && held.pages === pages - 1) return continueThread(kind, sessionKey, session, held)
+    if (options?.delta === true && held && held.pages === pages - 1) return continueThread(kind, sessionKey, session, held, signal)
 
     const focus = await loadFocus(id)
     if (!focus) return { focus: null, ancestors: [], removedAncestorIds: [], replies: emptyPage() }
+    throwIfCancelled(signal)
 
     const isReply = targetKindOf(focus) === 'reply'
     const [{ chain, removed }, read] = await Promise.all([
@@ -553,6 +559,7 @@ export const posts = {
         ? loadFlatReplies(focus, pages).then(({ replies, next }) => ({ raw: replies, next, replies: layoutFlat(focus, replies) }))
         : loadV2Replies(focus).then(replies => ({ raw: [], next: undefined, replies })),
     ])
+    throwIfCancelled(signal)
 
     const dtos = await hydrateThread([focus, ...chain], read.replies.map(entry => entry.reply))
     const items = threadItems(read.replies, dtos)

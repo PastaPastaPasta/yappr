@@ -8,6 +8,7 @@ import {
   type KvOp,
   type LogLevel,
 } from '../protocol/envelope'
+import { startWithSignal } from './call-signal'
 import type { Transport } from './transport'
 
 /** A tree of async methods, addressed by dotted path (`feed.home`). */
@@ -52,6 +53,19 @@ export function resolveMethod(api: ApiTree, path: string): (...args: unknown[]) 
   return node as (...args: unknown[]) => unknown
 }
 
+/**
+ * `work`'s outcome, or a rejection as soon as `signal` aborts: the dispatcher
+ * stops waiting for a cancelled call at once, whatever the method is doing.
+ * The method's own late outcome is dropped.
+ */
+function untilAborted<T>(work: T | Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new RpcError('The call was cancelled', RpcErrorCode.Aborted))
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(work).then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
+}
+
 /** Distinguishes engine loads; no crypto needed, and `crypto.randomUUID` is absent in insecure contexts. */
 const newInstanceId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -76,13 +90,21 @@ export function createDispatcher({ api, transport, includeStacks = false, onStor
     }
   }
 
+  /** Calls in progress, by request id, so a `cancel` reaches them. */
+  const inflight = new Map<string, AbortController>()
+
   const handle = async (id: string, path: string, args: unknown[]) => {
+    const controller = new AbortController()
+    inflight.set(id, controller)
     try {
-      const value = await resolveMethod(api, path)(...args)
+      const value = await untilAborted(startWithSignal(controller.signal, () => resolveMethod(api, path)(...args)), controller.signal)
       // An unencodable result (a cycle) throws here and is reported below.
       send({ t: 'res', v: PROTOCOL_VERSION, id, ok: true, value })
     } catch (error) {
-      fail(id, error)
+      // A cancelled call has nobody waiting for it: nothing is encoded or sent.
+      if (!controller.signal.aborted) fail(id, error)
+    } finally {
+      inflight.delete(id)
     }
   }
 
@@ -102,6 +124,10 @@ export function createDispatcher({ api, transport, includeStacks = false, onStor
     }
     if (raw.t === 'kv-ack') {
       if (typeof raw.seq === 'number') onStorageAck?.(raw.seq)
+      return
+    }
+    if (raw.t === 'cancel') {
+      if (typeof raw.id === 'string') inflight.get(raw.id)?.abort()
       return
     }
     if (raw.t !== 'req' || typeof raw.id !== 'string') return

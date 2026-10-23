@@ -42,8 +42,24 @@ export interface StorageBatch {
   ops: KvOp[]
 }
 
+export interface CallOptions {
+  /**
+   * Aborting it rejects the call with ABORTED and drops its pending entry,
+   * and, once the request went out, tells the engine to stop it (`cancel`).
+   */
+  signal?: AbortSignal
+  /**
+   * Send `cancel` on abort (default true). False for writes: one that may
+   * have been signed is reconciled, never cancelled blindly, so the abort
+   * only stops this client from waiting.
+   */
+  cancelRemote?: boolean
+}
+
 export interface EngineClient<T> {
   api: Remote<T>
+  /** Call `path` (`feed.home`) by name, with options the `api` proxy cannot take. */
+  call(path: string, args: unknown[], options?: CallOptions): Promise<unknown>
   /** Resolves with the engine's first hello; calls made earlier are queued until then. */
   ready: Promise<EngineHello>
   /** Engine events, plus `engine.hello` on every (re)announcement. */
@@ -58,6 +74,8 @@ interface Pending {
   resolve(value: unknown): void
   reject(error: unknown): void
   timer?: ReturnType<typeof setTimeout>
+  /** Stops listening to the call's abort signal. */
+  release?(): void
 }
 
 /**
@@ -106,6 +124,7 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
     if (!entry) return undefined
     pending.delete(id)
     if (entry.timer) clearTimeout(entry.timer)
+    entry.release?.()
     return entry
   }
 
@@ -233,22 +252,46 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
     }
   }
 
-  const call = (path: string, args: unknown[]): Promise<unknown> => new Promise((resolve, reject) => {
+  const call = (path: string, args: unknown[], options: CallOptions = {}): Promise<unknown> => new Promise((resolve, reject) => {
+    const { signal, cancelRemote = true } = options
+    const cancelled = () => new RpcError(`Engine call ${path} was cancelled`, RpcErrorCode.Aborted)
     if (closed) {
       reject(new RpcError(closed.message, RpcErrorCode.Disconnected))
       return
     }
+    if (signal?.aborted) {
+      reject(cancelled())
+      return
+    }
     const id = String(++nextId)
+    let sent = false
     const entry: Pending = { resolve, reject }
     if (timeoutMs > 0) {
       entry.timer = setTimeout(() => {
         take(id)?.reject(new RpcError(`Engine call ${path} timed out after ${timeoutMs} ms`, RpcErrorCode.Timeout))
       }, timeoutMs)
     }
+    if (signal) {
+      const onAbort = () => {
+        const aborted = take(id)
+        if (!aborted) return
+        aborted.reject(cancelled())
+        if (!sent || !cancelRemote || closed) return
+        try {
+          transport.send(JSON.stringify({ t: 'cancel', v: PROTOCOL_VERSION, id }))
+        } catch {
+          // The engine is gone, and the call with it.
+        }
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      entry.release = () => signal.removeEventListener('abort', onAbort)
+    }
     pending.set(id, entry)
     ready
       .then(() => {
-        if (pending.has(id)) transport.send(stringify({ t: 'req', v: PROTOCOL_VERSION, id, path, args, instance: current?.instanceId }))
+        if (!pending.has(id)) return
+        transport.send(stringify({ t: 'req', v: PROTOCOL_VERSION, id, path, args, instance: current?.instanceId }))
+        sent = true
       })
       .catch((error: unknown) => take(id)?.reject(error))
   })
@@ -267,6 +310,7 @@ export function createEngineClient<T>(transport: Transport, options: ClientOptio
 
   return {
     api: proxyAt([]) as Remote<T>,
+    call,
     ready,
     on(event, handler) {
       let set = listeners.get(event)

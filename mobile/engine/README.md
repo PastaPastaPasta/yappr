@@ -113,6 +113,7 @@ No `next/*` module is reached. If a future lib change pulls in something browser
   - `log {t,v,level,message}`
   - `ping {t,v}` (host → engine: re-send hello)
   - `kv` / `skv {t,v,seq,ops}` (engine → host) and `kv-ack {t,v,seq}` (host → engine): storage write-through, above
+  - `cancel {t,v,id}` (host → engine): the host gave up on read `id`; the engine aborts it (methods check `callSignal()`, `src/rpc/call-signal.ts`) and sends no response (ENGINE.md §4.6)
 - **Handshake:**
   - The engine sends `evt engine.hello {protocol, bundleHash, instanceId}` when it can take calls, and again whenever it receives a `ping`. The client pings on creation, so a client created after the engine loaded still completes the handshake.
   - The client queues calls until the first hello. A hello with another protocol fails the client (`PROTOCOL_MISMATCH`); so does no hello within `helloTimeoutMs` (default 30 s, `ENGINE_HELLO_TIMEOUT`). The engine also refuses requests with a different `v`.

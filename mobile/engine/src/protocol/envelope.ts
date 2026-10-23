@@ -32,6 +32,18 @@ export interface RequestEnvelope {
   instance?: string
 }
 
+/**
+ * Host → engine: the caller gave up on request `id` (ENGINE.md §4.6): its
+ * read was abandoned or ran past its deadline. The engine stops the call
+ * where it can and sends no response. The host never cancels a write that
+ * may have been signed; it reconciles those.
+ */
+export interface CancelEnvelope {
+  t: 'cancel'
+  v: number
+  id: string
+}
+
 /** Host → engine: ask the engine to re-send `engine.hello` (a client created after the first one). */
 export interface PingEnvelope {
   t: 'ping'
@@ -104,6 +116,7 @@ export interface LogEnvelope {
 
 export type Envelope =
   | RequestEnvelope
+  | CancelEnvelope
   | PingEnvelope
   | ResponseEnvelope
   | EventEnvelope
@@ -128,6 +141,8 @@ export const RpcErrorCode = {
   HelloTimeout: 'ENGINE_HELLO_TIMEOUT',
   Restarted: 'ENGINE_RESTARTED',
   Disconnected: 'ENGINE_DISCONNECTED',
+  /** The caller cancelled the call (an abandoned read, or one past its deadline). */
+  Aborted: 'ABORTED',
   /** Part of the engine itself (its WASM, a sidecar script) did not load: only a fresh page can help. */
   LoadFailed: 'ENGINE_LOAD_FAILED',
 } as const

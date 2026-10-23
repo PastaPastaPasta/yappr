@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDispatcher, resolveMethod } from '../../src/rpc/dispatcher'
 import { createEngineClient, type ClientOptions } from '../../src/rpc/client'
+import { callSignal, throwIfCancelled } from '../../src/rpc/call-signal'
 import { createHandlerSet, createInProcessPair, createWebViewTransport, type Transport } from '../../src/rpc/transport'
 import { PROTOCOL_VERSION } from '../../src/protocol/envelope'
 import { parse, stringify } from '../../src/protocol/codec'
@@ -280,6 +281,89 @@ describe('dispatcher + client', () => {
       expect((feed as Record<string, unknown>)[key], key).toBeUndefined()
     }
     expect(sent).not.toHaveBeenCalled()
+  })
+})
+
+describe('cancellation (ENGINE.md §4.6, MARCH-4)', () => {
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  /** A dispatcher over an API whose `read` checks its call's signal between two steps, held at `release`. */
+  function cancellable() {
+    const steps: string[] = []
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const readApi = {
+      async read(label: string) {
+        const signal = callSignal()
+        steps.push(`${label}: first read`)
+        await gate
+        throwIfCancelled(signal)
+        steps.push(`${label}: second read`)
+        return label
+      },
+    }
+    const [host, engine] = createInProcessPair()
+    const fromEngine: { t: string; id?: string }[] = []
+    const engineSide: Transport = { send: message => { fromEngine.push(JSON.parse(message)); engine.send(message) }, onMessage: engine.onMessage }
+    createDispatcher({ api: readApi, transport: engineSide }).hello({ bundleHash: 'test' })
+    const client = createEngineClient<typeof readApi>(host)
+    return { client, steps, release, responses: () => fromEngine.filter(message => message.t === 'res') }
+  }
+
+  it('stops a cancelled read between its steps, and the engine answers nothing', async () => {
+    const { client, steps, release, responses } = cancellable()
+    const controller = new AbortController()
+    const call = client.call('read', ['old'], { signal: controller.signal })
+    await vi.waitFor(() => expect(steps).toEqual(['old: first read']))
+    controller.abort()
+    await expect(call).rejects.toMatchObject({ code: 'ABORTED' })
+    await tick()
+    release()
+    await tick()
+    expect(steps).toEqual(['old: first read'])
+    expect(responses()).toEqual([])
+    // The client and the engine go on serving.
+    expect(await client.call('read', ['new'])).toBe('new')
+    expect(responses()).toHaveLength(1)
+  })
+
+  it('sends nothing for a call given up before it went out', async () => {
+    const { transport, deliver, sent, requests } = manualEngine()
+    const client = createEngineClient<Api>(transport)
+    const controller = new AbortController()
+    const call = client.call('math.add', [1, 2], { signal: controller.signal })
+    controller.abort()
+    await expect(call).rejects.toMatchObject({ code: 'ABORTED' })
+    deliver(helloMessage())
+    await tick()
+    expect(requests()).toEqual([])
+    expect(sent.filter(message => message.t === 'cancel')).toEqual([])
+    // Already aborted: never even queued.
+    await expect(client.call('math.add', [1, 2], { signal: controller.signal })).rejects.toMatchObject({ code: 'ABORTED' })
+  })
+
+  it('only stops waiting for a write: no cancel reaches the engine', async () => {
+    const { transport, deliver, sent, requests } = manualEngine()
+    const client = createEngineClient<Api>(transport)
+    deliver(helloMessage())
+    const read = new AbortController()
+    const write = new AbortController()
+    const readCall = client.call('math.add', [1, 2], { signal: read.signal })
+    const writeCall = client.call('math.add', [3, 4], { signal: write.signal, cancelRemote: false })
+    await tick()
+    expect(requests()).toHaveLength(2)
+    read.abort()
+    write.abort()
+    await expect(readCall).rejects.toMatchObject({ code: 'ABORTED' })
+    await expect(writeCall).rejects.toMatchObject({ code: 'ABORTED' })
+    expect(sent.filter(message => message.t === 'cancel')).toEqual([{ t: 'cancel', v: PROTOCOL_VERSION, id: requests()[0].id }])
+    // A late answer to either is dropped.
+    for (const { id } of requests()) deliver(stringify({ t: 'res', v: PROTOCOL_VERSION, id, ok: true, value: 0 }))
+  })
+
+  it('gives a method a signal that never aborts outside a dispatched call', () => {
+    expect(callSignal().aborted).toBe(false)
+    expect(() => throwIfCancelled(callSignal())).not.toThrow()
   })
 })
 

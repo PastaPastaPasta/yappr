@@ -49,7 +49,8 @@ export function engineQueryOptions<T, S = T>(
     ...(persist ? persistedQuery : {}),
     ...options,
     queryKey: key,
-    queryFn: () => read(engine.api),
+    // TanStack's signal cancels the read in the engine when nobody wants it any more (ENGINE.md §4.6).
+    queryFn: ({ signal }) => read(engine.withSignal(signal)),
   });
 }
 
@@ -153,7 +154,7 @@ export function useEngineInfiniteQuery<T>(
     ...(persist ? persistedQuery : {}),
     ...options,
     queryKey: key,
-    queryFn: ({ pageParam }) => read(engine.api, pageParam),
+    queryFn: ({ pageParam, signal }) => read(engine.withSignal(signal), pageParam),
     initialPageParam: null,
     getNextPageParam: (last) => (last.hasMore && last.cursor ? last.cursor : undefined),
   });

@@ -70,14 +70,16 @@ export function useThread(id: string) {
   const query = useInfiniteQuery<ThreadDTO, Error, InfiniteData<ThreadDTO>, readonly unknown[], string | null>({
     ...persistedQuery,
     queryKey: queryKeys.post.thread(id),
-    queryFn: async ({ pageParam }) => {
+    queryFn: async ({ pageParam, signal }) => {
+      // Leaving the screen cancels the read in the engine (ENGINE.md §4.6).
+      const api = engine.withSignal(signal);
       const read = async () => {
         const held = pageParam === null ? undefined : heldThread(id);
         if (held) {
-          const merged = mergeThreadPage(held, await engine.api.posts.thread(id, pageParam, { delta: true }));
+          const merged = mergeThreadPage(held, await api.posts.thread(id, pageParam, { delta: true }));
           if (merged) return merged;
         }
-        return engine.api.posts.thread(id, pageParam);
+        return api.posts.thread(id, pageParam);
       };
       const first = await read();
       if (first.focus) return first;

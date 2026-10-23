@@ -16,6 +16,7 @@ import { cursorInt, decodeCursor } from '../dto/cursor'
 import { listToDTOs, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts, viewerId, visibleDTOs } from '../dto/hydrate'
 import { nextPage, onePage, pageAfter, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
+import { callSignal, throwIfCancelled } from '../rpc/call-signal'
 import { NewPostsRetry, selectNewPosts } from './new-posts-retry'
 import type { Page, PostDTO, RankingWindow } from './dto'
 
@@ -80,11 +81,14 @@ function storageTag(input: string): string {
 }
 
 function forYou(cursor: string | null | undefined): Promise<Page<PostDTO>> {
+  // Read at the call's start (`feed.home`): a page the host stopped waiting for is not enriched (MARCH-4).
+  const signal = callSignal()
   const language = feedLanguage()
   // The language is in the kind: a cursor from another language's index is a BAD_CURSOR.
   return pageAfter(`forYou:${language ?? ''}`, cursor,
     after => loadForYouFeed({ startAfter: after, feedLanguage: language, currentUserId: viewerId() ?? undefined }),
     async page => {
+      throwIfCancelled(signal)
       const sorted = sortFeedByTimestamp(page.posts)
       // This page's own quote targets, read again: a quote of a post deleted
       // since the last load must not keep showing the text it had (RC16-I-04).

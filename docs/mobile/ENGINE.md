@@ -379,6 +379,8 @@ When a deadline passes, the host:
 
 ### 4.6 Cancellation
 
+> **As built (MARCH-4).** The host sends `{t:'cancel', v, id}` (`CancelEnvelope`) for a **read** whose query signal aborted or whose deadline passed; the RPC client (`client.call(path, args, { signal, cancelRemote })`) drops its pending entry either way, so a call the engine never answers no longer stays pending. Writes, session and control calls are only stopped being waited for: no `cancel` reaches the engine (`cancelRemote: false`). The supervisor drops a call given up while it is still queued. The data layer passes TanStack's `signal` through `engine.withSignal(signal)` (`useEngineQuery`, `useEngineInfiniteQuery`, `useThread`). In the engine the dispatcher aborts the call's controller, stops waiting for it and sends no response. There is no hidden `ctx` parameter: a method reads its signal with `callSignal()` (`src/rpc/call-signal.ts`) before its first `await` and calls `throwIfCancelled(signal)` between its DAPI steps (`posts.thread`, `feed.home` For You, `explore.searchPosts`, `explore.searchHashtags`).
+
 `cancel` aborts the call's `AbortController`, and cancellation is cooperative:
 - **Long polls.** `pollYapprKeyExchangeResponse` honours the signal (`controller.ts:125`, `yappr-protocol.ts:413-422`).
 - **Composite flows.** `api/*` functions check `ctx.signal` between `lib/` steps and reject with `ABORTED`.

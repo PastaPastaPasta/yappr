@@ -25,6 +25,8 @@ class FakeEngine {
   answerPings = true;
   pings = 0;
   calls: string[] = [];
+  /** Ids of the requests the host cancelled. */
+  cancels: string[] = [];
 
   constructor(private readonly receive: (message: string) => void) {}
 
@@ -63,6 +65,10 @@ class FakeEngine {
     if (envelope.t === 'ping') {
       this.pings += 1;
       if (this.answerPings) this.hello();
+      return;
+    }
+    if (envelope.t === 'cancel') {
+      this.cancels.push(envelope.id);
       return;
     }
     if (envelope.t !== 'req') return;
@@ -807,6 +813,61 @@ describe('EngineSupervisor', () => {
     expect(operations).not.toContain('engine.diagnostics');
     expect(JSON.stringify((s.deps.error as jest.Mock).mock.calls)).not.toContain('secret-arg');
     s.supervisor.stop();
+  });
+
+  describe('cancellation (ENGINE.md §4.6, MARCH-4)', () => {
+    it('cancels a read in the engine at its deadline, and only stops waiting for a write', async () => {
+      const s = setup({
+        configure: (engine) => {
+          engine.hold.add('posts.thread');
+          engine.hold.add('engage.like');
+        },
+        // No pings in the jump to the deadline (unanswered within it, they would restart the engine first).
+        supervisor: { pingIntervalMs: 60_000 },
+      });
+      s.supervisor.start();
+      await boot(s);
+      const read = s.supervisor.call('posts.thread', ['root']);
+      const write = s.supervisor.call('engage.like', [{ id: 'p' }]);
+      await settle(30_000);
+      await expect(read).rejects.toMatchObject({ code: 'RPC_TIMEOUT' });
+      await expect(write).rejects.toMatchObject({ code: 'RPC_TIMEOUT' });
+      await settle();
+      const engine = s.engines[1];
+      expect(engine.cancels).toEqual([engine.held.find((held) => held.path === 'posts.thread')?.id]);
+    });
+
+    it('drops a read given up while it waits for the engine, and cancels one given up while it runs', async () => {
+      const s = setup({
+        configure: (engine) => {
+          engine.answerPings = false;
+          engine.hold.add('posts.thread');
+        },
+      });
+      s.supervisor.start();
+      const waiting = new AbortController();
+      const queued = s.supervisor.call('feed.home', [{}], { signal: waiting.signal });
+      expect(s.supervisor.getStatus().queued).toBe(1);
+      waiting.abort();
+      await expect(queued).rejects.toMatchObject({ code: 'ABORTED' });
+      expect(s.supervisor.getStatus().queued).toBe(0);
+      await settle();
+      await boot(s);
+      expect(s.engines[1].calls).not.toContain('feed.home');
+
+      const running = new AbortController();
+      const call = s.supervisor.call('posts.thread', ['root'], { signal: running.signal });
+      await settle();
+      running.abort();
+      await expect(call).rejects.toMatchObject({ code: 'ABORTED' });
+      await settle();
+      expect(s.engines[1].cancels).toEqual([s.engines[1].held[0].id]);
+      // Giving up is not a failure to list in diagnostics.
+      expect(s.deps.error).not.toHaveBeenCalledWith('posts.thread', expect.anything());
+      // An already-abandoned call never starts.
+      await expect(s.supervisor.call('posts.get', ['p'], { signal: running.signal })).rejects.toMatchObject({ code: 'ABORTED' });
+      expect(s.engines[1].calls).not.toContain('posts.get');
+    });
   });
 
   it('reads the Chrome major version from a WebView user agent', () => {

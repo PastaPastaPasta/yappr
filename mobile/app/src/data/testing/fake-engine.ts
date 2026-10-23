@@ -60,6 +60,8 @@ export const engineModule = {
   engineNetworkKey: 'devnet-test',
   engine: {
     api: at([]),
+    // The fake's calls answer from mocks; a query's signal changes nothing here.
+    withSignal: () => at([]),
     on(event: string, listener: Listener) {
       const set = listeners.get(event) ?? new Set();
       set.add(listener);
