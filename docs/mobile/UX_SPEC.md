@@ -729,8 +729,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │            Yappr                │  wordmark 36
 │   Sign in with your Dash wallet │  headline
 │  Approve one request in your    │  subhead, secondary
-│  wallet. Your keys never leave  │
-│  it.                            │
+│  wallet. It keeps your main     │
+│  keys, and Yappr gets limited   │
+│  keys for this device.          │
 │  ┌───────────────────────────┐  │
 │  │  ◈  Open wallet           │  │  primary block (same-device)
 │  └───────────────────────────┘  │
@@ -1444,7 +1445,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | welcome.signIn | Sign in |
 | welcome.browse | Browse without signing in |
 | signin.title | Sign in with your Dash wallet |
-| signin.subtitle | Approve one request in your wallet. Your keys never leave it. |
+| signin.subtitle | Approve one request in your wallet. It keeps your main keys, and Yappr gets limited keys for this device. |
 | signin.openWallet | Open wallet |
 | signin.otherDevice | Use a wallet on another device |
 | signin.other | Advanced |
