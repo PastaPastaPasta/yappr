@@ -6,6 +6,7 @@ import type {
   AuthUser,
   PlatformAuthDependencies,
   PlatformAuthEvent,
+  SecretRemoval,
 } from 'platform-auth'
 import { decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { logger } from '@/lib/logger'
@@ -141,6 +142,11 @@ async function storeRawLoginKey(identityId: string, wif: string): Promise<void> 
   else storeSessionOnlyPrivateKey(identityId, wif)
 }
 
+/** A secret the browser kept despite the removal is reported, not passed over (the controller logs it and goes on). */
+function requireRemoved(removal: SecretRemoval): void {
+  if (!removal.complete) throw new Error('This browser could not remove a saved key')
+}
+
 function toSessionSnapshot(user: AuthUser, timestamp: number): AuthSessionSnapshot {
   return {
     user,
@@ -260,15 +266,17 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       getPrivateKey,
       hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
-        clearPrivateKey(identityId)
-        if (!isAppConnectBuild()) return
-        // Logout wipes the key ring too; the connection id stays for the next login.
-        // Only while this tab holds the session: after a revoke this tab has
-        // already dropped its own grant, and must not take a newer one another
-        // tab stored for the same identity with it. Either way a renewal still
-        // being stored is cancelled, so it cannot bring the session back.
-        if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
-        else appConnectSessions.cancelAdoptions(identityId)
+        const removal = clearPrivateKey(identityId)
+        if (isAppConnectBuild()) {
+          // Logout wipes the key ring too; the connection id stays for the next login.
+          // Only while this tab holds the session: after a revoke this tab has
+          // already dropped its own grant, and must not take a newer one another
+          // tab stored for the same identity with it. Either way a renewal still
+          // being stored is cancelled, so it cannot bring the session back.
+          if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
+          else appConnectSessions.cancelAdoptions(identityId)
+        }
+        requireRemoved(removal)
       },
       storeEncryptionKey: (identityId, encryptionKey) => {
         storeEncryptionKey(identityId, encryptionKey)
@@ -281,21 +289,21 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       getEncryptionKey,
       hasEncryptionKey,
       clearEncryptionKey: async (identityId) => {
-        clearEncryptionKey(identityId)
+        requireRemoved(clearEncryptionKey(identityId))
       },
       storeEncryptionKeyType,
       clearEncryptionKeyType: async (identityId) => {
-        clearEncryptionKeyType(identityId)
+        requireRemoved(clearEncryptionKeyType(identityId))
       },
       storeTransferKey,
       getTransferKey,
       clearTransferKey: async (identityId) => {
-        clearTransferKey(identityId)
+        requireRemoved(clearTransferKey(identityId))
       },
       storeLoginKey,
       getLoginKey: async (identityId) => getLoginKeyBytes(identityId),
       clearLoginKey: async (identityId) => {
-        clearLoginKey(identityId)
+        requireRemoved(clearLoginKey(identityId))
       },
     },
     identity: {
@@ -374,6 +382,12 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     onEvent(event: PlatformAuthEvent) {
       if (event.type === 'background-error') {
         logger.error(`platform-auth background error (${event.operation}):`, extractErrorMessage(event.error))
+        // A key the browser would not remove is the user's to know about, not only the log's.
+        if (event.operation.startsWith('clear')) {
+          import('react-hot-toast')
+            .then(({ default: toast }) => toast.error('This browser kept a saved key. Clear this site\'s data in your browser settings to remove it.', { id: 'saved-key-kept', duration: 15_000 }))
+            .catch((error) => logger.warn('Could not show the saved-key notice:', error))
+        }
       }
     },
   }

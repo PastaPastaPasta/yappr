@@ -47,8 +47,7 @@ function renewReason(stats: FeedStats | null): 'choice' | 'key-changed' | 'full'
 
 /**
  * Keep the key the chain just accepted available the way the manual key-entry
- * flow does. Throws when it cannot be saved (the store swallows write failures,
- * so this reads it back).
+ * flow does. Throws when it cannot be saved.
  */
 async function rememberEncryptionKey(identityId: string, enteredKey: string, acceptedKey: Uint8Array): Promise<void> {
   const {
@@ -63,13 +62,16 @@ async function rememberEncryptionKey(identityId: string, enteredKey: string, acc
   // The input is prefilled with the stored key, which may be a derived key.
   // Remember it so resubmitting that same key does not relabel it.
   const priorKeyBytes = getEncryptionKeyBytes(identityId)
-  storeEncryptionKey(identityId, enteredKey)
-  const normalizedEncryptionKey = getEncryptionKey(identityId)
-  // The store swallows write failures, so a non-null readback can still be a stale
-  // key left over from an earlier session. Compare the decoded secret with the key
-  // that was actually accepted before backing anything up.
-  const storedKeyBytes = getEncryptionKeyBytes(identityId)
-  if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, acceptedKey)) {
+  // Compare the decoded secret read back with the key that was actually accepted
+  // before backing anything up.
+  let storedKeyBytes: Uint8Array | null = null
+  try {
+    storeEncryptionKey(identityId, enteredKey)
+    storedKeyBytes = getEncryptionKeyBytes(identityId)
+  } catch (error) {
+    logger.warn('Private feed: the browser did not save the encryption key:', error)
+  }
+  if (!getEncryptionKey(identityId) || !storedKeyBytes || !bytesEqual(storedKeyBytes, acceptedKey)) {
     // Drop any stale key so later private-feed operations cannot pick up a secret
     // that no longer matches the one the chain just accepted.
     clearEncryptionKey(identityId)

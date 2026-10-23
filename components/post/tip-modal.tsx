@@ -2,6 +2,7 @@
 
 import { filterPaymentUris } from '@/lib/utils/payment-uri'
 import { logger } from '@/lib/logger';
+import toast from 'react-hot-toast'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Modal, ModalTitle } from '@/components/ui/modal'
@@ -562,10 +563,9 @@ export function TipModal() {
     try {
       storeTransferKey(user.identityId, usedTransferKeyRef.current)
     } catch (err) {
+      // The tip went through: only the key was not saved, so this is no transfer failure to retry.
       logger.error('Failed to store transfer key:', err)
-      setError('Failed to save transfer key')
-      setState('error')
-      return
+      toast.error('Your tip was sent, but this browser couldn\'t save your transfer key.')
     }
     usedTransferKeyRef.current = null
     setState('success')
