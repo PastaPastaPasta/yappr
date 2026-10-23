@@ -11,7 +11,8 @@ function PaymentFixture() {
   const [selected, setSelected] = useState<ParsedPaymentUri | null>(unsafe)
   return <>
     <PaymentSelector paymentUris={[unsafe, { scheme: 'dash:', uri: 'data:text/html,SECURITY_QA' }, bitcoin]}
-      selected={selected} onSelect={setSelected} txid="" onTxidChange={() => {}} />
+      selected={selected} onSelect={setSelected} txid="" onTxidChange={() => {}}
+      detectedPayment={null} onDetectedPaymentChange={() => {}} onContinue={() => {}} />
     <div data-testid="unsafe-qr"><PaymentQRCode paymentUri={unsafe} /></div>
   </>
 }

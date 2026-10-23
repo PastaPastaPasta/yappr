@@ -1,7 +1,9 @@
-import { useId, useState, useCallback } from 'react'
+import { useId, useCallback } from 'react'
 import { filterPaymentUris, parsePaymentUri } from '@/lib/utils/payment-uri'
 import { CreditCardIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import { PaymentQRCode } from '@/components/ui/payment-qr-code'
+import { Button } from '@/components/ui/button'
+import { formatDetectedDash, type DetectedPayment } from '@/lib/storefront/checkout-payment'
 import { isDashScheme } from '@/lib/services/insight-api-service'
 import type { ParsedPaymentUri } from '@/lib/types'
 
@@ -15,6 +17,11 @@ interface PaymentSelectorProps {
   txidMaxLength?: number
   orderTotal?: number
   orderCurrency?: string
+  /** The payment the watcher saw, held by the checkout so its confirmation can say so. */
+  detectedPayment: DetectedPayment | null
+  onDetectedPaymentChange: (payment: DetectedPayment | null) => void
+  /** Once a payment is detected, the watcher offers this as the next step: on to the order's review and Place Order. */
+  onContinue: () => void
 }
 
 export function PaymentSelector({
@@ -25,13 +32,16 @@ export function PaymentSelector({
   onTxidChange,
   txidMaxLength,
   orderTotal,
-  orderCurrency
+  orderCurrency,
+  detectedPayment,
+  onDetectedPaymentChange,
+  onContinue
 }: PaymentSelectorProps) {
   const txidId = useId()
   const paymentUris = filterPaymentUris(storedPaymentUris)
   const selected = parsePaymentUri(storedSelected)
-  const [detectedAmount, setDetectedAmount] = useState<number | null>(null)
-  const [wasAutoFilled, setWasAutoFilled] = useState(false)
+  // The field holds the detected transaction until the buyer types over it.
+  const wasAutoFilled = detectedPayment !== null && txid === detectedPayment.txid
 
   // Check if the selected payment is a Dash scheme
   const isSelectedDashPayment = selected && isDashScheme(selected.scheme)
@@ -39,17 +49,15 @@ export function PaymentSelector({
   // Handle detected Dash transaction
   const handleTransactionDetected = useCallback((detectedTxid: string, amountDash: number) => {
     onTxidChange(detectedTxid)
-    setDetectedAmount(amountDash)
-    setWasAutoFilled(true)
-  }, [onTxidChange])
+    onDetectedPaymentChange({ txid: detectedTxid, amountDash })
+  }, [onTxidChange, onDetectedPaymentChange])
 
   // Handle payment selection - reset detected state when changing payment
   const handleSelect = useCallback((uri: ParsedPaymentUri | null) => {
     onSelect(uri)
     onTxidChange('') // Clear any stale txid from previous payment method
-    setDetectedAmount(null)
-    setWasAutoFilled(false)
-  }, [onSelect, onTxidChange])
+    onDetectedPaymentChange(null)
+  }, [onSelect, onTxidChange, onDetectedPaymentChange])
 
   return (
     <div className="p-4 space-y-4">
@@ -89,6 +97,16 @@ export function PaymentSelector({
             size={180}
             watchForTransaction={!!isSelectedDashPayment}
             onTransactionDetected={handleTransactionDetected}
+            detectedAction={(
+              <div className="space-y-2">
+                <p className="text-xs text-green-700 dark:text-green-300">
+                  Next step: review your order below, then place it so the seller receives it with this payment.
+                </p>
+                <Button className="w-full" onClick={onContinue}>
+                  Review and place order
+                </Button>
+              </div>
+            )}
             orderTotal={orderTotal}
             orderCurrency={orderCurrency}
           />
@@ -108,11 +126,7 @@ export function PaymentSelector({
               type="text"
               value={txid}
               maxLength={txidMaxLength}
-              onChange={(e) => {
-                onTxidChange(e.target.value)
-                // If user manually edits, clear the auto-fill indicator
-                if (wasAutoFilled) setWasAutoFilled(false)
-              }}
+              onChange={(e) => onTxidChange(e.target.value)}
               placeholder={isSelectedDashPayment ? "Will auto-fill when detected" : "Enter after payment"}
               className={`w-full px-4 py-2 border rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm ${
                 wasAutoFilled
@@ -120,9 +134,9 @@ export function PaymentSelector({
                   : 'border-gray-200 dark:border-gray-700'
               }`}
             />
-            {detectedAmount !== null && wasAutoFilled && (
+            {detectedPayment && wasAutoFilled && (
               <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                Detected payment: {detectedAmount.toFixed(8)} DASH
+                Detected payment: {formatDetectedDash(detectedPayment.amountDash)}
               </p>
             )}
             {!wasAutoFilled && (
