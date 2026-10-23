@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import type { SeatedTeam } from '@/lib/services/moderation-election-service'
@@ -9,6 +10,20 @@ import { charterService, type JoinRequest, type TeamRecord } from '@/lib/service
 import type { CharterAction } from '@/lib/moderation-charters/refusals'
 import { teamChanges } from '@/lib/moderation-charters/team-flow'
 import { IdentityName, Notice, useCharterRun } from './shared'
+
+/** A team change waiting for the leader to confirm it. */
+interface PendingChange {
+  title: string
+  message: string
+  confirmText: string
+  variant: 'danger' | 'default'
+  label: string
+  action: CharterAction
+  work: () => Promise<unknown>
+}
+
+const PAYOUT = 'The moderators pot is paid out to the team as it stands first, and the change costs a small fee.'
+const TAKE_OFF = { title: 'Take this member off the team?', message: `They stop moderating as soon as this is recorded. You can put them back later. ${PAYOUT}`, confirmText: 'Take off', variant: 'danger' as const }
 
 interface Records {
   additions: TeamRecord[]
@@ -32,6 +47,8 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
   const me = user?.identityId ?? null
   const [records, setRecords] = useState<Records | null>(null)
   const { busy, error, setError, run } = useCharterRun()
+  // Each change is confirmed first: a session that holds its signing key signs on the click.
+  const [pending, setPending] = useState<PendingChange | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -91,10 +108,14 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
         <h4 className="font-semibold text-sm mb-1">On the team</h4>
         <ul className="space-y-1">
           {changes.removable.map((id) => row(id,
-            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Taking the member off…', 'remove-member', () => charterService.removeMember(me, seated.electedCharterId, id))}>Take off</Button>,
+            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setPending({
+              ...TAKE_OFF, label: 'Taking the member off…', action: 'remove-member', work: () => charterService.removeMember(me, seated.electedCharterId, id),
+            })}>Take off</Button>,
             'elected'))}
           {changes.added.map((id) => row(id,
-            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Taking the member off…', 'undo-team-change', () => charterService.undoTeamChange(me, 'addedModerator', changeOf(records.additions, id)))}>Take off</Button>,
+            <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setPending({
+              ...TAKE_OFF, label: 'Taking the member off…', action: 'undo-team-change', work: () => charterService.undoTeamChange(me, 'addedModerator', changeOf(records.additions, id)),
+            })}>Take off</Button>,
             'added'))}
           {changes.removable.length + changes.added.length === 0 && <li className="text-sm text-gray-500">Only you.</li>}
         </ul>
@@ -104,7 +125,10 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
           <h4 className="font-semibold text-sm mb-1">Taken off</h4>
           <ul className="space-y-1">
             {changes.restorable.map((id) => row(id,
-              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => act('Putting the member back…', 'undo-team-change', () => charterService.undoTeamChange(me, 'removedModerator', changeOf(records.removals, id)))}>Put back</Button>))}
+              <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => setPending({
+                title: 'Put this member back on the team?', message: `They can moderate again as soon as this is recorded. ${PAYOUT}`, confirmText: 'Put back', variant: 'default',
+                label: 'Putting the member back…', action: 'undo-team-change', work: () => charterService.undoTeamChange(me, 'removedModerator', changeOf(records.removals, id)),
+              })}>Put back</Button>))}
           </ul>
         </div>
       )}
@@ -113,10 +137,26 @@ export function TeamAdmin({ seated, requests, maxAdded, onChanged }: {
         {!changes.canAdd && <p className="text-xs text-gray-500">You have added {maxAdded} of {maxAdded} members this contract allows. Take one off to add another.</p>}
         <ul className="space-y-1">
           {changes.addable.map((id) => row(id,
-            <Button size="sm" disabled={busy !== null || !changes.canAdd} onClick={() => act('Adding the member…', 'add-member', () => charterService.addMember(me, seated, id))}>Add</Button>))}
+            <Button size="sm" disabled={busy !== null || !changes.canAdd} onClick={() => setPending({
+              title: 'Add this member to the team?', message: `They can moderate as soon as this is recorded, and you can take them off later. ${PAYOUT}`, confirmText: 'Add', variant: 'default',
+              label: 'Adding the member…', action: 'add-member', work: () => charterService.addMember(me, seated, id),
+            })}>Add</Button>))}
           {changes.addable.length === 0 && <li className="text-sm text-gray-500">Nobody else has asked to join.</li>}
         </ul>
       </div>
+      <ConfirmDialog
+        isOpen={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={() => {
+          const change = pending
+          setPending(null)
+          if (change) act(change.label, change.action, change.work).catch(() => { /* reported inside */ })
+        }}
+        title={pending?.title ?? ''}
+        message={pending?.message ?? ''}
+        confirmText={pending?.confirmText}
+        variant={pending?.variant}
+      />
     </div>
   )
 }
