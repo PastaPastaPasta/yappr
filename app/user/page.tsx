@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger'
 import bs58 from 'bs58'
-import { useState, useEffect, Suspense, useCallback } from 'react'
+import { useState, useEffect, useRef, Suspense, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeftIcon, EyeSlashIcon, NoSymbolIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -18,6 +18,7 @@ import { paymentUriScheme } from '@/lib/services/unified-profile-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { profileModerationReadStep } from '@/lib/profile/profile-moderation-read'
+import { appendProfilePostsPage, commitProfileFirstPage, emptyProfilePosts, profilePostsScope } from '@/lib/profile/profile-posts-state'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
@@ -77,11 +78,24 @@ function replaceQueryParam(key: string, value: string | null) {
   window.history.replaceState({}, '', url.toString())
 }
 
+/**
+ * Everything the view holds (profile, posts, cursor, follow state, tabs) is
+ * read for one profile as one viewer sees it. Keying the view by both resets
+ * all of it at once when either changes, so a profile never renders under
+ * another's header and a read still out for the old key lands on a dead view.
+ */
 function UserProfileContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const requestedUserId = searchParams.get('id')
   const userId = profileIdentityId(requestedUserId)
+  const { user: currentUser } = useAuth()
+  const viewerId = currentUser?.identityId
+  return <UserProfileView key={`${userId ?? ''}:${viewerId ?? ''}`} requestedUserId={requestedUserId} userId={userId} />
+}
+
+function UserProfileView({ requestedUserId, userId }: { requestedUserId: string | null; userId: string | null }) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { user: currentUser, logout, isAuthRestoring } = useAuth()
   const viewerId = currentUser?.identityId
   const { requireAuth } = useRequireAuth()
@@ -92,7 +106,6 @@ function UserProfileContent() {
   const [username, setUsername] = useState<string | null>(null)
   const [allUsernames, setAllUsernames] = useState<string[]>([])
   const hasDpns = allUsernames.length > 0
-  const [posts, setPosts] = useState<Post[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [postCount, setPostCount] = useState<number | null>(null)
   const [profileDocumentMissing, setProfileDocumentMissing] = useState(false)
@@ -112,9 +125,13 @@ function UserProfileContent() {
 
   // Posts-tab pagination. Reposts are not paginated: the service returns the
   // whole list on the first load, so only original posts page.
-  const [hasMore, setHasMore] = useState(true)
+  const [postsState, setPostsState] = useState(() => emptyProfilePosts(''))
+  const { posts, hasMore, lastPostId } = postsState
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [lastPostId, setLastPostId] = useState<string | null>(null)
+  // The load generation whose posts are current: a first page or a next page
+  // started under another one (a reload, or this view going away) is dropped.
+  const loadGenerationRef = useRef(0)
+  const currentScopeRef = useRef('')
 
   // Editing (own profile only): the profile the dialog opened with, or null when closed.
   const [editInitial, setEditInitial] = useState<ProfileDraft | null>(null)
@@ -194,22 +211,15 @@ function UserProfileContent() {
   }
 
   useEffect(() => {
-    setNsfwAcknowledged(false)
-    setHasPrivateFeed(false)
-    setIsPrivateFollower(false)
-    setUserStore(null)
-    setBlogs([])
-    setBlogsLoading(false)
-    setEditInitial(null)
-  }, [userId])
-
-  useEffect(() => {
     // Wait for the stored session: starting before it resolves read everything
     // twice, once anonymously and again once the viewer was known.
     if (!userId || isAuthRestoring) return
-    // A load still out when the page moves to another profile must not write
-    // that profile's fields into this one (an owner edit would then save them).
+    // A load still out when this view goes away must not write into it.
     let cancelled = false
+    const scope = profilePostsScope(userId, viewerId, ++loadGenerationRef.current)
+    currentScopeRef.current = scope
+    setPostsState(emptyProfilePosts(scope))
+    setIsLoadingMore(false)
 
     // The private-feed, store and blog lookups decorate the header; none may fail the page.
     const loadPrivateFeed = async () => {
@@ -282,8 +292,13 @@ function UserProfileContent() {
         const { loadUserStats } = await import('@/lib/services/social-stats-service')
 
         const statsRead = loadUserStats(userId)
+        // A failed read is flagged so it is never taken for a profile with no posts.
         const postsRead = postService.getUserPosts(userId, { limit: PAGE_SIZE, forDisplay: true })
-          .catch(() => ({ documents: [] as Post[], preloaded: undefined }))
+          .then((result) => ({ ...result, failed: false }))
+          .catch((postsError: unknown) => {
+            logger.error('Failed to load profile posts:', postsError)
+            return { documents: [] as Post[], preloaded: undefined, failed: true }
+          })
         // The stats read seeds the base profile and the posts read its
         // extension, so the profile follows both (the header waits for both
         // anyway) and is then usually answered from cache. A failed stats read
@@ -361,16 +376,13 @@ function UserProfileContent() {
         setAllUsernames(sortedUsernames)
         setUsername(sortedUsernames[0] ?? null)
 
-        if (merged.length > 0) {
-          const named = sortedUsernames.length > 0
-            ? merged.map((post) => withAuthor(post, { username: sortedUsernames[0], hasDpns: true }))
-            : merged
-          setPosts(named)
-          enrichProgressively(named, postsResult.preloaded)
-        }
+        const named = sortedUsernames.length > 0
+          ? merged.map((post) => withAuthor(post, { username: sortedUsernames[0], hasDpns: true }))
+          : merged
+        // Committed even when empty: this profile's posts replace whatever was there.
         const originals = postsResult.documents || []
-        if (originals.length > 0) setLastPostId(originals[originals.length - 1].id)
-        setHasMore(originals.length >= PAGE_SIZE)
+        setPostsState((current) => commitProfileFirstPage(current, scope, { posts: named, originals, failed: postsResult.failed }, PAGE_SIZE))
+        if (named.length > 0) enrichProgressively(named, postsResult.preloaded)
         setIsLoading(false)
 
         await decorations
@@ -382,7 +394,11 @@ function UserProfileContent() {
     }
 
     loadProfileData().catch((err) => logger.error('Failed to load profile:', err))
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      // A next page still out for this load no longer has a view to join.
+      if (currentScopeRef.current === scope) currentScopeRef.current = ''
+    }
     // Reload on a profile change, or once the stored session has been checked;
     // the viewer changing mid-visit (sign-in here) reloads through enrichProgressively.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -461,29 +477,29 @@ function UserProfileContent() {
   const loadMorePosts = useCallback(async () => {
     if (!userId || isLoadingMore || !hasMore || !lastPostId) return
 
+    // The page belongs to the load whose cursor it continues; if that load is
+    // replaced while this is out, the result (and its cursor) is dropped.
+    const scope = postsState.scope
+    const isCurrent = () => currentScopeRef.current === scope
     setIsLoadingMore(true)
     try {
       const { postService } = await import('@/lib/services')
       const result = await postService.getUserPosts(userId, { limit: PAGE_SIZE, startAfter: lastPostId })
+      if (!isCurrent()) return
       const newPostDocs = result.documents || []
       // Author display fields are already resolved for this profile.
       const fresh = newPostDocs.map((post) => withAuthor(post, { username: username || '', displayName: profile?.displayName || '', avatar: '', hasDpns }))
 
       await attachQuotedPosts(fresh)
-      setPosts((current) => {
-        const seen = new Set(current.map((p) => p.id))
-        return [...current, ...fresh.filter((p) => !seen.has(p.id))].sort(byNewestActivity)
-      })
+      if (!isCurrent()) return
+      setPostsState((current) => appendProfilePostsPage(current, scope, { posts: fresh, documents: newPostDocs }, PAGE_SIZE))
       if (fresh.length > 0) enrichProgressively(fresh)
-
-      if (newPostDocs.length > 0) setLastPostId(newPostDocs[newPostDocs.length - 1].id)
-      setHasMore(newPostDocs.length >= PAGE_SIZE)
     } catch (error) {
       logger.error('Failed to load more posts:', error)
     } finally {
-      setIsLoadingMore(false)
+      if (isCurrent()) setIsLoadingMore(false)
     }
-  }, [userId, isLoadingMore, hasMore, lastPostId, username, profile?.displayName, hasDpns, enrichProgressively])
+  }, [userId, isLoadingMore, hasMore, lastPostId, postsState.scope, username, profile?.displayName, hasDpns, enrichProgressively])
 
   const hasMorePosts = hasMore
   const infiniteScroll = useInfiniteScroll({
