@@ -6,6 +6,11 @@
   --network-pill-height: 24px;
 }
 
+/* The election banner already clears the network pill; a page below it need not. */
+:root:has([data-testid="election-banner"]) {
+  --page-pill-clearance: 0px;
+}
+
 /*
  * Always reserve the page scrollbar's width. With classic (non-overlay)
  * scrollbars (Linux, Windows, macOS with a mouse or "Show scroll bars:

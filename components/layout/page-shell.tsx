@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { ElectionBannerSlot } from '@/components/moderation/election-banner'
 import { Sidebar } from './sidebar'
 import { RightSidebar } from './right-sidebar'
 
@@ -24,6 +25,7 @@ export function PageShell({ children, mainClassName, hideRightSidebar = false }:
       <Sidebar />
       <div className="flex-1 flex justify-center min-w-0">
         <main className={cn('w-full max-w-[700px] md:border-x border-gray-200 dark:border-gray-800', mainClassName)}>
+          <ElectionBannerSlot />
           {children}
         </main>
       </div>

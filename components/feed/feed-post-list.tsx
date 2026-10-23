@@ -5,7 +5,7 @@ import ErrorBoundary from '@/components/error-boundary';
 import { LoadingState } from '@/components/ui/loading-state';
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel';
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll';
-import { usePostingClosed } from '@/hooks/use-posting-opening';
+import { usePostingClosed } from '@/hooks/use-moderator-elections';
 import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';

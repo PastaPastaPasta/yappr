@@ -22,7 +22,7 @@ import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { useDocumentTitle } from '@/hooks/use-document-title'
-import { usePostingClosed } from '@/hooks/use-posting-opening'
+import { usePostingClosed } from '@/hooks/use-moderator-elections'
 import { ModeratorViewChip } from '@/components/moderation/moderator-view'
 
 const PAGE_SIZE = 50

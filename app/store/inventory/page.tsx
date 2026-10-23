@@ -10,6 +10,7 @@ import {
 } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
 import { Sidebar } from '@/components/layout/sidebar'
+import { ElectionBannerSlot } from '@/components/moderation/election-banner'
 import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -206,6 +207,7 @@ function InventoryPage() {
 
       <div className="flex-1 flex justify-center min-w-0">
         <main className="w-full max-w-[900px] md:border-x border-gray-200 dark:border-gray-800">
+          <ElectionBannerSlot />
           <PageHeader>
             <div className="flex items-center justify-between p-4">
               <div className="flex items-center gap-4">

@@ -66,7 +66,7 @@ function NextSteps({ stage, status, now }: { stage: ElectionStage; status: Elect
       <p>
         Masternode owners vote on{' '}
         <a href={vote} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-yappr-700 dark:text-yappr-400 hover:underline">
-          vote.dashhq.org <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+          EvoVote <ArrowTopRightOnSquareIcon className="h-4 w-4" />
         </a>
         . Share your charter with them.
       </p>

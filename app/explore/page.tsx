@@ -19,8 +19,7 @@ import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { KeptPanel } from '@/components/ui/kept-panel'
-import { PostingOpensBanner } from '@/components/moderation/posting-opens-banner'
-import { usePostingClosed } from '@/hooks/use-posting-opening'
+import { usePostingClosed } from '@/hooks/use-moderator-elections'
 import { likesAreIndexOnly, prefixRankingsAvailable } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
@@ -266,7 +265,6 @@ export default function ExplorePage() {
 
   return (
     <PageShell>
-          <PostingOpensBanner />
           <PageHeader borderless={!searchQuery}>
             <div className="flex items-center gap-4 p-4">
               {isSearchFocused && (

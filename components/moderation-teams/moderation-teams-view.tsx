@@ -20,7 +20,7 @@ import { Notice, Section, useElectionStatus } from './shared'
  * `/moderation-teams?contract=social|blog|store[&proposal=<id>|&start=1]`:
  * standing for election as a contract's moderation team. Each contract
  * (social, blog, store) has its own election; a tab picks which. Masternodes
- * vote elsewhere (vote.dashhq.org); this page links there.
+ * vote elsewhere (EvoVote); this page links there.
  */
 export function ModerationTeamsView() {
   const router = useRouter()

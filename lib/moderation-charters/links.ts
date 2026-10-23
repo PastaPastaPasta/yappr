@@ -33,7 +33,7 @@ export function inviteUrl(contract: ModeratedContractKey, proposalId: string, or
   return `${origin}${basePath.replace(/\/+$/, '')}${teamsHref(contract, { proposal: proposalId })}`
 }
 
-/** Where masternode owners vote; `NEXT_PUBLIC_MASTERNODE_VOTE_URL` overrides it. */
+/** Where masternode owners vote (EvoVote); `NEXT_PUBLIC_MASTERNODE_VOTE_URL` overrides it. */
 export const DEFAULT_MASTERNODE_VOTE_URL = 'https://vote.dashhq.org/'
 
 /**
