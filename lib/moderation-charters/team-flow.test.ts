@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CharterProposal, ElectionContest, ElectionStatus, SeatedTeam } from '@/lib/services/moderation-election-service'
 import { LEADER_MINIMUM_CREDITS } from './rules.mjs'
-import { applyBlocker, chainOffsetMs, electionStage, statusForContract, joinBlocker, proposalStanding, teamChanges } from './team-flow'
+import { applyBlocker, chainOffsetMs, electionStage, statusForContract, joinBlocker, proposalStanding, teamChanges, unseenRequesters } from './team-flow'
 
 const HOUR = 3_600_000
 const T0 = 1_800_000_000_000
@@ -126,6 +126,14 @@ describe('apply', () => {
   it('refuses a second application by the same leader, whichever proposal it ran on', () => {
     const s = status({ contest: contest([{ identityId: LEADER, votes: 0, submittedCharterId: 'p9' }], T0 + 2 * HOUR) })
     expect(base({ status: s, stage: electionStage(s, T0 + HOUR) })).toBe('already-applied')
+  })
+})
+
+describe('join requests read again before applying', () => {
+  it('finds a member who asked after the leader opened the proposal', () => {
+    expect(unseenRequesters([], [{ ownerId: MEMBER }])).toEqual([MEMBER])
+    expect(unseenRequesters(null, [{ ownerId: MEMBER }])).toEqual([MEMBER])
+    expect(unseenRequesters([{ ownerId: MEMBER }], [{ ownerId: MEMBER }])).toEqual([])
   })
 })
 

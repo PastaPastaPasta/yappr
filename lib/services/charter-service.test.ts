@@ -172,17 +172,28 @@ describe('a refusal', () => {
   })
 
 
-  it('drops the bytes on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
+  const seatedE5 = { electedCharterId: 'e5', submittedCharterId: 'p1' }
+
+  it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
-    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), undefined)
-    expect(stored('submittedCharter', TERMS.targetContractId)).toBeNull()
+    expect(stored('addedModerator', 'e5:m1')).toBeNull()
+  })
+
+  it('keeps a proposal through a refusal of its first send: the SDK may have retried after a dispatch that landed', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('a cited reason is not visible yet'), { code: 40120 }))
+    const first = charterService.submitProposal(OWNER, TERMS)
+    await expect(first).rejects.toMatchObject({ outcome: 'uncertain' })
+    await expect(first).rejects.toThrow('This may still go through; the network refused it just now')
+    expect(stored('submittedCharter', TERMS.targetContractId)?.signed?.nonce).toBe('1')
+    expect(nonces.release).not.toHaveBeenCalled()
   })
 
   it('counts the nonce spent when Platform refused it at execution (paid)', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('duplicate'), { code: 40105 }))
     builders.consumed.mockResolvedValue(true)
-    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'refused', code: 40105 })
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40105 })
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
   })
 })
@@ -592,6 +603,16 @@ describe('an edited join message', () => {
 })
 
 describe('a landed marker', () => {
+  it('for a team change, answers even while recent only on proof, so a change undone elsewhere is made again', async () => {
+    const seated = { electedCharterId: 'e7', submittedCharterId: 'p1' }
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+    // Taken off from another browser: the recent marker is not trusted.
+    builders.exists.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-2')
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the signed entry when the marker cannot be stored, so a retry proves it again instead of signing', async () => {
     builders.exists.mockResolvedValue(true)
     const realSet = storage.setItem

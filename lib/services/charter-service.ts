@@ -716,7 +716,9 @@ class CharterService {
       const stored = loadSlot(key)
       if (!stored) return { kind: 'empty' }
       if (isLanded(stored)) {
-        if (isRecent(stored)) {
+        // A team change can be undone from another browser or the CLI: its marker answers only on proof.
+        const reversible = type === 'addedModerator' || type === 'removedModerator'
+        if (isRecent(stored) && !reversible) {
           if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
           return { kind: 'landed', id: stored.landed }
         }
@@ -724,6 +726,7 @@ class CharterService {
         // not unique per target, so its marker stays authoritative (an absence read could be stale);
         // anything else is proved still there first. A different write is a new one.
         if (stored.fingerprint === fingerprint && type === 'submittedCharter') return { kind: 'landed', id: stored.landed }
+        if (stored.fingerprint !== fingerprint && isRecent(stored)) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
         if (stored.fingerprint === fingerprint) {
           const there = await charterStepExists(w, sdk, { id: stored.landed, type, owner: ownerId }, targetContractId).catch(() => null)
           if (there === true) return { kind: 'landed', id: stored.landed }
@@ -763,9 +766,13 @@ class CharterService {
           // (say, a node behind on its funding). Where a second signature could file a duplicate (a
           // proposal, an application) the entry stays until settling proves what happened; reasons and
           // join requests are unique per owner, so their entry goes as before.
-          if (!fresh && (type === 'submittedCharter' || type === 'electedCharter')) {
+          // Even a first send's refusal may come after the SDK's own retries, one of which may have
+          // landed, so for these it is never a verdict: the way out is the deliberate "Clear and start over".
+          if (type === 'submittedCharter' || type === 'electedCharter') {
             const reason = charterActionError(action, error).message
-            throw new CharterActionError(`An earlier try may still go through; the network refused to resend it just now: ${reason}`, 'uncertain')
+            throw new CharterActionError(fresh
+              ? `This may still go through; the network refused it just now: ${reason}`
+              : `An earlier try may still go through; the network refused to resend it just now: ${reason}`, 'uncertain')
           }
           // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
           this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false))

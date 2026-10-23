@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeftIcon, ArrowTopRightOnSquareIcon, CheckCircleIcon, LockOpenIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, ArrowPathIcon, ArrowTopRightOnSquareIcon, CheckCircleIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -15,7 +15,7 @@ import { charterService, type JoinRequest } from '@/lib/services/charter-service
 import { CharterActionError, type CharterAction } from '@/lib/moderation-charters/refusals'
 import { CHARTERS_CONTRACT_ID, CHARTER_LIMITS, CONTEST_FUND_CREDITS, LEADER_MINIMUM_CREDITS, messageProblem, utf8Bytes } from '@/lib/moderation-charters/rules.mjs'
 import { DEPOSIT_TEXT, LEADER_MINIMUM_TEXT, applyCostLines, formatDash, joinCostLines } from '@/lib/moderation-charters/costs'
-import { applyBlocker, chainOffsetMs, electionStage, joinBlocker, statusForContract, proposalStanding, type ApplyBlocker, type ElectionStage } from '@/lib/moderation-charters/team-flow'
+import { applyBlocker, chainOffsetMs, electionStage, joinBlocker, statusForContract, proposalStanding, unseenRequesters, type ApplyBlocker, type ElectionStage } from '@/lib/moderation-charters/team-flow'
 import { inviteUrl, masternodeVoteUrl, teamsHref } from '@/lib/moderation-charters/links'
 import {
   CharterTerms, CostPreview, Hint, IdentityName, InviteLink, Notice, Section, StageBadge,
@@ -199,6 +199,12 @@ export function ProposalView({ contract, proposalId, election }: {
     if (!target || proposal.targetContractId !== target) throw new CharterActionError(`This proposal is not for ${declared.label}.`, 'refused')
     /** Reads the contest and balance again: before the key is asked for, and once more right before a new application is signed. */
     const preflight = async () => {
+      // Read the join requests again: someone who asked since this page loaded is shown before the deposit is paid.
+      const freshRequests = await charterService.joinRequests(proposal.id)
+      if (unseenRequesters(requests, freshRequests).length > 0) {
+        setRequests(freshRequests)
+        throw new CharterActionError('New people asked to join since this page loaded. Review them above, then apply again.', 'refused')
+      }
       const fresh = statusForContract(await moderationElectionService.getStatus(target), target)
       const freshBalance = await charterService.balance(me)
       if (!fresh) throw new CharterActionError('The election could not be read. Refresh, then try again.', 'refused')
@@ -286,6 +292,11 @@ export function ProposalView({ contract, proposalId, election }: {
         {isLeader && requests && requests.length > 0 && !messages && (
           <Button variant="outline" size="sm" className="gap-1" onClick={() => readMessages()} disabled={busy !== null}>
             <LockOpenIcon className="h-4 w-4" /> Read their messages
+          </Button>
+        )}
+        {isLeader && requests && (
+          <Button variant="outline" size="sm" className="gap-1" onClick={() => { loadRequests().catch(() => { /* handled inside */ }) }} disabled={busy !== null} data-testid="refresh-requests">
+            <ArrowPathIcon className="h-4 w-4" /> Check for new requests
           </Button>
         )}
       </Section>

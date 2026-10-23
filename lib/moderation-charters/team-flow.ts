@@ -130,6 +130,15 @@ export function applyBlocker(input: {
   return null
 }
 
+/**
+ * Who asked to join since the list shown was read (by identity): an
+ * application must not be paid for while they are unseen.
+ */
+export function unseenRequesters(shown: ReadonlyArray<{ ownerId: string }> | null, fresh: ReadonlyArray<{ ownerId: string }>): string[] {
+  const seen = new Set((shown ?? []).map((r) => r.ownerId))
+  return fresh.map((r) => r.ownerId).filter((ownerId) => !seen.has(ownerId))
+}
+
 export type JoinBlocker = 'signed-out' | 'leader' | 'already-asked' | 'not-seated'
 
 /** Why the viewer cannot ask to join `proposal`, or null when they can. */
