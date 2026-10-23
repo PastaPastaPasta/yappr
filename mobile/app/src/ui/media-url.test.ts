@@ -1,4 +1,4 @@
-import { resolveMediaUrl, safeExternalUrl } from './media-url';
+import { mediaCandidates, resolveMediaUrl, safeExternalUrl } from './media-url';
 
 const CID = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy';
 
@@ -15,6 +15,28 @@ describe('media and link URLs', () => {
     );
     expect(resolveMediaUrl('https://x.org/a.png', undefined, 'avatar')).toContain('&w=256&');
     expect(resolveMediaUrl('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA');
+  });
+
+  it('lists every gateway that can serve an IPFS image, in the engine order', () => {
+    const gateways = [
+      { domain: 'a.example', format: 'path' as const },
+      { domain: 'b.example', format: 'subdomain' as const },
+      { domain: 'c.example', format: 'path' as const },
+    ];
+    expect(mediaCandidates(`ipfs://${CID}/a.png`, gateways)).toEqual([
+      `https://a.example/ipfs/${CID}/a.png`,
+      `https://${CID}.b.example/a.png`,
+      `https://c.example/ipfs/${CID}/a.png`,
+    ]);
+    // CIDv0 is case-sensitive base58: a subdomain gateway can't carry it.
+    const v0 = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
+    expect(mediaCandidates(`ipfs://${v0}`, gateways)).toEqual([
+      `https://a.example/ipfs/${v0}`,
+      `https://c.example/ipfs/${v0}`,
+    ]);
+    // Other sources have one URL; refused ones none.
+    expect(mediaCandidates('https://x.org/a.png', gateways)).toHaveLength(1);
+    expect(mediaCandidates('http://x.org/a.png', gateways)).toEqual([]);
   });
 
   it('loads no plain-http, blob, app-relative or other-scheme image', () => {

@@ -3,21 +3,46 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { imageSourceFor, isSafeMediaUrl } from '~/lib-allowlist';
 
 /** How large the proxy serves a non-IPFS image (lib/media/remote-media `ProxyImageSize`). */
-type ImageSize = 'avatar' | 'thumbnail' | 'full';
+export type ImageSize = 'avatar' | 'thumbnail' | 'full';
 
 /**
  * Turns stored media and link URLs into ones the app may load or open.
  * `ipfs://` goes through an HTTP gateway; only http(s) leaves the app.
  *
- * TODO(S0): wire the provider to `engine.info().ipfsGateways`, with
- * fallback to the next gateway (UX_SPEC 2.4.6). Until then: ipfs.io.
+ * The provider carries the engine's ordered gateway list
+ * (`engine.info().ipfsGateways`). Images try it in order, falling back to the
+ * next gateway on an error or after 8 s (UX_SPEC 2.4.6, `useMediaSource`).
+ * Until the engine reports one: ipfs.io.
  */
 export const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
+
+/** One entry of the engine's gateway list (`engine.info().ipfsGateways`). */
+export interface IpfsGateway {
+  domain: string;
+  format: 'path' | 'subdomain';
+}
+
+export const DEFAULT_IPFS_GATEWAYS: readonly IpfsGateway[] = [{ domain: 'ipfs.io', format: 'path' }];
 
 const IPFS = /^ipfs:\/\/(?:ipfs\/)?(.+)$/i;
 const HTTP = /^https?:\/\/[^\s/?#]+/i;
 
 const DATA_IMAGE = /^data:image\//i;
+
+/** CIDv0 is case-sensitive base58, which a DNS label can't hold: subdomain gateways can't serve it. */
+const isCidV0 = (cid: string) => cid.startsWith('Qm');
+
+/** Where one gateway serves `cid` + `path` (`path` is empty or starts with `/`); null when it can't. */
+function gatewayUrl(gateway: IpfsGateway, cid: string, path: string): string | null {
+  if (gateway.format === 'subdomain') return isCidV0(cid) ? null : `https://${cid}.${gateway.domain}${path}`;
+  return `https://${gateway.domain}/ipfs/${cid}${path}`;
+}
+
+/** The first path-style gateway as a base URL (`https://host/ipfs/`), for links the user opens or shares. */
+function pathGatewayBase(gateways: readonly IpfsGateway[]): string {
+  const gateway = gateways.find((g) => g.format === 'path');
+  return gateway ? `https://${gateway.domain}/ipfs/` : DEFAULT_IPFS_GATEWAY;
+}
 
 /** An http(s) URL for an `ipfs://` or http(s) one; null for any other scheme. */
 function toHttp(url: string | null | undefined, gateway: string): string | null {
@@ -54,6 +79,29 @@ export function resolveMediaUrl(
 }
 
 /**
+ * Every URL an image may load from, in the order to try them: an `ipfs://`
+ * reference once per gateway that can serve it, any other source on its own.
+ * Empty for a URL the app refuses to load.
+ */
+export function mediaCandidates(
+  url: string | null | undefined,
+  gateways: readonly IpfsGateway[] = DEFAULT_IPFS_GATEWAYS,
+  size: ImageSize = 'full',
+): string[] {
+  const source = imageSourceFor(url, size);
+  if (source.kind !== 'ipfs') {
+    const single = resolveMediaUrl(url, DEFAULT_IPFS_GATEWAY, size);
+    return single ? [single] : [];
+  }
+  const reference = source.ipfsUrl.slice('ipfs://'.length);
+  const slash = reference.indexOf('/');
+  const cid = slash === -1 ? reference : reference.slice(0, slash);
+  const path = slash === -1 ? '' : reference.slice(slash);
+  const urls = gateways.map((gateway) => gatewayUrl(gateway, cid, path)).filter((u): u is string => u !== null);
+  return urls.length > 0 ? urls : [`${DEFAULT_IPFS_GATEWAY}${reference}`];
+}
+
+/**
  * The guard every external link goes through before it reaches Linking or
  * the in-app browser: http(s) only, IPFS via the gateway, anything else
  * (`javascript:`, `file:`, app schemes) and malformed URLs refused.
@@ -66,20 +114,31 @@ export function safeExternalUrl(
   return toHttp(url, gateway);
 }
 
-const GatewayContext = createContext(DEFAULT_IPFS_GATEWAY);
+const GatewayContext = createContext<readonly IpfsGateway[]>(DEFAULT_IPFS_GATEWAYS);
 
-export function MediaUrlProvider({ ipfsGateway, children }: { ipfsGateway: string; children: ReactNode }) {
-  return <GatewayContext.Provider value={ipfsGateway}>{children}</GatewayContext.Provider>;
+export function MediaUrlProvider({
+  ipfsGateways,
+  children,
+}: {
+  ipfsGateways: readonly IpfsGateway[];
+  children: ReactNode;
+}) {
+  return <GatewayContext.Provider value={ipfsGateways}>{children}</GatewayContext.Provider>;
 }
 
-/** `media` for image sources, `external` for links: both bound to the provider's gateway. */
+/**
+ * `media` for an image's first source, `candidates` for all of them in the
+ * order to try (`useMediaSource` walks them), `external` for links: all bound
+ * to the provider's gateways.
+ */
 export function useMediaUrls() {
-  const gateway = useContext(GatewayContext);
-  return useMemo(
-    () => ({
-      media: (url: string | null | undefined, size?: ImageSize) => resolveMediaUrl(url, gateway, size) ?? undefined,
-      external: (url: string | null | undefined) => safeExternalUrl(url, gateway),
-    }),
-    [gateway],
-  );
+  const gateways = useContext(GatewayContext);
+  return useMemo(() => {
+    const base = pathGatewayBase(gateways);
+    return {
+      media: (url: string | null | undefined, size?: ImageSize) => mediaCandidates(url, gateways, size)[0],
+      candidates: (url: string | null | undefined, size?: ImageSize) => mediaCandidates(url, gateways, size),
+      external: (url: string | null | undefined) => safeExternalUrl(url, base),
+    };
+  }, [gateways]);
 }

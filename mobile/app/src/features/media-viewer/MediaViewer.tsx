@@ -4,7 +4,7 @@ import { NavigationBar } from 'expo-navigation-bar';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
-import { Platform, Pressable, Share, useWindowDimensions, View } from 'react-native';
+import { Linking, Platform, Pressable, Share, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { ArrowUpTrayIcon, HeartIcon, PhotoIcon, PlayIcon, XMarkIcon } from 'react-native-heroicons/outline';
 import { HeartIcon as HeartSolid } from 'react-native-heroicons/solid';
@@ -30,7 +30,9 @@ import { lightImpact } from '~/ui/haptics';
 import { useMediaUrls } from '~/ui/media-url';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
+import { toast } from '~/ui/toast';
 import { colors } from '~/ui/tokens';
+import { useMediaUrlSource } from '~/ui/use-media-source';
 
 import { findCachedPost } from './cached-post';
 import { clampOffset, fittedSize, settlePage, shouldDismiss, MAX_ZOOM, DOUBLE_TAP_ZOOM } from './viewer-math';
@@ -86,11 +88,10 @@ const ViewerPage = memo(function ViewerPage({
   onSize,
   onStep,
 }: PageProps) {
-  const { media: resolve } = useMediaUrls();
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const video = media.type === 'video';
-  const uri = resolve(video ? media.thumbnail : media.url);
+  // Each gateway in turn (an error or 8 s moves on), then the placeholder with Retry (UX_SPEC 2.4.6).
+  const source = useMediaUrlSource(video ? media.thumbnail : media.url);
+  const { uri, loaded } = source;
   const zoomStyle = useAnimatedStyle(() =>
     page.value === index
       ? { transform: [{ translateX: offsetX.value }, { translateY: offsetY.value }, { scale: scale.value }] }
@@ -100,13 +101,27 @@ const ViewerPage = memo(function ViewerPage({
   const label = `${media.alt || kind}, ${index + 1} of ${count}`;
 
   let content;
-  if (!uri || failed) {
+  if (!uri) {
     content = (
       <View className="items-center gap-3">
         {video ? <PlayIcon size={48} color={WHITE} /> : <PhotoIcon size={48} color={WHITE} />}
         <Text variant="subhead" style={{ color: WHITE }}>
           {video ? 'Video' : 'Image unavailable'}
         </Text>
+        {source.retryable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={video ? 'Retry loading video preview' : 'Retry loading image'}
+            onPress={source.retry}
+            hitSlop={8}
+            testID="media-retry"
+            className="min-h-11 justify-center rounded-full bg-white/20 px-5 active:bg-white/30"
+          >
+            <Text variant="subheadStrong" style={{ color: WHITE }}>
+              Retry
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   } else {
@@ -119,22 +134,16 @@ const ViewerPage = memo(function ViewerPage({
           transition={150}
           accessible={false}
           onLoad={(e) => {
-            setLoaded(true);
+            source.onLoad();
             onSize(index, { width: e.source.width, height: e.source.height });
           }}
-          onError={() => setFailed(true)}
+          onProgress={source.onProgress}
+          onError={source.onError}
           testID={`media-image-${index}`}
         />
         {!loaded ? (
           <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
             <Spinner size="md" color={WHITE} />
-          </View>
-        ) : null}
-        {video ? (
-          <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-            <View className="h-16 w-16 items-center justify-center rounded-full bg-black/60">
-              <PlayIcon size={32} color={WHITE} />
-            </View>
           </View>
         ) : null}
       </>
@@ -146,15 +155,21 @@ const ViewerPage = memo(function ViewerPage({
       accessible
       accessibilityRole={onStep ? 'adjustable' : 'image'}
       accessibilityLabel={label}
-      accessibilityActions={
-        onStep
+      accessibilityActions={[
+        ...(onStep
           ? [
               { name: 'increment', label: 'Next image' },
               { name: 'decrement', label: 'Previous image' },
             ]
-          : undefined
-      }
-      onAccessibilityAction={onStep ? (e) => onStep(e.nativeEvent.actionName === 'increment' ? 1 : -1) : undefined}
+          : []),
+        // The page is one control to a screen reader, so the visible Retry is out of its reach.
+        ...(!uri && source.retryable ? [{ name: 'retry', label: 'Retry' }] : []),
+      ]}
+      onAccessibilityAction={(e) => {
+        const action = e.nativeEvent.actionName;
+        if (action === 'retry') source.retry();
+        else if (onStep) onStep(action === 'increment' ? 1 : -1);
+      }}
       style={{ width, height }}
       className="items-center justify-center"
     >
@@ -434,6 +449,17 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
   // The item's own link (IPFS via the gateway), not the image-proxy copy shown here.
   const shareUrl = current ? external(current.url) : null;
 
+  // 1.0 never plays video in the app (UX_SPEC 2.4.6): the viewer shows the thumbnail and hands the video to the system, as web's "Watch video" link does.
+  const isVideo = current?.type === 'video';
+  const videoUrl = isVideo ? external(current.url) : null;
+  const watchVideo = () => {
+    if (!videoUrl) return;
+    Linking.openURL(videoUrl).catch((error: unknown) => {
+      appendLog('warn', 'host', `Opening a video failed: ${errorMessage(error)}`);
+      toast.error("Couldn't open the video");
+    });
+  };
+
   const share = () => {
     if (!shareUrl) return;
     const content = Platform.OS === 'ios' ? { url: shareUrl } : { message: shareUrl };
@@ -489,9 +515,23 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
         style={[{ position: 'absolute', left: 0, right: 0, bottom: insets.bottom + 12 }, chromeStyle]}
         className="flex-row items-center justify-between px-4"
       >
-        <ChromeButton label="Share image" onPress={share} testID="media-share">
+        <ChromeButton label={isVideo ? 'Share video' : 'Share image'} onPress={share} testID="media-share">
           <ArrowUpTrayIcon size={22} color={WHITE} />
         </ChromeButton>
+        {isVideo && videoUrl ? (
+          <ChromeButton label="Watch video" onPress={watchVideo} testID="media-watch-video">
+            <PlayIcon size={22} color={WHITE} />
+            <Text variant="subheadStrong" style={{ color: WHITE }}>
+              Watch video
+            </Text>
+          </ChromeButton>
+        ) : isVideo ? (
+          <View accessible accessibilityLabel="Video preview" className="rounded-full bg-black/50 px-3 py-2" testID="media-video-preview">
+            <Text variant="subheadStrong" style={{ color: WHITE }}>
+              Video preview
+            </Text>
+          </View>
+        ) : null}
         <ChromeButton label={`${liked ? 'Unlike' : 'Like'}, ${likes} likes`} onPress={like} testID="media-like">
           {liked ? <HeartSolid size={22} color={colors.red500} /> : <HeartIcon size={22} color={WHITE} />}
           {likes > 0 ? (

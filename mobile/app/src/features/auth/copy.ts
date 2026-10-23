@@ -14,7 +14,8 @@ export const copy = {
   },
   signin: {
     title: 'Sign in with your Dash wallet',
-    subtitle: 'Approve one request in your wallet. Your keys never leave it.',
+    // The wallet keeps the main keys; the app is handed limited ones (App Connect), so never "your keys never leave it".
+    subtitle: 'Approve one request in your wallet. It keeps your main keys, and Yappr gets limited keys for this device.',
     /** AUTH-14: the flow opened for an account whose stored key no longer signs. */
     reauth: (name: string) => `Sign in again as ${name} with its wallet or key.`,
     openWallet: 'Open wallet',
