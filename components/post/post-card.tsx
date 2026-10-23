@@ -404,9 +404,7 @@ function PostCardView({
   const [showLikesModal, setShowLikesModal] = useState(false)
   // Selectors, not the whole store: the actions never change, whereas the
   // draft's state changes on every keystroke, and every mounted card would re-render with it.
-  const setReplyingTo = useAppStore((s) => s.setReplyingTo)
-  const setComposeOpen = useAppStore((s) => s.setComposeOpen)
-  const setQuotingPost = useAppStore((s) => s.setQuotingPost)
+  const openCompose = useAppStore((s) => s.openCompose)
   const { open: openTipModal } = useTipModal()
   const { open: openRecoveryModal } = useRecoveryModal()
   const { open: openDeleteModal } = useDeleteConfirmationModal()
@@ -524,8 +522,7 @@ function PostCardView({
       router.push(`/post?id=${ownQuote.id}`)
       return
     }
-    setQuotingPost(enrichedPost)
-    setComposeOpen(true)
+    openCompose({ quotingPost: enrichedPost })
   }
   const handleReply = () => {
     if (isTombstoned || !requireAuth()) return
@@ -537,8 +534,7 @@ function PostCardView({
       toast.error(cantReplyReason || "Can't reply to this post")
       return
     }
-    setReplyingTo(enrichedPost)
-    setComposeOpen(true)
+    openCompose({ replyingTo: enrichedPost })
   }
   const handleHideUnreadablePrivate = () => {
     setHideUnreadablePrivate(true)

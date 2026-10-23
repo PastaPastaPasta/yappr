@@ -41,7 +41,7 @@ import { LegalLinks } from './legal-links'
 export function MobileBottomNav() {
   const pathname = useRoutePath()
   const { user, logout } = useAuth()
-  const { setComposeOpen } = useAppStore()
+  const openCompose = useAppStore((s) => s.openCompose)
   const openLoginModal = useLoginModal((s) => s.open)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [isHydrated, setIsHydrated] = useState(false)
@@ -259,7 +259,7 @@ export function MobileBottomNav() {
           {user ? (
             <button
               aria-label="Create post"
-              onClick={() => setComposeOpen(true)}
+              onClick={() => openCompose()}
               className="flex items-center justify-center -mt-4 h-14 w-14 rounded-full bg-yappr-500 text-white shadow-yappr-lg active:scale-95 transition-transform"
             >
               <PlusIcon className="h-7 w-7" />

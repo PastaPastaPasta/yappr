@@ -120,7 +120,10 @@ export function ThreadView({ row, messages, details, status, isLoading, blocked,
                 <MenuItem onClick={onToggleBlock}>{blocked ? 'Unblock' : 'Block'} {title}</MenuItem>
               )}
               {!row.legacyOnly && (
-                <MenuItem onClick={onHide} className="text-red-600">Delete conversation</MenuItem>
+                <MenuItem onClick={onHide}>
+                  Hide conversation
+                  <span className="block text-xs text-gray-500">Returns if a new message arrives</span>
+                </MenuItem>
               )}
             </MenuContent>
           </DropdownMenu.Root>

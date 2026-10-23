@@ -172,7 +172,7 @@ export function ConversationList({
           ))}
           {hiddenCount > 0 && (
             <button onClick={onToggleHidden} className="w-full p-3 text-sm text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-950">
-              {showHidden ? 'Hide deleted conversations' : `Show ${hiddenCount} deleted conversation${hiddenCount === 1 ? '' : 's'}`}
+              {showHidden ? 'Stop showing hidden conversations' : `Show ${hiddenCount} hidden conversation${hiddenCount === 1 ? '' : 's'}`}
             </button>
           )}
         </div>

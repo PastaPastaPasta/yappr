@@ -35,6 +35,8 @@ import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingLine, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
+import { isDashScheme } from '@/lib/services/insight-api-service'
+import { orderPaymentStatus, orderPlacedPaymentNote, placeOrderNote, type DetectedPayment, type OrderPaymentStatus } from '@/lib/storefront/checkout-payment'
 
 const CHECKOUT_STEP_LABELS = { details: 'Details', policies: 'Policies', payment: 'Payment' } as const
 
@@ -104,6 +106,8 @@ function CheckoutPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
+  // What payment the placed order went out with, for the confirmation screen.
+  const [placedPayment, setPlacedPayment] = useState<OrderPaymentStatus | null>(null)
   const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
   const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -152,6 +156,8 @@ function CheckoutPage() {
   // Payment
   const [selectedPaymentUri, setSelectedPaymentUri] = useState<ParsedPaymentUri | null>(null)
   const [txid, setTxid] = useState('')
+  const [detectedPayment, setDetectedPayment] = useState<DetectedPayment | null>(null)
+  const placeOrderRef = useRef<HTMLButtonElement>(null)
   const [notes, setNotes] = useState('')
   const [refundAddress, setRefundAddress] = useState('')
 
@@ -765,6 +771,13 @@ function CheckoutPage() {
     })
   }
 
+  const paymentStatus = orderPaymentStatus({
+    detected: detectedPayment,
+    txid,
+    canDetect: !!selectedPaymentUri && isDashScheme(selectedPaymentUri.scheme),
+  })
+  const placeOrderDisabled = isSubmitting || isCheckingAvailability || isCalculatingShipping || Boolean(stockError) || !selectedPaymentUri
+
   const handlePlaceOrder = async () => {
     // A quote being recalculated reads as 0 until it settles: never place on it.
     if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || isCalculatingShipping || stockError) return
@@ -863,6 +876,7 @@ function CheckoutPage() {
       // Clear cart items for this store
       cartService.removeStoreItems(store.id)
 
+      setPlacedPayment(paymentStatus)
       setOrderCreated(true)
     } catch (err) {
       logger.error('Failed to create order:', err)
@@ -889,6 +903,11 @@ function CheckoutPage() {
               Your order has been sent to the seller. They will process it and provide updates.
               {digitalCount > 0 && ' Your digital items will appear under My Orders → Library as soon as the seller delivers them.'}
             </p>
+            {placedPayment && (
+              <p role="status" className="text-sm text-center max-w-sm mb-6 text-gray-700 dark:text-gray-300">
+                {orderPlacedPaymentNote(placedPayment)}
+              </p>
+            )}
             <div className="flex gap-4">
               <Button variant="outline" onClick={() => router.push('/orders')}>
                 View Orders
@@ -1109,6 +1128,13 @@ function CheckoutPage() {
                 txidMaxLength={paymentFieldLimits?.txid}
                 orderTotal={total}
                 orderCurrency={currency}
+                detectedPayment={detectedPayment}
+                onDetectedPaymentChange={setDetectedPayment}
+                onContinue={() => {
+                  // The refund address, review and notes sit between the payment and Place Order.
+                  placeOrderRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  placeOrderRef.current?.focus({ preventScroll: true })
+                }}
               />
 
               <div className="p-4 space-y-4">
@@ -1155,12 +1181,19 @@ function CheckoutPage() {
                 </div>
 
                 <Button
+                  ref={placeOrderRef}
                   className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting || isCheckingAvailability || isCalculatingShipping || Boolean(stockError) || !selectedPaymentUri}
+                  disabled={placeOrderDisabled}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>
+
+                {selectedPaymentUri && placeOrderNote(paymentStatus) && (
+                  <p data-testid="place-order-payment-note" className="text-xs text-center text-gray-500">
+                    {placeOrderNote(paymentStatus)}
+                  </p>
+                )}
 
                 <p className="text-xs text-center text-gray-500">
                   Your order details will be encrypted and sent securely to the seller.

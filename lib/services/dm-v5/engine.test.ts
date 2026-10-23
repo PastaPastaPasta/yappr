@@ -189,7 +189,7 @@ describe('DmEngine views', () => {
     expect(fresh.getSnapshot().conversations.find((c) => c.key === key)).toMatchObject({ removed: true, hidden: true })
   })
 
-  it('"delete conversation" hides it until a newer message arrives', async () => {
+  it('"hide conversation" hides it until a newer message arrives', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
     const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))

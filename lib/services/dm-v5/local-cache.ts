@@ -14,7 +14,7 @@
  * - `readAt`/`hiddenAt` per conversation and `blocks`: this device's latest
  *   self-state edits. The self-state save is coalesced and cannot finish once
  *   the page is closing (§5.5), so they are kept here and re-applied on load:
- *   a reload never loses a read position, a deleted conversation or a block.
+ *   a reload never loses a read position, a hidden conversation or a block.
  */
 
 import { senderBucketLevel } from '@/lib/dm/invite'

@@ -542,7 +542,7 @@ export class DmEngine {
     })
   }
 
-  /** "Delete conversation": hide it until a newer message arrives (§5.5). */
+  /** "Hide conversation": hide it until a newer message arrives (§5.5). Positions only move forward, so there is no un-hide. */
   hide(key: string): void {
     const conv = this.convByKey(key)
     const newest = timeline(conv).at(-1)
@@ -552,7 +552,7 @@ export class DmEngine {
     this.ctx.store.touch(conv.entry, { hiddenAt: at, readAt: newest?.createdAt ?? 0 })
     this.notePositions(conv)
     this.emit()
-    this.saveNow('the deleted conversation')
+    this.saveNow('the hidden conversation')
   }
 
   /**

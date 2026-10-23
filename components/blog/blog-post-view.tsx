@@ -73,7 +73,7 @@ export function BlogPostView({ blog, post, username, usernamePending }: BlogPost
   const router = useRouter()
   const blocks = Array.isArray(post.content) ? post.content : []
   const { text: summaryText, hidden: summaryHidden } = decodeSummary(post.subtitle)
-  const { setQuotingPost, setComposeOpen } = useAppStore()
+  const openCompose = useAppStore((s) => s.openCompose)
   const { requireAuth } = useRequireAuth()
   const { user } = useAuth()
   const { isFollowing, isLoading: followLoading, toggleFollow } = useBlogFollow(blog.id, undefined, false)
@@ -100,7 +100,7 @@ export function BlogPostView({ blog, post, username, usernamePending }: BlogPost
   const handleQuote = () => {
     if (!requireAuth()) return
 
-    setQuotingPost({
+    openCompose({ quotingPost: {
       id: post.id,
       author: {
         id: post.ownerId,
@@ -129,9 +129,7 @@ export function BlogPostView({ blog, post, username, usernamePending }: BlogPost
       blogName: blog.name,
       blogUsername: username,
       blogContent: post.content,
-    })
-
-    setComposeOpen(true)
+    } })
   }
 
   const deploymentUrl = `${APP_URL.replace(/\/+$/, '')}${(process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/+$/, '')}`

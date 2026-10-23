@@ -158,7 +158,7 @@ function SidebarBrand() {
 
 export function Sidebar() {
   const pathname = useRoutePath()
-  const { setComposeOpen } = useAppStore()
+  const openCompose = useAppStore((s) => s.openCompose)
   const { user, logout, refreshBalance } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
 
@@ -353,7 +353,7 @@ export function Sidebar() {
 
         {isHydrated && user ? (
           <Button
-            onClick={() => setComposeOpen(true)}
+            onClick={() => openCompose()}
             className="mx-auto mt-8 flex h-12 w-12 px-0 text-base shadow-yappr-lg xl:w-full xl:px-6"
             size="lg"
           >

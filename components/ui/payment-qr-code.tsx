@@ -2,7 +2,7 @@
 
 import { parsePaymentUri } from '@/lib/utils/payment-uri'
 import { getDashPaymentNetwork, isDashScheme } from '@/lib/services/insight-api-service'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, type ReactNode } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { ClipboardIcon, CheckIcon, ArrowLeftIcon, ArrowPathIcon } from '@heroicons/react/24/outline'
 import { PaymentSchemeIcon, getPaymentLabel, PAYMENT_SCHEME_LABELS, TDASH_NETWORK_LABEL } from './payment-icons'
@@ -39,6 +39,8 @@ interface PaymentQRCodeProps {
   onTransactionDetected?: (txid: string, amountDash: number) => void
   onWatchTimeout?: () => void
   onDone?: () => void
+  /** What to offer once a payment is detected, in place of the Done button. */
+  detectedAction?: ReactNode
   orderTotal?: number
   orderCurrency?: string
 }
@@ -67,6 +69,7 @@ function ValidPaymentQRCode({
   onTransactionDetected,
   onWatchTimeout,
   onDone,
+  detectedAction,
   orderTotal,
   orderCurrency
 }: PaymentQRCodeProps) {
@@ -241,6 +244,7 @@ function ValidPaymentQRCode({
           onDetected={onTransactionDetected}
           onTimeout={onWatchTimeout}
           onDone={onDone}
+          detectedAction={detectedAction}
         />
       )}
 

@@ -1,9 +1,11 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { ClockIcon, ArrowPathIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { CheckCircleIcon as CheckCircleSolidIcon } from '@heroicons/react/24/solid'
 import { useDashTransactionWatcher, type WatcherStatus } from '@/hooks/use-dash-transaction-watcher'
 import { isDashScheme } from '@/lib/services/insight-api-service'
+import { formatDetectedDash } from '@/lib/storefront/checkout-payment'
 
 interface DashPaymentWatcherProps {
   scheme: string
@@ -11,19 +13,24 @@ interface DashPaymentWatcherProps {
   enabled?: boolean
   onDetected?: (txid: string, amountDash: number) => void
   onTimeout?: () => void
+  /** Dialogs: a Done button under the detected message that closes them. */
   onDone?: () => void
+  /** Replaces the Done button with the caller's own next step (the checkout's Place Order). */
+  detectedAction?: ReactNode
 }
 
 function WatcherStatusDisplay({
   status,
   detectedAmount,
   onRetry,
-  onDone
+  onDone,
+  detectedAction
 }: {
   status: WatcherStatus
   detectedAmount: number | null
   onRetry: () => void
   onDone?: () => void
+  detectedAction?: ReactNode
 }) {
   switch (status) {
     case 'watching':
@@ -49,13 +56,28 @@ function WatcherStatusDisplay({
 
     case 'detected':
       return (
-        <button
-          onClick={onDone}
-          className="w-full py-3 rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors flex items-center justify-center gap-2"
+        <div
+          role="status"
+          className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg space-y-3"
         >
-          <CheckCircleSolidIcon className="w-5 h-5" />
-          Done {detectedAmount !== null && `(${detectedAmount.toFixed(8)} DASH received)`}
-        </button>
+          <div className="flex items-start gap-2">
+            <CheckCircleSolidIcon className="w-5 h-5 shrink-0 text-green-500" />
+            <div>
+              <p className="text-sm font-medium text-green-800 dark:text-green-200">Payment detected</p>
+              {detectedAmount !== null && (
+                <p className="text-xs text-green-700 dark:text-green-300">{formatDetectedDash(detectedAmount)} received</p>
+              )}
+            </div>
+          </div>
+          {detectedAction ?? (onDone && (
+            <button
+              onClick={onDone}
+              className="w-full py-3 rounded-lg bg-green-500 hover:bg-green-600 text-white font-medium transition-colors"
+            >
+              Done
+            </button>
+          ))}
+        </div>
       )
 
     case 'timeout':
@@ -136,7 +158,8 @@ export function DashPaymentWatcher({
   enabled = true,
   onDetected,
   onTimeout,
-  onDone
+  onDone,
+  detectedAction
 }: DashPaymentWatcherProps) {
   const {
     status,
@@ -161,6 +184,7 @@ export function DashPaymentWatcher({
       detectedAmount={detectedAmount}
       onRetry={retry}
       onDone={onDone}
+      detectedAction={detectedAction}
     />
   )
 }
