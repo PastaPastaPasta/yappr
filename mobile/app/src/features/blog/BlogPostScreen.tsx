@@ -239,20 +239,16 @@ function PostReader({ blog: b, post: p, info, follow, deletion, refetchAll }: {
   const cover = urls.media(p.coverImage);
   const model = useMemo(() => contentModel(blocksOf(p.content)), [p.content]);
 
-  const onRevealComposer = useCallback((dy: number) => {
-    list.current?.scrollToOffset({ offset: scrollY.current + dy, animated: true });
-  }, []);
   const onReport = useCallback((target: BlogReportTargetDTO) => requireAuth(() => setReport(target)), []);
   const comments = useBlogComments({
     post: p,
     maxLength: info?.limits.comment ?? 500,
     canReport,
     onReport,
-    onReveal: onRevealComposer,
+    onReveal: (dy) => list.current?.scrollToOffset({ offset: scrollY.current + dy, animated: true }),
     actionsRef: composerActions,
   });
 
-  const banner = deletion.state !== 'idle';
   const showFollow = !own && Boolean(viewerId) && follow.data?.following === false;
   const onJumpToHeading = useCallback(
     (index: number) => {
@@ -312,9 +308,9 @@ function PostReader({ blog: b, post: p, info, follow, deletion, refetchAll }: {
 
   // Where deleting the post stands. The list's header, always mounted: a row inserted above the screen would
   // scroll the list to keep its place and push this off it, and the live region would be unmounted far down the post.
-  const deletionBanner = banner ? (
+  const deletionBanner = deletion.state !== 'idle' ? (
     <View accessibilityLiveRegion="polite" collapsable={false} style={{ gap: 4, paddingBottom: 16 }} testID="blog-post-deletion">
-      <RNText style={{ color: palette.muted, fontSize: 15 }}>{DELETION_TEXT[deletion.state as Exclude<Deletion, 'idle'>]}</RNText>
+      <RNText style={{ color: palette.muted, fontSize: 15 }}>{DELETION_TEXT[deletion.state]}</RNText>
       {deletion.state === 'unconfirmed' ? (
         <View style={{ flexDirection: 'row', gap: 16 }}>
           <Pressable

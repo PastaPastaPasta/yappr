@@ -29,7 +29,7 @@ import type { BlogPalette } from './blog-theme';
  */
 
 /** What every block draws with. */
-export interface BlockStyle {
+interface BlockStyle {
   palette: BlogPalette;
   bodyFont: TextStyle;
   headingFont: TextStyle;
@@ -38,7 +38,7 @@ export interface BlockStyle {
   /** The table of contents a `tableOfContents` block lists. */
   toc: readonly HeadingLink[];
   /** A table of contents entry was tapped, by `headingLinks` index. */
-  onJumpToHeading?: (index: number) => void;
+  onJumpToHeading: (index: number) => void;
 }
 
 /** One top-level block, as a row. */
@@ -49,7 +49,7 @@ export interface BlockRow {
   number: number;
 }
 
-export interface BlogContentModel {
+interface BlogContentModel {
   rows: BlockRow[];
   toc: HeadingLink[];
   footnotes: string[];
@@ -269,7 +269,7 @@ function renderBlock(block: RawBlock, key: string, depth: number, number: number
           {toc.map((heading) => (
             <Pressable
               key={heading.index}
-              onPress={() => onJumpToHeading?.(heading.index)}
+              onPress={() => onJumpToHeading(heading.index)}
               accessibilityRole="link"
               style={{ minHeight: MIN_TARGET, justifyContent: 'center', paddingLeft: (heading.level - 1) * 12 }}
             >
@@ -320,8 +320,8 @@ function renderBlock(block: RawBlock, key: string, depth: number, number: number
 }
 
 /** One top-level block of a post. Draws nothing for a block that has nothing to show. */
-export const BlogBlock = memo(function BlogBlock({ row, palette, bodyFont, headingFont, scale, toc, onJumpToHeading }: { row: BlockRow } & BlockStyle) {
-  const node = renderBlock(row.block, row.key, 0, row.number, { palette, bodyFont, headingFont, scale, toc, onJumpToHeading });
+export const BlogBlock = memo(function BlogBlock({ row, ...style }: { row: BlockRow } & BlockStyle) {
+  const node = renderBlock(row.block, row.key, 0, row.number, style);
   // `gap` for a paragraph and the blocks nested under it, which come back as siblings.
   return node ? <View style={{ paddingBottom: 14, gap: 14 }}>{node}</View> : null;
 });

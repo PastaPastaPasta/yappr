@@ -75,7 +75,7 @@ export function useBlogComments({ post, maxLength, canReport, onReport, onReveal
   canReport: boolean;
   onReport: (target: BlogReportTargetDTO) => void;
   /** Scroll the screen down by this much, to bring the Post comment button up from under the keyboard. */
-  onReveal?: (dy: number) => void;
+  onReveal: (dy: number) => void;
   /** The composer's button row (`CommentsHeader`'s `actionsRef`), measured to bring it above the keyboard. */
   actionsRef: RefObject<View | null>;
 }) {
@@ -115,7 +115,7 @@ export function useBlogComments({ post, maxLength, canReport, onReport, onReveal
   const keyboardTop = useRef<number | null>(null);
   const reveal = () => {
     const top = keyboardTop.current;
-    if (!focused.current || top === null || !onReveal) return;
+    if (!focused.current || top === null) return;
     actionsRef.current?.measureInWindow((_x, y, _width, height) => {
       const overlap = y + height + 12 - top;
       if (overlap > 0) onReveal(overlap);
@@ -171,17 +171,16 @@ export function useBlogComments({ post, maxLength, canReport, onReport, onReveal
     });
 
   // Stable, so a comment's row (memoized) is not drawn again for every key typed in the composer.
-  const postId = post.id;
   const remove = useCallback(
     (comment: BlogCommentDTO) => {
       confirmAlert({ title: 'Delete your comment?', message: 'This can’t be undone.', confirmText: 'Delete', destructive: true })
         .then((ok) => {
           if (!ok) return;
-          runWrite(deleteCommentWrite, { commentId: comment.id, postId }).catch(() => undefined);
+          runWrite(deleteCommentWrite, { commentId: comment.id, postId: post.id }).catch(() => undefined);
         })
         .catch(() => undefined);
     },
-    [postId],
+    [post.id],
   );
   const report = useCallback(
     (comment: BlogCommentDTO) => onReport({ docType: 'blogComment', targetId: comment.id, ownerId: comment.ownerId }),
@@ -224,7 +223,7 @@ export function useBlogComments({ post, maxLength, canReport, onReport, onReveal
   };
 }
 
-export type BlogComments = ReturnType<typeof useBlogComments>;
+type BlogComments = ReturnType<typeof useBlogComments>;
 
 /** Comments a post turned off say so. */
 export function CommentsOff({ palette }: { palette: BlogPalette }) {
