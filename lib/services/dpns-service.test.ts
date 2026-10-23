@@ -17,7 +17,8 @@ vi.mock('@/lib/contract-topology', async (importOriginal) => ({
 }));
 vi.mock('./signer-service', () => ({ signerService: {} }));
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: false, reason: 'no-match' }) }));
-import { describeDpnsRegistrationError, DpnsNotSentError, dpnsService, formatCreditsAsDash, minimumContestFundCredits } from './dpns-service';
+import { describeDpnsRegistrationError, dpnsService, formatCreditsAsDash } from './dpns-service';
+import { DpnsNotSentError } from './dpns-registration';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -308,9 +309,9 @@ describe('describeDpnsRegistrationError (contested names, 4.2.0-beta.5)', () => 
       .toMatch(/20 or more characters/i);
   });
 
-  it('mentions the contest fund, without a hard-coded price, when the identity is short of credits', () => {
+  it('mentions the vote deposit, without a hard-coded price, when the identity is short of credits', () => {
     const message = describeDpnsRegistrationError(new Error('Insufficient identity 9t2e balance 5000000000 required 10020000000'));
-    expect(message).toMatch(/contest fund/i);
+    expect(message).toMatch(/vote deposit/i);
     expect(message).not.toMatch(/\d\s*DASH/);
   });
 
@@ -337,56 +338,44 @@ describe('DPNS credit amounts', () => {
     expect(formatCreditsAsDash(123_456_789_012_345_678_000n)).toBe('1234567890.12345678');
   });
 
-  it('knows the lowest contest fund per protocol version', () => {
-    expect(minimumContestFundCredits(14)).toBe(10_000_000_000n);
-    expect(minimumContestFundCredits(null)).toBe(10_000_000_000n);
-    expect(minimumContestFundCredits(12)).toBe(20_000_000_000n);
-  });
 });
 
-describe('contested DPNS registration without the contest fund', () => {
+describe('registering a username', () => {
   beforeEach(() => {
     dpns.isValidUsername.mockReset().mockResolvedValue(true);
     dpns.isContestedUsername.mockReset().mockResolvedValue(true);
-    dpns.isNameAvailable.mockReset().mockResolvedValue(true);
-    dpns.registerName.mockReset().mockResolvedValue({});
-    epoch.current.mockReset().mockResolvedValue({ protocolVersion: 14 });
-    // QA S3-04: 0.0699 DASH, short of the 0.1 DASH protocol-14 fund.
+    dpns.convertToHomographSafe.mockReset().mockImplementation(async (label: string) => label.toLowerCase());
+    dpns.registerName.mockReset();
+    // QA S3-04: 0.0699 DASH, short of the 0.1 DASH protocol-14 deposit.
     identities.fetch.mockReset().mockResolvedValue({ balance: 6_989_772_426n, publicKeys: [] });
   });
 
-  it('refuses before the preorder is paid', async () => {
-    await expect(dpnsService.registerUsername('qabetafivegus', 'B', 'wif'))
-      .rejects.toThrow(/pays at least 0\.1 DASH .* has 0\.06989772 DASH/);
-    expect(dpns.registerName).not.toHaveBeenCalled();
-  });
-
-  it('marks a failure before the SDK was asked to register as not sent, and words a read timeout as such', async () => {
-    dpns.isNameAvailable.mockRejectedValue(new Error('Request timeout'));
+  it('marks a failure before anything is sent as not sent, and words a read timeout as such', async () => {
+    identities.fetch.mockRejectedValue(new Error('Request timeout'));
     const error = await dpnsService.registerUsername('qabetafivegus', 'B', 'wif').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DpnsNotSentError);
     expect((error as DpnsNotSentError).cause).toMatchObject({ message: 'Request timeout' });
-    expect(dpns.registerName).not.toHaveBeenCalled();
     // Nothing was sent, so never "it may have gone through".
     expect(describeDpnsRegistrationError(error)).not.toMatch(/may have gone through/);
   });
 
-  it('still checks the lowest fund when the epoch cannot be read', async () => {
-    epoch.current.mockRejectedValue(new Error('offline'));
-    await expect(dpnsService.registerUsername('qabetafivegus', 'B', 'wif')).rejects.toThrow(/at least 0\.1 DASH/);
+  it('refuses a key the identity does not hold, and never uses the SDK one-shot registration', async () => {
+    await expect(dpnsService.registerUsername('a-long-uncontested-name-2', 'B', 'wif')).rejects.toThrow(/No suitable signing key/);
     expect(dpns.registerName).not.toHaveBeenCalled();
   });
 
-  it('reports the failed name as contested', async () => {
-    const [result] = await dpnsService.registerUsernamesSequentially([{ label: 'qabetafivegus', identityId: 'B', privateKeyWif: 'wif' }]);
-    expect(result).toMatchObject({ success: false, isContested: true });
-    expect(result.error).toMatch(/contested name/);
-  });
-
-  it('does not read the epoch for a name that is not contested', async () => {
-    dpns.isContestedUsername.mockResolvedValue(false);
-    // Past the fund check, key matching fails on the empty key list.
-    await expect(dpnsService.registerUsername('a-long-uncontested-name-2', 'B', 'wif')).rejects.toThrow(/No suitable signing key/);
-    expect(epoch.current).not.toHaveBeenCalled();
+  it('sends nothing for any name when the balance misses the total the review showed', async () => {
+    const results = await dpnsService.registerUsernamesSequentially(
+      [
+        { label: 'qabetafivegus', identityId: 'B', privateKeyWif: 'wif', contestFund: 10_000_000_000n },
+        { label: 'a-long-uncontested-name-2', identityId: 'B', privateKeyWif: 'wif' },
+      ],
+      undefined,
+      10_070_000_000n
+    );
+    expect(results.map((r) => r.success)).toEqual([false, false]);
+    expect(results[0].error).toBe('This needs 0.1007 DASH (about 604¢), and your balance is 0.0699 DASH (about 419¢). Top up, or pick a name of 20 or more characters or one with a digit from 2 to 9.');
+    // Refused on one balance read, before any name's key or deposit was looked at.
+    expect(identities.fetch).toHaveBeenCalledTimes(1);
   });
 });

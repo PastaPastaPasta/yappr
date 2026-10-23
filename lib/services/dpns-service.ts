@@ -2,7 +2,9 @@ import { logger } from '@/lib/logger';
 import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
-import { signerService } from './signer-service';
+import { DPNS_STALLED_MESSAGE, DPNS_STILL_CONFIRMING_MESSAGE, DpnsNotSentError, quoteDpnsName, registerDpnsName, type DpnsRegistrationOutcome } from './dpns-registration';
+import { shortBalanceMessage, totalQuote, type DpnsNameQuote, type DpnsQuote } from '@/lib/dpns/registration-quote';
+import type { SigningKey } from '@/lib/auth/signing-keys';
 import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { matchIdentityKey } from '@/lib/crypto/keys';
@@ -21,7 +23,6 @@ import {
   isContestedDocumentsNotYetAllowedError,
   isContestNotJoinableError,
   isOutcomeUnknownError,
-  sentWriteOutcomeUnknown,
 } from '@/lib/error-utils';
 
 
@@ -41,41 +42,15 @@ export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'
 }
 
 /**
- * The least a contested DPNS name pays into its vote: 0.1 DASH from protocol
- * 14 and 0.2 DASH under protocol 12/13. It only goes up from here (it doubles
- * once a contest holds 250 contenders), so a balance below it is certain to
- * be refused, and checking it before the preorder saves that fee. The SDK
- * still prices the real fund just before it signs.
- */
-export function minimumContestFundCredits(protocolVersion: number | null): bigint {
-  const dash = protocolVersion === null || protocolVersion >= 14 ? 10n : 20n;
-  return (BigInt(CREDITS_PER_DASH) * dash) / 100n;
-}
-
-/**
  * What a failed DPNS registration tells the user. A contested name (fewer than
  * 20 characters, only letters, hyphens and the digits 0 and 1) joins a
- * masternode vote and pays into its fund. The fund depends on the network's
- * protocol version (0.2 DASH under protocol 12/13, 0.1 DASH at protocol 14,
- * where it also doubles once a contest holds 250 contenders, platform#5034), so
- * no figure is hard-coded here. From 4.2.0-beta.5 the registration states the
- * most it pays (`contestFund`, #5039); Yappr leaves it out, so the SDK reads the
- * price just before it signs. The refusals below are what remains.
+ * masternode vote and pays a deposit into it. The deposit depends on the
+ * network's protocol version (0.2 DASH under protocol 12/13, 0.1 DASH at
+ * protocol 14, where it also doubles once a contest holds 250 contenders,
+ * platform#5034), so the review reads it (`quoteRegistrations`) and the
+ * registration pays only that (`lib/services/dpns-registration.ts`). The
+ * refusals below are what remains.
  */
-/**
- * `registerUsername` failed before the SDK was asked to register: a check,
- * the identity read or the signer. Nothing was sent or paid, so a retry is
- * safe. `cause` is the original error.
- */
-export class DpnsNotSentError extends Error {
-  readonly cause: unknown;
-  constructor(cause: unknown) {
-    super(extractErrorMessage(cause));
-    this.name = 'DpnsNotSentError';
-    this.cause = cause;
-  }
-}
-
 export function describeDpnsRegistrationError(failure: unknown): string {
   const notSent = failure instanceof DpnsNotSentError;
   const error = notSent ? failure.cause : failure;
@@ -86,7 +61,7 @@ export function describeDpnsRegistrationError(failure: unknown): string {
   if (isContestFundError(error)) {
     const needed = contestFundNeededFromError(error);
     const price = needed === null ? '' : ` (${formatCreditsAsDash(needed)} DASH now)`;
-    return `Others joined the vote for this name while you were registering, so it now costs more to enter${price}. Try again to pay the current price.`;
+    return `Others joined the vote for this name while you were registering, so its deposit went up${price}. The deposit wasn't paid. Review the new amount, then try again.`;
   }
   // 40111: the contest for this name opened more than its join window ago (a
   // week on mainnet), so no new contender may enter until it ends.
@@ -103,7 +78,7 @@ export function describeDpnsRegistrationError(failure: unknown): string {
     return 'The network couldn\'t confirm this registration yet. It may have gone through, so check your names before trying again.';
   }
   if (/insufficient identity .* balance/i.test(message)) {
-    return 'Your identity does not have enough credits for this registration. A contested name also pays a contest fund into its vote, priced by the network before you sign. Top up and try again.';
+    return 'Your balance does not cover this registration. A short name also pays the vote deposit shown before you register. Top up and try again.';
   }
   return message || 'Registration failed';
 }
@@ -518,127 +493,89 @@ class DpnsService {
   }
 
   /**
-   * Register a new username using the SDK API
+   * Register `label`, or continue a registration of it this browser started:
+   * a preorder already sent is settled and reused, never paid again
+   * (`lib/services/dpns-registration.ts`). `contestFund` is the vote deposit
+   * the user approved for a contested name; the domain is not signed when the
+   * deposit differs from it. Rejects with {@link DpnsNotSentError} when this
+   * call sent nothing.
    */
   async registerUsername(
     label: string,
     identityId: string,
     privateKeyWif: string,
-    onPreorderSuccess?: () => void
-  ): Promise<{ success: boolean }> {
-    // Set once the SDK is asked to register: an error before that sent nothing.
-    let sent = false;
+    options: { contestFund?: bigint | null; durable?: () => Promise<void> } = {}
+  ): Promise<DpnsRegistrationOutcome> {
+    let signingKey: SigningKey;
+    let normalizedLabel: string;
     try {
       const sdk = await getEvoSdk();
-
-      // Validate the username first using SDK
-      const isValid = await sdk.dpns.isValidUsername(label);
-      if (!isValid) {
+      if (!(await sdk.dpns.isValidUsername(label))) {
         throw new Error(`Invalid username format: ${label}`);
       }
-
-      // Check if it's contested
-      const isContested = await sdk.dpns.isContestedUsername(label);
-      if (isContested) {
-        logger.warn(`Username ${label} is contested and will require masternode voting`);
-      }
-
-      // Check availability
-      const isAvailable = await sdk.dpns.isNameAvailable(label);
-      if (!isAvailable) {
-        throw new Error(`Username ${label} is already taken`);
-      }
-
-      // Fetch identity to validate and get public key info
+      normalizedLabel = await sdk.dpns.convertToHomographSafe(label);
       const identity = await sdk.identities.fetch(identityId);
       if (!identity) {
         throw new Error('Identity not found');
       }
-
-      if (isContested) {
-        // Refuse before the preorder is paid: registerName pays it first and
-        // only then finds the balance short of the contest fund.
-        const protocolVersion = await sdk.epoch.current().then(
-          (epoch) => epoch.protocolVersion,
-          (error) => {
-            logger.warn('DPNS: epoch read failed; checking the lowest contest fund:', extractErrorMessage(error));
-            return null;
-          }
-        );
-        const minimumFund = minimumContestFundCredits(protocolVersion);
-        if (identity.balance < minimumFund) {
-          throw new Error(
-            `${label} is a contested name, and entering its vote pays at least ${formatCreditsAsDash(minimumFund)} DASH from your credits. ` +
-            `This identity has ${formatCreditsAsDash(identity.balance, 'down')} DASH. Top up, or pick a name of 20 or more characters or one with a digit from 2 to 9.`
-          );
-        }
-      }
-
-      // Get WASM public keys to find the matching signing key
-      const wasmPublicKeys = identity.publicKeys;
-
-      // Find a signing key that matches the provided private key
-      // DPNS operations require CRITICAL or HIGH security level
-      const identityKey = this.findMatchingSigningKey(privateKeyWif, wasmPublicKeys);
+      // DPNS operations require a CRITICAL or HIGH AUTHENTICATION key.
+      const identityKey = this.findMatchingSigningKey(privateKeyWif, identity.publicKeys);
       if (!identityKey) {
         throw new Error('No suitable signing key found that matches your private key. DPNS operations require a CRITICAL or HIGH security level AUTHENTICATION key.');
       }
-
-      logger.debug(`DPNS: Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
-
-      // Create signer and identity key for the state transition
-      const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(
-        privateKeyWif,
-        identityKey
-      );
-
-      // Register the name. `contestFund` is left out on purpose: for a contested
-      // name the SDK reads the fund to join just before it signs (beta.5), which
-      // is the least that is accepted and what is charged.
-      logger.debug(`Registering DPNS name: ${label}`);
-      sent = true;
-      await sdk.dpns.registerName({
-        label,
-        identity,
-        identityKey: signingKey,
-        signer,
-        preorderCallback: onPreorderSuccess
-      });
-
-      // Clear cache for this identity
-      this.clearCache(undefined, identityId);
-
-      return { success: true };
+      signingKey = { wif: privateKeyWif, identityKey, appConnect: false };
     } catch (error) {
-      // Sent, and no verdict came back (a timeout, or a result proof that could
-      // not be checked during a quorum rotation): the name may be registered.
-      // Registering again would pay a second preorder, so ask DPNS first.
-      if (sent && sentWriteOutcomeUnknown(error) && await this.nameIsOwnedBy(label, identityId)) {
-        logger.warn(`DPNS: registering ${label} reported "${extractErrorMessage(error)}" but the name is registered to ${identityId}`);
-        this.clearCache(undefined, identityId);
-        return { success: true };
-      }
       logger.error('Error registering username:', error);
-      // Failed before the SDK was asked to register (a check, the identity read, the signer):
-      // nothing was sent or paid. Callers that track the write can say so (DpnsNotSentError).
-      if (!sent) throw new DpnsNotSentError(error);
+      throw new DpnsNotSentError(error);
+    }
+    try {
+      const outcome = await registerDpnsName({
+        label,
+        normalizedLabel,
+        ownerId: identityId,
+        signingKey,
+        contestFund: options.contestFund,
+        durable: options.durable,
+        readOwner: (name) => this.readDomainOwner(name),
+      });
+      if (outcome.state !== 'pending') this.clearCache(normalizedLabel, identityId);
+      return outcome;
+    } catch (error) {
+      logger.error('Error registering username:', error);
       throw error;
     }
   }
 
   /**
-   * Whether DPNS shows `label` registered to `identityId`, read from the
-   * chain (never the name cache, which may predate this registration); false
-   * when it does not, or the read fails.
+   * Who owns the `domain` of a normalized label now, read from the chain
+   * (never the name cache, which may predate a registration): the
+   * document's owner, or null when DPNS answered that there is none. Rejects
+   * when the read fails.
    */
-  private async nameIsOwnedBy(label: string, identityId: string): Promise<boolean> {
-    this.clearCache(label.toLowerCase().replace(/\.dash$/, ''));
-    try {
-      return (await this.findIdentityByName(label)) === identityId;
-    } catch (readError) {
-      logger.warn(`DPNS: could not read back ${label}:`, extractErrorMessage(readError));
-      return false;
-    }
+  private async readDomainOwner(normalizedLabel: string): Promise<string | null> {
+    this.clearCache(normalizedLabel);
+    const doc = await this.findDomain(normalizedLabel);
+    return doc ? identifierToBase58(doc.$ownerId || doc.ownerId) || null : null;
+  }
+
+  /** What registering `label` costs `identityId` from here (its vote deposit and the fees still to pay). Rejects when a read fails. */
+  async quoteName(label: string, identityId: string): Promise<DpnsNameQuote> {
+    const sdk = await getEvoSdk();
+    return quoteDpnsName(sdk, identityId, label, await sdk.dpns.convertToHomographSafe(label));
+  }
+
+  /**
+   * What registering `labels` costs `identityId` now, name by name (each
+   * contested name's vote deposit, read from its contest, and the fees still
+   * to pay), and the identity's balance. Rejects when a read fails: a name
+   * whose deposit is unknown cannot be approved.
+   */
+  async quoteRegistrations(labels: string[], identityId: string): Promise<{ quote: DpnsQuote; balance: bigint }> {
+    const sdk = await getEvoSdk();
+    const names = await Promise.all(labels.map((label) => this.quoteName(label, identityId)));
+    const identity = await sdk.identities.fetch(identityId);
+    if (!identity) throw new Error('Identity not found');
+    return { quote: totalQuote(names), balance: BigInt(identity.balance) };
   }
 
   /**
@@ -734,48 +671,60 @@ class DpnsService {
   }
 
   /**
-   * Register multiple usernames sequentially with progress callback
-   * Uses typed API (publicKeyId no longer needed - key is found from identity)
+   * Register usernames one after another, each with the vote deposit the user
+   * approved (`contestFund`, credits; null for a name that goes to no vote).
+   * `needed`, when given, is what the review showed all of them cost: nothing
+   * is sent unless the balance covers it.
    */
   async registerUsernamesSequentially(
     registrations: Array<{
       label: string;
       identityId: string;
       privateKeyWif: string;
-      publicKeyId?: number; // Deprecated, kept for backwards compatibility but ignored
+      contestFund?: bigint | null;
     }>,
-    onProgress?: (index: number, total: number, label: string) => void
+    onProgress?: (index: number, total: number, label: string) => void,
+    needed?: bigint
   ): Promise<UsernameRegistrationResult[]> {
     const results: UsernameRegistrationResult[] = [];
+    const contestedOf = async (label: string): Promise<boolean> => {
+      try {
+        return await (await getEvoSdk()).dpns.isContestedUsername(label);
+      } catch {
+        return false;
+      }
+    };
+
+    // Every name's deposit and fees, before the first of them is paid.
+    const identityId = registrations[0]?.identityId;
+    if (needed !== undefined && identityId) {
+      let short: string | null;
+      try {
+        const identity = await (await getEvoSdk()).identities.fetch(identityId);
+        if (!identity) throw new Error('Identity not found');
+        short = shortBalanceMessage(BigInt(identity.balance), needed);
+      } catch (error) {
+        short = describeDpnsRegistrationError(new DpnsNotSentError(error));
+      }
+      if (short) {
+        for (const reg of registrations) {
+          results.push({ label: reg.label, success: false, isContested: await contestedOf(reg.label), error: short });
+        }
+        return results;
+      }
+    }
 
     for (let i = 0; i < registrations.length; i++) {
       const reg = registrations[i];
       onProgress?.(i, registrations.length, reg.label);
-
-      // Known before the attempt, so a failure still says whether the name was contested.
-      let isContested = false;
+      const isContested = await contestedOf(reg.label);
       try {
-        const sdk = await getEvoSdk();
-        isContested = await sdk.dpns.isContestedUsername(reg.label);
-
-        await this.registerUsername(
-          reg.label,
-          reg.identityId,
-          reg.privateKeyWif
-        );
-
-        results.push({
-          label: reg.label,
-          success: true,
-          isContested,
-        });
+        const outcome = await this.registerUsername(reg.label, reg.identityId, reg.privateKeyWif, { contestFund: reg.contestFund ?? null });
+        results.push(outcome.state === 'pending'
+          ? { label: reg.label, success: false, pending: true, isContested, error: outcome.stalled ? DPNS_STALLED_MESSAGE : DPNS_STILL_CONFIRMING_MESSAGE }
+          : { label: reg.label, success: true, isContested: outcome.state === 'joined-vote' || isContested });
       } catch (error) {
-        results.push({
-          label: reg.label,
-          success: false,
-          isContested,
-          error: describeDpnsRegistrationError(error),
-        });
+        results.push({ label: reg.label, success: false, isContested, error: describeDpnsRegistrationError(error) });
       }
     }
 

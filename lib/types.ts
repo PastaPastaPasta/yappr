@@ -56,6 +56,8 @@ export interface UsernameEntry {
   validationError?: string
   registrationError?: string
   registered?: boolean
+  /** Sent and not settled yet (`registered` is false): "Check again" continues it. */
+  pending?: boolean
 }
 
 export interface UsernameCheckResult {
@@ -67,6 +69,8 @@ export interface UsernameCheckResult {
 export interface UsernameRegistrationResult {
   label: string
   success: boolean
+  /** Sent and not settled yet: checking again continues it and pays nothing twice. */
+  pending?: boolean
   isContested: boolean
   error?: string
 }

@@ -1,12 +1,14 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { clearRegistration, registrationsInProgress } from '@/lib/dpns/registration-journal'
+import type { UsernameEntry } from '@/lib/types'
 import { identityService } from '@/lib/services/identity-service'
 import { findDuplicateLabels } from '@/lib/utils/duplicate-labels'
 import { getPrivateKey } from '@/lib/secure-storage'
@@ -41,10 +43,37 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setUsernameContested,
     setUsernameRegistered,
     setCurrentRegistrationIndex,
+    setQuote,
+    quote,
     reset,
   } = useDpnsRegistration()
 
   const identityId = user?.identityId
+  const [checkingAgain, setCheckingAgain] = useState(false)
+  // Registrations this browser started and has not finished (the tab closed mid-way, say).
+  const [unfinished, setUnfinished] = useState<string[]>([])
+  useEffect(() => {
+    if (step !== 'username-entry' || !identityId) return
+    let current = true
+    const records = registrationsInProgress(identityId)
+    setUnfinished(records.map((record) => record.label))
+    // One whose name is already this account's finished after its answer was lost: forget it.
+    Promise.all(records.map(async (record) => {
+      dpnsService.clearCache(record.normalizedLabel)
+      const owner = await dpnsService.findIdentityByName(record.normalizedLabel).catch(() => undefined)
+      if (owner !== identityId) return record.label
+      clearRegistration(identityId, record.normalizedLabel)
+      return null
+    })).then((labels) => {
+      if (current) setUnfinished(labels.filter((label): label is string => label !== null))
+    }).catch((error: unknown) => logger.warn('Could not check unfinished registrations:', error))
+    return () => { current = false }
+  }, [step, identityId])
+  const handleContinueUnfinished = useCallback(() => {
+    useDpnsRegistration.setState({
+      usernames: unfinished.map((label) => ({ id: crypto.randomUUID(), label, status: 'pending', isContested: false })),
+    })
+  }, [unfinished])
 
   const handleCheckAvailability = useCallback(async () => {
     if (!isSdkReady) {
@@ -97,46 +126,58 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         }
       }
 
+      // What the registrable names cost, read before the review shows them: the
+      // amount the user approves is the most a contested name pays.
+      const registrable = validUsernames.filter((entry) => {
+        const result = results.get(entry.label.toLowerCase())
+        return result && !result.error && result.available
+      })
+      setQuote({ status: 'none' })
+      if (registrable.length > 0 && identityId) {
+        try {
+          const { quote, balance } = await dpnsService.quoteRegistrations(registrable.map((u) => u.label), identityId)
+          setQuote({ status: 'ready', quote, balance })
+        } catch (error) {
+          logger.error('Failed to read the registration cost:', error)
+          setQuote({ status: 'failed' })
+        }
+      }
+
       setStep('review')
     } catch (error) {
       logger.error('Failed to check availability:', error)
       toast.error('Failed to check availability. Please try again.')
       setStep('username-entry')
     }
-  }, [isSdkReady, usernames, setStep, updateUsernameStatus, setUsernameContested])
+  }, [isSdkReady, usernames, identityId, setStep, updateUsernameStatus, setUsernameContested, setQuote])
 
-  const handleRegister = useCallback(async () => {
+  /**
+   * Register `entries` (all available, or the ones still being confirmed) with
+   * the deposits the review approved, and record each outcome. `needed` is the
+   * review's total: nothing is sent unless the balance covers it.
+   */
+  const runRegistrations = useCallback(async (entries: UsernameEntry[], { needed, showProgress }: { needed?: bigint; showProgress: boolean }) => {
     if (!identityId) {
       toast.error('Please sign in again.')
       return
     }
-
     const privateKey = getPrivateKey(identityId)
     if (!privateKey) {
       toast.error('Please sign in again.')
       return
     }
-
-    const availableUsernames = usernames.filter(
-      (u) => u.status === 'available' || u.status === 'contested'
-    )
-
-    if (availableUsernames.length === 0) {
-      toast.error('No available usernames to register.')
+    if (quote.status !== 'ready') {
+      toast.error('The cost of registering could not be read. Check the names again.')
+      setStep('review')
       return
     }
 
-    for (const entry of availableUsernames) {
-      const error = dpnsService.getUsernameValidationError(entry.label.trim())
-      if (error) {
-        updateUsernameStatus(entry.id, 'invalid', error)
-        setStep('username-entry')
-        return
-      }
+    if (showProgress) {
+      setStep('registering')
+      setCurrentRegistrationIndex(0)
+    } else {
+      setCheckingAgain(true)
     }
-
-    setStep('registering')
-    setCurrentRegistrationIndex(0)
 
     try {
       const identity = await identityService.getIdentity(identityId)
@@ -162,22 +203,24 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      const registrations = availableUsernames.map((u) => ({
+      const approved = new Map(quote.quote.names.map((name) => [name.label, name.contestFund?.credits ?? null]))
+      const registrations = entries.map((u) => ({
         label: u.label,
         identityId,
-        publicKeyId: matched.match.keyId,
         privateKeyWif: privateKey,
+        contestFund: approved.get(u.label) ?? null,
       }))
 
       const results = await dpnsService.registerUsernamesSequentially(
         registrations,
-        (index) => setCurrentRegistrationIndex(index)
+        (index) => { if (showProgress) setCurrentRegistrationIndex(index) },
+        needed
       )
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i]
-        const entry = availableUsernames[i]
-        setUsernameRegistered(entry.id, result.success, result.error)
+        const entry = entries[i]
+        setUsernameRegistered(entry.id, result.success, result.error, result.pending)
         if (result.isContested) {
           setUsernameContested(entry.id, true)
         }
@@ -194,22 +237,50 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       logger.error('Registration failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Registration failed. Please try again.'
       toast.error(errorMessage)
-      // Mark any pending usernames as failed
-      for (const entry of availableUsernames) {
-        setUsernameRegistered(entry.id, false, 'Registration interrupted')
+      // The identity read or the key check failed: registerUsernamesSequentially, which sends, never throws.
+      for (const entry of entries) {
+        setUsernameRegistered(entry.id, false, 'Nothing was sent. Try again.', entry.pending)
       }
       setStep('complete')
+    } finally {
+      setCheckingAgain(false)
     }
   }, [
     identityId,
-    usernames,
+    quote,
     setStep,
     setCurrentRegistrationIndex,
     setUsernameRegistered,
     setUsernameContested,
-    updateUsernameStatus,
     updateDPNSUsername,
   ])
+
+  const handleRegister = useCallback(async () => {
+    const availableUsernames = usernames.filter(
+      (u) => u.status === 'available' || u.status === 'contested'
+    )
+
+    if (availableUsernames.length === 0) {
+      toast.error('No available usernames to register.')
+      return
+    }
+
+    for (const entry of availableUsernames) {
+      const error = dpnsService.getUsernameValidationError(entry.label.trim())
+      if (error) {
+        updateUsernameStatus(entry.id, 'invalid', error)
+        setStep('username-entry')
+        return
+      }
+    }
+
+    await runRegistrations(availableUsernames, { needed: quote.status === 'ready' ? quote.quote.total : undefined, showProgress: true })
+  }, [usernames, quote, runRegistrations, updateUsernameStatus, setStep])
+
+  // Continues each registration still being confirmed: a step already sent is settled, never paid again.
+  const handleCheckAgain = useCallback(async () => {
+    await runRegistrations(usernames.filter((u) => u.pending), { showProgress: false })
+  }, [usernames, runRegistrations])
 
   const handleBackToEdit = useCallback(() => {
     for (const entry of usernames) {
@@ -232,6 +303,22 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   return (
     <div className="space-y-6">
+      {step === 'username-entry' && unfinished.length > 0 && (
+        <div className="border border-purple-300 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 space-y-3" data-testid="dpns-unfinished">
+          <p className="text-sm text-purple-900 dark:text-purple-100">
+            You started registering {unfinished.map((label) => `${label}.dash`).join(', ')} and it isn&apos;t finished yet.
+            Continuing uses what you already paid; nothing is charged twice.
+          </p>
+          <button
+            type="button"
+            onClick={handleContinueUnfinished}
+            className="text-sm font-medium text-purple-700 hover:text-purple-900 dark:text-purple-300 dark:hover:text-purple-100"
+          >
+            Continue registering
+          </button>
+        </div>
+      )}
+
       {step === 'username-entry' && (
         <UsernameEntryStep onCheckAvailability={handleCheckAvailability} />
       )}
@@ -245,7 +332,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       {step === 'registering' && <RegisteringStep />}
 
       {step === 'complete' && (
-        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} />
+        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} onCheckAgain={handleCheckAgain} checkingAgain={checkingAgain} />
       )}
 
       {step === 'username-entry' && onSkip && (

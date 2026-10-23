@@ -84,7 +84,7 @@ describe('engine storage', () => {
   })
 
   it('routes private keys, private-feed keys and upload credentials to the secure area', async () => {
-    expect(SECURE_KEY_PREFIXES).toEqual(['yappr_secure_', 'yappr:pf:', 'yappr_pinata_', 'yappr_storacha_'])
+    expect(SECURE_KEY_PREFIXES).toEqual(['yappr_secure_', 'yappr:pf:', 'yappr_pinata_', 'yappr_storacha_', 'yappr:dpns-registration:'])
     for (const key of ['yappr_secure_pk_abc', 'yappr:pf:feed_seed', 'yappr:pf:path_keys:1', 'yappr_pinata_jwt', 'yappr_storacha_agent']) {
       expect(isSecureStorageKey(key), key).toBe(true)
     }

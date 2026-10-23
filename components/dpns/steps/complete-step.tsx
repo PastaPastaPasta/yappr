@@ -2,24 +2,31 @@
 
 import { Button } from '@/components/ui/button'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { CheckCircle2, AlertTriangle, XCircle, PartyPopper } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, XCircle, PartyPopper, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface CompleteStepProps {
   onRegisterMore: () => void
   onContinue: () => void
+  /** Continue the registrations still being confirmed (nothing is paid twice). */
+  onCheckAgain: () => void
+  checkingAgain: boolean
 }
 
-export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) {
+export function CompleteStep({ onRegisterMore, onContinue, onCheckAgain, checkingAgain }: CompleteStepProps) {
   const { usernames } = useDpnsRegistration()
 
   const registeredUsernames = usernames.filter((u) => u.registered === true)
+  const pendingUsernames = usernames.filter((u) => u.registered === false && u.pending)
   const failedUsernames = usernames.filter(
-    (u) => u.registered === false && u.registrationError
+    (u) => u.registered === false && !u.pending && u.registrationError
   )
   const contestedRegistered = registeredUsernames.filter((u) => u.isContested)
 
   const getStatusIcon = (entry: typeof usernames[0]) => {
+    if (entry.pending) {
+      return <Loader2 className="w-5 h-5 text-orange-500" />
+    }
     if (entry.registered && entry.isContested) {
       return <AlertTriangle className="w-5 h-5 text-orange-500" />
     }
@@ -30,6 +37,9 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
   }
 
   const getStatusText = (entry: typeof usernames[0]) => {
+    if (entry.pending) {
+      return entry.registrationError || 'Still being confirmed'
+    }
     if (entry.registered && entry.isContested) {
       return 'Waiting for the community vote'
     }
@@ -47,6 +57,11 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
             <PartyPopper className="w-12 h-12 text-green-500 mx-auto mb-4" />
             <h2 className="text-xl font-semibold mb-2">Registration Complete</h2>
           </>
+        ) : pendingUsernames.length > 0 ? (
+          <>
+            <Loader2 className="w-12 h-12 text-orange-500 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold mb-2">Still Registering</h2>
+          </>
         ) : (
           <>
             <XCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
@@ -55,6 +70,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
         )}
         <p className="text-gray-600 dark:text-gray-400">
           {registeredUsernames.length} succeeded, {failedUsernames.length} failed
+          {pendingUsernames.length > 0 && `, ${pendingUsernames.length} still being confirmed`}
           {contestedRegistered.length > 0 &&
             `, ${contestedRegistered.length} waiting for a vote`}
         </p>
@@ -90,8 +106,8 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
                         className={cn(
                           'text-sm',
                           entry.registered && !entry.isContested && 'text-green-600',
-                          entry.registered && entry.isContested && 'text-orange-600',
-                          !entry.registered && 'text-red-600'
+                          (entry.pending || (entry.registered && entry.isContested)) && 'text-orange-600',
+                          !entry.registered && !entry.pending && 'text-red-600'
                         )}
                       >
                         {getStatusText(entry)}
@@ -104,8 +120,14 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
         </table>
       </div>
 
+      {pendingUsernames.length > 0 && (
+        <Button onClick={onCheckAgain} disabled={checkingAgain} className="w-full" data-testid="dpns-check-again">
+          {checkingAgain ? 'Checking…' : 'Check and continue registering'}
+        </Button>
+      )}
+
       <div className="flex gap-3">
-        <Button variant="outline" onClick={onRegisterMore} className="flex-1">
+        <Button variant="outline" onClick={onRegisterMore} disabled={checkingAgain} className="flex-1">
           Register More Usernames
         </Button>
         <Button onClick={onContinue} className="flex-1">

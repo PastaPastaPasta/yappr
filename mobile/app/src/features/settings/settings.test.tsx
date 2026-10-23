@@ -967,7 +967,7 @@ describe('Choose a username (AUTH-15)', () => {
     expect(screen.queryByTestId('username-contested')).toBeNull();
 
     await act(async () => fireEvent.press(byId('username-register')));
-    expect(fakeEngine.method('dpns.register')).toHaveBeenCalledWith('newname');
+    expect(fakeEngine.method('dpns.register')).toHaveBeenCalledWith('newname', null);
     expect(byId('username-register')).toHaveTextContent('Claiming…');
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed', stage: null })));
     await settle();
@@ -999,12 +999,14 @@ describe('Choose a username (AUTH-15)', () => {
     renderScreen(<UsernameScreen />);
     await settle();
     await typeName('bob');
-    expect(byId('username-contested')).toHaveTextContent('Short names like this go to a community vote and cost at least 0.1 DASH.');
+    expect(byId('username-contested')).toHaveTextContent("Short names like this start or join a community vote and hold a 0.1 DASH (about 600¢) deposit in it. It isn't refunded, and no more than this is paid into the vote.");
 
     // Landing only joins the vote: the name is not theirs yet.
     const pending = ticket({ op: 'dpns.register', target: { identityId: ALICE } });
     fakeEngine.method('dpns.register').mockResolvedValue(pending);
     await act(async () => fireEvent.press(byId('username-register')));
+    // The deposit shown is the most the registration may pay.
+    expect(fakeEngine.method('dpns.register')).toHaveBeenCalledWith('bob', 10_000_000_000n);
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed', stage: null })));
     await settle();
     expect(toastMessage()).toBe("You've joined the vote for @bob. It's yours if the vote picks you.");
