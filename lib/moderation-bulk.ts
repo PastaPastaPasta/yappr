@@ -17,6 +17,7 @@
  * (lib/services/identity-nonce.ts serializes them), and what is done is
  * always read back from the chain rather than trusted to this tab.
  */
+import type { ModerationMarks } from './moderation-view'
 
 /** Hide the listed documents, or list the hidden ones again. */
 export type BulkMode = 'hide' | 'unhide'
@@ -157,12 +158,26 @@ export interface BulkApplyResult {
   success: boolean
   error?: string
   errorCode?: string
+  /** The change's own block time, from the proved answer. */
+  moderatedAt?: number
 }
 
 /** One document that did not change, and why, in words. */
 export interface BulkFailure {
   item: BulkItem
   error: string
+  /** False when it changed some other way (a legal hold): nothing to try again, and it stays listed here whatever the lists show. */
+  retryable: boolean
+}
+
+/**
+ * What a confirmed document now holds, for the cards on screen: `marks` from a
+ * chain read (null: listed), or undefined for "as this run asked"; `at` the
+ * block time it was changed at, when known.
+ */
+export interface BulkChange {
+  marks?: ModerationMarks | null
+  at?: number
 }
 
 export interface BulkProgress {
@@ -197,11 +212,17 @@ export function chainState(doc: Readonly<Record<string, unknown>> | undefined, m
 export interface BulkChainRead {
   todo: Set<string>
   changed: Set<string>
+  /** What each document read holds now (null: no marks), for the cards on screen. */
+  marks?: Map<string, ModerationMarks | null>
 }
 
 export interface BulkRunDeps {
-  /** Signs and sends the change for one document; resolves with the service's answer. */
-  apply: (item: BulkItem) => Promise<BulkApplyResult>
+  /**
+   * Signs and sends the change for one document; resolves with the service's
+   * answer. `guard` must run under the write lock, just before signing (after
+   * any nonce wait): false sends nothing and answers `PRECONDITION_FAILED`.
+   */
+  apply: (item: BulkItem, guard: () => Promise<boolean>) => Promise<BulkApplyResult>
   /** Reads the chain: where each of `items` stands ({@link chainState}); an id in neither set is done. */
   pending: (items: readonly BulkItem[]) => Promise<BulkChainRead>
   /**
@@ -211,10 +232,11 @@ export interface BulkRunDeps {
    */
   recheck?: (item: BulkItem) => Promise<BulkChainState>
   /**
-   * Each document whose own proved transition in this run put it in the state
-   * asked for (not ones found that way, nor ones settled by a later read).
+   * Each document confirmed in the state asked for: by this run's own proved
+   * transition (`change.marks` undefined, `at` its block time), or by a chain
+   * read (`change.marks` what the read holds, which may be another moderator's).
    */
-  onDone?: (item: BulkItem) => void
+  onDone?: (item: BulkItem, change: BulkChange) => void
   onProgress?: (progress: BulkProgress) => void
   /** Checked before each transition: true stops the run after the one under way. */
   cancelled?: () => boolean
@@ -289,6 +311,8 @@ const ALREADY = 'NOTHING_TO_CHANGE'
 const FOUND_DONE = 'FOUND_DONE'
 const FOUND_CHANGED = 'FOUND_CHANGED'
 const RECHECK_FAILED = 'RECHECK_FAILED'
+/** The guard said no under the write lock: nothing went out (the service's code). */
+const PRECONDITION_FAILED = 'PRECONDITION_FAILED'
 
 const UNCONFIRMED_ERROR = 'The network did not confirm this one. Try again.'
 const RECHECK_ERROR = 'Couldn’t check this one just before changing it, so it was left as it is. Try again.'
@@ -326,21 +350,25 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const report = () => deps.onProgress?.({ ...progress, failures: [...progress.failures] })
 
   /** Counts `item` done; announces it only when this run's own transition did it. */
-  const markDone = (item: BulkItem, ours: boolean) => {
+  const markDone = (item: BulkItem, change: BulkChange) => {
     progress.done++
-    if (ours) deps.onDone?.(item)
+    deps.onDone?.(item, change)
+  }
+  const fail = (item: BulkItem, error: string, retryable = true) => {
+    progress.failures.push({ item, error, retryable })
   }
   /**
    * Counts what a chain read says is done or changed; returns what it says is
-   * still to do. Never announced: a read cannot tell this run's change from
-   * another moderator's (a legal hold reads as done for a hide).
+   * still to do. What it counts done is announced with the marks the read
+   * holds, never as this run's change: a read cannot tell them apart (a legal
+   * hold reads as done for a hide).
    */
   const settle = (read: BulkChainRead, asked: readonly BulkItem[], stillError: string | null): BulkItem[] => {
     const still: BulkItem[] = []
     for (const item of asked) {
-      if (read.changed.has(item.id)) progress.failures.push({ item, error: CHANGED_ERROR })
-      else if (!read.todo.has(item.id)) markDone(item, false)
-      else if (stillError) progress.failures.push({ item, error: stillError })
+      if (read.changed.has(item.id)) fail(item, CHANGED_ERROR, false)
+      else if (!read.todo.has(item.id)) markDone(item, { marks: read.marks?.get(item.id) ?? null })
+      else if (stillError) fail(item, stillError)
       else still.push(item)
     }
     return still
@@ -365,28 +393,47 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   let streakCount = 0
   let waitMs = 0
 
+  /**
+   * Whether `item` may still be sent: the run not stopped, and the chain read
+   * just now still showing it to do. Its answer, when it says no, as the loop
+   * reads it (nothing was sent).
+   */
+  const mayStillSend = async (item: BulkItem): Promise<BulkApplyResult | null> => {
+    if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
+    if (!deps.recheck) return null
+    let state: BulkChainState
+    try {
+      state = await deps.recheck(item)
+    } catch {
+      return { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
+    }
+    // The read took a moment: a stop pressed meanwhile still stops before signing.
+    if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
+    if (state === 'done') return { success: false, errorCode: FOUND_DONE }
+    if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+    return null
+  }
+
   const send = async (item: BulkItem): Promise<BulkApplyResult> => {
     for (let waits = 0; ; waits++) {
       if (waitMs > 0) await pause(waitMs)
-      if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
       progress.current = item
       report()
-      if (deps.recheck) {
-        let state: BulkChainState
-        try {
-          state = await deps.recheck(item)
-        } catch {
-          return { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
-        }
-        if (state === 'done') return { success: false, errorCode: FOUND_DONE }
-        if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+      const before = await mayStillSend(item)
+      if (before) return before
+      // Asked again under the write lock, after any nonce wait, just before signing.
+      const last: { refusal: BulkApplyResult | null } = { refusal: null }
+      const guard = async () => {
+        last.refusal = await mayStillSend(item)
+        return last.refusal === null
       }
       let result: BulkApplyResult
       try {
-        result = await deps.apply(item)
+        result = await deps.apply(item, guard)
       } catch (error) {
         result = { success: false, error: error instanceof Error ? error.message : String(error), errorCode: 'NETWORK_ERROR' }
       }
+      if (result.errorCode === PRECONDITION_FAILED) return last.refusal ?? { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
       waitMs = PACE_MS
       if (result.errorCode !== WRITE_PENDING) return result
       if (waits + 1 >= MAX_PENDING_WAITS) return { ...result, errorCode: 'NETWORK_ERROR' }
@@ -399,16 +446,18 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   for (const item of todo) {
     const result = await send(item)
     if (result.success || result.errorCode === ALREADY) {
-      markDone(item, true)
+      // As this run asked; ordered by its own block time when the answer gave it.
+      markDone(item, result.moderatedAt !== undefined ? { at: result.moderatedAt } : {})
       streakCode = null
       continue
     }
     if (result.errorCode === FOUND_DONE) {
-      markDone(item, false)
+      // Done before its turn, perhaps by another moderator and some other way: nothing is said of its marks.
+      progress.done++
       continue
     }
     if (result.errorCode === FOUND_CHANGED) {
-      progress.failures.push({ item, error: CHANGED_ERROR })
+      fail(item, CHANGED_ERROR, false)
       continue
     }
     if (closedKeySheet(result.errorCode)) {
@@ -427,7 +476,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       report()
       waitMs = UNCONFIRMED_BACKOFF_MS
     } else {
-      progress.failures.push({ item, error: result.error ?? FAILED_ERROR })
+      fail(item, result.error ?? FAILED_ERROR)
     }
     // A gateway timeout neither counts toward a streak nor breaks one.
     if (code === TIMEOUT) continue

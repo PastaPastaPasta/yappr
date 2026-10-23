@@ -5,8 +5,12 @@ import { readSupersedes, shownMarks, type MarksWithRestriction, type RecordedMar
 interface RecentModeration {
   /** By document id: the last hide or unhide this tab made, and when. */
   marks: Record<string, RecordedMarks>
-  /** `proved` false when the network did not confirm it in time. */
-  record: (documentId: string, marks: MarksWithRestriction | null, proved?: boolean) => void
+  /**
+   * `proved` false when the network did not confirm it in time; `at` the
+   * change's block time (`$moderatedAt`) when known, so a later change by
+   * anyone orders after it exactly; this tab's clock otherwise.
+   */
+  record: (documentId: string, marks: MarksWithRestriction | null, proved?: boolean, at?: number) => void
   /** Drops `documentId`'s record once a read superseded it, unless a newer one replaced it since. */
   retire: (documentId: string, recorded: RecordedMarks) => void
 }
@@ -19,8 +23,8 @@ interface RecentModeration {
  */
 export const useRecentModeration = create<RecentModeration>((set) => ({
   marks: {},
-  record: (documentId, marks, proved = true) =>
-    set((state) => ({ marks: { ...state.marks, [documentId]: { marks, at: Date.now(), proved } } })),
+  record: (documentId, marks, proved = true, at = Date.now()) =>
+    set((state) => ({ marks: { ...state.marks, [documentId]: { marks, at, proved } } })),
   retire: (documentId, recorded) =>
     set((state) => {
       if (state.marks[documentId] !== recorded) return state

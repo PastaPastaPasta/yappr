@@ -28,6 +28,8 @@ export interface ModeratorHideOutcome {
   restricted?: boolean
   /** The network did not confirm it in time: it may not have landed, so the next read is the truth. */
   unconfirmed?: boolean
+  /** A hide or unhide: its block time (`$moderatedAt`), when the proved answer gave it. */
+  at?: number
 }
 
 interface ModeratorHidePayload {

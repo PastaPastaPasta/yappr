@@ -4,7 +4,7 @@ import { moderatedContract } from '@/lib/moderated-contracts'
 import { chainState, inLane, laneMod, newestFirst, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
 import { getEvoSdk } from './evo-sdk-service'
 import { moderationService } from './moderation-service'
-import { moderationViewAll } from '@/lib/moderation-view'
+import { moderationMarksOf, moderationViewAll } from '@/lib/moderation-view'
 import { MAX_IN_CLAUSE_VALUES, documentCount } from './pagination-utils'
 import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers'
 
@@ -129,10 +129,12 @@ class BulkHideService {
         }
       }
     }
-    const read: BulkChainRead = { todo: new Set(), changed: new Set() }
+    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map() }
     for (const item of items) {
-      const state = chainState(found.get(item.id), mode)
+      const doc = found.get(item.id)
+      const state = chainState(doc, mode)
       if (state !== 'done') read[state].add(item.id)
+      else if (doc) read.marks?.set(item.id, moderationMarksOf(doc))
     }
     logger.info(`bulkHide: ${read.todo.size} of ${items.length} still to ${mode}, ${read.changed.size} changed`)
     return read

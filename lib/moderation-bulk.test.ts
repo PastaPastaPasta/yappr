@@ -16,6 +16,7 @@ import {
   readEveryPage,
   runBulk,
   type BulkApplyResult,
+  type BulkChange,
   type BulkChainRead,
   type BulkChainState,
   type BulkItem,
@@ -122,7 +123,7 @@ describe('cost', () => {
 
 describe('runBulk', () => {
   const ok: BulkApplyResult = { success: true }
-  type Apply = (item: BulkItem) => Promise<BulkApplyResult>
+  type Apply = (item: BulkItem, guard: () => Promise<boolean>) => Promise<BulkApplyResult>
   /** The ids a chain read finds still to do; `changed` ones changed some other way. */
   type Pending = (items: readonly BulkItem[]) => Promise<Set<string>>
   const deps = ({ apply, pending, changed = [], recheck, cancelled, onProgress }: {
@@ -137,7 +138,7 @@ describe('runBulk', () => {
     return {
       apply: vi.fn<Apply>(apply ?? (async () => ok)),
       pending: vi.fn(async (asked: readonly BulkItem[]): Promise<BulkChainRead> => ({ todo: await todo(asked), changed: new Set(changed) })),
-      onDone: vi.fn<(item: BulkItem) => void>(),
+      onDone: vi.fn<(item: BulkItem, change: BulkChange) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
       ...(recheck ? { recheck: vi.fn(recheck) } : {}),
       cancelled,
@@ -159,8 +160,8 @@ describe('runBulk', () => {
     const summary = await runBulk(items, d)
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['c'])
     expect(summary.done).toBe(3)
-    // Only what this run changed is announced to the cards on screen; a and b were done before.
-    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['c'])
+    // Every confirmed one reaches the cards on screen: a and b with what the read holds, c as this run asked.
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { marks: null }], ['b', { marks: null }], ['c', {}]])
   })
 
   it('never counts a document that changed some other way as done', async () => {
@@ -193,7 +194,7 @@ describe('runBulk', () => {
     expect(summary.stopped).toBe('fatal')
   })
 
-  it('counts an unconfirmed change the chain shows landed, but does not announce it', async () => {
+  it('counts an unconfirmed change the chain shows landed, announcing what the read holds', async () => {
     let reads = 0
     const d = deps({
       apply: async () => ({ success: false, errorCode: 'MAYBE_APPLIED' }),
@@ -201,7 +202,35 @@ describe('runBulk', () => {
     })
     const summary = await runBulk([items[0]], d)
     expect(summary.done).toBe(1)
-    expect(d.onDone).not.toHaveBeenCalled()
+    // Never as this run's own change: the read may hold another moderator's (a legal hold).
+    expect(d.onDone.mock.calls[0][1]).toEqual({ marks: null })
+  })
+
+  it('stops before signing when Stop is pressed while the document is read again', async () => {
+    let stop = false
+    const d = deps({
+      recheck: async () => {
+        stop = true
+        return 'todo'
+      },
+      cancelled: () => stop,
+    })
+    const summary = await runBulk(items, d)
+    expect(d.apply).not.toHaveBeenCalled()
+    expect(summary.stopped).toBe('cancelled')
+  })
+
+  it('asks again under the write lock, and leaves a document held since', async () => {
+    let calls = 0
+    // Still to do when read before its turn; under a legal hold by the time the lock is held.
+    const recheck = async (): Promise<BulkChainState> => (calls++ % 2 === 0 ? 'todo' : 'changed')
+    const d = deps({
+      recheck,
+      apply: async (_item, guard) => ((await guard()) ? ok : { success: false, errorCode: 'PRECONDITION_FAILED' }),
+    })
+    const summary = await runBulk([items[0]], d)
+    expect(summary.done).toBe(0)
+    expect(summary.failures).toEqual([{ item: items[0], error: expect.stringContaining('changed'), retryable: false }])
   })
 
   it('sends nothing when the first read fails', async () => {
@@ -230,7 +259,7 @@ describe('runBulk', () => {
     const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'b' ? { success: false, error: 'Refused', errorCode: 'DOCUMENT_GONE' } : ok)) })
     const summary = await runBulk(items, d)
     expect(summary.done).toBe(2)
-    expect(summary.failures).toEqual([{ item: items[1], error: 'Refused' }])
+    expect(summary.failures).toEqual([{ item: items[1], error: 'Refused', retryable: true }])
     expect(summary.stopped).toBeNull()
   })
 

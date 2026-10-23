@@ -159,6 +159,10 @@ export function ModeratorHideModal() {
         break
     }
     setBusy(false)
+    // Ordered by the change's own block time when the proved answer gave it (hooks/use-recent-moderation.ts).
+    if (result.moderatedAt !== undefined) {
+      outcome = { ...outcome, at: result.moderatedAt, ...(outcome.moderation ? { moderation: { ...outcome.moderation, moderatedAt: result.moderatedAt } } : {}) }
+    }
     // The moderator closed the key sheet: nothing was signed, so the dialog stays open.
     if (result.errorCode === 'CANCELLED') return
     if (result.errorCode === 'MAYBE_APPLIED') {

@@ -103,6 +103,8 @@ export interface ModerationResult {
   success: boolean;
   /** `removeDocument` only: whether a copy was kept on this device, so the removal can be restored from here. */
   snapshotSaved?: boolean;
+  /** A field change only: the changed document's `$moderatedAt` (block time, ms), as the proved answer gave it. */
+  moderatedAt?: number;
   error?: string;
   /**
    * `MAYBE_APPLIED`: the broadcast went out but its confirmation timed out (the
@@ -111,7 +113,7 @@ export interface ModerationResult {
    */
   /** `CANCELLED`: the moderator closed the sheet asking for the CRITICAL key; nothing was signed (say nothing). */
   errorCode?: 'CANCELLED' | 'NEEDS_CRITICAL_KEY' | 'INVALID_KEY' | 'ALREADY_CLAIMED' | 'NOTHING_TO_CLAIM' | 'NO_SNAPSHOT' | 'MAYBE_APPLIED' | 'NETWORK_ERROR' | 'DOCUMENT_GONE'
-    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | 'INSUFFICIENT_CREDITS' | ModerationErrorKind;
+    | 'INVALID_LABEL' | 'ALREADY_RESTRICTED' | 'NOT_RESTRICTED' | 'WRITE_PENDING' | 'PRECONDITION_FAILED' | 'INSUFFICIENT_CREDITS' | ModerationErrorKind;
 }
 
 /**
@@ -129,8 +131,9 @@ export interface HideOptions {
 
 /** Hides and unhides that all sign with one signer, resolved once ({@link ModerationService.openBatch}). */
 export interface ModerationBatch {
-  hide(kind: string, documentId: string, options: HideOptions): Promise<ModerationResult>;
-  unhide(kind: string, documentId: string, reason?: string | ModerationReasonInput): Promise<ModerationResult>;
+  /** `precondition` runs under the write lock, after any earlier write settled and just before signing: false sends nothing (PRECONDITION_FAILED). */
+  hide(kind: string, documentId: string, options: HideOptions, precondition?: () => Promise<boolean>): Promise<ModerationResult>;
+  unhide(kind: string, documentId: string, reason?: string | ModerationReasonInput, precondition?: () => Promise<boolean>): Promise<ModerationResult>;
 }
 
 /** The `mod` values a moderator writes: 1 hidden, 2 legal hold (`mod` is absent while listed). */
@@ -531,7 +534,8 @@ export function restrictionCreateFields(identityId: string, reason: number): { t
 }
 
 /** Sends one moderation transition under the write lock (see `withSdkSignedWrite`). */
-type ModerationSend = <R>(write: () => Promise<R>) => Promise<R>;
+/** Sends one transition under the write lock; `precondition` is the last word on whether to (identity-nonce `withSdkSignedWrite`). */
+type ModerationSend = <R>(write: () => Promise<R>, precondition?: () => Promise<boolean>) => Promise<R>;
 
 const NO_STANDING: ModerationStanding = { banned: false, banReason: null, suspendedUntil: null, suspensionReason: null, warnings: [] };
 
@@ -1270,14 +1274,14 @@ class ModerationService {
     return this.hideWith(moderatorId, kind, documentId, options);
   }
 
-  private async hideWith(moderatorId: string, kind: string, documentId: string, options: HideOptions, auth?: ModeratorAuth): Promise<ModerationResult> {
+  private async hideWith(moderatorId: string, kind: string, documentId: string, options: HideOptions, auth?: ModeratorAuth, precondition?: () => Promise<boolean>): Promise<ModerationResult> {
     if (!this.canHide(kind)) {
       return { success: false, error: `Moderators cannot hide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
     if (!isModerationLabel(options.label)) {
       return { success: false, error: 'Choose the reason it is hidden for', errorCode: 'INVALID_LABEL' };
     }
-    const result = await this.changeFields(moderatorId, kind, documentId, hideFields(options.label, options.legalHold), options.reason, auth);
+    const result = await this.changeFields(moderatorId, kind, documentId, hideFields(options.label, options.legalHold), options.reason, auth, precondition);
     if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is already hidden for that reason` };
     if (result.errorCode === 'MAYBE_APPLIED') {
       return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be hidden. Check again before retrying.` };
@@ -1290,11 +1294,11 @@ class ModerationService {
     return this.unhideWith(moderatorId, kind, documentId, reason);
   }
 
-  private async unhideWith(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput, auth?: ModeratorAuth): Promise<ModerationResult> {
+  private async unhideWith(moderatorId: string, kind: string, documentId: string, reason?: string | ModerationReasonInput, auth?: ModeratorAuth, precondition?: () => Promise<boolean>): Promise<ModerationResult> {
     if (!this.canHide(kind)) {
       return { success: false, error: `Moderators cannot unhide a ${documentNoun(kind)} here`, errorCode: 'NOT_MODERATED' };
     }
-    const result = await this.changeFields(moderatorId, kind, documentId, { ...UNHIDE_FIELDS }, reason, auth);
+    const result = await this.changeFields(moderatorId, kind, documentId, { ...UNHIDE_FIELDS }, reason, auth, precondition);
     if (result.errorCode === 'NOTHING_TO_CHANGE') return { ...result, error: `This ${documentNoun(kind)} is not hidden` };
     if (result.errorCode === 'MAYBE_APPLIED') {
       return { ...result, error: `The network did not confirm in time: the ${documentNoun(kind)} may already be visible again. Check again before retrying.` };
@@ -1321,8 +1325,8 @@ class ModerationService {
     }
     return {
       batch: {
-        hide: (kind, documentId, options) => this.hideWith(moderatorId, kind, documentId, options, auth),
-        unhide: (kind, documentId, reason) => this.unhideWith(moderatorId, kind, documentId, reason, auth),
+        hide: (kind, documentId, options, precondition) => this.hideWith(moderatorId, kind, documentId, options, auth, precondition),
+        unhide: (kind, documentId, reason, precondition) => this.unhideWith(moderatorId, kind, documentId, reason, auth, precondition),
       },
     };
   }
@@ -1415,16 +1419,24 @@ class ModerationService {
   }
 
   /** One `moderatorChangeDocumentFields` on `kind`/`documentId`, as every other moderation write is sent. */
-  private changeFields(
+  private async changeFields(
     moderatorId: string,
     kind: string,
     documentId: string,
     fields: Record<string, unknown>,
     reason?: string | ModerationReasonInput,
-    heldAuth?: ModeratorAuth
+    heldAuth?: ModeratorAuth,
+    precondition?: () => Promise<boolean>
   ): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.moderatorChangeDocumentFields({
+    let changed: Record<string, unknown> | undefined;
+    // Whether the caller's precondition said not to send, under the lock: then nothing went out.
+    let refused = false;
+    const guarded = precondition && (async () => {
+      refused = !(await precondition());
+      return !refused;
+    });
+    const answer = await this.moderate(moderatorId, async (sdk, auth, send) => {
+      const document = await send(() => sdk.contracts.moderatorChangeDocumentFields({
         identity: auth.identity,
         signer: auth.signer,
         contractId: this.contract.contractId,
@@ -1432,8 +1444,15 @@ class ModerationService {
         documentId,
         fields,
         ...(reason === undefined ? {} : { reason: reasonOf(reason) }),
-      }));
+      }), guarded);
+      [changed] = normalizeSDKResponse(document);
     }, undefined, reason, heldAuth);
+    const result: ModerationResult = refused && !answer.success
+      ? { success: false, error: 'Not sent: it changed since it was read.', errorCode: 'PRECONDITION_FAILED' }
+      : answer;
+    // The change's own block time orders it against any later moderator change a read brings.
+    const moderatedAt = changed ? moderationMarksOf(changed).moderatedAt : undefined;
+    return result.success && moderatedAt !== undefined ? { ...result, moderatedAt } : result;
   }
 
   /**
@@ -1864,12 +1883,12 @@ class ModerationService {
     let started = false;
     // Each transition its own reservation (a batch signs one nonce per report).
     let auth: ModeratorAuth | undefined;
-    const send: ModerationSend = (write) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
+    const send: ModerationSend = (write, precondition) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
       // Last check before the CRITICAL key signs: the session it was read in must still be the one signed in.
       auth?.assertLive();
       started = true;
       return write();
-    });
+    }, undefined, precondition);
     try {
       const sdk = await getEvoSdk();
       // A batch's held signer still answers to its session: `assertLive` refuses it once that ended.

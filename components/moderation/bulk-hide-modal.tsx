@@ -228,13 +228,18 @@ export function BulkHideModal() {
     const { batch } = opened
     const hideLabel = chosen?.label ?? 0
     const result = await runBulk(batchItems, {
-      apply: (item) => mode === 'hide'
-        ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) })
-        : batch.unhide(item.kind, item.id, reasonFor(item)),
+      apply: (item, guard) => mode === 'hide'
+        ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) }, guard)
+        : batch.unhide(item.kind, item.id, reasonFor(item), guard),
       pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
       recheck: (item) => bulkHideService.pending([item], mode).then((read) => (read.todo.has(item.id) ? 'todo' : read.changed.has(item.id) ? 'changed' : 'done')),
-      // The cards already on screen show the change as soon as it is proved.
-      onDone: (item) => recordMarks(item.id, mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: Date.now() } : null),
+      // The cards already on screen show each change as soon as it is confirmed:
+      // this run's own as it asked, one settled by a read as the read holds it.
+      onDone: (item, change) => {
+        const at = change.at ?? Date.now()
+        const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
+        recordMarks(item.id, change.marks === undefined ? asked : change.marks, true, change.marks === undefined ? at : change.marks?.moderatedAt)
+      },
       onProgress: (next) => {
         if (current()) setProgress(next)
       },
@@ -272,7 +277,9 @@ export function BulkHideModal() {
   const percent = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
   // Failures still to do: once the lists are read again, one that landed after all drops out.
   const listed = new Set(items.map((item) => item.id))
-  const failures = list.status === 'ready' ? (summary?.failures ?? []).filter((failure) => listed.has(failure.item.id)) : []
+  // A failure that changed some other way (a legal hold) stays listed whatever the lists show; one to try again only while it is still listed to do.
+  const failures = (summary?.failures ?? []).filter((failure) => !failure.retryable || (list.status === 'ready' && listed.has(failure.item.id)))
+  const retryable = failures.filter((failure) => failure.retryable).map((failure) => failure.item)
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto">
@@ -440,7 +447,7 @@ export function BulkHideModal() {
               <div className="mt-2 min-h-0 flex-1 flex flex-col" data-testid="bulk-hide-failures">
                 <div className="flex items-center justify-between gap-3">
                   <p className="font-medium text-red-600 dark:text-red-400">{plural(failures.length, 'post')} didn&apos;t go through</p>
-                  <Button size="sm" variant="outline" disabled={!canRun} onClick={() => start(failures.map((failure) => failure.item))} data-testid="bulk-hide-retry">Try again</Button>
+                  <Button size="sm" variant="outline" disabled={!canRun || retryable.length === 0} onClick={() => start(retryable)} data-testid="bulk-hide-retry">Try again</Button>
                 </div>
                 <ul className="mt-1 min-h-0 flex-1 overflow-y-auto text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
                   {failures.map(({ item, error }) => (
