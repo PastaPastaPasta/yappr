@@ -15,7 +15,7 @@ import { EngineHost } from '~/engine/EngineHost';
 import { untilUnlocked, useLockState } from '~/features/auth/app-lock';
 import { AuthGates } from '~/features/auth/AuthGates';
 import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
-import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
+import { resolveAvatarSvg, useIpfsGateways, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { startPendingPosts } from '~/features/compose/pending-posts';
 import { startTabStacksFollowAccount } from '~/navigation/account-stacks';
 import { useAppearance } from '~/state/appearance';
@@ -99,14 +99,14 @@ export default function RootLayout() {
   // Another account taking over takes every tab back to its root (AUTH-10, D-rc5a-003).
   const navigation = useNavigationContainerRef();
   useEffect(() => startTabStacksFollowAccount(navigation), [navigation]);
-  const ipfsGateway = useIpfsGateway();
+  const ipfsGateways = useIpfsGateways();
   const dark = useColorScheme().colorScheme === 'dark';
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
         <ThemeProvider value={navigationTheme(dark)}>
-          <MediaUrlProvider ipfsGateway={ipfsGateway}>
+          <MediaUrlProvider ipfsGateways={ipfsGateways}>
             <AvatarSvgProvider resolve={resolveAvatarSvg}>
               <BottomSheetModalProvider>
                 <Stack screenOptions={stackScreenOptions}>

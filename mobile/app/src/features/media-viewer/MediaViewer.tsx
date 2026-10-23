@@ -31,6 +31,7 @@ import { useMediaUrls } from '~/ui/media-url';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { colors } from '~/ui/tokens';
+import { useMediaUrlSource } from '~/ui/use-media-source';
 
 import { findCachedPost } from './cached-post';
 import { clampOffset, fittedSize, settlePage, shouldDismiss, MAX_ZOOM, DOUBLE_TAP_ZOOM } from './viewer-math';
@@ -86,11 +87,10 @@ const ViewerPage = memo(function ViewerPage({
   onSize,
   onStep,
 }: PageProps) {
-  const { media: resolve } = useMediaUrls();
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const video = media.type === 'video';
-  const uri = resolve(video ? media.thumbnail : media.url);
+  // Each gateway in turn (an error or 8 s moves on), then the placeholder with Retry (UX_SPEC 2.4.6).
+  const source = useMediaUrlSource(video ? media.thumbnail : media.url);
+  const { uri, loaded } = source;
   const zoomStyle = useAnimatedStyle(() =>
     page.value === index
       ? { transform: [{ translateX: offsetX.value }, { translateY: offsetY.value }, { scale: scale.value }] }
@@ -100,13 +100,27 @@ const ViewerPage = memo(function ViewerPage({
   const label = `${media.alt || kind}, ${index + 1} of ${count}`;
 
   let content;
-  if (!uri || failed) {
+  if (!uri) {
     content = (
       <View className="items-center gap-3">
         {video ? <PlayIcon size={48} color={WHITE} /> : <PhotoIcon size={48} color={WHITE} />}
         <Text variant="subhead" style={{ color: WHITE }}>
           {video ? 'Video' : 'Image unavailable'}
         </Text>
+        {source.retryable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={video ? 'Retry loading video preview' : 'Retry loading image'}
+            onPress={source.retry}
+            hitSlop={8}
+            testID="media-retry"
+            className="min-h-11 justify-center rounded-full bg-white/20 px-5 active:bg-white/30"
+          >
+            <Text variant="subheadStrong" style={{ color: WHITE }}>
+              Retry
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   } else {
@@ -119,10 +133,11 @@ const ViewerPage = memo(function ViewerPage({
           transition={150}
           accessible={false}
           onLoad={(e) => {
-            setLoaded(true);
+            source.onLoad();
             onSize(index, { width: e.source.width, height: e.source.height });
           }}
-          onError={() => setFailed(true)}
+          onProgress={source.onProgress}
+          onError={source.onError}
           testID={`media-image-${index}`}
         />
         {!loaded ? (
@@ -146,15 +161,21 @@ const ViewerPage = memo(function ViewerPage({
       accessible
       accessibilityRole={onStep ? 'adjustable' : 'image'}
       accessibilityLabel={label}
-      accessibilityActions={
-        onStep
+      accessibilityActions={[
+        ...(onStep
           ? [
               { name: 'increment', label: 'Next image' },
               { name: 'decrement', label: 'Previous image' },
             ]
-          : undefined
-      }
-      onAccessibilityAction={onStep ? (e) => onStep(e.nativeEvent.actionName === 'increment' ? 1 : -1) : undefined}
+          : []),
+        // The page is one control to a screen reader, so the visible Retry is out of its reach.
+        ...(!uri && source.retryable ? [{ name: 'retry', label: 'Retry' }] : []),
+      ]}
+      onAccessibilityAction={(e) => {
+        const action = e.nativeEvent.actionName;
+        if (action === 'retry') source.retry();
+        else if (onStep) onStep(action === 'increment' ? 1 : -1);
+      }}
       style={{ width, height }}
       className="items-center justify-center"
     >

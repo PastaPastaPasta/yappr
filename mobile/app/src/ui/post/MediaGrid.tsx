@@ -1,5 +1,4 @@
 import { Image } from 'expo-image';
-import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 import { PhotoIcon, PlayIcon } from 'react-native-heroicons/outline';
 import { PlayIcon as PlaySolid } from 'react-native-heroicons/solid';
@@ -8,8 +7,8 @@ import { cn } from '~/lib-allowlist';
 
 import { Button } from '../Button';
 import { Text } from '../Text';
-import { useMediaUrls } from '../media-url';
 import { colors, motion, tw, useColors } from '../tokens';
+import { useMediaUrlSource } from '../use-media-source';
 import type { CardMedia } from './types';
 
 const VIDEO = 16 / 9;
@@ -85,18 +84,21 @@ function MediaCell({
   className?: string;
 }) {
   const c = useColors();
-  const urls = useMediaUrls();
-  const [failedUrl, setFailedUrl] = useState<string>();
   // 1.0 never plays video or GIF inline: thumbnails only (UX_SPEC 2.4.6). Without
   // one, both show the placeholder (an animated GIF's own URL would play).
   const still = media.type === 'image';
-  const source = urls.media(still ? (media.thumbnail ?? media.url) : media.thumbnail);
-  const failed = !source || failedUrl === media.url;
+  // IPFS tries each gateway in turn (an error or 8 s moves on); failing all of them leaves Retry.
+  const source = useMediaUrlSource(still ? (media.thumbnail ?? media.url) : media.thumbnail);
+  const failed = !source.uri;
   const kind = mediaKindLabel(media.type);
+  // A screen reader meets the cell as one control, so the visible Retry is out of its reach: offer it as an action.
+  const canRetry = failed && source.retryable;
   return (
     <Pressable
       accessibilityRole="imagebutton"
       accessibilityLabel={media.alt ? `${kind}: ${media.alt}` : kind}
+      accessibilityActions={canRetry ? [{ name: 'retry', label: 'Retry' }] : undefined}
+      onAccessibilityAction={canRetry ? (e) => e.nativeEvent.actionName === 'retry' && source.retry() : undefined}
       disabled={!onPress}
       onPress={onPress}
       className={cn('overflow-hidden', tw.bgSkeleton, className)}
@@ -111,15 +113,30 @@ function MediaCell({
           <Text variant="caption" tone="secondary">
             {still ? 'Image unavailable' : kind}
           </Text>
+          {canRetry ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={still ? 'Retry loading image' : 'Retry loading video preview'}
+              onPress={source.retry}
+              hitSlop={8}
+              testID="media-retry"
+            >
+              <Text variant="captionStrong" tone="link">
+                Retry
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : (
         <Image
-          source={{ uri: source }}
+          source={{ uri: source.uri }}
           style={{ flex: 1 }}
           contentFit="cover"
           transition={motion.fast}
           recyclingKey={media.url}
-          onError={() => setFailedUrl(media.url)}
+          onLoad={source.onLoad}
+          onProgress={source.onProgress}
+          onError={source.onError}
           accessible={false}
         />
       )}
