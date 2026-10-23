@@ -93,6 +93,7 @@ export type ApplyBlocker =
   | 'unknown'
   | 'requests-unread'
   | 'balance-unknown'
+  | 'balance-loading'
 
 /**
  * Why the viewer cannot file the application for `proposal` with `members`
@@ -107,7 +108,8 @@ export function applyBlocker(input: {
   status: ElectionStatus
   members: readonly string[]
   requested: ReadonlySet<string> | null
-  balance: bigint | null
+  /** Undefined while still being read, null when the read failed. */
+  balance: bigint | null | undefined
   minimumBalance: bigint
 }): ApplyBlocker | null {
   const { stage, proposal, viewerId, status, members, requested, balance, minimumBalance } = input
@@ -122,6 +124,7 @@ export function applyBlocker(input: {
   if (members.length > CHARTER_LIMITS.members) return 'too-many-members'
   if (!requested) return 'requests-unread'
   if (members.some((member) => !requested.has(member) || member === proposal.leaderId)) return 'unknown-members'
+  if (balance === undefined) return 'balance-loading'
   if (balance === null) return 'balance-unknown'
   if (balance < minimumBalance) return 'low-balance'
   return null

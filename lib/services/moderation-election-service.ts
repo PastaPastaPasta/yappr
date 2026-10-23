@@ -348,11 +348,12 @@ class ModerationElectionService {
       throw error;
     }
     let endTimeFailed = false;
-    const endsAtMs = await this.contestEnd(sdk, targetContractId, declaration, chainTimeMs).catch((error: unknown) => {
+    const readEnd = (lookback: boolean) => this.contestEnd(sdk, targetContractId, declaration, chainTimeMs, lookback).catch((error: unknown) => {
       logger.warn('moderationElection: vote poll end-date read failed', error);
       endTimeFailed = true;
       return null;
     });
+    let endsAtMs = await readEnd(true);
     const charters = [state, ...laterPages].some((page) => page.contenders?.some((contender: { serializedDocument?: Uint8Array }) => contender.serializedDocument))
       ? await sdk.contracts.fetch(MODERATION_CHARTERS_CONTRACT_ID).catch(() => undefined)
       : undefined;
@@ -363,6 +364,11 @@ class ModerationElectionService {
       charters?.free?.();
     }
     if (contest.contenders.length === 0 && !contest.winner) return { contest: null, endTimeFailed: false };
+    // A contest past its end that a stalled chain has not closed lies before the lookback: read again from the start.
+    if (endsAtMs === null && !endTimeFailed && chainTimeMs !== null && !contest.winner) {
+      endsAtMs = await readEnd(false);
+      contest = { ...contest, endsAtMs };
+    }
     return { contest, endTimeFailed };
   }
 
@@ -375,14 +381,17 @@ class ModerationElectionService {
    * platform#5139; beta.5 and beta.6 refused every time bound).
    *
    * The walk stops at the latest time a live contest can end: the join and
-   * vote windows from now, plus {@link END_DATE_SLACK_MS} for clock skew. So
-   * polls that end later, such as DPNS name contests weeks out, are not paged
-   * through when this contract has no contest. The lower end stays open: a
-   * poll whose end has passed but that a stalled chain has not yet closed is
-   * still this contract's contest.
+   * vote windows from now (the proved chain time when known), plus
+   * {@link END_DATE_SLACK_MS} for clock skew. So polls that end later, such as
+   * DPNS name contests weeks out, are not paged through when this contract has
+   * no contest. With chain time and `lookback`, the walk starts that slack
+   * before it, skipping long-ended polls; a poll whose end has passed but that
+   * a stalled chain has not yet closed is still this contract's contest, so
+   * {@link getContest} reads again with the lower end open when that first
+   * walk finds nothing for an undecided contest.
    */
   private async contestEnd(
-    sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null, chainTimeMs: number | null,
+    sdk: EvoSDK, targetContractId: string, declaration: ElectedModerationDeclaration | null, chainTimeMs: number | null, lookback: boolean,
   ): Promise<number | null> {
     // Anchored to the proved chain time when there is one (a device clock can be off), else this device's.
     const now = chainTimeMs ?? Date.now();
@@ -393,7 +402,7 @@ class ModerationElectionService {
       }
       : {};
     // With chain time, polls that ended more than the slack ago are skipped (they would only use up the page budget).
-    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = chainTimeMs === null
+    let lower: { startTimeMs: bigint; startTimeIncluded: boolean } | null = chainTimeMs === null || !lookback
       ? null
       : { startTimeMs: BigInt(Math.max(0, Math.floor(chainTimeMs - END_DATE_SLACK_MS))), startTimeIncluded: true };
     for (let page = 0; page < MAX_END_DATE_PAGES; page++) {

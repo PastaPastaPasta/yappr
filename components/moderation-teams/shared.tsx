@@ -93,15 +93,20 @@ export function useCreateFees(shape: { descriptionBytes: number; reasons: number
 
 /**
  * `me`'s balance and whether they still need to set up their charter key of
- * `role` (each null while unknown), read again whenever `refreshOn` changes.
+ * `role`, read again whenever `refreshOn` changes. `balance` is undefined
+ * until the first read answers and null when a read failed; a later read
+ * keeps showing the last answer until it answers itself.
  */
 export function useAccountReadiness(me: string | null, role: CharterRole, refreshOn: unknown) {
-  const [balance, setBalance] = useState<bigint | null>(null)
+  const [balance, setBalance] = useState<bigint | null | undefined>(undefined)
   const [needsKey, setNeedsKey] = useState<boolean | null>(null)
+  useEffect(() => {
+    setBalance(undefined)
+  }, [me])
   useEffect(() => {
     if (!me) return
     let live = true
-    charterService.balance(me).then((value) => { if (live) setBalance(value) }).catch(() => { /* shown without */ })
+    charterService.balance(me).then((value) => { if (live) setBalance(value) }).catch(() => { if (live) setBalance(null) })
     charterService.hasCharterKey(me, role).then((has) => { if (live) setNeedsKey(!has) }).catch(() => { /* priced as needed */ })
     return () => { live = false }
   }, [me, role, refreshOn])

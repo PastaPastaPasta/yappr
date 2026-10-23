@@ -269,7 +269,7 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
       </Section>
 
       <Section title="Cost">
-        <CostPreview lines={lines} balance={balance} loading={fees === null} />
+        <CostPreview lines={lines} balance={balance ?? null} loading={fees === null} />
         <p className="text-xs text-gray-500">
           Applying later pays a {DEPOSIT_TEXT} contest deposit for the masternode vote. It is not refunded.
         </p>

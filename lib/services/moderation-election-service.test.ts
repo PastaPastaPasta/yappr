@@ -139,6 +139,18 @@ describe('reading the contest', () => {
     }
   });
 
+  it('reads again from the start for an undecided contest past its end that a stalled chain has not closed', async () => {
+    const chain = 1_790_000_000_000;
+    sdk.voting.contestedResourceVoteState.mockResolvedValueOnce(state([{ identityId: leader, voteTally: 2 }]));
+    sdk.voting.votePollsByEndDate.mockResolvedValueOnce([]).mockResolvedValueOnce([entry(chain - 3_600_000, target)]);
+    const declaration = { joinWindowSeconds: 86_400, voteWindowSeconds: 86_400 } as unknown as Parameters<typeof moderationElectionService.getContest>[1];
+    const { contest, endTimeFailed } = await moderationElectionService.getContest(target, declaration, chain);
+    expect(contest?.endsAtMs).toBe(chain - 3_600_000);
+    expect(endTimeFailed).toBe(false);
+    expect(sdk.voting.votePollsByEndDate.mock.calls[0][0]).toHaveProperty('startTimeMs');
+    expect(sdk.voting.votePollsByEndDate.mock.calls[1][0]).not.toHaveProperty('startTimeMs');
+  });
+
   it('counts polls, not timestamp groups, when deciding a page was full', async () => {
     // 100 polls in 50 timestamps: a full page, though it holds only 50 entries.
     const pair = (timestampMs: number) => {

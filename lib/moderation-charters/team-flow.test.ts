@@ -120,6 +120,7 @@ describe('apply', () => {
 
   it('never pays the deposit on a balance it could not read', () => {
     expect(base({ balance: null })).toBe('balance-unknown')
+    expect(base({ balance: undefined })).toBe('balance-loading')
   })
 
   it('refuses a second application by the same leader, whichever proposal it ran on', () => {

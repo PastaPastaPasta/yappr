@@ -713,6 +713,9 @@ class CharterService {
         if (slot.kind === 'pending') return send(slot.entry)
         this.assertSameSession(generation)
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
+        this.assertSameSession(generation)
+        // The nonce read above stays this write's while the re-check reads the network: the lock holds every
+        // write from this browser off it (one from another device would get this one refused, never doubled).
         // After every wait (prompts, lock, earlier transitions settling), right before the transition is built.
         await input.beforeSigning?.().catch((error: unknown) => {
           if (error instanceof CharterActionError) throw error

@@ -38,6 +38,7 @@ function applyBlockerText(blocker: ApplyBlocker, stage: ElectionStage): string {
     case 'low-balance': return `Your balance is below ${LEADER_MINIMUM_TEXT}: the ${formatDash(CONTEST_FUND_CREDITS)} DASH deposit plus fees. Top up first.`
     case 'unknown': return 'The election could not be read. Refresh, then try again.'
     case 'balance-unknown': return "Your balance couldn't be read. Refresh, then try again."
+    case 'balance-loading': return 'Checking your balance…'
     case 'requests-unread': return "The join requests haven't been read yet. Wait a moment, or read them again above."
   }
 }
@@ -100,7 +101,9 @@ export function ProposalView({ contract, proposalId, election }: {
   const [message, setMessage] = useState(DEFAULT_MESSAGE)
   const [confirmed, setConfirmed] = useState(false)
   const [done, setDone] = useState<string | null>(null)
-  const { balance, needsKey: needsMemberKey } = useAccountReadiness(me, 'member', done)
+  // Read again after each write here and each refresh of the election (so Refresh re-reads a failed balance too).
+  const readinessKey = useMemo(() => ({ done, status }), [done, status])
+  const { balance, needsKey: needsMemberKey } = useAccountReadiness(me, 'member', readinessKey)
   const { busy, error, setError, run } = useCharterRun()
   const fees = useCreateFees({ descriptionBytes: 600, reasons: 3, members: Math.max(members.length, 1) })
 
@@ -301,7 +304,7 @@ export function ProposalView({ contract, proposalId, election }: {
               </p>
               <Textarea aria-label="Message to the leader" value={message} onChange={(e) => setMessage(e.target.value)} rows={3} />
               <Hint bad={messageBytes > CHARTER_LIMITS.messageBytes}>{messageBytes} / {CHARTER_LIMITS.messageBytes} bytes</Hint>
-              <CostPreview lines={fees ? joinCostLines(fees, { needsCharterKey: needsMemberKey ?? true }) : null} balance={balance} loading={fees === null} />
+              <CostPreview lines={fees ? joinCostLines(fees, { needsCharterKey: needsMemberKey ?? true }) : null} balance={balance ?? null} loading={fees === null} />
               {needsMemberKey !== false && (
                 <p className="text-xs text-gray-500">
                   First time? Yappr adds a charter key to your account, which needs your MASTER key once. It stays in this tab and is never stored.
@@ -334,7 +337,7 @@ export function ProposalView({ contract, proposalId, election }: {
                 After you apply, others have {formatWindow(status.declaration.joinWindowSeconds)} to apply too. With no rival you are seated then;
                 otherwise masternodes vote for {formatWindow(status.declaration.voteWindowSeconds)}.
               </p>
-              <CostPreview lines={fees ? applyCostLines(fees) : null} balance={balance} loading={fees === null} />
+              <CostPreview lines={fees ? applyCostLines(fees) : null} balance={balance ?? null} loading={fees === null} />
               {pendingApplication && (
                 <Notice tone="warn" testId="application-uncertain">
                   <p>
@@ -357,7 +360,7 @@ export function ProposalView({ contract, proposalId, election }: {
                 variant="danger"
               />
               {apply ? (
-                <Notice tone={apply === 'not-open' ? 'info' : 'warn'} testId="apply-blocker">
+                <Notice tone={apply === 'not-open' || apply === 'balance-loading' ? 'info' : 'warn'} testId="apply-blocker">
                   {apply === 'already-applied' ? 'You have applied for this contract with another of your proposals.' : applyBlockerText(apply, stage)}
                 </Notice>
               ) : (
