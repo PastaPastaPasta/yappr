@@ -16,6 +16,8 @@
     return timer;
   };
   global.setTimeout = (callback, delay, ...args) => {
+    // Node's own error for a bad callback, at the call.
+    if (typeof callback !== 'function') return realSetTimeout(callback, delay, ...args);
     const timer = realSetTimeout(
       (...fired) => {
         pending.delete(timer);
@@ -26,6 +28,8 @@
     );
     return note(timer);
   };
+  // `util.promisify(setTimeout)` keeps working.
+  global.setTimeout[require('util').promisify.custom] = realSetTimeout[require('util').promisify.custom];
   global.setInterval = (callback, delay, ...args) => note(realSetInterval(callback, delay, ...args));
   global.clearTimeout = (timer) => {
     pending.delete(timer);
