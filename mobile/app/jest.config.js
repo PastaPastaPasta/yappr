@@ -14,6 +14,8 @@ const [expoNodeModulesPattern, ...expoOtherPatterns] = expoPreset.transformIgnor
 /** @type {import('jest').Config} */
 module.exports = {
   preset: 'jest-expo',
+  // The preset's environment, which also clears timers a test file leaves pending (jest.setup.js).
+  testEnvironment: '<rootDir>/jest.environment.js',
   roots: ['<rootDir>/src'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   // The first renderRouter call compiles every route (~5s on a cold cache).

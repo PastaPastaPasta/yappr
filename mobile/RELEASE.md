@@ -43,6 +43,11 @@ APP_VARIANT=staging-testnet npm run release:android -- apk
 APP_VARIANT=staging-testnet npm run release:ios -- simulator
 ```
 
+Run the Maestro smoke suite (deep links, wallet return, native routes) against
+the installed staging build with
+`mobile/e2e/run.sh --platform ios|android --device <id> --variant staging-testnet --suite smoke`
+([mobile/e2e/README.md](e2e/README.md)).
+
 Staging uses `yappr-staging://`, distinct from production beta's `yappr-beta://`,
 so both can be installed together. All handoffs retain the deployment prefix.
 The wallet returns to `<web-base>/connect/?r=…&app=<scheme>`; the exported web

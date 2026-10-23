@@ -4,7 +4,7 @@
 #   mobile/e2e/run.sh --platform ios|android --device <udid|serial> [options]
 #
 # Options:
-#   --variant devnet|testnet|production   the installed app (default devnet)
+#   --variant devnet|staging-testnet|testnet|production   the installed app (default devnet)
 #   --suite smoke|full     smoke: signed-out flows only, no secrets, no writes (default).
 #                          full: smoke, then the signed-in flows; devnet (sakura) only.
 #   --metro-port <port>    a dev client: load the bundle from Metro on localhost:<port>
@@ -62,11 +62,14 @@ die() { echo "run.sh: $*" >&2; exit 2; }
 case "$platform" in ios|android) ;; *) die "--platform ios|android is required" ;; esac
 [ -n "$device" ] || die "--device is required"
 case "$suite" in smoke|full) ;; *) die "--suite must be smoke or full" ;; esac
+# One line per variant, kept equal to mobile/app/src/variants.ts by
+# mobile/app/src/__tests__/e2e-variants.test.ts.
 case "$variant" in
   devnet) app_id=pr.yap.app.dev; scheme=yappr-dev ;;
+  staging-testnet) app_id=pr.yap.app.staging; scheme=yappr-staging ;;
   testnet) app_id=pr.yap.app.beta; scheme=yappr-beta ;;
   production) app_id=pr.yap.app; scheme=yappr ;;
-  *) die "--variant must be devnet, testnet or production" ;;
+  *) die "--variant must be devnet, staging-testnet, testnet or production" ;;
 esac
 # The full suite writes: only ever to sakura, with pool personas.
 [ "$suite" = full ] && [ "$variant" != devnet ] && die "the full suite writes, so it runs on the devnet variant (sakura) only"

@@ -615,7 +615,7 @@ export const DEVNET_NAME = process.env.NEXT_PUBLIC_DEVNET_NAME || 'moutai'
 export const DEVNET_QUORUM_URL = process.env.NEXT_PUBLIC_QUORUM_URL || ''
 export const DAPI_ADDRESSES: readonly string[] = (process.env.NEXT_PUBLIC_DAPI_ADDRESSES || '')
   .split(',')
-  .map((address) => address.trim())
+  .map((address: string) => address.trim())
   .filter(Boolean)
 
 // Insight API configuration for transaction detection

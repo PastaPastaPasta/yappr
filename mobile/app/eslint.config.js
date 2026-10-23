@@ -53,6 +53,7 @@ const TOOLING = [
   'eslint.config.js',
   'eslint/**',
   'jest.config.js',
+  'jest.environment.js',
   'jest.setup.js',
   'metro.config.js',
   'tailwind.config.js',
@@ -67,7 +68,7 @@ const config = defineConfig([
   },
   {
     files: TOOLING,
-    languageOptions: { globals: { ...globals.node, jest: 'readonly' } },
+    languageOptions: { globals: { ...globals.node, jest: 'readonly', afterAll: 'readonly' } },
   },
   {
     files: ['**/*.{ts,tsx}'],

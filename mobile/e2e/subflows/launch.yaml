@@ -1,6 +1,6 @@
 # Launch the app under test from a stopped state, for any variant and build.
 #
-#   APP_ID          pr.yap.app.dev | pr.yap.app.beta | pr.yap.app
+#   APP_ID          pr.yap.app.dev | pr.yap.app.staging | pr.yap.app.beta | pr.yap.app
 #   DEV_CLIENT_URL  a dev client's Metro link (yappr-dev://expo-development-client/?url=...);
 #                   empty for a release build, which needs no Metro
 #   CLEAR           'true': clear the app's data first (a fresh install: Welcome shows)
