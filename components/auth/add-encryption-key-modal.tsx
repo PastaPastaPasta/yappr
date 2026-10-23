@@ -310,13 +310,19 @@ function KeyEntryAddEncryptionKeyModal({
       )
 
       if (result.success) {
-        // Store the encryption key in session (WIF format)
-        storeEncryptionKey(user.identityId, privateKeyWif)
-        // Mark as derived since we derived it from auth key
-        storeEncryptionKeyType(user.identityId, 'derived')
+        try {
+          // Store the encryption key in session (WIF format)
+          storeEncryptionKey(user.identityId, privateKeyWif)
+          // Mark as derived since we derived it from auth key
+          storeEncryptionKeyType(user.identityId, 'derived')
+          toast.success('Encryption key added to your identity!')
+        } catch (saveError) {
+          // The identity has the key now: adding it again would fail, so this is still a success.
+          logger.error('Could not save the added encryption key:', saveError)
+          toast.error('Encryption key added, but this browser couldn\'t save it. Keep the key you copied: you\'ll need it to unlock encrypted features here.')
+        }
 
         setStep('success')
-        toast.success('Encryption key added to your identity!')
 
         if (onSuccess) {
           onSuccess()

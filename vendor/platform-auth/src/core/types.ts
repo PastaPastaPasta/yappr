@@ -38,6 +38,11 @@ export interface SessionStore {
   clearSession(): MaybePromise<void>
 }
 
+/**
+ * Where a session's secrets are kept. A store rejects when the secret was not
+ * kept, and a clear rejects when a copy outlived it; the controller still runs
+ * every other clear and reports the failure as a `background-error`.
+ */
 export interface SecretStore {
   storePrivateKey(identityId: string, privateKey: string): MaybePromise<void>
   getPrivateKey(identityId: string): MaybePromise<string | null>

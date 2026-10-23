@@ -29,6 +29,24 @@ const DEFAULT_FEATURES: PlatformAuthFeatures = {
 
 const DEFAULT_BALANCE_REFRESH_MS = 300_000
 
+type SecretRemovalName = 'clearPrivateKey' | 'clearEncryptionKey' | 'clearEncryptionKeyType' | 'clearTransferKey' | 'clearLoginKey'
+
+const LOGOUT_REMOVALS: readonly SecretRemovalName[] = ['clearPrivateKey', 'clearEncryptionKey', 'clearEncryptionKeyType', 'clearTransferKey', 'clearLoginKey']
+
+interface CleanupFailure {
+  operation: string
+  error: unknown
+}
+
+/** Runs one cleanup step, keeping its failure for the caller to report once every step has run. */
+async function attempt(operation: string, run: () => unknown, failures: CleanupFailure[]): Promise<void> {
+  try {
+    await run()
+  } catch (error) {
+    failures.push({ operation, error })
+  }
+}
+
 const noopLogger = {
   info: () => undefined,
   warn: () => undefined,
@@ -343,10 +361,22 @@ export class PlatformAuthController {
       await this.exclusive(async () => {
         if (this.epoch !== startedAt || (options.stillCurrent && !options.stillCurrent())) throw new SupersededSignInError()
         this.epoch += 1
+        // Read before it is replaced, and waited for only if the key store fails (a restore may hold it meanwhile).
+        const previousSession = privateKey === null ? null : Promise.resolve(this.deps.sessionStore.getSession()).catch(() => null)
+        const previousUser = this.state.user
         await this.persistSessionUser(user)
         if (privateKey !== null) {
           options.beforeStore?.()
-          await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+          try {
+            await this.deps.secretStore.storePrivateKey(identity.id, privateKey)
+          } catch (error) {
+            // The key was not kept: no session is left standing on it, or on a key an earlier sign-in left.
+            const previous = await previousSession
+            if (previous) await this.deps.sessionStore.setSession(previous)
+            else await this.deps.sessionStore.clearSession()
+            this.patchState({ user: previousUser })
+            throw error
+          }
           options.afterStore?.()
         }
         await this.deps.clientIdentity?.setIdentity(identity.id)
@@ -431,10 +461,9 @@ export class PlatformAuthController {
 
       return result
     } catch (error) {
-      await this.deps.secretStore.clearPrivateKey(identityId)
-      await this.deps.secretStore.clearEncryptionKey(identityId)
-      await this.deps.secretStore.clearEncryptionKeyType(identityId)
-      await this.deps.secretStore.clearLoginKey(identityId)
+      const failures: CleanupFailure[] = []
+      await this.clearSecrets(identityId, ['clearPrivateKey', 'clearEncryptionKey', 'clearEncryptionKeyType', 'clearLoginKey'], failures)
+      await this.reportFailures(failures)
 
       this.logger.error('platform-auth: login-key login failed', error)
       this.patchState({
@@ -465,21 +494,17 @@ export class PlatformAuthController {
     this.restoringIdentityId = null
     this.epoch += 1
 
-    if (!localOnly) await this.deps.sessionStore.clearSession()
-    if (identityId && localOnly) await this.deps.secretStore.clearTabSecrets?.(identityId)
-    if (identityId && !localOnly) {
-      await this.deps.secretStore.clearPrivateKey(identityId)
-      await this.deps.secretStore.clearEncryptionKey(identityId)
-      await this.deps.secretStore.clearEncryptionKeyType(identityId)
-      await this.deps.secretStore.clearTransferKey(identityId)
-      await this.deps.secretStore.clearLoginKey(identityId)
-    }
+    // Each step runs even when one before it fails, so no failure keeps a secret or the session in place.
+    const failures: CleanupFailure[] = []
+    if (!localOnly) await attempt('clearSession', () => this.deps.sessionStore.clearSession(), failures)
+    if (identityId && localOnly) await attempt('clearTabSecrets', () => this.deps.secretStore.clearTabSecrets?.(identityId), failures)
+    if (identityId && !localOnly) await this.clearSecrets(identityId, LOGOUT_REMOVALS, failures)
     if (identityId) {
-      if (localOnly) await this.deps.sideEffects?.runLocalLogoutCleanup?.(identityId)
-      else await this.deps.sideEffects?.runLogoutCleanup?.(identityId)
+      if (localOnly) await attempt('runLocalLogoutCleanup', () => this.deps.sideEffects?.runLocalLogoutCleanup?.(identityId), failures)
+      else await attempt('runLogoutCleanup', () => this.deps.sideEffects?.runLogoutCleanup?.(identityId), failures)
     }
 
-    await this.deps.clientIdentity?.setIdentity('')
+    await attempt('setIdentity', () => this.deps.clientIdentity?.setIdentity(''), failures)
     this.stopBalanceRefresh()
     this.patchState({
       user: null,
@@ -487,10 +512,27 @@ export class PlatformAuthController {
       error: null,
     })
 
+    await this.reportFailures(failures)
     await this.emit({ type: 'logout', identityId })
     return {
       user: null,
       intent: { kind: 'logged-out' },
+    }
+  }
+
+  /** Runs every removal even when one fails: a secret the browser keeps never keeps the others in place. */
+  private async clearSecrets(identityId: string, removals: readonly SecretRemovalName[], failures: CleanupFailure[]): Promise<void> {
+    for (const operation of removals) await attempt(operation, () => this.deps.secretStore[operation](identityId), failures)
+  }
+
+  /** Each failure as a `background-error`; one the listener rejects does not hold back the rest. */
+  private async reportFailures(failures: CleanupFailure[]): Promise<void> {
+    for (const failure of failures) {
+      try {
+        await this.emit({ type: 'background-error', ...failure })
+      } catch (error) {
+        this.logger.error(`platform-auth: could not report a failed ${failure.operation}`, error)
+      }
     }
   }
 

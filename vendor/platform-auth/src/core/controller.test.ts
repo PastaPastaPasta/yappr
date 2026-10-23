@@ -13,6 +13,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
   const storePrivateKey = vi.fn(async () => undefined)
   const clearTabSecrets = vi.fn(async () => undefined)
   const clearPrivateKey = vi.fn(async () => undefined)
+  const clearLoginKey = vi.fn(async () => undefined)
   const usernames: UsernamePort = {
     resolveUsername: vi.fn(resolveUsername),
     resolveIdentity: async () => null,
@@ -38,7 +39,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
       clearEncryptionKey: async () => undefined,
       clearEncryptionKeyType: async () => undefined,
       clearTransferKey: async () => undefined,
-      clearLoginKey: async () => undefined,
+      clearLoginKey,
     } as unknown as SecretStore,
     identity: {
       getIdentity,
@@ -56,6 +57,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     usernames,
     storePrivateKey,
     clearPrivateKey,
+    clearLoginKey,
     clearTabSecrets,
     getIdentity,
     storedUser: (): AuthUser | undefined => session?.user,
@@ -331,6 +333,38 @@ describe('tab-only sign-in keys', () => {
     expect(await tab(false).restoreSession()).toBeNull()
     expect(snapshot).not.toBeNull()
     expect(await tab(true).restoreSession()).toMatchObject({ identityId: IDENTITY_ID })
+  })
+})
+
+describe('a sign-in whose key the browser does not keep', () => {
+  it('leaves no session standing: the tab and the stored session go back to what they were', async () => {
+    const { controller, storedUser, storePrivateKey } = setup(async () => 'alice.dash')
+    storePrivateKey.mockImplementation(async () => { throw new Error('This browser could not save your key') })
+    await expect(controller.loginWithAuthKey('other-identity', 'private-key')).rejects.toThrow('could not save')
+    expect(controller.getState().user).toBeNull()
+    expect(storedUser()?.identityId).toBe(IDENTITY_ID)
+
+    const signedIn = setup(async () => 'alice.dash')
+    await signedIn.controller.restoreSession()
+    signedIn.storePrivateKey.mockImplementation(async () => { throw new Error('full') })
+    await expect(signedIn.controller.loginWithAuthKey('other-identity', 'private-key')).rejects.toThrow('full')
+    expect(signedIn.controller.getState().user?.identityId).toBe(IDENTITY_ID)
+    expect(signedIn.storedUser()?.identityId).toBe(IDENTITY_ID)
+  })
+})
+
+describe('sign-out', () => {
+  it('still removes every other secret and signs out when the browser keeps one, and reports it', async () => {
+    const { controller, events, storedUser, clearPrivateKey, clearLoginKey } = setup(async () => 'alice.dash')
+    await controller.restoreSession()
+    const refused = new Error('This browser could not remove a saved key')
+    clearPrivateKey.mockImplementation(async () => { throw refused })
+    await controller.logout()
+    expect(clearLoginKey).toHaveBeenCalledWith(IDENTITY_ID)
+    expect(controller.getState().user).toBeNull()
+    expect(storedUser()).toBeUndefined()
+    expect(events).toContainEqual({ type: 'background-error', operation: 'clearPrivateKey', error: refused })
+    expect(events.at(-1)).toEqual({ type: 'logout', identityId: IDENTITY_ID })
   })
 })
 

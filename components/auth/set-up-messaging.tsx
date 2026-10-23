@@ -110,8 +110,17 @@ export function SetUpMessaging({
   // Only while this dialog is open: if it closed first, the next opening finds the key current and adopts it.
   const finish = useCallback((ready: MessagingKeyDraft) => {
     if (finishedRef.current || !aliveRef.current) return
+    let wif: string
+    try {
+      wif = adoptMessagingKey(ready)
+    } catch (error) {
+      // Not finished: "Try again", or the next check, saves it once the browser can.
+      logger.warn('Messaging setup: could not save the messaging key:', error)
+      setPhase({ kind: 'failed', message: 'This browser couldn\'t save your messaging key. Free up some space and try again.' })
+      return
+    }
     finishedRef.current = true
-    onDoneRef.current(ready.identityId, adoptMessagingKey(ready))
+    onDoneRef.current(ready.identityId, wif)
   }, [])
 
   const alreadySetUp = useCallback(() => {

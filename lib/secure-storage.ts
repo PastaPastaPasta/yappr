@@ -3,6 +3,7 @@
 import {
   createBrowserSecretStore,
   type BrowserStoredKeyType,
+  type SecretRemoval,
 } from 'platform-auth'
 import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
@@ -113,8 +114,12 @@ export function storeSessionOnlyPrivateKey(identityId: string, wif: string): voi
     if (sessionStorageRecord(identityId) !== null) throw new Error('This browser could not keep your sign-in key')
     sessionOnlyMemory.set(identityId, record)
   }
-  // Only now that this tab holds it is the persisted copy dropped.
-  browserSecretStore.clearPrivateKey(identityId)
+  // Only now that this tab holds it is the persisted copy dropped. One the browser keeps would sign in
+  // this key's place (getPrivateKey reads it first): the sign-in fails instead, holding neither.
+  if (!browserSecretStore.clearPrivateKey(identityId).complete) {
+    dropSessionOnlyRecord(identityId)
+    throw new Error('This browser could not keep your sign-in key')
+  }
 }
 
 function sessionStorageRecord(identityId: string): string | null {
@@ -161,23 +166,36 @@ export function hasPrivateKey(identityId: string): boolean {
   return getPrivateKey(identityId) !== null
 }
 
-/** Remote sign-out must destroy this tab's key without deleting a newer shared login. */
-export function clearTabSecrets(identityId: string): void {
-  sessionOnlyMemory.delete(identityId)
-  forgetCriticalKey(identityId)
-  expectedPasskeyKeys.delete(identityId)
+function removeSessionItem(name: string): void {
   try {
-    sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
-    for (const kind of ['pk', 'ek', 'ek_type', 'tk', 'lk']) sessionStorage.removeItem(`${SECRET_PREFIX}${kind}_${identityId}`)
+    sessionStorage.removeItem(name)
   } catch {
-    // The in-memory key was still removed if sessionStorage is blocked.
+    // Blocked, or this one refused: the in-memory key and the other records still go.
   }
 }
 
-export function clearPrivateKey(identityId: string): boolean {
-  const hadSessionOnly = getSessionOnlyPrivateKey(identityId) !== null
+function dropSessionOnlyRecord(identityId: string): void {
+  sessionOnlyMemory.delete(identityId)
+  removeSessionItem(SESSION_ONLY_KEY_PREFIX + identityId)
+}
+
+/** Remote sign-out must destroy this tab's key without deleting a newer shared login. */
+export function clearTabSecrets(identityId: string): void {
+  dropSessionOnlyRecord(identityId)
+  forgetCriticalKey(identityId)
+  expectedPasskeyKeys.delete(identityId)
+  for (const kind of ['pk', 'ek', 'ek_type', 'tk', 'lk']) removeSessionItem(`${SECRET_PREFIX}${kind}_${identityId}`)
+}
+
+/** Removes the sign-in key wherever it is kept, and says whether any copy outlived the removal. */
+export function clearPrivateKey(identityId: string): SecretRemoval {
+  const hadSessionOnly = getSessionOnlyRecord(identityId) !== null
   clearTabSecrets(identityId)
-  return browserSecretStore.clearPrivateKey(identityId) || hadSessionOnly
+  const persisted = browserSecretStore.clearPrivateKey(identityId)
+  return {
+    existed: persisted.existed || hadSessionOnly,
+    complete: persisted.complete && getSessionOnlyRecord(identityId) === null,
+  }
 }
 
 /**

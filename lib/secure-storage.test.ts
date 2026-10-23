@@ -140,6 +140,37 @@ describe('remote sign-out secrets', () => {
     localStorage.clear()
     expect(s.getPrivateKey(IDENTITY)).toBeNull()
   })
+  it('erases a persisted key from storage that is full but still deletable', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    localStorage.setItem = () => { throw new Error('QuotaExceededError') }
+    sessionStorage.setItem = () => { throw new Error('QuotaExceededError') }
+    expect(s.clearPrivateKey(IDENTITY)).toEqual({ existed: true, complete: true })
+    expect(s.getPrivateKey(IDENTITY)).toBeNull()
+    expect(localStorage.length).toBe(0)
+  })
+  it('says when a persisted key outlived the removal', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    localStorage.removeItem = () => { throw new Error('SecurityError') }
+    expect(s.clearPrivateKey(IDENTITY)).toEqual({ existed: true, complete: false })
+  })
+  it('fails a tab-only sign-in, holding nothing, when the persisted key it replaces cannot be removed', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    localStorage.removeItem = () => { throw new Error('SecurityError') }
+    expect(() => s.storeSessionOnlyPrivateKey(IDENTITY, STORED_WIF)).toThrow()
+    // The persisted key is still what signs; the typed one is not left behind in this tab.
+    expect(s.getPrivateKey(IDENTITY)).toBe(LOGIN_WIF)
+    expect(sessionStorage.length).toBe(0)
+  })
+  it('fails a store the browser cannot keep', async () => {
+    const s = await load()
+    localStorage.setItem = () => { throw new Error('QuotaExceededError') }
+    expect(() => s.storePrivateKey(IDENTITY, LOGIN_WIF)).toThrow()
+    expect(() => s.storeEncryptionKey(IDENTITY, STORED_WIF)).toThrow()
+    expect(s.getPrivateKey(IDENTITY)).toBeNull()
+  })
   it('erases the memory fallback when session storage is unavailable', async () => {
     const s = await load()
     sessionStorage.setItem = () => { throw new Error('Storage blocked') }

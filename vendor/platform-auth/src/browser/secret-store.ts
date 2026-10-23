@@ -16,110 +16,149 @@ export interface BrowserSecretStoreOptions {
 
 export type BrowserStoredKeyType = EncryptionKeyType
 
+/** What removing a secret found, and whether it is now gone from every storage area. */
+export interface SecretRemoval {
+  existed: boolean
+  /** False when a copy is still there: the browser refused to remove it. */
+  complete: boolean
+}
+
+function mergeRemovals(removals: SecretRemoval[]): SecretRemoval {
+  return {
+    existed: removals.some((removal) => removal.existed),
+    complete: removals.every((removal) => removal.complete),
+  }
+}
+
+/**
+ * Secrets live in localStorage; sessionStorage holds copies an earlier version
+ * kept there. Every operation reaches each area on its own: a full or
+ * read-only store still reads, lists and removes what it holds, so a failed
+ * write never stops a secret from being removed.
+ */
 class BrowserStorage {
   public constructor(private readonly prefix: string) {}
 
-  private getKeysWithPrefix(storage: Storage): string[] {
-    const keys: string[] = []
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
-      if (key?.startsWith(this.prefix)) {
-        keys.push(key)
-      }
-    }
-    return keys
-  }
-
-  private getStorage(): Storage | null {
+  /** The storage area, or null where there is none or the browser blocks it. */
+  private static area(kind: 'local' | 'session'): Storage | null {
     if (typeof window === 'undefined') return null
-    return localStorage
-  }
-
-  private getLegacyStorage(): Storage | null {
-    if (typeof window === 'undefined') return null
-    return sessionStorage
-  }
-
-  private isAvailable(): boolean {
-    if (typeof window === 'undefined') return false
     try {
-      const test = '__storage_test__'
-      localStorage.setItem(test, test)
-      localStorage.removeItem(test)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  public set(key: string, value: unknown): void {
-    if (!this.isAvailable()) return
-    const storage = this.getStorage()
-    if (!storage) return
-    try {
-      storage.setItem(this.prefix + key, JSON.stringify(value))
-      this.getLegacyStorage()?.removeItem(this.prefix + key)
-    } catch {
-      // Keep storage helpers silent; callers handle absence/failure the same way as Yappr did.
-    }
-  }
-
-  public get(key: string): unknown {
-    if (!this.isAvailable()) return null
-    try {
-      const storage = this.getStorage()
-      if (!storage) return null
-      const item = storage.getItem(this.prefix + key)
-      if (item) return JSON.parse(item)
-
-      const legacyStorage = this.getLegacyStorage()
-      const fallback = legacyStorage?.getItem(this.prefix + key)
-      if (!fallback) return null
-
-      const parsed = JSON.parse(fallback)
-      storage.setItem(this.prefix + key, fallback)
-      legacyStorage?.removeItem(this.prefix + key)
-      return parsed
+      return kind === 'local' ? localStorage : sessionStorage
     } catch {
       return null
     }
   }
 
-  public has(key: string): boolean {
-    if (!this.isAvailable()) return false
-    const storage = this.getStorage()
+  private static read(storage: Storage | null, name: string): string | null {
+    try {
+      return storage?.getItem(name) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /** Writes `value` and reads it back: true only once the area holds it. */
+  private static write(storage: Storage | null, name: string, value: string): boolean {
     if (!storage) return false
-    if (storage.getItem(this.prefix + key) !== null) return true
-    return this.getLegacyStorage()?.getItem(this.prefix + key) !== null
+    try {
+      storage.setItem(name, value)
+    } catch {
+      return false
+    }
+    return BrowserStorage.read(storage, name) === value
   }
 
-  public delete(key: string): boolean {
-    if (!this.isAvailable()) return false
-    const existed = this.has(key)
-    localStorage.removeItem(this.prefix + key)
-    sessionStorage.removeItem(this.prefix + key)
-    return existed
+  private static remove(storage: Storage | null, name: string): SecretRemoval {
+    if (!storage) return { existed: false, complete: true }
+    const existed = BrowserStorage.read(storage, name) !== null
+    try {
+      storage.removeItem(name)
+    } catch {
+      // Checked below.
+    }
+    try {
+      return { existed, complete: storage.getItem(name) === null }
+    } catch {
+      // Unreadable afterwards: nothing confirms the copy is gone.
+      return { existed, complete: false }
+    }
   }
 
-  public clear(): void {
-    if (!this.isAvailable()) return
-    this.getKeysWithPrefix(localStorage).forEach((key) => localStorage.removeItem(key))
-    this.getKeysWithPrefix(sessionStorage).forEach((key) => sessionStorage.removeItem(key))
+  private namesWithPrefix(storage: Storage | null): string[] {
+    const names: string[] = []
+    if (!storage) return names
+    try {
+      for (let index = 0; index < storage.length; index += 1) {
+        const name = storage.key(index)
+        if (name?.startsWith(this.prefix)) names.push(name)
+      }
+    } catch {
+      // Unreadable: nothing in it can be listed.
+    }
+    return names
+  }
+
+  /** Throws when the browser does not keep the value, so no caller goes on believing it saved. */
+  public set(key: string, value: unknown): void {
+    const name = this.prefix + key
+    if (!BrowserStorage.write(BrowserStorage.area('local'), name, JSON.stringify(value))) {
+      throw new Error('This browser could not save your key')
+    }
+    // The saved value now outranks any older copy, which only has to go.
+    BrowserStorage.remove(BrowserStorage.area('session'), name)
+  }
+
+  public get(key: string): unknown {
+    const name = this.prefix + key
+    const storage = BrowserStorage.area('local')
+    const item = BrowserStorage.read(storage, name)
+    if (item) return parseStored(item)
+
+    const legacyStorage = BrowserStorage.area('session')
+    const fallback = BrowserStorage.read(legacyStorage, name)
+    if (!fallback) return null
+    const parsed = parseStored(fallback)
+    // Moved to localStorage; the old copy goes only once the new one reads back, so a failed write loses nothing.
+    if (parsed !== null && BrowserStorage.write(storage, name, fallback)) BrowserStorage.remove(legacyStorage, name)
+    return parsed
+  }
+
+  public has(key: string): boolean {
+    const name = this.prefix + key
+    return BrowserStorage.read(BrowserStorage.area('local'), name) !== null
+      || BrowserStorage.read(BrowserStorage.area('session'), name) !== null
+  }
+
+  public delete(key: string): SecretRemoval {
+    const name = this.prefix + key
+    return mergeRemovals([
+      BrowserStorage.remove(BrowserStorage.area('local'), name),
+      BrowserStorage.remove(BrowserStorage.area('session'), name),
+    ])
+  }
+
+  public clear(): SecretRemoval {
+    return mergeRemovals(this.keys().map((key) => this.delete(key)))
   }
 
   public keys(): string[] {
-    if (!this.isAvailable()) return []
-
-    const allKeys = [
-      ...this.getKeysWithPrefix(localStorage),
-      ...this.getKeysWithPrefix(sessionStorage),
+    const allNames = [
+      ...this.namesWithPrefix(BrowserStorage.area('local')),
+      ...this.namesWithPrefix(BrowserStorage.area('session')),
     ]
-    const uniqueKeys = new Set(allKeys.map((key) => key.slice(this.prefix.length)))
-    return Array.from(uniqueKeys)
+    return Array.from(new Set(allNames.map((name) => name.slice(this.prefix.length))))
   }
 
   public size(): number {
     return this.keys().length
+  }
+}
+
+function parseStored(value: string): unknown {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
   }
 }
 
@@ -156,15 +195,12 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
     return typeof value === 'string' ? value : null
   }
 
-  const clearPrivateKey = (identityId: string): boolean => storage.delete(`pk_${identityId}`)
+  const clearPrivateKey = (identityId: string): SecretRemoval => storage.delete(`pk_${identityId}`)
 
   const hasPrivateKey = (identityId: string): boolean => storage.has(`pk_${identityId}`)
 
-  const clearAllPrivateKeys = (): void => {
-    storage.keys().filter((key) => key.startsWith('pk_')).forEach((key) => {
-      storage.delete(key)
-    })
-  }
+  const clearAllPrivateKeys = (): SecretRemoval =>
+    mergeRemovals(storage.keys().filter((key) => key.startsWith('pk_')).map((key) => storage.delete(key)))
 
   const storeLoginKey = (identityId: string, loginKey: Uint8Array): void => {
     storage.set(`lk_${identityId}`, bytesToBase64(loginKey))
@@ -182,7 +218,7 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
 
   const hasLoginKey = (identityId: string): boolean => storage.has(`lk_${identityId}`)
 
-  const clearLoginKey = (identityId: string): boolean => storage.delete(`lk_${identityId}`)
+  const clearLoginKey = (identityId: string): SecretRemoval => storage.delete(`lk_${identityId}`)
 
   const storeNormalizedWif = (storageKey: string, privateKey: string): void => {
     if (options.crypto.isLikelyWif(privateKey)) {
@@ -218,7 +254,7 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
 
   const hasEncryptionKey = (identityId: string): boolean => storage.has(`ek_${identityId}`)
 
-  const clearEncryptionKey = (identityId: string): boolean => storage.delete(`ek_${identityId}`)
+  const clearEncryptionKey = (identityId: string): SecretRemoval => storage.delete(`ek_${identityId}`)
 
   const storeEncryptionKeyType = (identityId: string, type: BrowserStoredKeyType): void => {
     storage.set(`ek_type_${identityId}`, type)
@@ -229,7 +265,7 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
     return value === 'derived' || value === 'external' ? value : null
   }
 
-  const clearEncryptionKeyType = (identityId: string): boolean => storage.delete(`ek_type_${identityId}`)
+  const clearEncryptionKeyType = (identityId: string): SecretRemoval => storage.delete(`ek_type_${identityId}`)
 
   const storeTransferKey = (identityId: string, transferKey: string): void => {
     storeNormalizedWif(`tk_${identityId}`, transferKey)
@@ -244,7 +280,7 @@ export function createBrowserSecretStore(options: BrowserSecretStoreOptions) {
 
   const hasTransferKey = (identityId: string): boolean => storage.has(`tk_${identityId}`)
 
-  const clearTransferKey = (identityId: string): boolean => storage.delete(`tk_${identityId}`)
+  const clearTransferKey = (identityId: string): SecretRemoval => storage.delete(`tk_${identityId}`)
 
   return {
     secureStorage: storage,
