@@ -19,7 +19,9 @@
  * sign for the charters contract). The charter keys join requests are
  * encrypted between are made from the MASTER key, asked for once when the
  * key is first needed (lib/moderation-charters/charter-keys.ts). Every key
- * typed in lives in this tab's memory only, until `forgetKeys()`.
+ * typed in lives in this tab's memory only: a charter key until `forgetKeys()`
+ * or the end of its sign-in, a CRITICAL key "kept for this tab" in the shared
+ * sheet until sign-out (the shared step-up's own rule).
  *
  * Each create is signed once under a known nonce and kept until proved, so
  * "try again" after an uncertain outcome broadcasts the same bytes and can
@@ -33,7 +35,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
 import { base64ToBytes, bytesToBase64, requireBytes } from '@/lib/bytes'
-import { askForKey, cancelPrompt, criticalKeyFor, criticalKeySession } from '@/lib/auth/critical-key'
+import { askForKey, cancelPrompt, criticalKeyFor, criticalKeySession, type KeyPrompt } from '@/lib/auth/critical-key'
 import { currentIdentityId } from '@/lib/auth/active-identity'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getPrivateKey } from '@/lib/secure-storage'
@@ -279,13 +281,12 @@ export interface CharterSession {
 }
 
 class CharterService {
-  /** Signing keys typed in, by identity: this tab's memory only. */
   /** The write each slot has under way, so a second click joins it instead of signing again. */
   private inFlight = new Map<string, { fingerprint: string; work: Promise<string> }>()
   /** Bumped by `forgetKeys`: a key answered for an earlier generation is never kept. */
   private generation = 0
-  /** Key prompts this service has open on the shared sheet (one at a time there). */
-  private prompting = 0
+  /** The MASTER-key prompt this service has open on the shared sheet, so `forgetKeys` can close it. */
+  private openPrompt: KeyPrompt | null = null
 
   /**
    * The current session, to pass to each write of a multi-write action (key
@@ -305,21 +306,15 @@ class CharterService {
     return session.generation === this.generation && session.epoch === criticalKeySession() && session.identityId === currentIdentityId()
   }
 
-  /** Runs a key prompt on the shared sheet, so `forgetKeys` can close it. */
-  private async prompt<T>(ask: () => Promise<T>): Promise<T> {
-    this.prompting++
-    try {
-      return await ask()
-    } finally {
-      this.prompting--
-    }
-  }
 
   /** Drops every key this tab was given for charters (on leaving the page, signing out or switching account). */
   forgetKeys(): void {
     this.generation++
-    // A key prompt this service has open closes with the page that asked (the shared sheet is app-wide).
-    if (this.prompting > 0) cancelPrompt(() => true)
+    // The MASTER-key prompt this service opened closes with the page that asked (the sheet is app-wide). A
+    // CRITICAL-key request may be shared with another feature, so it stays; the charters write that waits on
+    // it stops on its own session check once answered.
+    const open = this.openPrompt
+    if (open) cancelPrompt((request) => request.prompt === open)
     forgetCharterKeys()
   }
 
@@ -505,11 +500,10 @@ class CharterService {
       })
       if (result.ok && signingKeyProblem(result, result.key) === null) return { wif: raw, identityKey: result.key }
     }
-    const critical = await this.prompt(() => criticalKeyFor(identityId, identity.publicKeys, 'moderation', null, generation.epoch))
+    // A key bound to another contract can't sign charters: a held one is passed over for the sheet, an answer refused.
+    const unbound = (key: IdentityPublicKey) => !(key as { contractBounds?: unknown }).contractBounds
+    const critical = await criticalKeyFor(identityId, identity.publicKeys, 'moderation', null, generation.epoch, unbound)
     this.assertSameSession(generation)
-    if ((critical.key as { contractBounds?: unknown }).contractBounds) {
-      throw new CharterActionError('That key only signs for another contract. Use your CRITICAL key.', 'refused')
-    }
     return { wif: critical.wif, identityKey: critical.key }
   }
 
@@ -558,7 +552,7 @@ class CharterService {
         bytes.fill(0)
       }
     }
-    const input = await this.prompt(() => askForKey(identityId, {
+    const prompt: KeyPrompt = {
       title: onChain ? 'Unlock your charter key' : 'Set up your charter key',
       why: onChain
         ? (role === 'leader' ? 'Join messages are encrypted to your charter key.' : 'Your join message is encrypted with your charter key.')
@@ -581,7 +575,14 @@ class CharterService {
           return keyInputError(error)
         }
       },
-    }, generation.epoch))
+    }
+    this.openPrompt = prompt
+    let input: string
+    try {
+      input = await askForKey(identityId, prompt, generation.epoch)
+    } finally {
+      if (this.openPrompt === prompt) this.openPrompt = null
+    }
     this.assertSameSession(generation)
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
@@ -620,6 +621,7 @@ class CharterService {
       try {
         signer.addKey(masterKey)
         signer.addKey(newKey)
+        // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
         await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
       } catch (error) {
         if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
@@ -1070,6 +1072,7 @@ class CharterService {
         try {
           signer.addKey(privateKey)
           sent = true
+          // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
           await sdk.documents.delete({ document: { id: documentId, ownerId, dataContractId: CHARTERS_CONTRACT_ID, documentTypeName: type }, identityKey, signer })
         } finally {
           signer.free()

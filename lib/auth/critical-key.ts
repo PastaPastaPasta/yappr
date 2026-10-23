@@ -76,6 +76,9 @@ export class CriticalKeyCancelledError extends Error {
 /** The marker the services turn into NEEDS_CRITICAL_KEY (no sheet to ask with, or a key that does not fit). */
 export const CRITICAL_KEY_REQUIRED = 'critical key required'
 
+/** No sheet is mounted to ask for another key with ({@link askForKey}). */
+export const KEY_SHEET_MISSING = 'no key sheet to ask with'
+
 function usableFor(source: CriticalKeySource, use: CriticalKeyUse): boolean {
   return use === 'moderation' || source !== 'passkey'
 }
@@ -216,10 +219,11 @@ export function availableCriticalKey<K extends IdentityKeyLike>(
   publicKeys: readonly K[],
   use: CriticalKeyUse,
   sessionKey: string | null,
+  accept: (key: K) => boolean = () => true,
 ): { wif: string; key: K } | null {
   if (sessionKey) {
     const result = matchCritical(sessionKey, publicKeys)
-    if (result.ok) return { wif: sessionKey, key: result.key }
+    if (result.ok && accept(result.key)) return { wif: sessionKey, key: result.key }
   }
   const kept = held.get(identityId)
   if (!kept) return null
@@ -230,7 +234,8 @@ export function availableCriticalKey<K extends IdentityKeyLike>(
   }
   if (!usableFor(kept.source, use)) return null
   const result = matchCritical(kept.wif, publicKeys)
-  if (result.ok) return { wif: kept.wif, key: result.key }
+  // One the caller can't sign with (say, bound to another contract) is kept for others; this one asks.
+  if (result.ok) return accept(result.key) ? { wif: kept.wif, key: result.key } : null
   // Disabled or replaced since it was given: never offered again.
   held.delete(identityId)
   return null
@@ -251,6 +256,10 @@ export function availableCriticalKey<K extends IdentityKeyLike>(
  * so a sign-out or a switch of account while the identity was read, or while
  * the sheet was open, stops the action (CriticalKeyCancelledError).
  *
+ * `accept`, when given, narrows which matching key may sign (charters take
+ * no key bound to another contract): a held key it refuses is passed over
+ * for the sheet, and an answer it refuses is refused before it is kept.
+ *
  * Throws {@link CriticalKeyCancelledError} when the sheet is closed, and the
  * {@link CRITICAL_KEY_REQUIRED} marker where no sheet is mounted (the mobile
  * engine) or the answer does not match.
@@ -261,17 +270,18 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
   use: CriticalKeyUse,
   sessionKey: string | null,
   session: number,
+  accept: (key: K) => boolean = () => true,
 ): Promise<{ wif: string; key: K; assertLive: () => void }> {
   const assertLive = liveSessionCheck(identityId, session)
   assertLive()
-  const available = availableCriticalKey(identityId, publicKeys, use, sessionKey)
+  const available = availableCriticalKey(identityId, publicKeys, use, sessionKey, accept)
   if (available) return { ...available, assertLive }
   if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
   const answer = await ask(identityId, use)
   if (!answer) throw new CriticalKeyCancelledError()
   assertLive()
   const result = usableFor(answer.source, use) ? matchCritical(answer.wif, publicKeys) : null
-  if (!result?.ok) throw new Error(CRITICAL_KEY_REQUIRED)
+  if (!result?.ok || !accept(result.key)) throw new Error(CRITICAL_KEY_REQUIRED)
   if (answer.keep) holdCriticalKey(identityId, answer.wif, answer.source)
   return { wif: answer.wif, key: result.key, assertLive }
 }
@@ -287,14 +297,19 @@ export async function criticalKeyFor<K extends IdentityKeyLike>(
 export async function askForKey(identityId: string, prompt: KeyPrompt, session: number): Promise<string> {
   const assertLive = liveSessionCheck(identityId, session)
   assertLive()
-  if (listeners.size === 0) throw new Error(CRITICAL_KEY_REQUIRED)
+  if (listeners.size === 0) throw new Error(KEY_SHEET_MISSING)
   const answer = await ask(identityId, 'moderation', prompt)
   if (!answer) throw new CriticalKeyCancelledError()
   assertLive()
   return answer.wif
 }
 
-/** Closes the sheet when it is asking `identityId` with one of `prompts` (the action that asked is gone). */
+/**
+ * Closes the sheet when the request it shows is one `isOurs` recognises (say,
+ * by its {@link KeyPrompt}): the action that asked is gone. A
+ * {@link criticalKeyFor} request may be shared by several waiting actions, so
+ * no single one of them closes it; each stops on its own session check instead.
+ */
 export function cancelPrompt(isOurs: (request: CriticalKeyRequest) => boolean): void {
   if (pending && isOurs(pending.request)) settle(null)
 }

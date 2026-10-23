@@ -7,6 +7,7 @@ import { bindCurrentIdentity } from './active-identity'
 import {
   CRITICAL_KEY_REQUIRED,
   CriticalKeyCancelledError,
+  KEY_SHEET_MISSING,
   answerCriticalKeyRequest,
   askForKey,
   cancelPrompt,
@@ -343,6 +344,6 @@ describe('askForKey (another key, asked with the same sheet)', () => {
   })
 
   it('needs a mounted sheet', async () => {
-    await expect(askForKey(A, prompt, 0)).rejects.toThrow(CRITICAL_KEY_REQUIRED)
+    await expect(askForKey(A, prompt, 0)).rejects.toThrow(KEY_SHEET_MISSING)
   })
 })

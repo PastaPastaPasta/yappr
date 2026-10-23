@@ -4,7 +4,7 @@
  * reaches the page: an unknown refusal reads as "That didn't go through".
  */
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, consensusCodeOf, extractErrorMessage, isOutcomeUnknownError } from '@/lib/error-utils'
-import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError } from '@/lib/auth/critical-key'
+import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, KEY_SHEET_MISSING } from '@/lib/auth/critical-key'
 
 /** What was being written. */
 export type CharterAction = 'reason' | 'proposal' | 'join' | 'application' | 'add-member' | 'remove-member' | 'undo-team-change' | 'charter-key'
@@ -87,6 +87,7 @@ export function charterActionError(action: CharterAction, error: unknown): Chart
   // Nothing was sent: another write may still land on this nonce sequence, or this browser's storage refused the nonce.
   const plain = extractErrorMessage(error)
   if (plain === CRITICAL_KEY_REQUIRED) return new CharterActionError("That key can't sign this. Use your account's CRITICAL key.", 'refused')
+  if (plain === KEY_SHEET_MISSING) return new CharterActionError('Your key could not be asked for here. Reload the page, then try again.', 'refused')
   if (plain === PENDING_WRITE_ERROR || plain === NONCE_STORE_ERROR) return new CharterActionError(plain, 'refused')
   const code = consensusCodeOf(error) ?? codeInMessage(error)
   if (code !== null) {

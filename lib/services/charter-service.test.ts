@@ -71,14 +71,31 @@ vi.mock('@/lib/auth/critical-key', async (original: () => Promise<Record<string,
 const auth = vi.hoisted(() => ({ identity: 'owner1' as string | null, epoch: 1 }))
 vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => auth.identity }))
 vi.mock('@/lib/secure-storage', () => ({ getPrivateKey: () => 'wif' }))
-vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => false }))
+const wallet = vi.hoisted(() => ({ appConnect: false }))
+vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => wallet.appConnect }))
 vi.mock('@/lib/retry-utils', () => ({ sleep: async () => undefined }))
 
 const { charterService } = await import('./charter-service')
 const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
 const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
-const { bindCriticalKeySession } = await import('@/lib/auth/critical-key')
-bindCriticalKeySession(() => auth.epoch)
+const sharedKeys = await import('@/lib/auth/critical-key')
+sharedKeys.bindCriticalKeySession(() => auth.epoch)
+
+/** The app-wide CRITICAL-key sheet, mounted: records each request and answers it as told (null closes it). */
+function mountSheet(answer: () => { wif: string; source: 'typed'; keep: boolean } | null) {
+  let asked = 0
+  const unsubscribe = sharedKeys.subscribeCriticalKeyRequests(() => {
+    const request = sharedKeys.currentCriticalKeyRequest()
+    if (!request) return
+    asked++
+    queueMicrotask(() => {
+      const reply = answer()
+      if (reply) sharedKeys.answerCriticalKeyRequest(request, reply)
+      else sharedKeys.cancelCriticalKeyRequest(request)
+    })
+  })
+  return { asked: () => asked, unsubscribe }
+}
 
 /** A fresh page (a reload, or another tab) sharing this browser's storage. */
 async function anotherTab() {
@@ -98,6 +115,8 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  wallet.appConnect = false
+  sharedKeys.forgetCriticalKey(OWNER)
   auth.identity = OWNER
   auth.epoch = 1
   hooks.onSdk = undefined
@@ -445,6 +464,68 @@ describe('a write queued behind another', () => {
     await expect(charterService.fileApplication(OWNER, proposal, 'target-q', ['m1'], { stillEligible: open })).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(open).toHaveBeenCalledTimes(1)
     expect(builders.sign).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the signing key from the shared step-up', () => {
+  const seated = { electedCharterId: 'e8', submittedCharterId: 'p1' }
+
+  it('asks the shared sheet for a wallet session, which holds no raw key for charters', async () => {
+    wallet.appConnect = true
+    builders.exists.mockResolvedValue(true)
+    const sheet = mountSheet(() => ({ wif: 'critical-wif', source: 'typed', keep: false }))
+    try {
+      await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+      expect(sheet.asked()).toBe(1)
+      expect(builders.sign.mock.calls[0][2]).toMatchObject({ identityKey: { keyId: 1 } })
+    } finally {
+      sheet.unsubscribe()
+    }
+  })
+
+  it('signs nothing when the sign-in ends while the sheet is open', async () => {
+    wallet.appConnect = true
+    const sheet = mountSheet(() => {
+      auth.epoch++
+      return { wif: 'critical-wif', source: 'typed', keep: true }
+    })
+    try {
+      await expect(charterService.addMember(OWNER, seated, 'm1')).rejects.toMatchObject({ outcome: 'cancelled' })
+      expect(builders.sign).not.toHaveBeenCalled()
+      expect(sharedKeys.availableCriticalKey(OWNER, [], 'moderation', null)).toBeNull()
+    } finally {
+      sheet.unsubscribe()
+    }
+  })
+
+  it('refuses a key bound to another contract before it is kept, and passes a held one over for the sheet', async () => {
+    wallet.appConnect = true
+    keys.match.mockReturnValue({ ok: true, key: { keyId: 4, contractBounds: { id: 'other' } }, match: { keyId: 4 } })
+    const sheet = mountSheet(() => ({ wif: 'bound-wif', source: 'typed', keep: true }))
+    try {
+      await expect(charterService.addMember(OWNER, seated, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+      expect(builders.sign).not.toHaveBeenCalled()
+      // Held by another feature: charters ask instead of refusing it on every try.
+      sharedKeys.holdCriticalKey(OWNER, 'bound-wif', 'typed')
+      await expect(charterService.addMember(OWNER, seated, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+      expect(sheet.asked()).toBe(2)
+    } finally {
+      sheet.unsubscribe()
+    }
+  })
+
+  it('never signs with a CRITICAL key held from an earlier sign-in', async () => {
+    wallet.appConnect = true
+    builders.exists.mockResolvedValue(true)
+    sharedKeys.holdCriticalKey(OWNER, 'old-wif', 'typed')
+    auth.epoch++
+    const sheet = mountSheet(() => ({ wif: 'critical-wif', source: 'typed', keep: false }))
+    try {
+      await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+      expect(sheet.asked()).toBe(1)
+    } finally {
+      sheet.unsubscribe()
+    }
   })
 })
 
