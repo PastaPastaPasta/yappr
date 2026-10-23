@@ -46,6 +46,9 @@ export interface CreateReceipt {
   transition: Uint8Array;
 }
 
+/** What {@link StateTransitionService.settleCreate} proved of an unconfirmed create (null: still unknown). */
+export type CreateSettlement = 'landed' | 'not-recorded' | 'stalled' | null;
+
 export interface StateTransitionResult {
   success: boolean;
   transactionHash?: string;
@@ -486,7 +489,7 @@ class StateTransitionService {
    * asked right before that re-send: false keeps it proof-only (null when the
    * proof alone does not decide).
    */
-  async settleCreate(receipt: CreateReceipt, { mayResend }: { mayResend?: () => boolean } = {}): Promise<'landed' | 'not-recorded' | 'stalled' | null> {
+  async settleCreate(receipt: CreateReceipt, { mayResend }: { mayResend?: () => boolean } = {}): Promise<CreateSettlement> {
     const { contractId, documentType, ownerId, documentId, nonce } = receipt;
     const sdk = await getEvoSdk();
     const outcome = (settled: StateTransitionResult | null) => settled === null ? null : settled.success ? 'landed' : 'not-recorded';

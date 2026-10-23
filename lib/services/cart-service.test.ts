@@ -281,3 +281,36 @@ describe('cart currencies (QA D-02)', () => {
     expect(cartService.getItems()).toHaveLength(2)
   })
 })
+
+describe('the stored cart a checkout sends from (WARCH-1)', () => {
+  it('holds the lines only while storage still has them at their quantity', () => {
+    cartService.addStoreItem(product(), undefined, 2)
+    const ordered = cartService.getItemsForStore('store')
+    expect(cartService.storedCartHolds(ordered)).toBe(true)
+
+    // Another window placed the order and emptied the store's lines.
+    localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: [], updatedAt: 0 }))
+    expect(cartService.storedCartHolds(ordered)).toBe(false)
+
+    localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: [{ ...ordered[0], quantity: 1 }], updatedAt: 0 }))
+    expect(cartService.storedCartHolds(ordered)).toBe(false)
+    localStorage.setItem(scopedKey('yappr_cart'), '{')
+    expect(cartService.storedCartHolds(ordered)).toBe(false)
+  })
+
+  it('never brings back lines another window cleared when this one changes the cart', async () => {
+    cartService.addStoreItem(product(), undefined, 2)
+    cartService.addStoreItem(product({ id: 'other-item', storeId: 'other', currency: 'DASH' }))
+    // A second window: its own service, loaded from the same storage.
+    vi.resetModules()
+    const { cartService: otherWindow } = await import('./cart-service')
+    expect(otherWindow.getItems()).toHaveLength(2)
+
+    // This window's order landed and cleared its store's lines; the other window then changes its cart.
+    cartService.removeStoreItems('store')
+    otherWindow.updateQuantity({ itemId: 'other-item' }, 2)
+    expect(cartService.getItemsForStore('store')).toEqual([])
+    expect(otherWindow.getItemsForStore('store')).toEqual([])
+    expect(cartService.getItems().map(line => [line.itemId, line.quantity])).toEqual([['other-item', 2]])
+  })
+})

@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeftIcon, CheckCircleIcon, CloudArrowDownIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, CheckCircleIcon, ClockIcon, CloudArrowDownIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -37,6 +37,17 @@ import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, 
 import { normalizeBytes } from '@/lib/bytes'
 import { isDashScheme } from '@/lib/services/insight-api-service'
 import { orderPaymentStatus, orderPlacedPaymentNote, placeOrderNote, type DetectedPayment, type OrderPaymentStatus } from '@/lib/storefront/checkout-payment'
+import {
+  ORDER_CHECKED_ELSEWHERE_MESSAGE,
+  ORDER_NOT_PLACED_MESSAGE,
+  checkPendingCheckoutOrder,
+  loadPendingCheckoutOrder,
+  sendCheckoutOrder,
+  type CheckoutOrderResult,
+  type ReplacingOrder
+} from '@/lib/storefront/pending-checkout-order'
+
+const ORDER_CHECK_FAILED_MESSAGE = 'Your order couldn’t be checked just now. Try again in a moment.'
 
 const CHECKOUT_STEP_LABELS = { details: 'Details', policies: 'Policies', payment: 'Payment' } as const
 
@@ -98,6 +109,7 @@ function CheckoutPage() {
   const searchParams = useSearchParams()
   const storeId = searchParams.get('storeId')
   const { user } = useAuth()
+  const buyerId = user?.identityId
   const { isReady: sdkReady } = useSdk()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
 
@@ -108,6 +120,13 @@ function CheckoutPage() {
   const [orderCreated, setOrderCreated] = useState(false)
   // What payment the placed order went out with, for the confirmation screen.
   const [placedPayment, setPlacedPayment] = useState<OrderPaymentStatus | null>(null)
+  const [placedDigital, setPlacedDigital] = useState(false)
+  // An order sent for this cart and not confirmed yet (lib/storefront/pending-checkout-order.ts):
+  // while it stands nothing new is sent and the cart is kept. `stalled`: refused for now, it may still land.
+  const [pendingOrder, setPendingOrder] = useState<{ stalled: ReplacingOrder | null; error?: string } | null>(null)
+  const [isCheckingOrder, setIsCheckingOrder] = useState(false)
+  // Set by "Place it again" on a stalled order: the next order is signed at its nonce, so only one can land.
+  const [replacingOrder, setReplacingOrder] = useState<ReplacingOrder | null>(null)
   const [step, setStep] = useState<'details' | 'policies' | 'payment'>('details')
   const [includeShipping, setIncludeShipping] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -323,6 +342,7 @@ function CheckoutPage() {
       return
     }
 
+    // Nothing to check out goes back to the cart (the effect below), unless an order is confirming or placed.
     const loadData = async () => {
       try {
         setIsLoading(true)
@@ -332,10 +352,7 @@ function CheckoutPage() {
         ])
 
         // No single amount exists for lines in different currencies; the cart explains why.
-        if (!storeData || items.length === 0 || !getCartCurrency(items)) {
-          router.push('/cart')
-          return
-        }
+        if (!storeData || items.length === 0 || !getCartCurrency(items)) return
 
         setStore(storeData)
         setCartItems(items)
@@ -351,7 +368,6 @@ function CheckoutPage() {
         if (readiness.blocker === 'store-unavailable' || readiness.blocker === 'store-hidden' || readiness.blocker === 'own-store') setError(readiness.blockerMessage)
       } catch (error) {
         logger.error('Failed to load checkout data:', error)
-        router.push('/cart')
       } finally {
         setIsLoading(false)
       }
@@ -359,6 +375,76 @@ function CheckoutPage() {
 
     loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, router, validateCheckoutReadiness, validateCartAvailability])
+
+  /** Checkout's next step for an order's result (the order's own module already cleared the cart if it was placed). */
+  const applyOrderResult = useCallback((result: CheckoutOrderResult, cartStoreId: string) => {
+    switch (result.kind) {
+      case 'placed':
+        setPendingOrder(null)
+        setReplacingOrder(null)
+        setPlacedPayment(result.payment)
+        setPlacedDigital(result.hasDigital)
+        setOrderCreated(true)
+        break
+      case 'confirming':
+        setPendingOrder({ stalled: null, error: result.error })
+        break
+      case 'stalled':
+        setPendingOrder({ stalled: result.replacing, error: result.error })
+        break
+      case 'not-placed':
+        setPendingOrder(null)
+        setReplacingOrder(null)
+        setError(ORDER_NOT_PLACED_MESSAGE)
+        // The payment the order carried, so placing it again doesn't leave it out.
+        if (result.txid) setTxid((current) => current || result.txid || '')
+        break
+      case 'failed':
+        setError(result.error)
+        break
+      case 'none':
+        // Only an order this window knew of comes back as none: another window settled it. The cart is
+        // read again (an order placed there emptied it, which sends this window back to the cart).
+        setPendingOrder(null)
+        setReplacingOrder(null)
+        setError(ORDER_CHECKED_ELSEWHERE_MESSAGE)
+        setCartItems(cartService.getItemsForStore(cartStoreId))
+        break
+    }
+  }, [])
+
+  /** "Check again": settles the order that went out (re-sending the same signed order while it may still land). */
+  const checkOrder = useCallback(async () => {
+    if (!buyerId || !storeId) return
+    setIsCheckingOrder(true)
+    try {
+      const result = await checkPendingCheckoutOrder(buyerId, storeId, (receipt) => storeOrderService.settleOrder(receipt), () => cartService.removeStoreItems(storeId))
+      // Another store's checkout may be open by now; this store's cart was still cleared if its order landed.
+      if (currentStoreId.current === storeId) applyOrderResult(result, storeId)
+    } catch (checkError) {
+      logger.error('Failed to check the pending order:', checkError)
+      setPendingOrder((current) => current && { ...current, error: ORDER_CHECK_FAILED_MESSAGE })
+    } finally {
+      setIsCheckingOrder(false)
+    }
+  }, [buyerId, storeId, applyOrderResult])
+
+  // An order of this cart sent earlier (before a reload, or in another window) and not confirmed: show it and check it once.
+  useEffect(() => {
+    if (!sdkReady || !buyerId || !storeId) return
+    setReplacingOrder(null)
+    if (!loadPendingCheckoutOrder(buyerId, storeId)) {
+      setPendingOrder(null)
+      return
+    }
+    setPendingOrder({ stalled: null })
+    checkOrder().catch((checkError) => logger.error(checkError))
+  }, [sdkReady, buyerId, storeId, checkOrder])
+
+  // Nothing pending and nothing to check out (the cart emptied or the store unread while an order was confirming).
+  useEffect(() => {
+    if (!isLoading && !pendingOrder && !orderCreated && (!store || cartItems.length === 0)) router.push('/cart')
+  }, [isLoading, pendingOrder, orderCreated, store, cartItems.length, router])
 
   // Load saved addresses
   useEffect(() => {
@@ -865,19 +951,28 @@ function CheckoutPage() {
         store.id
       )
 
-      // Refuses an own-store order or (v6) an oversized payload before signing.
-      await storeOrderService.createOrder(user.identityId, {
+      // Kept as a recovery record before it is broadcast; refused while an earlier order of this cart may still
+      // land, or once the stored cart no longer holds these lines (another window placed them).
+      // createOrder refuses an own-store order or (v6) an oversized payload before signing.
+      const buyer = user.identityId
+      const result = await sendCheckoutOrder({
+        buyerId: buyer,
         storeId: store.id,
-        sellerId: store.ownerId,
-        encryptedPayload,
-        nonce
+        payment: paymentStatus,
+        hasDigital: digitalCount > 0,
+        txid: payload.txid,
+        replacing: replacingOrder ?? undefined,
+        cartHolds: () => cartService.storedCartHolds(cartItems),
+        clearCart: () => cartService.removeStoreItems(store.id),
+        create: (options) => storeOrderService.createOrder(buyer, {
+          storeId: store.id,
+          sellerId: store.ownerId,
+          encryptedPayload,
+          nonce
+        }, options),
       })
-
-      // Clear cart items for this store
-      cartService.removeStoreItems(store.id)
-
-      setPlacedPayment(paymentStatus)
-      setOrderCreated(true)
+      // The checkout open now may be another store's; the cart of the store ordered from was cleared if it was placed.
+      if (currentStoreId.current === store.id) applyOrderResult(result, store.id)
     } catch (err) {
       logger.error('Failed to create order:', err)
       setError(err instanceof Error ? err.message : 'Failed to create order')
@@ -886,10 +981,54 @@ function CheckoutPage() {
     }
   }
 
-  if (isLoading) {
+  // An order still confirming shows straight away; the store and cart behind it may still be loading.
+  if (isLoading && !pendingOrder) {
     return (
       <PageShell mainClassName="flex items-center justify-center">
             <Spinner size="md" />
+      </PageShell>
+    )
+  }
+
+  if (pendingOrder && !orderCreated) {
+    const { stalled, error: pendingError } = pendingOrder
+    return (
+      <PageShell mainClassName="flex flex-col items-center justify-center p-8">
+            <ClockIcon className="h-20 w-20 text-yappr-500 mb-4" aria-hidden="true" />
+            <h1 className="text-2xl font-bold mb-2">{stalled ? 'Order not accepted yet' : 'Order sent — confirming…'}</h1>
+            <p role="status" className="text-gray-500 text-center max-w-sm mb-4">
+              {stalled
+                ? 'The network hasn’t accepted your order yet, but it may still go through, so your cart is kept. Check again later, or place it again: only one of the two can ever go through.'
+                : 'Your order went out, but it hasn’t been confirmed yet. Your cart is kept until it is, and the order won’t be sent twice.'}
+            </p>
+            <p className="text-sm text-center max-w-sm mb-6 text-gray-700 dark:text-gray-300">
+              If you’ve already paid, don’t pay again.
+            </p>
+            {pendingError && (
+              <p role="alert" className="text-sm text-center max-w-sm mb-6 text-red-600 dark:text-red-300">{pendingError}</p>
+            )}
+            <div className="flex flex-wrap justify-center gap-4">
+              <Button onClick={() => { checkOrder().catch((checkError) => logger.error(checkError)) }} disabled={isCheckingOrder}>
+                {isCheckingOrder ? 'Checking…' : 'Check again'}
+              </Button>
+              {stalled && (
+                <Button
+                  variant="outline"
+                  disabled={isCheckingOrder}
+                  onClick={() => {
+                    setReplacingOrder(stalled)
+                    setPendingOrder(null)
+                    // The payment the earlier order carried goes with this one too.
+                    if (stalled.txid) setTxid((current) => current || stalled.txid || '')
+                  }}
+                >
+                  Place it again
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => router.push('/orders')}>
+                View Orders
+              </Button>
+            </div>
       </PageShell>
     )
   }
@@ -901,7 +1040,7 @@ function CheckoutPage() {
             <h1 className="text-2xl font-bold mb-2">Order Placed!</h1>
             <p className="text-gray-500 text-center max-w-sm mb-6">
               Your order has been sent to the seller. They will process it and provide updates.
-              {digitalCount > 0 && ' Your digital items will appear under My Orders → Library as soon as the seller delivers them.'}
+              {placedDigital && ' Your digital items will appear under My Orders → Library as soon as the seller delivers them.'}
             </p>
             {placedPayment && (
               <p role="status" className="text-sm text-center max-w-sm mb-6 text-gray-700 dark:text-gray-300">
@@ -1024,6 +1163,12 @@ function CheckoutPage() {
           {error && (
             <div className="m-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm">
               {error}
+            </div>
+          )}
+
+          {replacingOrder && (
+            <div role="status" className="m-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-amber-800 dark:text-amber-200 text-sm">
+              This order replaces your earlier one, which hasn’t gone through. Only one of them can. If you’ve already paid, don’t pay again: include your payment’s transaction ID.
             </div>
           )}
 
