@@ -80,7 +80,7 @@ export function legacyAppEncryptionKeyPath(
   return `m/9'/${coinType(network)}'/5'/7'/0'/${hardened256(identityId)}/${hardened256(contractId)}/${hardened(purpose)}`
 }
 
-/** `m/9'/coin'/5'/6'/0'/identity_id'/request_id'`: an App Connect session authentication key (non-normative use). */
+/** `m/9'/coin'/5'/6'/0'/identity_id'/request_id'`: an App Connect session authentication key; App Connect request v2 uses `request_id = hash256(appEphPub33 ‖ u8(bindingIndex))` (docs/APP_CONNECT_PROFILE.md rule 6). */
 export function sessionAuthKeyPath(network: Dip13Network, identityId: Uint8Array, requestId: Uint8Array): string {
   return `m/9'/${coinType(network)}'/5'/6'/0'/${hardened256(identityId)}/${hardened256(requestId)}`
 }

@@ -340,7 +340,7 @@ export async function revokeAppConnect(input: RevokeInput, ports: AppConnectPort
 }
 
 /**
- * Wallet rule 7's `ac=` nudge: the callback with the status appended, keeping
+ * Wallet rule 10's `ac=` nudge: the callback with the status appended, keeping
  * its query. The responder only reports it; a test opens it if it wants.
  */
 function withStatus(callbackUrl: string | undefined, status: AppConnectStatus): string | undefined {

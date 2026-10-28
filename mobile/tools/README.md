@@ -7,7 +7,7 @@ a human tapping through a wallet (ADR-001 E5.4). Given a `dashpay://connect`,
 | URI | What the responder does |
 | --- | --- |
 | `dashpay://connect?v=2&n=…&r=…` or `dash-key:…&v=2` App Connect request (`dash-key:` is refused when `n=m`) | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then deletes its previous `loginKeyResponse` (by its values) and creates the new one on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
-| `dash-key:…&v=1` legacy key-exchange request (legacy; goes before mainnet) | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
+| `dash-key:…&v=1` legacy key-exchange request (legacy; goes before mainnet) | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation-legacy-v1-key-exchange)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
 | `dash-st:` unsigned IdentityUpdate | Decodes it. Checks that it updates the persona's identity, that it only adds AUTHENTICATION/HIGH and ENCRYPTION/MEDIUM keys and disables none (the 1.0 key registration), and that its identity nonce is not stale. Signs it with keyId 0 (MASTER), broadcasts it, and waits for the result. |
 
 It serves **devnet** or **testnet**, selected by one explicit env file. Requests for another network are refused before any write. Mainnet is always refused.
@@ -41,7 +41,7 @@ catches a stale `.env.devnet`: staging's still points at the abandoned bonsia.
 ## Usage
 
 ```bash
-export YAPPR_SAKURA_IDENTITIES=/Users/pasta/.local/share/yappr-sakura-20261001/identities.json
+export YAPPR_SAKURA_IDENTITIES=~/.local/share/yappr-sakura-<date>/identities.json   # the sakura pool file
 
 # One request (the answer is one JSON line on stdout; logs go to stderr)
 node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=1' --persona 90
@@ -73,13 +73,16 @@ curl -s 127.0.0.1:8789/health
 - Use personas **90–99**, the mobile reservation (ENGINE.md §12.3), so mobile
   writes never collide with corpus seeding.
 
-A first sign-in takes two calls, just as with a real wallet:
+Legacy v1: a first sign-in takes two calls, just as with a real wallet:
 1. The app shows `dash-key:`. The responder publishes the response.
 2. The app finds that the derived keys are not on the identity yet, and shows
    `dash-st:`. The responder signs the IdentityUpdate with MASTER and
    broadcasts it.
 
 A re-login needs only step 1. It derives the same keys.
+
+App Connect v2 needs one call: the responder registers the keys before it
+publishes the response.
 
 ## Derivation (legacy v1 key exchange)
 

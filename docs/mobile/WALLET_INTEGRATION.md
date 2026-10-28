@@ -1,8 +1,9 @@
 # Wallet integration
 
 Only a DashPay wallet can sign a user into Yappr mobile (D1). The Yappr app
-never imports a recovery phrase, WIF, or password-vault or passkey-vault key.
-It holds only keys that the wallet provisions for it through App Connect: a
+never imports a recovery phrase, WIF, or password-vault or passkey-vault key on
+production builds; non-production builds also allow raw-key sessions (README D9,
+D20). A wallet sign-in holds only the keys the wallet provisions through App Connect: a
 CRITICAL key bound to Yappr's contract group, a HIGH key bound to the DashPay
 `profile` document type, and one ENCRYPTION/MEDIUM key bound to the
 `yappr-app` anchor contract. It sends anything more privileged to the wallet.
@@ -20,7 +21,7 @@ recorded in the status box of the profile; this document does not repeat it.
 
 | Capability | Held by | How Yappr uses it |
 | --- | --- | --- |
-| Recovery phrase, MASTER and CRITICAL identity keys, L1 funds | Wallet | Never leaves the wallet |
+| Recovery phrase, the identity's own unbound MASTER and CRITICAL keys, L1 funds | Wallet | Never leave the wallet (Yappr holds a CRITICAL *group session* key, which is a different key) |
 | Identity creation, username (DPNS) registration from zero, credit top-up | Wallet | Onboarding sends users to DashPay to create an identity and username |
 | Adding keys to the identity (`IdentityUpdate`) | Wallet (MASTER) | Done at each sign-in, in one update |
 | Contract-group key (CRITICAL, 0.5 DASH, 90 days) | Yappr, in the Keychain/Keystore | Signs everything Yappr writes to the contracts in its group: social (posts, replies, likes, follows, `yapprProfile`, blocks, reports, private feeds), DM v5 and the other members. DPNS registration stays in the wallet. |

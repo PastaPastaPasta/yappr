@@ -50,8 +50,8 @@ deliverable. It runs on bonsia (D4), needs Y0, and covers:
   contract-group key, the DashPay `profile` key and the anchor encryption
   key), publishes real `loginKeyResponse` documents on the sakura pool
   (`YAPPR_SAKURA_IDENTITIES`), and honours `cb`.
-- Maestro drives the whole "open wallet → approve → return" loop across the
-  two apps.
+- Maestro drives the whole "open wallet → approve → return" loop: the Yappr
+  app on the device or simulator, and the responder on the host.
 
 ## Scenario matrix (release candidate)
 

@@ -172,13 +172,14 @@ Every Wave 3 screen PR:
 
 **S1 notes.**
 - **Screens:** Welcome; the EULA and community-rules gate (stored in RN MMKV); signed-out browsing; sign-in.
-- **Wallet sign-in** *(amended 2026-10-27: App Connect request v2 on App Connect builds; the legacy v1 key exchange below on the others)*:
+- **Key exchange:**
   - Same device: `Linking.openURL('dash-key:…')`. Across devices: a QR code.
   - Polling runs with no visible countdown and times out silently into "Check again".
   - A dev-only testID exposes the URI for Maestro.
-- **Key registration (legacy builds only):** the `dash-st:` step.
+- **Key registration:** the `dash-st:` step.
 - **Other ways to sign in:** key entry (WIF or hex).
-- **App Connect:** shipped on the builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (it was planned behind a `FEATURE_APP_CONNECT` flag, which does not exist in the code).
+- **Not yet shipped:** the App Connect button behind `FEATURE_APP_CONNECT=false`.
+- *Amended 2026-10-27:* wallet sign-in is App Connect request v2 on the builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, with no key-registration step, and the App Connect button shipped (it was planned behind a `FEATURE_APP_CONNECT` flag, which does not exist in the code). The key exchange and `dash-st:` registration above are the legacy path.
 - **Accounts:** the account switcher and an optional biometric lock.
 
 **S4 notes.**
@@ -311,7 +312,7 @@ No barrel files (`index.ts` re-exports) in `mobile/app`; import by path. That ke
 | User story (ADR E7) | iOS light | iOS dark | Android light | Android dark | Variants |
 | --- | --- | --- | --- | --- | --- |
 | Signed-out browse: welcome, feed, thread, profile, explore | ✓ | ✓ | ✓ | ✓ | devnet, testnet |
-| Sign in: wallet sign-in (App Connect through the responder on devnet; a DashPay wallet build on testnet; legacy key exchange and key registration on legacy builds), key entry WIF and hex, restore, switch account, sign out | ✓ | ✓ | ✓ | ✓ | both (store wallet: testnet only) |
+| Sign in: key exchange (responder on devnet; DashPay store wallet on testnet), key entry WIF and hex, key registration, restore, switch account, sign out | ✓ | ✓ | ✓ | ✓ | both (store wallet: testnet only) |
 | EULA gate; Lockdown screen (physical iPhone, TestFlight) | ✓ | ✓ | ✓ | ✓ | devnet |
 | Home: For You and Following, Top where supported, pill, pull-to-refresh, infinite scroll | ✓ | ✓ | ✓ | ✓ | both |
 | Thread: replies, removed and deleted stubs, engagements | ✓ | ✓ | ✓ | ✓ | both |

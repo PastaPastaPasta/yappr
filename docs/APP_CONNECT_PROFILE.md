@@ -7,7 +7,7 @@ The shared implementation is `vendor/platform-auth/src/app-connect/` (request co
 > **Status, 2026-10-27**
 >
 > - **Intended protocol.** The request v2 body below, carried by `dashpay://connect`; a second carrier, `dashpay://sign`, for signing one state transition; and an app that is identified by its contract id alone, with no manifest. See [Planned carriers](#planned-carriers) and [App identity](#app-identity).
-> - **Shipping today.** The same request v2 body on the transitional carrier `dash-key:<base58>?n=&v=2[&cb=]`. The response, keys and verification in this document are what runs. Wallet side: dashwallet-ios TestFlight 9.1.4 and dash-wallet PR #1604. App side: Yappr web and mobile builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (the testnet, devnet and beta env files) emit and verify it. The production root and `/testing` still use the legacy key exchange until the cut-over.
+> - **Shipping today.** The same request v2 body on the transitional carrier `dash-key:<base58>?n=&v=2[&cb=]`. The response, keys and verification in this document are what runs. Wallet side: dashwallet-ios TestFlight 9.1.4 (12), from the unmerged PRs #1202/#1204/#1210, and dash-wallet PR #1604 (open; it refuses `contractGroup` bindings, so it cannot yet answer Yappr's request). App side: Yappr web and mobile builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (the testnet, devnet and beta env files) emit and verify it. The production root and `/testing` still use the legacy key exchange until the cut-over.
 > - **Not implemented yet.** `dashpay://connect` and `dashpay://sign` exist in no wallet and Yappr does not emit them. Everything under "Planned" below is a design, and there are no test vectors for it yet.
 > - **Legacy.** `dash-key:` v1 and `dash-st:` are the first key exchange. They go before mainnet, and so does the `dash-key:` v2 carrier. Yappr still uses `dash-st:` for tips, YAPP purchases and messaging-key setup until those move to `dashpay://sign`.
 > - **DIP work.** dashpay/dips#191 (the DIP-13 derivation paths) and dashpay/dips#181 (to be rewritten as the App Connect DIP). Once that DIP exists, this profile shrinks to what Yappr requests and links to the DIP.
@@ -99,7 +99,7 @@ Budget and expiry are **proposals**: the app proposes, the wallet clamps and let
 
 ### Size
 
-Yappr's request (two auth bindings, one encryption binding, a connection id) is a 247-byte body. As a `dash-key:` URI with a callback URL it is 435 characters, which fits a QR code of version 14 at error correction L; without one it fits version 12. As `dashpay://connect` the same request is 439 characters with the same callback and 358 without, which fit the same versions.
+Yappr's request (two auth bindings, one encryption binding, a connection id) is a 247-byte body. As a `dash-key:` URI with the test-vector callback URL (Yappr's real callback differs slightly) it is 435 characters, which fits a QR code of version 14 at error correction L; without one it fits version 12. As `dashpay://connect` the same request is 439 characters with the same test-vector callback and 358 without, which fit the same versions.
 
 ## Planned carriers
 
@@ -173,7 +173,7 @@ Wallets accept both carriers while the apps switch, and every `connect` request 
 
 An app is its `appId`, a contract id, and nothing more. There is no manifest, on chain or in the wallet. A manifest could not show that an app is genuine: anyone can deploy a contract and publish an owner-only record that calls itself "Yappr", which proves who wrote the record and not who they are. Platform's merged response contract has no manifest either. Yappr's anchor contract has an owner-only `appInfo` document ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)); it is metadata for the owner, and wallets do not read it or enforce it.
 
-What the wallet does with an `appId`:
+What the wallet does with an `appId`. This is the intended wallet behaviour; some wallet builds today still warn on an unknown app id.
 
 - **Shows the id.** The approval sheet always has an app id line, the base58 id shortened to its first 6 and last 6 characters, with the full id and a copy action one tap away.
 - **Marks the label as unverified.** The name line is the brand-map name if the wallet knows the id; otherwise it is the request's label in quotes, marked as given by the app. It never has a "verified" badge, check mark or colour.
@@ -183,7 +183,7 @@ What the wallet does with an `appId`:
 The user is protected by seeing the id and every scope, budget and expiry, and by Platform enforcing each key's bounds, budget and expiry. Some structural rules hold for every app and none of them needs to recognise it:
 
 - Owner consistency (wallet rule 3): a request cannot show app X while asking for keys on a contract X's owner does not control.
-- A system contract (DPNS, DashPay and the like) may not be the `appId`.
+- Planned: a system contract (DPNS, DashPay and the like) may not be the `appId`. Rule 3 and the reference responder do not enforce this yet.
 - `IDENTITY_HINT`, when present, must be the identity the wallet signs in.
 
 ## Callback
@@ -250,7 +250,7 @@ The app does **not** rely on slot order: it classifies each key by finding it on
    requestId = hash256(appEphPub33 ‖ u8(bindingIndex))
    ```
 
-   `coin'` is `5'` on mainnet and `1'` elsewhere. `identityId'` and `requestId'` are 256-bit hardened levels (DIP-14). `appEphPub33` is the request's compressed public key, `hash256` is SHA-256 applied twice, and `bindingIndex` (0–3) is the binding's position in the **request**, declined bindings included, so the key does not depend on what the user declined. Binding 0 uses `u8(0)` too. A bare `hash256(appEphPub)` stays reserved for the legacy one-QR key, so a v2 key can never collide with it. dashwallet-ios and dash-wallet derive keys this way, and so does Yappr's test responder.
+   `coin'` is `5'` on mainnet and `1'` elsewhere. `identityId'` and `requestId'` are 256-bit hardened levels (DIP-14). `appEphPub33` is the request's compressed public key, `hash256` is SHA-256 applied twice, and `bindingIndex` (0–3) is the binding's position in the **request**, declined bindings included, so the key does not depend on what the user declined. Binding 0 uses `u8(0)` too. A bare `hash256(appEphPub)` stays reserved for the legacy one-QR key, so a v2 key can never collide with it. dashwallet-ios and dash-wallet derive keys this way. Yappr's test responder does too, but only for personas with a recovery phrase; personas without one use a test-only HKDF scheme (`mobile/tools/src/app-connect/derive.ts`) that no wallet uses.
 
    Two properties follow, and they are why the leaf is what it is:
    - Each granted key is distinct from every other key on the identity, including the other keys in the same response.
@@ -263,7 +263,7 @@ The app does **not** rely on slot order: it classifies each key by finding it on
    m / 9' / coin' / 5' / 7' / 0' / identityId' / appId' / purpose'        purpose 1' ENCRYPTION, 2' DECRYPTION
    ```
 
-   This derivation is normative: peers and other wallets must find the same key. It is the sub-feature `7'` path built in rust-dashcore#1049 and dips#191. The key is ECDSA_SECP256K1 (peers need the point), MEDIUM, bound `singleContract(appId)`. There is no rotation index: this profile defines one key per (identity, `appId`, purpose), and replacing it is not defined.
+   This derivation is normative: peers and other wallets must find the same key. (As with rule 6, the test responder follows it only for personas with a recovery phrase.) It is the sub-feature `7'` path built in rust-dashcore#1049 and dips#191. The key is ECDSA_SECP256K1 (peers need the point), MEDIUM, bound `singleContract(appId)`. There is no rotation index: this profile defines one key per (identity, `appId`, purpose), and replacing it is not defined.
    - If the identity's current key for `appId` (what `identities.contractKeys` returns) is one this wallet can derive, **re-send it** and register nothing.
    - If the identity has none, register it and send it.
    - If it has one this wallet cannot derive (another wallet made it), **omit the slot**. Omit it too when the wallet's own key is on the identity but disabled or no longer current.

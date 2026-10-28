@@ -285,12 +285,11 @@ As a user with a shared phone, I want Face ID or fingerprint before Yappr opens,
 - While locked, the app switcher snapshot shows the lock screen, not content.
 - Turning it on requires one successful biometric check.
 
-#### AUTH-13 · App Connect sign-in (request v2) · P2 · all
-As the team, we want wallet sign-in to use App Connect request v2 on builds that select it, so that the wallet provisions the keys in one hand-off.
-- *Amended 2026-10-27.* This story was written as "App Connect behind `FEATURE_APP_CONNECT`, off in every 1.0 build". That flag does not exist in the code. Builds choose by `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (the devnet, testnet and beta builds), and the engine reports `capabilities.walletSignIn` as `'app-connect'` or `'legacy'`.
-- On App Connect builds, both wallet buttons open `/sign-in/connect` ([UX_SPEC.md](UX_SPEC.md)). The request and the key set are those of [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md), which is the spec for it. The platform document `docs/protocol/app-connect.md` defines only where the response is stored.
-- The wallet's return link is `https://yap.pr[/prefix]/connect/?r=<hash>&app=<scheme>`, a page that opens the app, which then checks at once.
-- Legacy builds show no App Connect UI, and the legacy key exchange methods are `NOT_SUPPORTED` on App Connect builds.
+#### AUTH-13 · App Connect (flagged off) · P2 · all
+As the team, we want App Connect implemented behind `FEATURE_APP_CONNECT`, so that we can turn it on when a wallet ships it.
+- With the flag off (every 1.0 build), no App Connect UI appears anywhere.
+- With the flag on in a dev build, a third method "Connect with App Connect" follows `platform/docs/protocol/app-connect.md`, and the `https://yap.pr/app/connect?r=` return route resumes the waiting screen.
+- *Amended 2026-10-27:* App Connect request v2 is the wallet sign-in on builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (the devnet, testnet and beta builds); the engine reports `capabilities.walletSignIn` as `'app-connect'` or `'legacy'`. `FEATURE_APP_CONNECT` does not exist in the code. Both wallet buttons open `/sign-in/connect` ([UX_SPEC.md](UX_SPEC.md)). The spec is [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md); the platform document defines only where the response is stored. The wallet's return link is `https://yap.pr[/prefix]/connect/?r=<hash>&app=<scheme>`, which opens the app, and the legacy key exchange methods are `NOT_SUPPORTED` on App Connect builds.
 
 #### AUTH-14 · Session expired or key revoked · P1 · all
 As any user, I want to be told when my stored key no longer works, so that I can sign in again.
