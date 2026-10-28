@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { bytesToHex } from '@/lib/bytes'
 import { hash160 } from '@/lib/crypto/hash'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { getPublicKey } from '@/lib/crypto/keys'
 import type { Dip13Key } from '@/lib/crypto/dip13'
-import { masterKey, phraseKeys, phraseMessagingState, recoveryPhraseOffered, sessionKey } from './recovery-phrase'
+import { masterKey, messagingKeyCandidates, phraseKeys, phraseMessagingState, recoveryPhraseOffered, sessionKey } from './recovery-phrase'
 
 const ANCHOR = 'AwjuEqZtXwBq5jU9tg8UnRMmXrwb3nozSgGx59ghD1c1'
 const OTHER_CONTRACT = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec'
@@ -63,41 +64,119 @@ describe('phraseKeys', () => {
   })
 })
 
-describe('phraseMessagingState (#1210 rules)', () => {
+describe('phraseMessagingState (#1210 and DIP rules)', () => {
   const mine = keyAt(7).publicKey
+  const rotated = keyAt(8).publicKey
+  const legacy = keyAt(9).publicKey
   const bound = (contractId: string) => ({ $type: 'singleContract', id: contractId })
   const encryptionKey = (id: number, data: Uint8Array, contractId = ANCHOR, extra: Record<string, unknown> = {}) =>
     ({ id, type: KeyType.ECDSA_SECP256K1, purpose: KeyPurpose.ENCRYPTION, data, contractBounds: bound(contractId), ...extra })
+  const state = (...args: Parameters<typeof phraseMessagingState>) => phraseMessagingState(...args)
 
   it('is current when the anchor\'s current key is the phrase\'s', () => {
-    expect(phraseMessagingState(mine, mine, [encryptionKey(5, mine)], ANCHOR)).toBe('current')
+    expect(state([mine], mine, [encryptionKey(5, mine)], ANCHOR)).toEqual({ state: 'current', candidate: 0 })
   })
 
   it('belongs to another wallet when another key is current', () => {
-    expect(phraseMessagingState(mine, foreign.publicKey, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
+    expect(state([mine], foreign.publicKey, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR))
+      .toEqual({ state: 'another-wallet', candidate: null })
   })
 
   it('is absent when the identity has no anchor key and never had the phrase\'s', () => {
-    expect(phraseMessagingState(mine, null, [], ANCHOR)).toBe('absent')
+    expect(state([mine], null, [], ANCHOR)).toEqual({ state: 'absent', candidate: null })
     // A key bound to another contract is not the app's.
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, foreign.publicKey, OTHER_CONTRACT)], ANCHOR)).toBe('absent')
+    expect(state([mine], null, [encryptionKey(5, foreign.publicKey, OTHER_CONTRACT)], ANCHOR)).toEqual({ state: 'absent', candidate: null })
   })
 
   it('never shadows a live anchor key the current-key read missed', () => {
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
+    expect(state([mine], null, [encryptionKey(5, foreign.publicKey)], ANCHOR)).toEqual({ state: 'another-wallet', candidate: null })
   })
 
   it('is current when the read lags but the newest live anchor key is the phrase\'s', () => {
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, foreign.publicKey, ANCHOR, { disabledAt: 1 }), encryptionKey(6, mine)], ANCHOR)).toBe('current')
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR)).toBe('another-wallet')
+    expect(state([mine], null, [encryptionKey(5, foreign.publicKey, ANCHOR, { disabledAt: 1 }), encryptionKey(6, mine)], ANCHOR))
+      .toEqual({ state: 'current', candidate: 0 })
+    expect(state([mine], null, [encryptionKey(5, mine), encryptionKey(6, foreign.publicKey)], ANCHOR))
+      .toEqual({ state: 'another-wallet', candidate: null })
   })
 
   it('is absent when the phrase\'s point is on the identity only under another purpose or contract', () => {
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, mine, OTHER_CONTRACT)], ANCHOR)).toBe('absent')
-    expect(phraseMessagingState(mine, null, [identityKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, mine)], ANCHOR)).toBe('absent')
+    expect(state([mine], null, [encryptionKey(5, mine, OTHER_CONTRACT)], ANCHOR).state).toBe('absent')
+    expect(state([mine], null, [identityKey(5, KeyPurpose.AUTHENTICATION, SecurityLevel.HIGH, mine)], ANCHOR).state).toBe('absent')
   })
 
   it('does not re-add the phrase\'s key once it was disabled', () => {
-    expect(phraseMessagingState(mine, null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 })], ANCHOR)).toBe('another-wallet')
+    expect(state([mine], null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 })], ANCHOR).state).toBe('another-wallet')
+  })
+
+  it('finds the current key among rotation 0, a later rotation and the pre-DIP key', () => {
+    const candidates = [mine, rotated, legacy]
+    const keys = [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 }), encryptionKey(6, rotated)]
+    expect(state(candidates, rotated, keys, ANCHOR)).toEqual({ state: 'current', candidate: 1 })
+    expect(state(candidates, null, keys, ANCHOR)).toEqual({ state: 'current', candidate: 1 })
+    expect(state(candidates, legacy, [encryptionKey(5, legacy)], ANCHOR)).toEqual({ state: 'current', candidate: 2 })
+  })
+
+  it('belongs to another wallet when a current key matches no candidate, whatever else is on the identity', () => {
+    const keys = [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 }), encryptionKey(6, foreign.publicKey)]
+    expect(state([mine, legacy], foreign.publicKey, keys, ANCHOR)).toEqual({ state: 'another-wallet', candidate: null })
+  })
+
+  it('does not register next to disabled candidates: any one on the identity leaves the slot out', () => {
+    expect(state([mine, legacy], null, [encryptionKey(5, legacy, ANCHOR, { disabledAt: 1 })], ANCHOR))
+      .toEqual({ state: 'another-wallet', candidate: null })
+    expect(state([mine, rotated], null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 }), encryptionKey(6, rotated, ANCHOR, { disabledAt: 2 })], ANCHOR).state)
+      .toBe('another-wallet')
+  })
+
+  it('does not register when the only anchor key on the identity is another wallet\'s disabled one (DIP rule 2)', () => {
+    const foreignDisabled = encryptionKey(5, foreign.publicKey, ANCHOR, { disabledAt: 1 })
+    expect(state([mine, legacy], null, [foreignDisabled], ANCHOR)).toEqual({ state: 'another-wallet', candidate: null })
+    // Whatever the disabled key's type, it is still a key for the contract and purpose.
+    expect(state([mine], null, [{ ...foreignDisabled, type: KeyType.ECDSA_HASH160 }], ANCHOR).state).toBe('another-wallet')
+    // A disabled key bound to another contract, or another purpose, does not block.
+    expect(state([mine], null, [encryptionKey(5, foreign.publicKey, OTHER_CONTRACT, { disabledAt: 1 })], ANCHOR).state).toBe('absent')
+    expect(state([mine], null, [{ ...foreignDisabled, purpose: KeyPurpose.DECRYPTION }], ANCHOR).state).toBe('absent')
+  })
+})
+
+describe('messagingKeyCandidates', () => {
+  const bound = { $type: 'singleContract', id: ANCHOR }
+  const encryptionKey = (id: number, data: Uint8Array, extra: Record<string, unknown> = {}) =>
+    ({ id, type: KeyType.ECDSA_SECP256K1, purpose: KeyPurpose.ENCRYPTION, data, contractBounds: bound, ...extra })
+  // Rotation n is the stand-in key n + 20; the pre-DIP key is key 99.
+  const rotation = (n: number) => keyAt(20 + n)
+  const legacy = () => keyAt(99)
+  const publics = (keys: Dip13Key[]) => keys.map((key) => bytesToHex(key.publicKey))
+  const expectPublics = (keys: Dip13Key[], expected: Dip13Key[]) => expect(publics(keys)).toEqual(publics(expected))
+
+  it('is rotation 0 and the pre-DIP key when the identity has neither', () => {
+    expectPublics(messagingKeyCandidates(rotation, legacy, [], ANCHOR), [rotation(0), legacy()])
+  })
+
+  it('walks the rotations while each is on the identity, in any state, and stops at the first that is not', () => {
+    const keys = [
+      encryptionKey(5, rotation(0).publicKey, { disabledAt: 1 }),
+      encryptionKey(6, rotation(1).publicKey, { disabledAt: 2 }),
+      encryptionKey(7, rotation(2).publicKey),
+      // A gap: rotation 3 is missing, so rotation 4 is never looked at.
+      encryptionKey(8, rotation(4).publicKey),
+    ]
+    expectPublics(messagingKeyCandidates(rotation, legacy, keys, ANCHOR), [rotation(0), rotation(1), rotation(2), legacy()])
+  })
+
+  it('does not count a rotation key that is on the identity only under another purpose or contract', () => {
+    const keys = [
+      encryptionKey(5, rotation(0).publicKey, { contractBounds: { $type: 'singleContract', id: OTHER_CONTRACT } }),
+      { id: 6, type: KeyType.ECDSA_SECP256K1, purpose: KeyPurpose.AUTHENTICATION, data: rotation(0).publicKey },
+    ]
+    expectPublics(messagingKeyCandidates(rotation, null, keys, ANCHOR), [rotation(0)])
+  })
+
+  it('leaves the pre-DIP key out when none is asked for, and wipes the key it drops', () => {
+    const dropped = rotation(1)
+    const derived = (n: number) => (n === 1 ? dropped : rotation(n))
+    const keys = [encryptionKey(5, rotation(0).publicKey)]
+    expectPublics(messagingKeyCandidates(derived, null, keys, ANCHOR), [rotation(0)])
+    expect(dropped.privateKey.every((byte) => byte === 0)).toBe(true)
   })
 })

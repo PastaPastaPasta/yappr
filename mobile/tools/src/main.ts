@@ -45,8 +45,8 @@ const MAX_BODY_BYTES = 64 * 1024
 const MOBILE_PERSONAS = Array.from({ length: 10 }, (_, index) => 90 + index)
 
 const USAGE = `Usage:
-  test-wallet-responder --uri <dash-key:…|dash-st:…> --persona <idx> [--key-index <n>] [--env-file <path>]
-      App Connect (dash-key: v=2) only:
+  test-wallet-responder --uri <dashpay://connect…|dash-key:…|dash-st:…> --persona <idx> [--key-index <n>] [--env-file <path>]
+      App Connect (dashpay://connect or dash-key: v=2) only:
       [--fault <flag>]… [--other-persona <idx>] [--spam-personas <list, e.g. 91-99>] [--state-file <path>]
   test-wallet-responder --revoke --persona <idx> --app-id <base58> [--connection-id <hex>] [--state-file <path>]
   test-wallet-responder --serve 127.0.0.1:8789 [--env-file <path>] [--state-file <path>]

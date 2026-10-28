@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
-import { parseAppConnectPins, parseLoginProtocol } from './config'
+import { parseAppConnectCarriers, parseAppConnectPins, parseLoginProtocol } from './config'
 
 const id = (n: number) => bs58.encode(new Uint8Array(32).fill(n))
 const APP = id(1)
@@ -15,6 +15,31 @@ describe('parseLoginProtocol', () => {
     expect(parseLoginProtocol('legacy')).toBe('legacy')
     expect(parseLoginProtocol('App-Connect')).toBe('legacy')
     expect(parseLoginProtocol(' app-connect ')).toBe('app-connect')
+  })
+})
+
+describe('parseAppConnectCarriers', () => {
+  it('keeps dash-key: on testnet and devnet unless dashpay or both is asked for', () => {
+    for (const network of ['testnet', 'devnet'] as const) {
+      expect(parseAppConnectCarriers(undefined, network)).toEqual(['dash-key'])
+      expect(parseAppConnectCarriers('', network)).toEqual(['dash-key'])
+      expect(parseAppConnectCarriers('dash-key', network)).toEqual(['dash-key'])
+      expect(parseAppConnectCarriers('bogus', network)).toEqual(['dash-key'])
+      expect(parseAppConnectCarriers(' dashpay ', network)).toEqual(['dashpay'])
+    }
+  })
+
+  it('offers both on testnet and devnet, dash-key: first (what current wallets accept)', () => {
+    for (const network of ['testnet', 'devnet'] as const) {
+      expect(parseAppConnectCarriers('both', network)).toEqual(['dash-key', 'dashpay'])
+      expect(parseAppConnectCarriers(' both ', network)).toEqual(['dash-key', 'dashpay'])
+    }
+  })
+
+  it('is always dashpay alone on mainnet, both refused', () => {
+    for (const value of [undefined, '', 'dash-key', 'dashpay', 'both']) {
+      expect(parseAppConnectCarriers(value, 'mainnet')).toEqual(['dashpay'])
+    }
   })
 })
 

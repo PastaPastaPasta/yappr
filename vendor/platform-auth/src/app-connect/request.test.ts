@@ -2,6 +2,8 @@ import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
 import {
   AppConnectRequestError,
+  base64urlDecode,
+  base64urlEncode,
   buildAppConnectUri,
   checkAppConnectRequestAge,
   decodeAppConnectRequest,
@@ -43,13 +45,99 @@ describe('App Connect request v2 codec', () => {
 
   it('round-trips through the URI with network and callback', () => {
     const request = yapprVectorRequest()
-    const uri = buildAppConnectUri(request, 'mainnet', 'https://yap.pr/connect?r=ab')
+    const uri = buildAppConnectUri(request, 'testnet', 'https://yap.pr/connect?r=ab')
     expect(uri.startsWith('dash-key:')).toBe(true)
-    expect(uri).toContain('?n=m&v=2&cb=https%3A%2F%2Fyap.pr%2Fconnect%3Fr%3Dab')
+    expect(uri).toContain('?n=t&v=2&cb=https%3A%2F%2Fyap.pr%2Fconnect%3Fr%3Dab')
     const parsed = parseAppConnectUri(uri)
     expect(parsed.request).toEqual(request)
-    expect(parsed.network).toBe('mainnet')
+    expect(parsed.network).toBe('testnet')
     expect(parsed.callbackUrl).toBe('https://yap.pr/connect?r=ab')
+  })
+
+  it('round-trips through the dashpay://connect carrier on every network', () => {
+    const request = yapprVectorRequest()
+    for (const [network, id] of [['mainnet', 'm'], ['testnet', 't'], ['devnet', 'd']] as const) {
+      const uri = buildAppConnectUri(request, network, 'https://yap.pr/connect?r=ab', 'dashpay')
+      expect(uri.startsWith(`dashpay://connect?v=2&n=${id}&r=`)).toBe(true)
+      expect(uri.endsWith('&cb=https%3A%2F%2Fyap.pr%2Fconnect%3Fr%3Dab')).toBe(true)
+      const parsed = parseAppConnectUri(uri)
+      expect(parsed.request).toEqual(request)
+      expect(parsed.network).toBe(network)
+      expect(parsed.callbackUrl).toBe('https://yap.pr/connect?r=ab')
+    }
+    expect(buildAppConnectUri(request, 'devnet', undefined, 'dashpay')).not.toContain('&cb=')
+  })
+
+  it('defaults to dash-key: off mainnet and dashpay:// on mainnet, and never emits dash-key: on mainnet', () => {
+    const request = yapprVectorRequest()
+    expect(buildAppConnectUri(request, 'testnet').startsWith('dash-key:')).toBe(true)
+    expect(buildAppConnectUri(request, 'devnet').startsWith('dash-key:')).toBe(true)
+    expect(buildAppConnectUri(request, 'mainnet').startsWith('dashpay://connect?')).toBe(true)
+    expect(() => buildAppConnectUri(request, 'mainnet', undefined, 'dash-key')).toThrow(AppConnectRequestError)
+  })
+
+  it('refuses the dash-key: carrier when n=m', () => {
+    const uri = buildAppConnectUri(yapprVectorRequest(), 'testnet').replace('n=t', 'n=m')
+    expect(refusal(() => parseAppConnectUri(uri)).code).toBe('invalid')
+  })
+
+  it('accepts a differently-cased dashpay://connect URI, a single trailing slash and any parameter order', () => {
+    const request = yapprVectorRequest()
+    const uri = buildAppConnectUri(request, 'devnet', 'https://yap.pr/c', 'dashpay')
+    const r = new URL(uri.replace('dashpay://', 'https://')).searchParams.get('r')!
+    for (const variant of [
+      uri.replace('dashpay://connect', 'DashPay://CONNECT'),
+      uri.replace('connect?', 'connect/?'),
+      `dashpay://connect?cb=${encodeURIComponent('https://yap.pr/c')}&r=${r}&n=d&v=2&extra=1`,
+    ]) {
+      expect(parseAppConnectUri(variant).request, variant).toEqual(request)
+    }
+  })
+
+  it('refuses malformed dashpay://connect shapes', () => {
+    const uri = buildAppConnectUri(yapprVectorRequest(), 'devnet', undefined, 'dashpay')
+    const bad: Array<[string, string]> = [
+      ['userinfo', uri.replace('//connect', '//u@connect')],
+      ['port', uri.replace('//connect', '//connect:80')],
+      ['fragment', `${uri}#x`],
+      ['a path', uri.replace('connect?', 'connect/x?')],
+      ['a double slash', uri.replace('connect?', 'connect//?')],
+      ['another verb', uri.replace('//connect', '//sign')],
+      ['no query', 'dashpay://connect'],
+      ['no r', 'dashpay://connect?v=2&n=d'],
+      ['a repeated v', `${uri}&v=2`],
+      ['a repeated r', `${uri}&r=AA`],
+      ['a repeated n', `${uri}&n=d`],
+      ['a repeated cb', `${uri}&cb=a&cb=b`],
+      ['padding in r', `${uri}=`],
+    ]
+    for (const [name, value] of bad) {
+      expect(refusal(() => parseAppConnectUri(value)).code, name).toBe('invalid')
+    }
+    expect(refusal(() => parseAppConnectUri(uri.replace('v=2', 'v=3'))).code).toBe('unsupported')
+    expect(refusal(() => parseAppConnectUri(uri.replace('v=2&', ''))).code).toBe('unsupported')
+    expect(refusal(() => parseAppConnectUri(uri.replace('n=d', 'n=x'))).code).toBe('invalid')
+  })
+
+  it('enforces the dashpay://connect size limits', () => {
+    const uri = buildAppConnectUri(yapprVectorRequest(), 'devnet', undefined, 'dashpay')
+    expect(refusal(() => parseAppConnectUri(`${uri}&pad=${'a'.repeat(4096)}`)).message).toMatch(/URI is too long/)
+    const long = 'A'.repeat(1367)
+    expect(refusal(() => parseAppConnectUri(`dashpay://connect?v=2&n=d&r=${long}`)).message).toMatch(/request is too long/)
+    // 1,366 characters is exactly 1,024 bytes, so the character cap implies the byte cap.
+    expect(base64urlEncode(new Uint8Array(1024)).length).toBe(1366)
+  })
+
+  it('ignores an r parameter on the dash-key: carrier, where it is unknown', () => {
+    const request = yapprVectorRequest()
+    const uri = buildAppConnectUri(request, 'testnet')
+    expect(parseAppConnectUri(`${uri}&r=1&r=2`).request).toEqual(request)
+  })
+
+  it('ignores unknown dashpay://connect parameters', () => {
+    const request = yapprVectorRequest()
+    const uri = buildAppConnectUri(request, 'devnet', undefined, 'dashpay')
+    expect(parseAppConnectUri(`${uri}&utm=1&utm2=2`).request).toEqual(request)
   })
 
   it('ignores unknown optional (odd) TLVs', () => {
@@ -192,5 +280,35 @@ describe('App Connect request v2 codec', () => {
     const request = yapprVectorRequest()
     const decoded = decodeAppConnectRequest(encodeAppConnectRequest(request))
     expect(bs58.encode(decoded.authBindings[1].id)).toBe('Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7')
+  })
+})
+
+describe('canonical base64url', () => {
+  it('matches RFC 4648 section 5 without padding', () => {
+    const cases: Array<[number[], string]> = [
+      [[], ''],
+      [[0x66], 'Zg'],
+      [[0x66, 0x6f], 'Zm8'],
+      [[0x66, 0x6f, 0x6f], 'Zm9v'],
+      [[0xfb, 0xff, 0xfe], '-__-'],
+      [[0xff], '_w'],
+    ]
+    for (const [bytes, text] of cases) {
+      expect(base64urlEncode(Uint8Array.from(bytes))).toBe(text)
+      expect([...base64urlDecode(text)]).toEqual(bytes)
+    }
+  })
+
+  it('round-trips every length', () => {
+    for (let length = 0; length < 40; length++) {
+      const bytes = Uint8Array.from({ length }, (_, i) => (i * 37 + length) & 255)
+      expect(base64urlDecode(base64urlEncode(bytes))).toEqual(bytes)
+    }
+  })
+
+  it('refuses padding, the standard alphabet, other characters, length 1 mod 4 and non-zero trailing bits', () => {
+    for (const bad of ['Zg==', 'Zm8=', 'a+b-', 'a/bc', 'ab cd', 'ab\ncd', '\u00e9abc', 'A', 'Zm9vA', 'Zh', 'Zm9', 'Zm-']) {
+      expect(() => base64urlDecode(bad), JSON.stringify(bad)).toThrow(AppConnectRequestError)
+    }
   })
 })

@@ -1,12 +1,12 @@
 # mobile/tools: test-wallet responder
 
 A Node stand-in for DashPay, so agents and Maestro can sign in to Yappr without
-a human tapping through a wallet (ADR-001 E5.4). Given a `dash-key:` or
-`dash-st:` URI and a sakura pool persona, it does what a wallet would do:
+a human tapping through a wallet (ADR-001 E5.4). Given a `dashpay://connect`,
+`dash-key:` or `dash-st:` URI and a sakura pool persona, it does what a wallet would do:
 
 | URI | What the responder does |
 | --- | --- |
-| `dash-key:…&v=2` App Connect request | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then replaces the persona's `loginKeyResponse` on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
+| `dashpay://connect?v=2&n=…&r=…` or `dash-key:…&v=2` App Connect request (`dash-key:` is refused when `n=m`) | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then replaces the persona's `loginKeyResponse` on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
 | `dash-key:…&v=1` legacy key-exchange request | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
 | `dash-st:` unsigned IdentityUpdate | Decodes it. Checks that it updates the persona's identity, that it only adds AUTHENTICATION/HIGH and ENCRYPTION/MEDIUM keys and disables none (the 1.0 key registration), and that its identity nonce is not stale. Signs it with keyId 0 (MASTER), broadcasts it, and waits for the result. |
 

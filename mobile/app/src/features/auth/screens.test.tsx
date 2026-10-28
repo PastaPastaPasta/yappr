@@ -185,7 +185,7 @@ describe('private key sign-in (AUTH-08)', () => {
     };
 
     it('signs in with the CRITICAL key typed, and keeps this engine: a reload would drop that session-only key', async () => {
-      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect' } as CapabilitiesDTO } }));
+      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect', walletCarriers: ['dash-key', 'dashpay'] as CapabilitiesDTO['walletCarriers'] } as CapabilitiesDTO } }));
       parkedWithoutKey(1);
       await typeKeyAndSwitch();
       expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(alice.identityId);
@@ -195,7 +195,7 @@ describe('private key sign-in (AUTH-08)', () => {
     });
 
     it('reloads after signing in with a HIGH key, which survives it, to load the other stored keys', async () => {
-      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect' } as CapabilitiesDTO } }));
+      act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: 'app-connect', walletCarriers: ['dash-key', 'dashpay'] as CapabilitiesDTO['walletCarriers'] } as CapabilitiesDTO } }));
       parkedWithoutKey(2);
       await typeKeyAndSwitch();
       expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
@@ -253,8 +253,10 @@ describe('private key sign-in (AUTH-08)', () => {
 });
 
 describe('sign-in methods (AUTH-03, AUTH-05)', () => {
-  const walletSignIn = (kind: 'legacy' | 'app-connect') =>
-    act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: kind } as CapabilitiesDTO } }));
+  const walletSignIn = (
+    kind: 'legacy' | 'app-connect',
+    walletCarriers: CapabilitiesDTO['walletCarriers'] = kind === 'legacy' ? ['dash-key'] : ['dash-key', 'dashpay'],
+  ) => act(() => fakeEngine.setStatus({ info: { capabilities: { walletSignIn: kind, walletCarriers } as CapabilitiesDTO } }));
   beforeEach(() => walletSignIn('legacy'));
 
   it('explains a missing wallet and keeps the QR route', async () => {
@@ -307,6 +309,32 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     fireEvent.press(screen.getByTestId('sign-in-other-ways'));
     fireEvent.press(screen.getByTestId('sign-in-private-key'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/key');
+  });
+
+  it.each([['dashpay://connect'], ['dash-key:yappr']])('counts a wallet that answers only for %s for App Connect', async (scheme) => {
+    jest.spyOn(Linking, 'canOpenURL').mockImplementation(async (url) => url === scheme);
+    walletSignIn('app-connect');
+    render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.getByTestId('sign-in-open-wallet')).toBeTruthy();
+    expect(screen.queryByTestId('sign-in-no-wallet')).toBeNull();
+  });
+
+  it('does not count a dash-key:-only wallet when the build emits only dashpay://connect', async () => {
+    jest.spyOn(Linking, 'canOpenURL').mockImplementation(async (url) => url === 'dash-key:yappr');
+    walletSignIn('app-connect', ['dashpay']);
+    render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.getByTestId('sign-in-no-wallet')).toBeTruthy();
+    expect(screen.queryByTestId('sign-in-open-wallet')).toBeNull();
+  });
+
+  it('does not count a dashpay-only wallet for the legacy key exchange, which speaks only dash-key:', async () => {
+    jest.spyOn(Linking, 'canOpenURL').mockImplementation(async (url) => url === 'dashpay://connect');
+    render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.getByTestId('sign-in-no-wallet')).toBeTruthy();
+    expect(screen.queryByTestId('sign-in-open-wallet')).toBeNull();
   });
 
   it('signs in with App Connect where the network runs it, on this device or another', async () => {

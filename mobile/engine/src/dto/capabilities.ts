@@ -3,9 +3,9 @@ import {
   followRankingsAvailable, hasFlatThreads, hashtagsAreInline, inlineTags, likesAreIndexOnly, mediaItemLimit, moderatorsCannotDelete, postsHaveLanguage,
   prefixRankingsAvailable, privateFeedClientSupported, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
-import { dmIsV5, pollrHasEditableBallots, pollrIsConfigured, pollrIsV3, storefrontListingsCarryModLane } from '@/lib/constants'
+import { dmIsV5, getConfiguredNetwork, pollrHasEditableBallots, pollrIsConfigured, pollrIsV3, storefrontListingsCarryModLane } from '@/lib/constants'
 import { moderatedContract } from '@/lib/moderated-contracts'
-import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { appConnectCarriers, isAppConnectBuild } from '@/lib/app-connect/config'
 import { paymentIsChoosable } from '@/lib/payment-preference'
 import { reportFeeCredits } from '@/lib/reports'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
@@ -63,6 +63,7 @@ export function platformInfo(): PlatformInfoDTO {
       yappPayments: paymentIsChoosable('post'),
       dm: dmIsV5() ? 'v5' : 'legacy',
       walletSignIn: isAppConnectBuild() ? 'app-connect' : 'legacy',
+      walletCarriers: isAppConnectBuild() ? [...appConnectCarriers(getConfiguredNetwork())] : ['dash-key'],
       privateFeeds: privateFeedClientSupported(),
       pollVoting: pollVoting(),
     },

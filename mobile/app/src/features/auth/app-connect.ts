@@ -13,6 +13,7 @@ import { copy } from './copy';
 import { walletErrorText } from './errors';
 import { openLink } from './key-exchange';
 import { networkName } from './onboarding';
+import { installedCarriers, pickWalletUri, type WalletCarrierUri } from './wallet-uri';
 
 /**
  * Wallet sign-in on App Connect builds (docs/APP_CONNECT_PROFILE.md): the
@@ -75,13 +76,35 @@ const stale = (gen: number) => gen !== generation;
 const MODE_KEY = 'yappr.signin.connect-mode';
 export const lastAppConnectMode = (): AppConnectMode => (syncStorage.getItem(MODE_KEY) === 'qr' ? 'qr' : 'wallet');
 
-/** The `dash-key:` link of the flow's request, when it has one. */
+/** The link of the flow's request in the build's default carrier (what the QR code shows), when it has one. */
 export const flowUri = (flow: AppConnectFlowDTO | null): string | null => (flow && 'uri' in flow ? flow.uri : null);
 
-/** Opens the wallet on this device with the current request (`dash-key:` link). */
+/** The request in every carrier the build offers, default first (two on staging builds, else one). */
+const flowCarrierUris = (flow: AppConnectFlowDTO | null): readonly WalletCarrierUri[] =>
+  flow && 'uris' in flow && flow.uris ? flow.uris : [];
+
+/**
+ * Opens the wallet on this device with the current request. Where the build
+ * offers both carriers, it is the one whose scheme an installed wallet
+ * handles, else `dash-key:`; the request is the same either way.
+ */
 export function openWallet(): void {
-  const uri = flowUri(get().flow);
-  if (uri) openLink(uri, () => set({ walletOpenFailed: true }));
+  const flow = get().flow;
+  const uri = flowUri(flow);
+  if (!uri) return;
+  const failed = () => set({ walletOpenFailed: true });
+  const options = flowCarrierUris(flow);
+  if (options.length < 2) {
+    openLink(uri, failed);
+    return;
+  }
+  installedCarriers()
+    .then((installed) => {
+      // Cancelled, replaced by a new request, or switched to the QR code while the schemes were asked about: open nothing.
+      if (get().flow !== flow || get().mode !== 'wallet') return;
+      openLink(pickWalletUri(options, installed) ?? uri, failed);
+    })
+    .catch(() => undefined);
 }
 
 /** Whether a sign-in or renewal is waiting on the wallet (its return link lands here). */

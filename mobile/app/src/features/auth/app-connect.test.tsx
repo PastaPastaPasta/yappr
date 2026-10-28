@@ -103,6 +103,62 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(screen.queryByText(/\d+:\d\d/)).toBeNull();
   });
 
+  describe('on a staging build that offers both carriers', () => {
+    const DASHPAY_URI = `dashpay://connect?v=2&n=d&r=abc&cb=https%3A%2F%2Fyap.pr%2Fdevnet%2Fconnect%2F%3Fr%3D${HASH}%26app%3Dyappr-dev`;
+    // The app opens a request's wallet link once, so each test brings its own request.
+    const both = (requestHash: string) =>
+      flow({
+        phase: 'waiting',
+        uri: URI,
+        uris: [
+          { carrier: 'dash-key', uri: URI },
+          { carrier: 'dashpay', uri: DASHPAY_URI },
+        ],
+        requestHash,
+      });
+    const installed = (schemes: Record<string, boolean>) =>
+      jest.spyOn(Linking, 'canOpenURL').mockImplementation(async (url) => schemes[url.split(':')[0]] === true);
+    afterEach(() => jest.mocked(Linking.canOpenURL).mockRestore());
+
+    it('opens dashpay://connect when only a wallet for that scheme is installed', async () => {
+      installed({ dashpay: true });
+      await open({ mode: 'wallet' }, both('c1'.repeat(20)));
+      await act(async () => {});
+      expect(Linking.openURL).toHaveBeenCalledTimes(1);
+      expect(Linking.openURL).toHaveBeenCalledWith(DASHPAY_URI);
+    });
+
+    it('falls back to dash-key: when no wallet answers for dashpay', async () => {
+      installed({ 'dash-key': true });
+      await open({ mode: 'wallet' }, both('c2'.repeat(20)));
+      await act(async () => {});
+      expect(Linking.openURL).toHaveBeenCalledWith(URI);
+      jest.mocked(Linking.openURL).mockClear();
+      installed({});
+      await act(async () => fireEvent.press(screen.getByTestId('kx-open-again')));
+      await act(async () => {});
+      expect(Linking.openURL).toHaveBeenCalledWith(URI);
+    });
+
+    it('opens nothing when the user switches to the QR code while the schemes are being asked about', async () => {
+      let answer: (value: boolean) => void = () => undefined;
+      jest.spyOn(Linking, 'canOpenURL').mockImplementation(
+        (url) => (url.startsWith('dashpay') ? new Promise<boolean>((resolve) => { answer = resolve; }) : Promise.resolve(false)),
+      );
+      await open({ mode: 'wallet' }, both('c4'.repeat(20)));
+      await act(async () => fireEvent.press(screen.getByTestId('kx-other-device')));
+      await act(async () => answer(true));
+      expect(Linking.openURL).not.toHaveBeenCalled();
+    });
+
+    it('shows the default (dash-key:) link as the QR code', async () => {
+      installed({ dashpay: true });
+      await open({ mode: 'qr' }, both('c3'.repeat(20)));
+      expect(screen.getByTestId('kx-qr')).toBeTruthy();
+      expect(Linking.openURL).not.toHaveBeenCalled();
+    });
+  });
+
   it('shows the request as a QR code for a wallet on another device, without opening anything', async () => {
     await open({ mode: 'qr' });
     expect(screen.getByTestId('kx-qr')).toBeTruthy();

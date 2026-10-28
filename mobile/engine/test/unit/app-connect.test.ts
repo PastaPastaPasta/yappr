@@ -288,6 +288,8 @@ describe('App Connect sign-in', () => {
       expect(started).toMatchObject({ phase: 'waiting', renew: false })
       if (started.phase !== 'waiting') throw new Error('not waiting')
 
+      // The flow reports every carrier the build offers, the default's URI first (one here: no `both` in this env).
+      expect(started.uris).toEqual([{ carrier: 'dash-key', uri: started.uri }])
       const parsed = auth.parseAppConnectUri(started.uri)
       expect(bytesToHex(parsed.requestBytes)).toBe(vectors.request.bytes)
       expect(started.requestHash).toBe(bytesToHex(auth.appConnectRequestHash(parsed.request)))

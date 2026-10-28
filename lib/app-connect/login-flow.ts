@@ -17,7 +17,8 @@ import {
   type YapprKeyExchangeNetworkName,
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
-import { APP_CONNECT_MIN_PROTOCOL_VERSION, type AppConnectPins } from './config'
+import type { AppConnectCarrierUris, AppConnectCarriers } from './carrier'
+import { APP_CONNECT_MIN_PROTOCOL_VERSION, appConnectCarriers, type AppConnectPins } from './config'
 import type { AppConnectTrust } from './group-trust'
 import type { AppConnectPlatformPort } from './platform-port'
 import { appConnectCallbackUrl, buildYapprAppConnectRequest } from './yappr-request'
@@ -46,9 +47,9 @@ export interface VerifiedCandidate {
 export type AppConnectLoginState =
   | { phase: 'checking' }
   | { phase: 'unavailable'; reason: AppConnectUnavailableReason }
-  | { phase: 'waiting'; uri: string }
-  | { phase: 'confirm'; uri: string; candidates: VerifiedCandidate[] }
-  | { phase: 'timeout'; uri: string }
+  | { phase: 'waiting'; uri: string; uris: AppConnectCarrierUris }
+  | { phase: 'confirm'; uri: string; uris: AppConnectCarrierUris; candidates: VerifiedCandidate[] }
+  | { phase: 'timeout'; uri: string; uris: AppConnectCarrierUris }
   | { phase: 'too-many' }
 
 /** The request a tab is waiting on, kept so a reload or the /connect page can pick it up. */
@@ -83,6 +84,12 @@ export interface AppConnectLoginDeps {
   /** Origin and base path for the wallet's return link. */
   origin: string
   basePath: string
+  /**
+   * Which URIs can carry the request, the default first; defaults to the
+   * build's `NEXT_PUBLIC_APP_CONNECT_CARRIER` (always `dashpay` alone on mainnet).
+   * With several, each is the same request in another URI form.
+   */
+  carriers?: AppConnectCarriers
   /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
   callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
@@ -122,7 +129,9 @@ interface ActiveRequest {
   privateKey: Uint8Array
   request: AppConnectRequest
   hash: Uint8Array
+  /** The default carrier's URI, which `uris` leads with. */
   uri: string
+  uris: AppConnectCarrierUris
 }
 
 interface CandidateProgress {
@@ -256,10 +265,16 @@ export class AppConnectLogin {
     const callbackUrl = this.deps.callbackUrl
       ? this.deps.callbackUrl(bytesToHex(hash))
       : appConnectCallbackUrl(this.deps.origin, this.deps.basePath, bytesToHex(hash))
-    this.active = { record, privateKey, request, hash, uri: buildAppConnectUri(request, this.deps.network, callbackUrl) }
+    // One request, one body: a second carrier only wraps the same bytes in its own URI.
+    const [first, ...rest] = (this.deps.carriers ?? appConnectCarriers(this.deps.network)).map((carrier) => ({
+      carrier,
+      uri: buildAppConnectUri(request, this.deps.network, callbackUrl, carrier),
+    }))
+    const uris: AppConnectCarrierUris = [first, ...rest]
+    this.active = { record, privateKey, request, hash, uri: first.uri, uris }
     this.progress = new Map()
     this.discardVerified()
-    this.set({ phase: 'waiting', uri: this.active.uri })
+    this.set({ phase: 'waiting', uri: first.uri, uris })
   }
 
   /** The request hash the QR code carries (hex), for matching the wallet's return link. */
@@ -276,7 +291,7 @@ export class AppConnectLogin {
   async checkAgain(): Promise<void> {
     const active = this.active
     if (active && this.now() - active.record.createdAt < APP_CONNECT_MAX_REQUEST_AGE_MS) {
-      this.set({ phase: 'waiting', uri: active.uri })
+      this.set({ phase: 'waiting', uri: active.uri, uris: active.uris })
       this.poll()
       return
     }
@@ -377,7 +392,7 @@ export class AppConnectLogin {
       const delay = appConnectPollDelayMs(this.now() - active.record.createdAt)
       if (delay === null) {
         // Answers already verified stay on offer; only an unanswered request times out.
-        if (!signal.aborted && this.verified.length === 0) this.set({ phase: 'timeout', uri: active.uri })
+        if (!signal.aborted && this.verified.length === 0) this.set({ phase: 'timeout', uri: active.uri, uris: active.uris })
         return
       }
       await new Promise<void>((resolve) => {
@@ -438,7 +453,7 @@ export class AppConnectLogin {
     if (verifiedNow) {
       // Polling continues while the user decides: anyone else who answers
       // this code is added, and the confirm card becomes a chooser.
-      this.set({ phase: 'confirm', uri: active.uri, candidates: [...this.verified] })
+      this.set({ phase: 'confirm', uri: active.uri, uris: active.uris, candidates: [...this.verified] })
     }
     return false
   }

@@ -1,5 +1,7 @@
+import type { YapprKeyExchangeNetworkName } from 'platform-auth'
 import { parseAppConnectPins as parsePins } from './pins.mjs'
 import { DASHPAY_CONTRACT_ID } from '@/lib/constants'
+import type { AppConnectCarriers } from './carrier'
 
 /**
  * Build-time switches and pinned data for App Connect login
@@ -24,6 +26,34 @@ export function loginProtocol(): LoginProtocol {
 
 export function isAppConnectBuild(): boolean {
   return loginProtocol() === 'app-connect'
+}
+
+/**
+ * Which URIs can carry the request (DIP dashpay/dips#181): `dashpay://connect`
+ * or the transitional `dash-key:`. Current testnet and devnet wallets accept
+ * only `dash-key:`, so that is the default there. On those networks
+ * `NEXT_PUBLIC_APP_CONNECT_CARRIER` picks the DIP's URI (`dashpay`) or offers
+ * both (`both`), so a staging build can be tried with old and new wallets;
+ * the first carrier returned is the one shown first. Mainnet is always
+ * `dashpay` alone, whatever the variable says.
+ */
+export function parseAppConnectCarriers(
+  value: string | undefined,
+  network: YapprKeyExchangeNetworkName,
+): AppConnectCarriers {
+  if (network === 'mainnet') return ['dashpay']
+  switch (value?.trim()) {
+    case 'dashpay':
+      return ['dashpay']
+    case 'both':
+      return ['dash-key', 'dashpay']
+    default:
+      return ['dash-key']
+  }
+}
+
+export function appConnectCarriers(network: YapprKeyExchangeNetworkName): AppConnectCarriers {
+  return parseAppConnectCarriers(process.env.NEXT_PUBLIC_APP_CONNECT_CARRIER, network)
 }
 
 /** Platform's App Connect system contract, where wallets publish `loginKeyResponse` documents. */
