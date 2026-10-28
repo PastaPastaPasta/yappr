@@ -770,7 +770,7 @@ function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKe
  * legacy persona's rotation an operator registered, e.g.
  * `scripts/verify-appconnect.mjs --restore-anchor-key`), register rotation 0
  * at the DIP's path when there is none, and leave the slot out when another
- * wallet made the current one or any candidate was disabled. Never rotate.
+ * wallet made the current one or any key for it is on the identity, disabled. Never rotate.
  */
 async function prepareEncryptionKey(
   persona: Persona,
@@ -800,13 +800,16 @@ async function prepareEncryptionKey(
     ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
     return undefined
   }
-  if (held.some((candidate) => chainKeys.some((key) => bytesEqual(key.data, getYapprPublicKey(candidate))))) {
-    ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} is on the identity but not current (disabled?); slot omitted`)
+  // DIP rule 2: with no current key, any key for this contract and purpose (whoever's, all disabled)
+  // means a new one would be a rotation, which is never part of a login.
+  const bounds = encBindingBounds(binding)
+  if (chainKeys.some((key) => key.purpose === binding.purpose && key.bounds !== undefined && boundsEqual(key.bounds, bounds))) {
+    ports.log(`persona ${persona.personaIdx}: a ${role} key for app ${plan.appId} is on the identity but not current (disabled?); slot omitted`)
     return undefined
   }
   return {
     slot: { role, bindingIndex: index, privateKey },
-    register: { privateKey, purpose: binding.purpose, securityLevel: KeySecurityLevel.MEDIUM, bounds: encBindingBounds(binding) },
+    register: { privateKey, purpose: binding.purpose, securityLevel: KeySecurityLevel.MEDIUM, bounds },
   }
 }
 

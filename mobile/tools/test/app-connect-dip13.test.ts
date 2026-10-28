@@ -100,7 +100,7 @@ describe('seeded personas', () => {
     const encryptionSlot = (result: Awaited<ReturnType<typeof respondToAppConnect>>) =>
       result.answer.slots.find((slot) => slot.role === 'encryption')
 
-    function setup(derivations: Array<{ id: number; legacy?: boolean; rotation?: number; disabledAt?: number }>) {
+    function setup(derivations: Array<{ id: number; legacy?: boolean; foreign?: boolean; rotation?: number; disabledAt?: number }>) {
       const persona = seededPersona({ identityIdBytes: new Uint8Array(32).fill(0x37) })
       const chain = newChain()
       const wallet = dip13Wallet(WasmSdk, TEST_PHRASE, 'testnet')
@@ -111,10 +111,13 @@ describe('seeded personas', () => {
         ...layout,
         data: getYapprPublicKey(persona.key(keyId === 0 ? 'master' : keyId === 1 ? 'critical' : 'high').privateKey),
       })).slice(0, 3))
-      for (const { id, legacy, rotation, disabledAt } of derivations) {
-        const path = legacy
-          ? legacyAppEncryptionKeyPath('testnet', identityId, APP_ID)
-          : appEncryptionKeyPath('testnet', identityId, APP_ID, KeyPurpose.ENCRYPTION, rotation)
+      for (const { id, legacy, foreign, rotation, disabledAt } of derivations) {
+        // Another wallet's key: a point this phrase does not derive at any layout.
+        const path = foreign
+          ? appEncryptionKeyPath('testnet', new Uint8Array(32).fill(0x99), APP_ID, KeyPurpose.ENCRYPTION, 0)
+          : legacy
+            ? legacyAppEncryptionKeyPath('testnet', identityId, APP_ID)
+            : appEncryptionKeyPath('testnet', identityId, APP_ID, KeyPurpose.ENCRYPTION, rotation)
         chain.keysOf(persona).push({
           id,
           type: KeyType.ECDSA_SECP256K1,
@@ -146,6 +149,13 @@ describe('seeded personas', () => {
 
     it('omits the slot and registers nothing when only a pre-DIP key exists and it is disabled', async () => {
       const { persona, chain } = setup([{ id: 7, legacy: true, disabledAt: 1 }])
+      const result = await answer(persona, chain)
+      expect(encryptionSlot(result)).toBeUndefined()
+      expect(result.answer.addedKeyIds).toHaveLength(2)
+    })
+
+    it('omits the slot and registers nothing beside another wallet\'s disabled key', async () => {
+      const { persona, chain } = setup([{ id: 7, foreign: true, disabledAt: 1 }])
       const result = await answer(persona, chain)
       expect(encryptionSlot(result)).toBeUndefined()
       expect(result.answer.addedKeyIds).toHaveLength(2)
