@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle, RefreshCw, ShieldAlert } from 'lucide-react'
-import type { AppConnectGrant } from 'platform-auth'
+import type { AppConnectCarrier, AppConnectGrant } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { useAppConnectLogin } from '@/hooks/use-app-connect-login'
+import { selectCarrierUri } from '@/lib/app-connect/carrier'
 import type { AppConnectUnavailableReason, VerifiedCandidate } from '@/lib/app-connect/login-flow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { CarrierSwitch } from './carrier-switch'
 import { KeyExchangeQR } from './key-exchange-qr'
 import { IdentityConfirmCard } from './identity-confirm-card'
 
@@ -60,6 +62,8 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   const [signing, setSigning] = useState<'idle' | 'running' | 'done'>('idle')
   const [signInError, setSignInError] = useState<string | null>(null)
   const [restartedAfterRejection, setRestartedAfterRejection] = useState(false)
+  // null: the build's default carrier. Kept across new requests, so a tester's choice sticks.
+  const [carrier, setCarrier] = useState<AppConnectCarrier | null>(null)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -142,13 +146,17 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
       )
     }
 
-    case 'waiting':
+    case 'waiting': {
+      // Where a build offers both carriers, the switch only picks which URI is drawn.
+      const shown = selectCarrierUri(state.uris, carrier)
       return (
         <div className="flex flex-col items-center gap-4" role="status" aria-live="polite">
           {notices}
-          <KeyExchangeQR uri={state.uri} size={208} />
+          {state.uris.length > 1 && <CarrierSwitch uris={state.uris} value={shown.carrier} onChange={setCarrier} />}
+          <KeyExchangeQR uri={shown.uri} size={208} />
         </div>
       )
+    }
 
     case 'timeout':
       return (

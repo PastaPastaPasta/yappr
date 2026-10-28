@@ -7,7 +7,7 @@ import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface KeyExchangeQRProps {
-  /** The dash-key: or dash-st: URI to display */
+  /** The dashpay://connect, dash-key: or dash-st: URI to display */
   uri: string
   /** Size of the QR code in pixels (default: 200) */
   size?: number
@@ -16,7 +16,7 @@ interface KeyExchangeQRProps {
 /**
  * QR code component for key exchange URI.
  *
- * Displays a dash-key:/dash-st: URI as a QR code that can be scanned by a
+ * Displays a dashpay://connect, dash-key: or dash-st: URI as a QR code that can be scanned by a
  * wallet app, and offers an "Open in wallet app" deep link into whichever
  * wallet is registered for the URI scheme on this device. The deep link
  * matters on desktop too: Dash Evo Tool runs on the same machine as the
@@ -61,6 +61,7 @@ export function KeyExchangeQR({ uri, size = 200 }: KeyExchangeQRProps) {
       {/* Deep link into a wallet registered for the scheme on this device */}
       <a
         href={uri}
+        data-testid="key-exchange-open-link"
         onClick={() => setLaunchAttempted(true)}
         className={cn(buttonVariants({ size: 'lg' }), 'w-full gap-2')}
       >

@@ -28,22 +28,31 @@ export function isAppConnectBuild(): boolean {
 }
 
 /**
- * Which URI carries the request in the QR code (DIP dashpay/dips#181):
- * `dashpay://connect` or the transitional `dash-key:`. Current testnet and
- * devnet wallets accept only `dash-key:`, so that stays the default there;
- * `NEXT_PUBLIC_APP_CONNECT_CARRIER=dashpay` switches a build to the DIP's URI.
- * Mainnet is always `dashpay`, whatever the variable says.
+ * Which URIs can carry the request (DIP dashpay/dips#181): `dashpay://connect`
+ * or the transitional `dash-key:`. Current testnet and devnet wallets accept
+ * only `dash-key:`, so that is the default there. On those networks
+ * `NEXT_PUBLIC_APP_CONNECT_CARRIER` picks the DIP's URI (`dashpay`) or offers
+ * both (`both`), so a staging build can be tried with old and new wallets;
+ * the first carrier returned is the one shown first. Mainnet is always
+ * `dashpay` alone, whatever the variable says.
  */
-export function parseAppConnectCarrier(
+export function parseAppConnectCarriers(
   value: string | undefined,
   network: YapprKeyExchangeNetworkName,
-): AppConnectCarrier {
-  if (network === 'mainnet') return 'dashpay'
-  return value?.trim() === 'dashpay' ? 'dashpay' : 'dash-key'
+): readonly [AppConnectCarrier, ...AppConnectCarrier[]] {
+  if (network === 'mainnet') return ['dashpay']
+  switch (value?.trim()) {
+    case 'dashpay':
+      return ['dashpay']
+    case 'both':
+      return ['dash-key', 'dashpay']
+    default:
+      return ['dash-key']
+  }
 }
 
-export function appConnectCarrier(network: YapprKeyExchangeNetworkName): AppConnectCarrier {
-  return parseAppConnectCarrier(process.env.NEXT_PUBLIC_APP_CONNECT_CARRIER, network)
+export function appConnectCarriers(network: YapprKeyExchangeNetworkName): readonly [AppConnectCarrier, ...AppConnectCarrier[]] {
+  return parseAppConnectCarriers(process.env.NEXT_PUBLIC_APP_CONNECT_CARRIER, network)
 }
 
 /** Platform's App Connect system contract, where wallets publish `loginKeyResponse` documents. */

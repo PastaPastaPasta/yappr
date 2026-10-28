@@ -10,6 +10,7 @@ import { copy } from '~/features/auth/copy';
 import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
+import { WALLET_PROBE_URLS } from '~/features/auth/wallet-uri';
 import { cn } from '~/lib-allowlist';
 import { Lockup } from '~/ui/brand/Brand';
 import { Button } from '~/ui/Button';
@@ -27,7 +28,7 @@ function useWalletInstalled(): boolean | null {
   useEffect(() => {
     let live = true;
     // One scheme failing to answer must not hide the other's yes.
-    Promise.allSettled([Linking.canOpenURL('dashpay://connect'), Linking.canOpenURL('dash-key:yappr')]).then(
+    Promise.allSettled([Linking.canOpenURL(WALLET_PROBE_URLS.dashpay), Linking.canOpenURL(WALLET_PROBE_URLS['dash-key'])]).then(
       (answers) => {
         if (live) setInstalled(answers.some((answer) => answer.status === 'fulfilled' && answer.value));
       },

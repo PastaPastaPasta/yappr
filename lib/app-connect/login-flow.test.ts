@@ -1,6 +1,8 @@
 import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
+import { appConnectRequestHash, parseAppConnectUri } from 'platform-auth'
 import type { AppConnectCandidate, AppConnectGrant, AppConnectVerification, VerifyAppConnectCandidateInput } from 'platform-auth'
+import { bytesToHex } from '@/lib/bytes'
 import { AppConnectLogin, parseStoredRequest, type AppConnectLoginState, type StoredAppConnectRequest } from './login-flow'
 import type { AppConnectPlatformPort } from './platform-port'
 
@@ -32,7 +34,7 @@ function harness(options: {
   protocolVersion?: number
   trusted?: boolean
   network?: 'mainnet' | 'testnet' | 'devnet'
-  carrier?: 'dashpay' | 'dash-key'
+  carriers?: readonly ['dashpay' | 'dash-key', ...('dashpay' | 'dash-key')[]]
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
@@ -46,7 +48,7 @@ function harness(options: {
   const login = new AppConnectLogin({
     pins,
     network: options.network ?? 'devnet',
-    ...(options.carrier ? { carrier: options.carrier } : {}),
+    ...(options.carriers ? { carriers: options.carriers } : {}),
     port,
     trust: async () => (options.trusted === false
       ? { ok: false, reason: 'unexpected-members', group: { groupId: pins.groupId, members: [] } }
@@ -103,13 +105,40 @@ describe('AppConnectLogin', () => {
   })
 
   it('shows a dashpay://connect QR code when the carrier is dashpay, and on mainnet by default', async () => {
-    const devnet = harness({ carrier: 'dashpay' })
+    const devnet = harness({ carriers: ['dashpay'] })
     await devnet.login.start()
     expect((last(devnet) as { uri: string }).uri).toMatch(/^dashpay:\/\/connect\?v=2&n=d&r=[\w-]+&cb=https%3A%2F%2Fyap\.pr%2Fdevnet%2Fconnect%2F%3Fr%3D[0-9a-f]{40}$/)
 
     const mainnet = harness({ network: 'mainnet' })
     await mainnet.login.start()
     expect((last(mainnet) as { uri: string }).uri).toMatch(/^dashpay:\/\/connect\?v=2&n=m&r=/)
+  })
+
+  it('renders one request in both carriers: dash-key: first, the same body, and one request to poll', async () => {
+    const h = harness({ carriers: ['dash-key', 'dashpay'] })
+    await h.login.start()
+    const waiting = last(h) as Extract<AppConnectLoginState, { phase: 'waiting' }>
+    expect(waiting.uris.map((entry) => entry.carrier)).toEqual(['dash-key', 'dashpay'])
+    expect(waiting.uri).toBe(waiting.uris[0].uri)
+    expect(waiting.uris[0].uri).toMatch(/^dash-key:/)
+    expect(waiting.uris[1].uri).toMatch(/^dashpay:\/\/connect\?v=2&n=d&r=/)
+
+    // Same bytes (base58 in one, base64url in the other), same return link.
+    const [dashKey, dashpay] = waiting.uris.map((entry) => parseAppConnectUri(entry.uri))
+    expect(bytesToHex(dashpay.requestBytes)).toBe(bytesToHex(dashKey.requestBytes))
+    expect(dashpay.callbackUrl).toBe(dashKey.callbackUrl)
+    expect(bytesToHex(appConnectRequestHash(dashpay.request))).toBe(h.login.requestHashHex())
+
+    // One stored request, whichever URI a wallet reads.
+    expect(h.records.value).not.toBeNull()
+    const phases = h.states.map((state) => state.phase)
+    expect(phases.filter((phase) => phase === 'waiting')).toHaveLength(1)
+
+    // Checking again re-shows the same URIs without a new request.
+    const key = h.records.value?.ephemeralPrivateKey
+    await h.login.checkAgain()
+    expect((last(h) as Extract<AppConnectLoginState, { phase: 'waiting' }>).uris).toEqual(waiting.uris)
+    expect(h.records.value?.ephemeralPrivateKey).toBe(key)
   })
 
   it('offers a chooser when several identities answer, and wipes the ones not chosen', async () => {

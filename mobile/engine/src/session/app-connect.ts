@@ -1,5 +1,6 @@
 import type { AppConnectGrant } from 'platform-auth'
 import { YAPPR_APP_SCHEMES } from '@/lib/app-connect/callback-channel'
+import type { AppConnectCarrierUris } from '@/lib/app-connect/carrier'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
 import { AppConnectLogin, type AppConnectLoginState, type AppConnectUnavailableReason } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
@@ -31,12 +32,16 @@ export type AppConnectPhaseDTO =
   | { phase: 'idle' }
   | { phase: 'checking' }
   | { phase: 'unavailable'; reason: AppConnectUnavailableReason }
-  /** `requestHash`: what the wallet's return link names (`r=`), hex. */
-  | { phase: 'waiting'; uri: string; requestHash: string }
+  /**
+   * `requestHash`: what the wallet's return link names (`r=`), hex. `uri` is the
+   * build's default carrier; `uris` has the same request in every carrier the
+   * build offers (both `dash-key:` and `dashpay://connect` on staging), default first.
+   */
+  | { phase: 'waiting'; uri: string; uris?: AppConnectCarrierUris; requestHash: string }
   /** Verified answers; polling goes on, so another account that answers is added. */
-  | { phase: 'confirm'; uri: string; requestHash: string; candidates: AppConnectCandidateDTO[] }
+  | { phase: 'confirm'; uri: string; uris?: AppConnectCarrierUris; requestHash: string; candidates: AppConnectCandidateDTO[] }
   /** No answer within the request's 10 minutes. */
-  | { phase: 'timeout'; uri: string; requestHash: string }
+  | { phase: 'timeout'; uri: string; uris?: AppConnectCarrierUris; requestHash: string }
   /** Something kept answering the request: start again. */
   | { phase: 'too-many' }
 
@@ -108,13 +113,13 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       case 'confirm':
         names(next.candidates)
           .then((candidates) => {
-            if (latest === next) set({ ...base, phase: 'confirm', uri: next.uri, requestHash, candidates })
+            if (latest === next) set({ ...base, phase: 'confirm', uri: next.uri, uris: next.uris, requestHash, candidates })
           })
           .catch((error: unknown) => logger.warn('App Connect: could not read the answering accounts:', error))
         return
       case 'waiting':
       case 'timeout':
-        set({ ...base, phase: next.phase, uri: next.uri, requestHash })
+        set({ ...base, phase: next.phase, uri: next.uri, uris: next.uris, requestHash })
         return
       default:
         set({ ...base, ...next })
