@@ -309,6 +309,12 @@ export interface CapabilitiesDTO {
    */
   walletSignIn: 'app-connect' | 'legacy'
   /**
+   * The link schemes this build's wallet sign-in emits, default first: the configured App Connect
+   * carriers (`NEXT_PUBLIC_APP_CONNECT_CARRIER`; `dashpay` only on mainnet), or `dash-key` for the
+   * legacy key exchange. A wallet counts as installed only if it handles one of them.
+   */
+  walletCarriers: ReadonlyArray<'dash-key' | 'dashpay'>
+  /**
    * Private feeds (`privateFeedClientSupported`: social v17's multi-feed
    * shape): reading private posts, requesting access, the owner's settings
    * and private posting. False on earlier cuts, where a private post stays

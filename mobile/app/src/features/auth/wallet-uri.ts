@@ -43,17 +43,14 @@ export async function installedCarriers(): Promise<Partial<Record<WalletCarrier,
 }
 
 /**
- * Whether a wallet on this device can take the sign-in the engine chose. The
- * legacy key exchange speaks only `dash-key:`. App Connect is `dashpay://connect`
- * on mainnet and either carrier elsewhere (staging builds offer both, and
- * `openWallet` picks the one installed).
+ * Whether a wallet on this device can take this build's sign-in: it handles one
+ * of the carriers the engine says the sign-in emits (`walletCarriers`: the
+ * configured App Connect carriers, or `dash-key` for the legacy key exchange).
+ * Where a build offers both, `openWallet` opens the one installed.
  */
 export function walletHandlesSignIn(
   installed: Partial<Record<WalletCarrier, boolean>>,
-  walletSignIn: 'app-connect' | 'legacy',
-  network: string,
+  carriers: readonly WalletCarrier[],
 ): boolean {
-  if (walletSignIn === 'legacy') return installed['dash-key'] === true;
-  if (network === 'mainnet') return installed.dashpay === true;
-  return installed.dashpay === true || installed['dash-key'] === true;
+  return carriers.some((carrier) => installed[carrier] === true);
 }

@@ -31,19 +31,15 @@ describe('pickWalletUri', () => {
 });
 
 describe('walletHandlesSignIn', () => {
-  it('counts only dash-key: for the legacy key exchange', () => {
-    expect(walletHandlesSignIn({ 'dash-key': true }, 'legacy', 'testnet')).toBe(true);
-    expect(walletHandlesSignIn({ dashpay: true }, 'legacy', 'testnet')).toBe(false);
+  it('counts a wallet for a carrier the build emits', () => {
+    expect(walletHandlesSignIn({ 'dash-key': true }, ['dash-key'])).toBe(true);
+    expect(walletHandlesSignIn({ dashpay: true }, ['dash-key', 'dashpay'])).toBe(true);
+    expect(walletHandlesSignIn({ 'dash-key': true }, ['dash-key', 'dashpay'])).toBe(true);
   });
 
-  it('counts either carrier for App Connect off mainnet', () => {
-    expect(walletHandlesSignIn({ dashpay: true }, 'app-connect', 'testnet')).toBe(true);
-    expect(walletHandlesSignIn({ 'dash-key': true }, 'app-connect', 'devnet')).toBe(true);
-    expect(walletHandlesSignIn({}, 'app-connect', 'testnet')).toBe(false);
-  });
-
-  it('counts only dashpay://connect for App Connect on mainnet', () => {
-    expect(walletHandlesSignIn({ dashpay: true }, 'app-connect', 'mainnet')).toBe(true);
-    expect(walletHandlesSignIn({ 'dash-key': true }, 'app-connect', 'mainnet')).toBe(false);
+  it('does not count a wallet for a carrier the build does not emit', () => {
+    expect(walletHandlesSignIn({ dashpay: true }, ['dash-key'])).toBe(false);
+    expect(walletHandlesSignIn({ 'dash-key': true }, ['dashpay'])).toBe(false);
+    expect(walletHandlesSignIn({}, ['dash-key', 'dashpay'])).toBe(false);
   });
 });

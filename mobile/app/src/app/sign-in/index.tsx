@@ -4,7 +4,6 @@ import { Pressable, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDownIcon, ChevronRightIcon, KeyIcon } from 'react-native-heroicons/outline';
 
-import { config } from '~/config';
 import { useCapabilities, useSessionStore } from '~/data/session';
 import { accountName, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
@@ -82,12 +81,14 @@ export default function SignInScreen() {
   const reauth = useReauthTarget();
   const reauthAccount = useSessionStore((s) => s.accounts.find((a) => a.identityId === reauth));
   const reauthName = reauth ? accountName(reauthAccount ?? { identityId: reauth, username: null }) : null;
-  const walletSignIn = useCapabilities()?.walletSignIn ?? null;
-  // Only a wallet that speaks the carrier this sign-in uses counts (null while either is unknown).
+  const capabilities = useCapabilities();
+  const walletSignIn = capabilities?.walletSignIn ?? null;
+  const walletCarriers = capabilities?.walletCarriers ?? null;
+  // Only a wallet that speaks a carrier this build's sign-in emits counts (null while either is unknown).
   const walletInstalled =
-    installedCarrierSchemes === null || walletSignIn === null
+    installedCarrierSchemes === null || walletCarriers === null
       ? null
-      : walletHandlesSignIn(installedCarrierSchemes, walletSignIn, config.network);
+      : walletHandlesSignIn(installedCarrierSchemes, walletCarriers);
   const sameDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=wallet' : '/sign-in/wallet';
   const otherDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=qr' : '/sign-in/qr';
 
