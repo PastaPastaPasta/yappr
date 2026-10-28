@@ -1,6 +1,7 @@
-import type { AppConnectCarrier, YapprKeyExchangeNetworkName } from 'platform-auth'
+import type { YapprKeyExchangeNetworkName } from 'platform-auth'
 import { parseAppConnectPins as parsePins } from './pins.mjs'
 import { DASHPAY_CONTRACT_ID } from '@/lib/constants'
+import type { AppConnectCarriers } from './carrier'
 
 /**
  * Build-time switches and pinned data for App Connect login
@@ -39,7 +40,7 @@ export function isAppConnectBuild(): boolean {
 export function parseAppConnectCarriers(
   value: string | undefined,
   network: YapprKeyExchangeNetworkName,
-): readonly [AppConnectCarrier, ...AppConnectCarrier[]] {
+): AppConnectCarriers {
   if (network === 'mainnet') return ['dashpay']
   switch (value?.trim()) {
     case 'dashpay':
@@ -51,7 +52,7 @@ export function parseAppConnectCarriers(
   }
 }
 
-export function appConnectCarriers(network: YapprKeyExchangeNetworkName): readonly [AppConnectCarrier, ...AppConnectCarrier[]] {
+export function appConnectCarriers(network: YapprKeyExchangeNetworkName): AppConnectCarriers {
   return parseAppConnectCarriers(process.env.NEXT_PUBLIC_APP_CONNECT_CARRIER, network)
 }
 

@@ -2,8 +2,8 @@
  * Which App Connect URI opens the wallet on this device. A build offers one
  * carrier (`dashpay://connect` or `dash-key:`), or on testnet and devnet
  * staging both, the same request in each (`NEXT_PUBLIC_APP_CONNECT_CARRIER`).
- * Pure: the probing of installed schemes is in `app-connect.ts`.
  */
+import { Linking } from 'react-native';
 
 export type WalletCarrier = 'dash-key' | 'dashpay';
 
@@ -33,4 +33,11 @@ export function pickWalletUri(options: readonly WalletCarrierUri[], installed: P
   if (options.length === 0) return null;
   const handled = options.filter((option) => installed[option.carrier] === true);
   return (handled.length === 1 ? handled[0] : options[0]).uri;
+}
+
+/** Whether an app on this device handles each carrier's scheme; a scheme that cannot be asked about counts as no. */
+export async function installedCarriers(): Promise<Partial<Record<WalletCarrier, boolean>>> {
+  const carriers = Object.keys(WALLET_PROBE_URLS) as WalletCarrier[];
+  const answers = await Promise.allSettled(carriers.map((carrier) => Linking.canOpenURL(WALLET_PROBE_URLS[carrier])));
+  return Object.fromEntries(carriers.map((carrier, i) => [carrier, answers[i].status === 'fulfilled' && answers[i].value]));
 }

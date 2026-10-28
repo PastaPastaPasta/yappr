@@ -10,6 +10,9 @@ export interface AppConnectCarrierUri {
   uri: string
 }
 
+/** The carriers a build offers, the default first. */
+export type AppConnectCarriers = readonly [AppConnectCarrier, ...AppConnectCarrier[]]
+
 /** A request's URIs, the default carrier's first. */
 export type AppConnectCarrierUris = readonly [AppConnectCarrierUri, ...AppConnectCarrierUri[]]
 

@@ -1,5 +1,4 @@
 import type { AppConnectFlowDTO } from '@engine/api';
-import { Linking } from 'react-native';
 import { create } from 'zustand';
 
 import { config } from '~/config';
@@ -14,7 +13,7 @@ import { copy } from './copy';
 import { walletErrorText } from './errors';
 import { openLink } from './key-exchange';
 import { networkName } from './onboarding';
-import { pickWalletUri, WALLET_PROBE_URLS, type WalletCarrier, type WalletCarrierUri } from './wallet-uri';
+import { installedCarriers, pickWalletUri, type WalletCarrierUri } from './wallet-uri';
 
 /**
  * Wallet sign-in on App Connect builds (docs/APP_CONNECT_PROFILE.md): the
@@ -83,13 +82,6 @@ export const flowUri = (flow: AppConnectFlowDTO | null): string | null => (flow 
 /** The request in every carrier the build offers, default first (two on staging builds, else one). */
 const flowCarrierUris = (flow: AppConnectFlowDTO | null): readonly WalletCarrierUri[] =>
   flow && 'uris' in flow && flow.uris ? flow.uris : [];
-
-/** Whether an app on this device handles each carrier's scheme; a scheme that cannot be asked about counts as no. */
-async function installedCarriers(): Promise<Partial<Record<WalletCarrier, boolean>>> {
-  const carriers = Object.keys(WALLET_PROBE_URLS) as WalletCarrier[];
-  const answers = await Promise.allSettled(carriers.map((carrier) => Linking.canOpenURL(WALLET_PROBE_URLS[carrier])));
-  return Object.fromEntries(carriers.map((carrier, i) => [carrier, answers[i].status === 'fulfilled' && answers[i].value]));
-}
 
 /**
  * Opens the wallet on this device with the current request. Where the build

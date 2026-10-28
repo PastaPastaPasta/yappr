@@ -1,6 +1,6 @@
 import { router, Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Linking, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDownIcon, ChevronRightIcon, KeyIcon } from 'react-native-heroicons/outline';
 
@@ -10,7 +10,7 @@ import { copy } from '~/features/auth/copy';
 import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
-import { WALLET_PROBE_URLS } from '~/features/auth/wallet-uri';
+import { installedCarriers } from '~/features/auth/wallet-uri';
 import { cn } from '~/lib-allowlist';
 import { Lockup } from '~/ui/brand/Brand';
 import { Button } from '~/ui/Button';
@@ -27,12 +27,10 @@ function useWalletInstalled(): boolean | null {
   const [installed, setInstalled] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
-    // One scheme failing to answer must not hide the other's yes.
-    Promise.allSettled([Linking.canOpenURL(WALLET_PROBE_URLS.dashpay), Linking.canOpenURL(WALLET_PROBE_URLS['dash-key'])]).then(
-      (answers) => {
-        if (live) setInstalled(answers.some((answer) => answer.status === 'fulfilled' && answer.value));
-      },
-    );
+    // A scheme that fails to answer counts as no, without hiding the other's yes.
+    installedCarriers().then((installedBy) => {
+      if (live) setInstalled(Object.values(installedBy).some(Boolean));
+    });
     return () => {
       live = false;
     };

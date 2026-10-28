@@ -10,7 +10,6 @@ import {
   listAppConnectCandidates,
   verifyAppConnectCandidate,
   type AppConnectCandidate,
-  type AppConnectCarrier,
   type AppConnectGrant,
   type AppConnectRequest,
   type AppConnectVerification,
@@ -18,7 +17,7 @@ import {
   type YapprKeyExchangeNetworkName,
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
-import type { AppConnectCarrierUris } from './carrier'
+import type { AppConnectCarrierUris, AppConnectCarriers } from './carrier'
 import { APP_CONNECT_MIN_PROTOCOL_VERSION, appConnectCarriers, type AppConnectPins } from './config'
 import type { AppConnectTrust } from './group-trust'
 import type { AppConnectPlatformPort } from './platform-port'
@@ -90,7 +89,7 @@ export interface AppConnectLoginDeps {
    * build's `NEXT_PUBLIC_APP_CONNECT_CARRIER` (always `dashpay` alone on mainnet).
    * With several, each is the same request in another URI form.
    */
-  carriers?: readonly [AppConnectCarrier, ...AppConnectCarrier[]]
+  carriers?: AppConnectCarriers
   /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
   callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
