@@ -45,7 +45,8 @@ scheme belongs to the wallet.
 
 The request is App Connect request v2
 ([profile](../APP_CONNECT_PROFILE.md#request)). It travels today as a
-`dash-key:` link; `dashpay://connect` is planned and no wallet handles it yet.
+`dash-key:` link, which is allowed on testnet and devnet only. `dashpay://connect`
+is the protocol carrier and the only one on mainnet; no wallet handles it yet.
 
 ```
 Yappr                                         DashPay
@@ -90,9 +91,12 @@ on a phone:
   them in the wallet.
 - **The encryption key is the same on every device and every login.** Peers
   encrypt to it, so DM and private-feed history stays readable
-  ([profile rule 7](../APP_CONNECT_PROFILE.md#wallet-rules)). The profile
-  defines no rotation; replacing the key is not defined. DM v5 key rotation
-  (Y6) depends on such a mechanism, which does not exist yet.
+  ([profile rule 7](../APP_CONNECT_PROFILE.md#wallet-rules)). The App Connect
+  DIP does define a rotation: the wallet replaces the key when the user asks
+  (a wallet-side action, possible because the anchor's requirement is 2), and
+  the new key reaches the app at its next login. Today's wallets do not offer
+  it, and an app must check that the key is still the identity's current key
+  before it encrypts to it. DM v5 key rotation (Y6) builds on this.
 
 When a contract id changes (a social or DM re-cut, a new feature contract), the
 new contract joins the existing group ([APP_CONNECT_CONTRACTS.md](../APP_CONNECT_CONTRACTS.md))
@@ -222,7 +226,7 @@ chain data (DM v5 §1.5, private feed spec §8) without migrating anything.
 | --- | --- |
 | Sign out | The app wipes its keys, caches, the push endpoint document (a best-effort delete) and relay registration. The keys stay on the identity; the app tells the user they can revoke them in DashPay → Connections. |
 | A key is disabled in the wallet | Each foreground start and each background run check that the device's auth keys are still enabled (`identities.fetch`, cached for 1 hour). If they have been revoked or superseded, the app shows "Signed out by DashPay" and wipes local data. |
-| Lost phone | The user revokes that device's connection in DashPay → Connections. Other devices keep working. The lost phone can still *read* DMs with the shared encryption key (if unlocked). The profile defines no way to replace that key, so until one exists (Y6, 1.x) the app tells the user plainly that past and future DMs are readable on that phone. The push endpoint stays until it expires (7 days), and relay pings to it show only generic text. |
+| Lost phone | The user revokes that device's connection in DashPay → Connections. Other devices keep working. The lost phone can still *read* DMs with the shared encryption key (if unlocked). The DIP's rotation can replace that key, but no wallet offers it yet and the app does not rotate (Y6, 1.x), so until then the app tells the user plainly that past and future DMs are readable on that phone. The push endpoint stays until it expires (7 days), and relay pings to it show only generic text. |
 
 ## DashPay social integration
 
@@ -255,7 +259,7 @@ current builds.
 
 | ID | Ask | Needed by |
 | --- | --- | --- |
-| W1 | App Connect enabled on mainnet in a store release (the `dash-key:` / `dash-st:` carriers must be gone first; the profile has the migration) | G3 |
+| W1 | App Connect enabled on mainnet in a store release (`dashpay://connect` is required there, and no wallet may accept `dash-key:` / `dash-st:` on mainnet; the profile has the migration) | G3 |
 | W2 | App Connect request v2 as the profile defines it: contract-group, DashPay `profile` and encryption keys in one hop, delete-plus-create re-login | G3 |
 | W3 | `cb` return URL and the `ac` statuses; request-age limit and the "only approve if you just started signing in" copy (in the profile) | G2 |
 | W4 | Re-login lookup fix (#1137 / platform #4822), legacy key exchange only | G2 (moot with W2) |

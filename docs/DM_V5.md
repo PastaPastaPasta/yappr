@@ -933,11 +933,13 @@ Rotation is purely client-side, because no document carries a key id. Phase 1
 data will read unchanged once it is built.
 
 - **Where keys come from.** On App Connect builds the encryption key is the
-  wallet's DIP-13 `7'` key for (identity, anchor, purpose), bound
+  wallet's DIP-13 `7'` key for (identity, anchor, purpose, rotation), bound
   `singleContract(anchor)` ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md),
-  rule 7). The profile defines one such key and **no rotation index**, so
-  replacing it is not defined there; this design needs a wallet-side way to
-  issue a new key first. On legacy (v1 key exchange) builds the key is
+  rule 7). The App Connect DIP gives that path a rotation level. A wallet
+  rotates the key only when the user asks (the anchor's requirement is 2), the
+  new key reaches the app at its next login, and an app must check that a key
+  is still the identity's current key before it encrypts to it. No wallet
+  offers rotation yet, so this design waits on one. On legacy (v1 key exchange) builds the key is
   `HKDF(loginKey, identityId, "encryption")`, where the wallet derives
   `loginKey` per `keyIndex` and rotating means moving to `keyIndex + 1`. The
   v1 spec, `YAPPR_DET_SIGNER_SPEC.md` §5.1, is not in this repository, and v1

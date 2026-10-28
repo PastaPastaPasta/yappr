@@ -33,7 +33,7 @@ The cost is that every member is registered again, into the new group, at the cu
 - Drive's own test (`test_identity_update_adding_contract_bound_key_multiple_reference_to_latest`) pins it: the current key is the newest whatever the order inside an update, and disabling an older key leaves the pointer on the newer one.
 - The opt-in can never change: a contract update that changes `requiresIdentityEncryptionBoundedKey` is refused (`DataContractConfig::validate_update_v0`).
 
-No decryption opt-in: Yappr's anchor has no DECRYPTION twin, so Yappr asks for no DECRYPTION binding. (The profile still allows DECRYPTION `ENC_BINDING`s for an app whose contract opts in.)
+No decryption opt-in: Yappr's anchor has no DECRYPTION twin, so Yappr asks for no DECRYPTION binding. (The App Connect DIP allows a DECRYPTION `ENC_BINDING` for any contract whose decryption requirement is 0 or 2, and today's wallets grant one only for `appId`. Yappr's choice to name its anchor is not a DIP rule: an encryption binding may name any qualifying contract, whoever owns it.)
 
 **`appInfo`**, the one document type. It is deliberately small, and it is **not an app manifest**. It is owner-only metadata about the app. Wallets and apps do not read it, and a wallet must not use it to identify the app, to authorise a callback host or to set limits: an app is identified by its contract id alone, because anyone could publish an owner-only record that names itself "Yappr" ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md#app-identity)). The type exists because the anchor was registered with it; its schema is not extended.
 

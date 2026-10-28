@@ -59,8 +59,10 @@ curl -s 127.0.0.1:8789/health
   0 if there is none. An index below the stored one is refused (v1 spec
   §12.2). The v1 spec's request (§8.1) carries a keyIndex; the v1 request
   Yappr ships (`vendor/platform-auth`) does not, so the index is chosen on the
-  responder side, as the wallets do. App Connect request v2 has no key index,
-  and the profile defines no rotation.
+  responder side, as the wallets do. App Connect request v2 has no key index.
+  The App Connect DIP adds a rotation level to the encryption path, a
+  wallet-side action for requirement-2 contracts, and the responder never
+  rotates the key.
 - Routes: `POST /respond` (any URI above; App Connect also takes `faults`,
   `otherPersona` and `spamPersonas`), `POST /revoke` (App Connect,
   [below](#renew-and-revoke)) and `GET /health`.
@@ -127,9 +129,10 @@ codec and the response crypto, so it cannot drift from the app side:
    Another persona is refused as `invalid`.
 4. **Owner consistency** (chain reads): the group's owner, and the owner of
    every singleContract or documentType contract, must be the owner of
-   `appId`. The only foreign document type allowed is DashPay `profile`. An
-   `ENC_BINDING` must name `appId`, and `appId` must opt in to bounded keys of
-   that purpose. A proposed expiry in the past is `invalid`.
+   `appId`. The only foreign document type allowed is DashPay `profile`. Like
+   today's wallets, it accepts an `ENC_BINDING` for `appId` only, and `appId`
+   must opt in to bounded keys of that purpose (the DIP allows any contract
+   whose requirement is 0 or 2). A proposed expiry in the past is `invalid`.
 5. **Limits**: each auth key gets the binding's level and its proposals,
    clamped to 5 DASH and 365 days. A binding without an expiry gets the
    90-day preset, so every auth key is V1.
@@ -230,7 +233,7 @@ DIP-13 `"identityIndex"`. The persona's keyId 0 must be the phrase's MASTER key
 at that index, or the persona is refused:
 
 ```
-enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (rotation 0 only, as #1210)
+enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (no rotation level, as #1210; the DIP appends `/rotation'`, and this key stays valid as a current key at another path)
 auth_i = m/9'/coin'/5'/6'/0'/identityId'/hash256(appEphPub || u8(i))'      (#1210's leaf)
 ```
 
