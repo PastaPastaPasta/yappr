@@ -16,6 +16,8 @@
 > - the network: bonsia is abandoned, and development runs on **sakura**.
 >
 > Everything else here still stands unless [Decisions](#decisions) D16–D24 say otherwise.
+>
+> **Amended 2026-10-27 (sign-in).** Sign-in is App Connect request v2, defined in [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md). The `FEATURE_APP_CONNECT` flag named below does not exist in the code: builds choose by `NEXT_PUBLIC_LOGIN_PROTOCOL`, and the testnet, devnet and beta builds use App Connect. The v1 key exchange (`dash-key:` v1 / `dash-st:`) is legacy, and the `key-exchange-v2` fallback is withdrawn ([TESTNET_RELEASE.md](../TESTNET_RELEASE.md) D9: the key exchange contract is not registered). Statements below that still describe the 2026-09-30 sign-in design are marked.
 
 Status: **plan of record** (written 2026-09-27; revised and finalized
 2026-09-30 for the bonsia devnet, social v10 and the decisions below). This
@@ -49,7 +51,7 @@ decision, they win; the earlier decision says so.
 | D3 | **Everything lives in this repo for now.** The apps go under `mobile/`, and the shared TypeScript in `lib/` is consumed in place rather than extracted. |
 | D4 | *(Bonsia is abandoned; read "sakura" for "bonsia" throughout, per D21.)* **Networks: bonsia now, testnet later, then mainnet.** Development, internal alpha and Beta 1 run on the bonsia devnet (the `/devnet` staging deploy), the only chain with the v10 contract set. We move to testnet once it runs protocol 14 with the Yappr contract set deployed. See [Networks](#networks-and-environments). |
 | D5 | **No owner-claimable fees.** On testnet and mainnet, the social cut declares elected moderation with `interim: {"$type": "notYetUsable"}`. Posts, replies, reports and `yapprProfile` are refused (41200) until an elected charter is seated; nobody, the contract owner included, can claim the moderators pot, which accumulates for the seated team. The post and reply action fees stay and go to elected moderators only. **Yappr staff do not stand for the charter**, so no fee reaches the developer. Bonsia keeps the owner as interim (as v10 does today) so development is never blocked; the interim is the only difference between the bonsia and the testnet/mainnet files. See [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping). |
-| D6 | *(Behind `FEATURE_APP_CONNECT` and off in 1.0, per D20.)* **Sign-in uses App Connect with per-device, multi-bound keys.** One wallet handoff grants a per-device auth key bound to each contract Yappr writes (social, DM v5, `yappr-push`, DashPay `profile`) plus one encryption key shared by the user's devices. A new contract id (a re-cut, a devnet wipe, or a new 1.x feature contract) needs a re-grant of that binding. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#key-model-per-device-auth-shared-encryption). |
+| D6 | *(Amended 2026-10-27: no longer behind a flag, see D20; the key set is the profile's, not per-contract keys.)* **Sign-in uses App Connect.** One wallet handoff grants a CRITICAL key bound to Yappr's contract group (every contract Yappr writes), a HIGH key bound to the DashPay `profile` document type, and one encryption key bound to the `yappr-app` anchor, shared by the user's devices. A new contract id joins the group and is covered by the group key with no re-grant. See [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#keys-and-re-login) and [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md). |
 | D7 | **Reports cover posts, replies, profiles and DMs, on chain.** The next social cut extends the v10 `report` doctype with an identity target (a profile and a user are the same target). A DM report carries the reported conversation's key, encrypted to the moderation team, so moderators can read that conversation. See [COMPLIANCE.md](COMPLIANCE.md#reports). |
 | D8 | *(Image upload is deferred from 1.0 by D22; 1.0 displays media only.)* **Media become arrays in the next social cut.** A post or reply carries a list of media items (several images, or a video, or a GIF), each with its own hash. Until that cut is live, compose supports one image. |
 | D9 | *(Pasted keys are allowed on non-production builds by D20.)* **No migration for non-wallet web keys.** Mainnet users all sign in from a wallet, so passkey, password-vault and pasted-key identities are a devnet/testnet artefact. Mobile does not handle them. |
@@ -63,7 +65,7 @@ decision, they win; the earlier decision says so.
 | D17 | **No web `lib/` changes for 1.0** (ADR E2). Browser-bound modules are swapped by esbuild aliases inside `mobile/engine`. React Native imports only types and an allow-listed set of pure modules from `lib/`. The only root edits are the `mobile` excludes (tsconfig, eslint, knip) and a path-filtered CI workflow. The Y5 seams move to the Rust track. |
 | D18 | **UI stack** (ADR E3): Expo SDK 57 (RN 0.87, New Architecture, dev client), expo-router, FlashList 2, expo-image, Reanimated, TanStack Query persisted to MMKV, Zustand, NativeWind 4 with the root `tailwind.config.js` as a preset, Heroicons. Components are ported class-for-class from web; purple is reserved for private and encrypted content. |
 | D19 | **Navigation** (ADR E4): five tabs (Home, Explore, Notifications, Messages, Profile) and a floating compose button; For You / Following with Recent / Top where the topology supports it; native pull-to-refresh; the 15 s new-posts pill; persisted compose drafts; a compact network chip instead of the web banner. |
-| D20 | **Sign-in for 1.0** (ADR E5): wallet key exchange (`dash-key:` / `dash-st:`) is the default; private-key entry (WIF or hex) sits under "Other ways to sign in"; App Connect is built behind `FEATURE_APP_CONNECT` and stays off until a wallet ships it. A Node test-wallet responder replaces the test-wallet app. Multiple accounts, scoped by network and identity. No passkey or password vaults on mobile. |
+| D20 | *(Amended 2026-10-27: App Connect is the sign-in on the devnet, testnet and beta builds; `FEATURE_APP_CONNECT` does not exist in the code.)* **Sign-in for 1.0** (ADR E5): wallet sign-in through App Connect request v2 is the default, chosen by `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`; the v1 key exchange (`dash-key:` / `dash-st:`) is the legacy path on builds without it (`docs/RELEASE_CLEANUP.md`); private-key entry (WIF or hex) sits under "Other ways to sign in". A Node test-wallet responder replaces the test-wallet app. Multiple accounts, scoped by network and identity. No passkey or password vaults on mobile. |
 | D21 | **Networks and variants** (ADR E6): `devnet` (`pr.yap.app.dev`, **sakura**), `testnet` (`pr.yap.app.beta`, the production yap.pr contracts, topology v2), `production` (`pr.yap.app`, mainnet, later). The engine bundle is built per variant from its env file and never hard-codes contract ids or topology. Automated writes go only to sakura pool identities. |
 | D22 | **1.0 scope** (ADR E7): onboarding, home, post detail, compose, engagement, profiles, explore, in-app notifications, DM v5 (plus legacy 1:1 on testnet), safety, settings, read-only display of media, link previews and polls. Deferred: push, relay, NSE and background sync; private feeds; tips; storefront; blog; poll voting; DPNS registration; image upload; profile and DM reports; account deletion (a store blocker); moderator tools; iPad; localization; the Rust engine. |
 | D23 | **Testing** (ADR E8): root Vitest unchanged; jest-expo and RNTL in `mobile/app`; Vitest in `mobile/engine`; engine contract tests in Node against the live network (reads on every engine PR, writes serially with sakura pool identities); Maestro on the iOS simulator and the Android emulator; screenshots in light and dark on both platforms for every UI PR. |
@@ -107,13 +109,13 @@ bonsia, 4.2.0-beta.7 or v10 describe the state on 2026-09-30.
 | --- | --- | --- |
 | Yappr prod | Runs on **testnet** with social contract v2, where YAPP token costs are *required* for post/reply/like/repost. DM v3. No mainnet contracts exist. | `lib/constants.ts`, `contracts/*.json` |
 | Yappr staging | **Social v10** runs on the **bonsia** devnet (yap.pr/devnet; Platform 4.2.0-beta.7, protocol 14): optional YAPP; post and reply credit action fees (80M / 16M credits) to a moderators pot with the owner as interim; YAPP locked (not purchasable or transferable; a one-time 100 grant); real deletes; reposts are quotes; the DashPay `profile` is the base profile; moderator-resolved `report`. DM v5, storefront v5, blog v5, pollr v4 and key exchange are live there too. Devnets are wiped by platform betas, so every id is disposable. | `docs/archive/SOCIAL_V10.md`, `.env.devnet` |
-| Web login | Wallet QR key exchange (`dash-key:` / `dash-st:`), passkey PRF vault, password vault, raw-key paste. Secrets sit in plaintext `localStorage`. No App Connect support yet. | `vendor/platform-auth/src/core/controller.ts`, `lib/secure-storage.ts` |
+| Web login | *(2026-09-30)* Wallet QR key exchange (`dash-key:` / `dash-st:`), passkey PRF vault, password vault, raw-key paste. Secrets sit in plaintext `localStorage`. No App Connect support yet. *Since then:* web has App Connect (`lib/app-connect/`, `components/auth/app-connect-login-panel.tsx`) on builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`; the legacy key exchange stays on the production root until cut-over. | `vendor/platform-auth/src/core/controller.ts`, `lib/secure-storage.ts` |
 | SDK | `@dashevo/evo-sdk` 4.2.0-beta.7, a ~24.6 MB WASM module. Hermes has no WebAssembly (the Feb 2026 preview is not shipped), and the RN wasm runtimes are stalled or unproven. | `package.json`, [ARCHITECTURE.md](ARCHITECTURE.md#why-not-run-the-wasm-sdk-directly) |
 | Platform | Latest release **v4.2.0-beta.7** (2026-09-29, devnet-only prerelease). `v4.2-dev` already carries more breaking protocol-14 changes, so expect further betas and re-cuts. **Protocol 14 is active on neither testnet nor mainnet** (both report 13 on 2026-09-30), and no activation date is published. | dashpay/platform releases; platform explorer |
 | Native SDKs | `rs-sdk-ffi`, `swift-sdk` (iOS 18+) and `kotlin-sdk` build for arm64 iOS/simulator and arm64/x86_64 Android. Beta.7 ships an xcframework and an AAR as GitHub release assets only (no Maven Central, no remote Swift package), and there is no React Native or uniffi binding. Document create/replace/delete exist in the FFI. | `packages/{swift,kotlin}-sdk` at v4.2.0-beta.7 |
-| iOS DashPay | App Store **9.1.2** (2026-09-29). DashConnect (`dash-key:`/`dash-st:`, same-device links since #1104) **ships in the store build, testnet only**; store builds cannot select a devnet. Mainnet waits on a login contract (draft #1133). Re-login bug #1137 is open. No App Connect, no `cb=` return. | dashwallet-ios v9.1.1 notes, `ConnectionsViewModel.swift:90` |
-| Android DashPay | DashPay is live on mainnet. **11.9.1** (2026-09-28) shipped with `SUPPORTS_CONNECT=false` in the prod flavor (its GitHub release text wrongly says "enabled on mainnet"); testnet and devnet flavors have it. No App Connect, no `cb=` return. | dash-wallet `Constants.java:104`, PR #1567 |
-| App Connect | A system contract `H8F9mP1BM55TE1ShsxPZHzhyinaMdY9bMmP85mkDhcJJ` (platform #4869, in releases since beta.4) gives wallet→app login responses a fixed home on every protocol-14 network. Responses are `indexOnly`; re-login is delete plus create, never replace. Neither wallet uses it yet. | dashpay/platform `docs/protocol/app-connect.md` |
+| iOS DashPay | App Store **9.1.2** (2026-09-29). DashConnect (`dash-key:`/`dash-st:`, same-device links since #1104) **ships in the store build, testnet only**; store builds cannot select a devnet. Mainnet waits on a login contract (draft #1133). Re-login bug #1137 is open. No App Connect, no `cb=` return *(2026-09-30; see the profile's status box for current builds)*. | dashwallet-ios v9.1.1 notes, `ConnectionsViewModel.swift:90` |
+| Android DashPay | DashPay is live on mainnet. **11.9.1** (2026-09-28) shipped with `SUPPORTS_CONNECT=false` in the prod flavor (its GitHub release text wrongly says "enabled on mainnet"); testnet and devnet flavors have it. No App Connect, no `cb=` return *(2026-09-30; see the profile's status box for current builds)*. | dash-wallet `Constants.java:104`, PR #1567 |
+| App Connect | A system contract `H8F9mP1BM55TE1ShsxPZHzhyinaMdY9bMmP85mkDhcJJ` (platform #4869, in releases since beta.4) gives wallet→app login responses a fixed home on every protocol-14 network. Responses are `indexOnly`; re-login is delete plus create, never replace. Neither wallet used it on 2026-09-30; the profile's status box has the current builds. | dashpay/platform `docs/protocol/app-connect.md` |
 
 ## Milestones (single source of truth)
 
@@ -165,14 +167,16 @@ sign users in:
   There is no seed DNS, so clients take the explicit DAPI list, the devnet name
   and the quorum URL from `.env.devnet`. Platform betas wipe devnets, so every
   id is disposable.
-- **Testnet**: DashConnect works in both store wallets, but testnet runs
-  protocol 13, social **v2** (YAPP required to post) and DM v3.
+- **Testnet** *(2026-09-30)*: DashConnect works in both store wallets, but testnet runs
+  protocol 13, social **v2** (YAPP required to post) and DM v3. Testnet
+  now runs protocol 14, and the release set was registered there on
+  2026-10-21 ([TESTNET_RELEASE.md](../TESTNET_RELEASE.md)).
 - **Mainnet**: neither.
 
 | Environment | Used for | Needs |
 | --- | --- | --- |
 | **Bonsia (now)** *(read: sakura, see the update above)* | Dev, spikes, all automated E2E, internal alpha, Beta 1 | **Y0:** `yappr-push` deployed and mobile pool slots provisioned; **Y1** (the next social cut, owner interim) deployed by week 14. Wallets: the test-wallet harness for automation; **W8** devnet-capable internal/TestFlight wallet builds for human testers. |
-| **Testnet (later)** | Store-wallet interop; Beta 2 if mainnet is not ready; the testnet public beta fallback | **PL0** protocol 14 on testnet; the Yappr contract set (Y1 cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` while W2 is pending, plus `/testing` copies for E2E) and a **seated testnet charter** (M1). Wallets: DashConnect on testnet (in the stores today); App Connect (W2). |
+| **Testnet (later)** | Store-wallet interop; Beta 2 if mainnet is not ready; the testnet public beta fallback | **PL0** protocol 14 on testnet; the Yappr contract set (Y1 cut with `notYetUsable`, DM v5, `yappr-push`, plus `/testing` copies for E2E) and a **seated testnet charter** (M1). Wallets: App Connect request v2 (W2). |
 | **Mainnet (launch)** | Beta 2 / RC and GA | **PL1** protocol 14 on mainnet; **Y2** contract set on mainnet; a **seated charter** (M1); **W1/W2** DashConnect/App Connect on mainnet in store wallet builds |
 
 **Keeping bonsia usable** (now sakura)**.** The mobile build reads contract ids and the network
@@ -193,10 +197,9 @@ development never waits on mainnet; only the switch of the network flag does.
 - **Architecture spikes** S1–S6, run on bonsia. See
   [ARCHITECTURE.md › Spike plan](ARCHITECTURE.md#phase-0-spike-plan).
 - **Wallet handoff proof.** Same-device sign-in with the test-wallet harness
-  on bonsia, and with the store DashPay builds on testnet (key-exchange-v2),
+  on bonsia, and with the store DashPay builds on testnet (App Connect request v2),
   on both platforms.
-- **Protocol profiles.** Write `APP_CONNECT_PROFILE.md` (sign-in payload, the
-  per-device multi-bound key set, `cb`, error codes), `PUSH_PROFILE.md` (push
+- **Protocol profiles.** Write `APP_CONNECT_PROFILE.md` (written: [`docs/APP_CONNECT_PROFILE.md`](../APP_CONNECT_PROFILE.md), request v2, keys, `cb`, `ac` statuses), `PUSH_PROFILE.md` (push
   payload and signature encoding) and `REPORT_PROFILE.md` (profile targets and
   the encrypted DM-key envelope), each with test vectors. Get sign-off from
   both wallet teams on the first.
@@ -241,8 +244,8 @@ development never waits on mainnet; only the switch of the network flag does.
 - **Web workstream.**
   - Seam PRs 3–5: `secrets`, `sdk`, `txBuilder`.
   - Deploy `yappr-push` to bonsia; provision mobile pool slots (Y0).
-  - `.well-known` files and the `/app/connect` page.
-  - App Connect module in `vendor/platform-auth` (Y3), against the harness.
+  - `.well-known` files and the `/connect/` page.
+  - App Connect module in `vendor/platform-auth` (Y3; done: `vendor/platform-auth/src/app-connect/`), against the harness.
 - **Gate G1:** internal alpha on bonsia. Core flows pass Maestro E2E on both
   platforms, with no open P0.
 
@@ -329,20 +332,20 @@ Details and fallbacks are in the linked docs.
 | PL1 | Platform | Protocol 14 active on **mainnet** (App Connect, optional token costs, action fees, elected moderation, limited keys) | G3 | **None for mainnet.** Ship the testnet public beta (needs PL0). |
 | PL2 | Platform | An `rs-sdk` tag that builds for `aarch64-apple-ios(-sim)`, `aarch64-linux-android` and `x86_64-linux-android`, pinned to the same tag as web's `@dashevo/evo-sdk` (today `v4.2.0-beta.7`, `50d12037`) | G0 | Pin a commit and vendor its lockfile. Expect a pin bump (and a devnet re-cut) per platform beta. |
 | W1 | iOS and Android wallets | DashConnect enabled on **mainnet** in a store release | G3 | Testnet public beta |
-| W2 | Wallets + Yappr | App Connect (`H8F9…`) with one-hop provisioning and the per-device, multi-bound key model (D6): keys bound to social, DM v5, `yappr-push` and DashPay `profile`; delete-plus-create re-login; re-granting a binding when a contract id changes | G3 | Deploy Yappr `key-exchange-v2` to mainnet and the wallets pin it (dashwallet-ios #1133). Mobile then holds the legacy single unbound key set, shared by all of the user's devices, as web does today (see [WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#fallback-key-exchange-v2)) |
+| W2 | Wallets + Yappr | App Connect request v2 ([profile](../APP_CONNECT_PROFILE.md)) with one-hop provisioning: a contract-group key, a DashPay `profile` key and the anchor encryption key; delete-plus-create re-login | G3 | None. The `key-exchange-v2` fallback is withdrawn (TESTNET_RELEASE.md D9) |
 | W3 | Wallets | Same-device return: an optional `cb=` universal/app link, plus error codes | G2 | "Switch back to Yappr" plus polling. It works, but is clumsy. |
-| W4 | iOS wallet | Re-login lookup fix (dashwallet-ios #1137 / platform #4822) | G2 | Moot once App Connect's delete-plus-create re-login ships |
+| W4 | iOS wallet | Re-login lookup fix (dashwallet-ios #1137 / platform #4822), legacy key exchange only | G2 | Moot with App Connect's delete-plus-create re-login |
 | W8 | Wallets | Devnet-capable internal/TestFlight builds that accept a custom devnet (DAPI list, quorum URL, devnet name) and run DashConnect/App Connect there | G2 | Beta 1 waits for testnet (PL0) |
 | W9 | Wallets | Confirm the dHash avatar fingerprint matches DashPay's `avatarFingerprint` | G2 | Yappr writes its own fingerprint only when it sets the avatar |
 | Y0 | Yappr | On bonsia: `yappr-push` deployed; mobile test-pool slots provisioned | G1 | None |
-| Y1 | Yappr | **The next social cut (mainnet candidate):** report identity target and DM-key envelope (D7), media arrays (D8). On bonsia with the owner as interim; then on testnet with `notYetUsable` (D5), together with DM v5, `yappr-push`, `key-exchange-v2` (while W2 is pending) and `/testing` copies, when PL0 lands | Week 14 (bonsia) | General support contact only (D35); one image per post |
-| Y2 | Yappr | The **mainnet** contract set: the Y1 social cut with `notYetUsable`, DM v5, `yappr-push`, `key-exchange-v2` only if W2 is late; no client content-filter publishing identity, moderation rota or response SLA (D35/D37) | G3 | None |
+| Y1 | Yappr | **The next social cut (mainnet candidate):** report identity target and DM-key envelope (D7), media arrays (D8). On bonsia with the owner as interim; then on testnet with `notYetUsable` (D5), together with DM v5, `yappr-push` and `/testing` copies, when PL0 lands | Week 14 (bonsia) | General support contact only (D35); one image per post |
+| Y2 | Yappr | The **mainnet** contract set: the Y1 social cut with `notYetUsable`, DM v5, `yappr-push`; no client content-filter publishing identity, moderation rota or response SLA (D35/D37) | G3 | None |
 | M1 | Dash community, masternodes | Charter candidates stand and masternodes vote, so a charter is **seated before App Review** on mainnet (and on testnet for a testnet public beta). Yappr recruits candidates and staff do not stand (D5). At protocol 14 a seat is never replaced, so the first charter is long-lived. | G3 | None. Nobody can post until a charter is seated. |
-| Y3 | Yappr | App Connect login support in `vendor/platform-auth`, shared with web | With W2 | Keep the `key-exchange-v2` path |
-| Y4 | Yappr | ENCRYPTION key selection rule in `lib/crypto/encryption-key-lookup.ts` (still returns the first active key): prefer the key bound to the contract in use, then an unbound key, then the newest | G1 | None. Without it, DMs break once identities carry bound keys. |
+| Y3 | Yappr | App Connect login support in `vendor/platform-auth`, shared with web. **Done** (`vendor/platform-auth/src/app-connect/`) | With W2 | None |
+| Y4 | Yappr | ENCRYPTION key selection rule in `lib/crypto/encryption-key-lookup.ts`. **Done** for App Connect builds: only the key bound to the anchor counts (`findAnchorEncryptionKey`); the first-active-key rule is legacy only | G1 | None. Without it, DMs break once identities carry bound keys. |
 | Y5 | Yappr | *(Not a 1.0 dependency per D17; step R3 of the post-1.0 Rust track.)* `lib/` platform seams (see [ARCHITECTURE.md](ARCHITECTURE.md#platform-seams-in-lib-the-minimal-yappr-change)) | Seams 1–2 by G0, 3–5 by G1 | None. Mobile cannot share `lib/` without them. |
 | Y6 | Yappr | DM v5 encryption-key rotation (DM_V5 Appendix A), which enables "Reset messaging keys" after a lost device | 1.x | 1.0 documents the lost-device DM exposure |
-| Y7 | Yappr web | **Y7a (superseded by D35/D37):** no centralized moderation list or bundled client media filter. Terms and community guidelines remain. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/app/connect` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
+| Y7 | Yappr web | **Y7a (superseded by D35/D37):** no centralized moderation list or bundled client media filter. Terms and community guidelines remain. **Y7b:** `/delete-account` page; `.well-known` app-site association; `/connect/` page; `lib/push/ping.ts`; profile and DM report UI | Y7a by G1, Y7b by G2 | None. These are store blockers. |
 
 ## Staffing
 

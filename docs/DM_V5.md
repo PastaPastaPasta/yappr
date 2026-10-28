@@ -932,11 +932,17 @@ anyway. Read positions are lost too, so recovered conversations start as read.
 Rotation is purely client-side, because no document carries a key id. Phase 1
 data will read unchanged once it is built.
 
-- **Where keys come from.** The encryption key is
-  `HKDF(loginKey, identityId, "encryption")`, and the wallet derives `loginKey`
-  from its seed per `keyIndex` (`YAPPR_DET_SIGNER_SPEC.md` §5.1). Rotating
-  means moving to `keyIndex + 1`. The wallet can always re-derive old keys, so
-  there is no way to "rotate to forget".
+- **Where keys come from.** On App Connect builds the encryption key is the
+  wallet's DIP-13 `7'` key for (identity, anchor, purpose), bound
+  `singleContract(anchor)` ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md),
+  rule 7). The profile defines one such key and **no rotation index**, so
+  replacing it is not defined there; this design needs a wallet-side way to
+  issue a new key first. On legacy (v1 key exchange) builds the key is
+  `HKDF(loginKey, identityId, "encryption")`, where the wallet derives
+  `loginKey` per `keyIndex` and rotating means moving to `keyIndex + 1`. The
+  v1 spec, `YAPPR_DET_SIGNER_SPEC.md` §5.1, is not in this repository, and v1
+  is legacy. Either way the wallet can re-derive old keys, so there is no way
+  to "rotate to forget".
 - **Order,** so the self-state stays readable throughout:
   1. Add the new key to the identity.
   2. Re-save the self-state under the new key, with the old private key

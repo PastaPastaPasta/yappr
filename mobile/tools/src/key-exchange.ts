@@ -1,9 +1,10 @@
 /**
  * The wallet side of the `dash-key:` key exchange, with no network access.
  *
- * Spec: YAPPR_DET_SIGNER_SPEC.md ("Dash Platform Application Key Exchange
- * Protocol") §5.1 (login key), §6 (ECDH and AES-GCM) and §9 (response
- * document). The app side is `vendor/platform-auth/src/key-exchange/
+ * Legacy v1 key exchange (App Connect is the current login:
+ * docs/APP_CONNECT_PROFILE.md). Spec: YAPPR_DET_SIGNER_SPEC.md ("Dash Platform
+ * Application Key Exchange Protocol", not in this repo) §5.1 (login key), §6
+ * (ECDH and AES-GCM) and §9 (response document). The app side is `vendor/platform-auth/src/key-exchange/
  * yappr-protocol.ts`, which this module reuses for the URI codec, `hash160`
  * and the shared-secret KDF so both ends cannot drift apart.
  *

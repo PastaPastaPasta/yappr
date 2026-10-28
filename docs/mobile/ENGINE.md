@@ -573,7 +573,7 @@ type KeyExchangeResultDTO =
   | { status: 'needs-registration'; requestId: string; uri: string /* dash-st:… */; expiresAt: Date }
 ```
 
-App Connect (`FEATURE_APP_CONNECT`, ADR E5) adds `session.startAppConnect` and `session.awaitAppConnect` with the same shapes once the vendor module exists. Until then those paths are not registered, and the UI hides the button.
+*Amended 2026-10-27.* The `startKeyExchange` / `awaitKeyExchange` / `awaitKeyRegistration` / `cancelKeyExchange` methods above are the **legacy v1 key exchange**: they are `NOT_SUPPORTED` on App Connect builds, and `SessionDTO.method` is `'key-exchange'` only for them. App Connect (ADR E5; request v2 in [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md)) is not behind a `FEATURE_APP_CONNECT` flag. Builds choose by `NEXT_PUBLIC_LOGIN_PROTOCOL`, and the engine reports `capabilities.walletSignIn` as `'app-connect'` or `'legacy'`. The App Connect methods are `appConnectStart`, `appConnectPollNow`, `appConnectCheckAgain`, `appConnectReject`, `appConnectCancel`, `appConnectAccept`, `appConnectStatus`, `appConnectDismiss` and `appConnectConnections`, with `session.appConnect` and `session.appConnectStatus` events. Their shapes are in [mobile/engine/README.md](../../mobile/engine/README.md#session-writes-and-settings-m7a), not here.
 
 #### `feed`
 
@@ -1028,7 +1028,7 @@ The engine therefore shims no IndexedDB. The bootstrap sets `window.indexedDB` t
   | Key | Holds |
   | --- | --- |
   | `pk_<id>` | the auth WIF |
-  | `lk_<id>` | the login key |
+  | `lk_<id>` | the login key (legacy key-exchange builds only; App Connect builds keep a key ring, `mobile/engine/README.md`) |
   | `avd_<id>` | the vault DEK |
   | `ek_<id>` | the encryption WIF |
   | `ek_type_<id>` | `derived` or `external` |

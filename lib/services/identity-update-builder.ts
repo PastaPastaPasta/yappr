@@ -5,7 +5,8 @@
  * This service creates the transition bytes that get encoded into a dash-st: URI
  * for the wallet to sign and broadcast.
  *
- * Spec: YAPPR_DET_SIGNER_SPEC.md Section 11.5
+ * Legacy v1 key exchange (the v1 spec, YAPPR_DET_SIGNER_SPEC.md Section 11.5, is
+ * not in this repo). App Connect is the current login: docs/APP_CONNECT_PROFILE.md.
  */
 
 import type { YapprRegisteredKey } from 'platform-auth'

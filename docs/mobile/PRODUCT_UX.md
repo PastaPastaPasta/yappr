@@ -61,7 +61,7 @@ same routes as web query URLs:
 | `/user?id=X`, `/user?id=X&tip=…` | Profile (**1.0:** `tip` is ignored; tips are deferred) |
 | `/hashtag?tag=T` | Hashtag |
 | `/messages?…` | Messages |
-| `/app/connect?r=…` | Sign-in return ([WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#request-format-and-return-path)), only with `FEATURE_APP_CONNECT` |
+| `/connect/?r=…` (+ `app=<scheme>`) | Sign-in return ([WALLET_INTEGRATION.md](WALLET_INTEGRATION.md#return-path)), on App Connect builds |
 
 The `yappr://` scheme keeps web's paths and query parameters, so the mapping
 is one to one. The full table is in [UX_SPEC.md](UX_SPEC.md#35-deep-links).
@@ -83,9 +83,10 @@ list:
 
 ### 1. First run and sign-in
 
-> **1.0:** sign-in is the existing `dash-key:` key exchange (same-device deep
-> link or QR), with private key entry under "Other ways to sign in"; App
-> Connect is built but flagged off (ADR E5). After sign-in comes the terms /
+> **1.0:** sign-in is a wallet hand-off (same-device deep link or QR), with
+> private key entry under "Other ways to sign in". On the devnet, testnet and
+> beta builds it is App Connect request v2; the `dash-key:` v1 key exchange is
+> the legacy path on other builds (ADR E5, amended 2026-10-27). After sign-in comes the terms /
 > community-rules gate, then Home: there is no follow-suggestions step and no
 > notification-mode choice (push is deferred). See PRD AUTH-01 – AUTH-15.
 
@@ -320,7 +321,7 @@ See [NOTIFICATIONS.md](NOTIFICATIONS.md). UX essentials:
 
 | Area | 1.0 (both platforms) | 1.1–1.3 | Web only (foreseeable) |
 | --- | --- | --- | --- |
-| Identity | **1.0:** wallet key exchange (`dash-key:`) and private key entry, App Connect flagged off; multiple accounts; optional profile edit (DashPay profile + `yapprProfile`, or the v2 profile); app lock; DPNS registration links out. Later: App Connect with per-device keys, DPNS register via the wallet | Limited-key sessions (W7), invites, messaging-key reset (Y6) | Passkey/password vault login (**1.0:** private key entry is on mobile too, ADR E5) |
+| Identity | **1.0:** wallet sign-in (App Connect request v2 on devnet, testnet and beta builds; the `dash-key:` v1 key exchange is legacy) and private key entry; multiple accounts; optional profile edit (DashPay profile + `yapprProfile`, or the v2 profile); app lock; DPNS registration links out. Later: DPNS register via the wallet | Limited-key sessions (W7), invites, messaging-key reset (Y6) | Passkey/password vault login (**1.0:** private key entry is on mobile too, ADR E5) |
 | Feed | For You / Following with Recent / Top, threads, quotes, reposts, bookmarks, hashtags, search, explore | Lists, muted words | Query inspector |
 | Compose | **1.0:** text, replies, quotes, threads, mentions, sensitive flag, persisted drafts (no offline queue; media display only). Later: up to 4 images / 1 video / 1 GIF (Y1 cut), private posts | Share extension, polls (Pollr) | — |
 | Messages | 1:1 and group DMs (v5); legacy 1:1 (v3) on testnet. Later: requests inbox | Voice notes? (evaluate), reactions | — |

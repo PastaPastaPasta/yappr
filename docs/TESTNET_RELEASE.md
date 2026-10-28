@@ -78,7 +78,7 @@ Once a contract is registered, the shape of its existing document types cannot c
 
 ### 2.3 Launch shape
 
-- **D8, day-one sign-in.** Soft launch on the App Connect build. Newcomers onboard through the bridge plus a raw key, and the wallet QR is relabelled or demoted because no released wallet speaks App Connect v2 yet. The public announcement waits until a DashPay TestFlight or internal build signs in on testnet against the production anchor.
+- **D8, day-one sign-in.** Soft launch on the App Connect build. Newcomers onboard through the bridge plus a raw key, and the wallet QR is relabelled or demoted because, when this was written (2026-10-16), no released wallet spoke App Connect v2. The status box of [APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md) has the current wallet builds. The public announcement waits until a DashPay TestFlight or internal build signs in on testnet against the production anchor.
 - **D9, legacy contracts.** None of key exchange, the old vault, key backup or DM v4 is registered. Their ids are blanked in the release environment and the legacy code paths are deleted.
 - **D21/D22, migration.** Clean start with no notice. Browser storage starts clean under a new root scope, and old sessions and caches are ignored. There is no in-app notice on the old site, and no legacy link or archive link (`LegacyYapprLink` is dropped). The "Data may be reset" banner becomes a small Testnet pill (an audit recommendation the owner did not separately confirm).
 - **D23, product flags.** Social, DM v5 and polls are fully released. Store and Blog carry a Beta pill. Credit tips are hidden until wallets can send them; payment-URI tips stay.
@@ -151,11 +151,11 @@ Every PR goes to `staging` through the normal gates (lint, unit tests, build, de
 
 1. [O] Prepare the maker `hbGEc…` (D2): move the key to a 0600 file outside `~/Downloads`, top up the balance to cover registration plus the sponsorship float, make two encrypted backups, and name the holders. Make every identity key change **before** the plan, because key changes consume identity nonces.
 2. [A] Run read-only checks: the proved protocol version is 14, system contracts are present (App Connect anchor, DPNS, DashPay v2, token history, charters), and the maker's balance and nonce are as expected.
-3. [A] Run `--plan` and record the app id and group id. **Start the maker nonce freeze.** [O] Send the app id and `https://yap.pr` to the DashPay iOS and Android brand maps.
+3. [A] Run `--plan` and record the app id and group id. **Start the maker nonce freeze.** [O] Optionally send the app id and `https://yap.pr` to the DashPay iOS and Android teams for their brand maps. A brand map only gives the id a friendlier name; no wallet depends on it ([App identity](APP_CONNECT_PROFILE.md#app-identity)).
 4. [A] Run `--dry-run` then `--signed-dry-run`. Check that the interim, windows, app id, group id and member ids match the plan.
 5. [O/A] Run `--live --journal --upto app`, read back the group (owner is the maker, no admins, name Yappr), then `--live` for the members.
 6. [A/O] **Prepare before registration and file immediately afterward**, independently for social, blog and storefront, following the charter procedure below. Prove the submitted proposal, members' joins, and elected application in that order. Tie-break priority belongs to the **elected application**, not the submitted proposal. The owner's masternode majority decides contested elections. A sole contender seats after the one-day (86400 s) join window; a contested election also takes its one-day (86400 s) vote window. Posting stays closed until a team actually seats.
-7. [A] Run read-only `verify-appconnect g1,g2,g3,a1` (expect 32/0) and one proved query per index family. Snapshot the contracts and end the nonce freeze. [O] Write the anchor `appInfo` (name Yappr, url `https://yap.pr`).
+7. [A] Run read-only `verify-appconnect g1,g2,g3,a1` (expect 32/0) and one proved query per index family. Snapshot the contracts and end the nonce freeze. [O] Write the anchor `appInfo` (name Yappr, url `https://yap.pr`). This is owner-only metadata that wallets and apps do not read; it is not an app manifest, and nothing in this plan depends on it ([APP_CONNECT_CONTRACTS.md](APP_CONNECT_CONTRACTS.md)).
 
 **Gate G4.** All ids and hashes recorded in the runbook, charters seated, the journal at mode 0600 with an off-machine backup.
 
@@ -181,7 +181,7 @@ Registered from staging `815b4b2b` by the maker `hbGEcFcXKJ2W9Di24ekiozTWfFszrjq
 - **File pins (sha256)**, equal to `APP_CONNECT_ENTRIES`: app `d3acd888…41f41`, social `77cf4308…196bf`, blocks `ba0ef67a…d3677`, DM v5 `4fe2b3f4…37c21`, blog `448fb9ea…1504c`, pollr `a77afe5f…d2347`, storefront `69daf979…f05dc`, passkey vault `14094cad…f73c5`. The registration tool proved each registered schema equal to its pinned file as rendered with the policy.
 - **Readback:** every one of the 95 indexes across the eight members answered a proved query. The decoded contracts equal the bundled `lib/contracts/bundled/testnet.json` entries the app seeds from.
 - **Maker after registration:** 1,025,528,697,060 credits (≈61,531.72¢), nonce 64. Monitoring floor 200e9 credits.
-- **Journal:** mode 0600 in a 0700 directory, all eight entries verified. **Still owner items for G4:** its off-machine backup, the anchor `appInfo` write, and the charters.
+- **Journal:** mode 0600 in a 0700 directory, all eight entries verified. **Still owner items for G4:** its off-machine backup, the anchor `appInfo` write, and the charters. (The `appInfo` write is optional metadata, not a manifest; see step 7.)
 
 ### Charter preparation, filing, and masternode votes
 
@@ -317,7 +317,7 @@ stays open until the built production configuration proves DM v5 is active.
 - **Soft launch** immediately (D8): the App Connect build with raw-key onboarding and the wallet QR relabelled. The mobile TestFlight and Play internal betas go out with it (D26).
 - **Public announcement** only once a DashPay build (TestFlight or internal at least) completes App Connect v2 sign-in, renewal and revoke on testnet against the production anchor. The wallet must be on a platform build at rc.1 or later, because the Core V24 activation on testnet is pending and beta-era wallets break when it activates.
 - [A] Scheduled monitoring every 30 to 60 minutes: a smoke test against `yap.pr`, a chain probe of contract ids and hashes, DAPI and quorum health, maker and pot balances, rival charter contenders, and post and report rate. Failures open a GitHub incident issue.
-- Recurring work: watch the charter seats, pot claims by the seated teams, App Connect 90-day renewals, and every contract update following the same choreography (update, `id:version` pin, web deploy, mobile rebuild). The testnet update tool must exist before the first update.
+- Recurring work: watch the charter seats, pot claims by the seated teams, App Connect grant expiries (each user renews in their own wallet, so an operator can only watch the signal, not renew), and every contract update following the same choreography (update, `id:version` pin, web deploy, mobile rebuild). The testnet update tool must exist before the first update.
 - After release: the "after release" issues in section 5, the Yappr-run upload bucket (D24), the public store listing, and account deletion before that listing.
 
 ## 4. Go/no-go checklist

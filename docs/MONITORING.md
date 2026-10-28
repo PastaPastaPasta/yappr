@@ -62,7 +62,7 @@ One open issue per failing check uses the stable title `[monitoring] <check key>
 ## Recurring operator work
 
 - Review sponsor drain, pot accrual and outstanding incidents daily. Claim pots only through the normal moderator workflow, respecting the once-per-epoch rule.
-- Track App Connect grant expiries and renew before their 90-day limit. Monitoring does not hold credentials or renew grants.
+- Watch App Connect grant expiries (the app shows each user a renewal banner). Grants are per user and renewed in the user's own wallet, so an operator cannot renew them; monitoring holds no credentials.
 - For every additive contract update: review the new contract, update version pins and snapshots, rebuild web and mobile, and confirm fresh smoke/chain results before announcing it.
 - Review leader allowlists during planned charter/team changes, and traffic thresholds after representative use. Keep the private registration journal backed up with mode 0600 and preserve asset-lock outpoints outside git.
 - Since the 2026-10-21 activation, `npm run build` loads `.env.testnet` for root and `/staging` (`npm run build:staging` is `BASE_PATH=/staging npm run build`). The monitor reads `.env.testnet` as the expected contract set for both and will flag a build that still uses defaults. Production checks report `SKIP` until the activation reaches master.

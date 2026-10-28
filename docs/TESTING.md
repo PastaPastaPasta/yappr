@@ -81,7 +81,7 @@ E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
 On an App Connect build (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`) only an
 ENCRYPTION key bound to the `yappr-app` anchor counts, so the fixture switches
 each bot to its anchor key: the one the app's "Set up messaging" derives from
-the bot's AUTHENTICATION/HIGH key (`lib/crypto/derive-encryption-key.ts`). The
+the bot's AUTHENTICATION/HIGH key (`lib/crypto/derive-encryption-key.ts`). That is the typed-key developer derivation (D38), not what a wallet derives: a wallet's key is the DIP-13 `7'` key of [APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md) rule 7, so do not copy this as the wallet rule. The
 sakura ops script `ops/add-anchor-messaging-keys.mjs` registered it on slots
 1-8; a slot without it fails at once instead of timing out. Slot 0 is kept
 without one on purpose: `e2e/write/messaging-setup.spec.ts` uses it for the
@@ -94,6 +94,8 @@ NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect npm run build:devnet
 NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
   npx playwright test --project=write --trace=off dm-v5 messaging-setup
 ```
+
+A wallet sign-in cannot be tapped through in these specs. The Node test-wallet responder in `mobile/tools/` answers an App Connect request the way a wallet does (see `mobile/tools/README.md`); `docs/PASSKEY_VAULT.md` describes the responder-driven flow the passkey spec uses.
 
 The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) is local-only
 too. Its seller creates a store (once per identity) and a variant listing from

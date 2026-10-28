@@ -15,7 +15,7 @@ Live at [yap.pr](https://yap.pr). A second copy at [yap.pr/testing](https://yap.
 - **Polls**: native polls on the Pollr contract, embedded in posts.
 - **Storefront (Beta for the release)**: stores, items with variants, cart, checkout with shipping zones, encrypted orders, order status, reviews, encrypted saved addresses.
 - **Payments**: payment-URI tips for Dash and other coins. Release YAPP is a non-transferable starter grant for sponsored social writes, not a purchasable currency.
-- **Identity**: self-custodied keys and DPNS usernames. The release signs in through App Connect or a private key; the passkey vault ships through its own release work package. Password backup and legacy wallet key exchange are retired at cut-over.
+- **Identity**: self-custodied keys and DPNS usernames. The release signs in through App Connect ([the protocol profile](docs/APP_CONNECT_PROFILE.md)), the wallet's recovery phrase (not on mainnet) or a private key; a passkey can sign a session back in ([passkey vault](docs/PASSKEY_VAULT.md)). Password backup and legacy wallet key exchange are retired at cut-over.
 
 ## Getting started
 
@@ -71,7 +71,7 @@ types/          domain types
 contracts/      the deployed data contracts (JSON); older shapes are kept for reference
 vendor/         platform-auth, the shared login controller
 e2e/            Playwright: smoke (read-only) and write (needs E2E_SEED_PHRASE)
-docs/           private-feed spec, testing guide, deployment runbooks
+docs/           private-feed spec, App Connect profile, testing guide, deployment runbooks
 ```
 
 ### Contract topology
@@ -106,7 +106,7 @@ Ownership is the platform's `$ownerId`. A schema may also require a target's own
 
 ### Storage in the browser
 
-The private key lives in session storage for the tab; session metadata and preferences in local storage. Every sub-path build (`/testing`, `/devnet`, `/staging`) prefixes its keys with its own scope so deployments sharing an origin never read each other's sessions (`lib/storage-scope.ts`). `/cookies` describes this to users.
+A typed-in private key lives in local storage under the `yappr_secure_` prefix (a CRITICAL key typed in on an App Connect build stays in the tab only); a wallet sign-in's keys live in an AES-GCM-wrapped key ring in IndexedDB (`lib/app-connect/key-ring-store.ts`). Session metadata and preferences are in local storage. Every sub-path build (`/testing`, `/devnet`, `/staging`) prefixes its keys with its own scope so deployments sharing an origin never read each other's sessions (`lib/storage-scope.ts`). `/cookies` describes this to users.
 
 ## Contributing
 

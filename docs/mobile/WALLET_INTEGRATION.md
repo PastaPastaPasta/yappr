@@ -2,15 +2,19 @@
 
 Only a DashPay wallet can sign a user into Yappr mobile (D1). The Yappr app
 never imports a recovery phrase, WIF, or password-vault or passkey-vault key.
-It holds only keys that the wallet provisions for it: per-device
-AUTHENTICATION/HIGH keys bound to the contracts Yappr writes, and one
-ENCRYPTION/MEDIUM key. It sends anything more privileged to the wallet.
+It holds only keys that the wallet provisions for it through App Connect: a
+CRITICAL key bound to Yappr's contract group, a HIGH key bound to the DashPay
+`profile` document type, and one ENCRYPTION/MEDIUM key bound to the
+`yappr-app` anchor contract. It sends anything more privileged to the wallet.
+The request, the keys and how the app verifies them are defined in
+[APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md), and this document does not
+restate them. It covers what is specific to the mobile apps.
 
 Where this doc says "wallet", it means **DashPay for iOS**
-(`org.dashfoundation.dash`, App Store 9.1.2+) or **DashPay / Dash Wallet for
-Android** (`hashengineering.darkcoin.wallet`). Both run on the dashpay/platform
-native SDKs, and both ship the DashConnect code (`dash-key:` / `dash-st:`) in
-their store builds, enabled on testnet only (2026-09-30).
+(`org.dashfoundation.dash`) or **DashPay / Dash Wallet for Android**
+(`hashengineering.darkcoin.wallet`). Both run on the dashpay/platform native
+SDKs. Which wallet builds speak App Connect, and over which carrier, is
+recorded in the status box of the profile; this document does not repeat it.
 
 ## What each side holds
 
@@ -18,11 +22,12 @@ their store builds, enabled on testnet only (2026-09-30).
 | --- | --- | --- |
 | Recovery phrase, MASTER and CRITICAL identity keys, L1 funds | Wallet | Never leaves the wallet |
 | Identity creation, username (DPNS) registration from zero, credit top-up | Wallet | Onboarding sends users to DashPay to create an identity and username |
-| Adding keys to the identity (`IdentityUpdate`) | Wallet (MASTER) | Done once per device at sign-in |
-| AUTHENTICATION/HIGH keys, one set per device, each bound to one contract (D6) | Yappr, in the Keychain/Keystore | Social (posts, replies, likes, follows, `yapprProfile`, blocks, reports, private feeds), DM v5, `yappr-push`, and DashPay `profile` (name, avatar, bio). DPNS registration stays in the wallet. |
-| ENCRYPTION/MEDIUM key, one per identity and app, shared by the user's devices | Yappr, in the Keychain/Keystore | DM v5 (ECDH plus the `selfRoot` / group-secret HKDFs), private-feed ECIES, background DM decryption, DM-report key envelopes |
-| Starter-grant claim (100 YAPP, CRITICAL) | Wallet, via `dash-st:` | Not surfaced in 1.0 (YAPP is optional on v10; see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping)) |
-| Credit transfers (TRANSFER key) | Wallet, via `dash-st:` | Proved credit tips, 1.x |
+| Adding keys to the identity (`IdentityUpdate`) | Wallet (MASTER) | Done at each sign-in, in one update |
+| Contract-group key (CRITICAL, 0.5 DASH, 90 days) | Yappr, in the Keychain/Keystore | Signs everything Yappr writes to the contracts in its group: social (posts, replies, likes, follows, `yapprProfile`, blocks, reports, private feeds), DM v5 and the other members. DPNS registration stays in the wallet. |
+| DashPay `profile` key (HIGH, about 60¢, 90 days) | Yappr, in the Keychain/Keystore | DashPay `profile` (name, avatar, bio), which a group key cannot sign for |
+| ENCRYPTION/MEDIUM key, one per identity and app, bound to the anchor and shared by the user's devices | Yappr, in the Keychain/Keystore | DM v5 (ECDH plus the `selfRoot` / group-secret HKDFs), private-feed ECIES, background DM decryption, DM-report key envelopes |
+| Starter-grant claim (100 YAPP, a token batch, CRITICAL) | Yappr, with the CRITICAL group key | Not surfaced in 1.0 (YAPP is optional on v10; see [COMPLIANCE.md](COMPLIANCE.md#crypto-fees-and-tipping)) |
+| Credit transfers (TRANSFER key) | Wallet, via `dash-st:` (planned: `dashpay://sign`) | Proved credit tips, 1.x |
 | L1 DASH payments | Wallet, via `dash:` BIP21 | Profile tips, storefront checkout (1.x) |
 
 The mobile app does not need the web app's password vault, passkey vault or
@@ -33,168 +38,126 @@ them are a devnet/testnet artefact; mobile does not migrate them (D9).
 
 Both wallets register `dash-key` and `dash-st` URL schemes, and the Android
 wallet has an intent filter on `MainActivity`. Yappr must **not** register
-these schemes, or the OS may send the request back to Yappr.
+these schemes, or the OS may send the request back to Yappr. The planned
+`dashpay://connect` and `dashpay://sign` carriers are the same: the `dashpay`
+scheme belongs to the wallet.
+
+The request is App Connect request v2
+([profile](../APP_CONNECT_PROFILE.md#request)). It travels today as a
+`dash-key:` link; `dashpay://connect` is planned and no wallet handles it yet.
 
 ```
 Yappr                                         DashPay
 ─────                                         ───────
 1. Generate an ephemeral secp256k1 keypair
    and save the request context (ephemeral
-   private key, created time, network)
-   in the Keychain/Keystore.
-2. Open dash-key:<payload>?n=m&v=1[&cb=…]  ──▶ 3. Approval sheet: "Yappr wants to sign
-   (UIApplication.open / ACTION_VIEW)             in as @alice" with the app, network
+   private key, created time, network,
+   connection id) in the Keychain/Keystore.
+2. Open dash-key:<body>?n=t&v=2&cb=…        ──▶ 3. Approval sheet: "Yappr wants to sign
+   (UIApplication.open / ACTION_VIEW)             in as @alice" with the app id, network
                                                    and permissions; the user picks an
                                                    identity if they have several.
-                                              4. Derive the device's keys, add them to
-                                                   the identity (bound per contract),
-                                                   wait for confirmation, publish an
-                                                   App Connect response.
-                                    ◀──────── 5. Open cb (W3), or the user switches back.
+                                              4. Derive the keys, register them in one
+                                                   IdentityUpdate (which also disables the
+                                                   earlier grant of this connection), wait
+                                                   for confirmation, publish the response.
+                                    ◀──────── 5. Open cb, or the user switches back.
 6. On foreground or cb: poll by
-   hash160(ephPub), check that the keys are
-   live on $ownerId, decrypt, keep the auth
-   keys and the encryption key, throw away
-   the ephemeral key.
-7. With the legacy contract only: if the keys
-   are not registered, build dash-st and
-   open the wallet a second time (step 2).
+   hash160(ephPub), verify every key on
+   chain, decrypt, keep the key ring, throw
+   away the ephemeral key.
 ```
 
-### Key model: per-device auth, shared encryption
+There is no second hand-off: the wallet registers the keys before it
+responds. A build picks its sign-in by `NEXT_PUBLIC_LOGIN_PROTOCOL`: the engine
+reports `capabilities.walletSignIn` as `'app-connect'` or `'legacy'`
+([engine README](../../mobile/engine/README.md)). The legacy path is the v1 key
+exchange, described at the end of this section.
 
-Today's web protocol derives **one** `loginKey` per identity and app, and from
-it one unbound auth key and one encryption key. Every device and browser
-session therefore holds the same keys, which causes three problems:
+### Keys and re-login
 
-- Revoking a lost phone revokes every session.
-- Platform will not re-add a disabled key, so signing in again needs a new
-  `keyIndex`, which means a **new encryption key**.
-- DM v5 key rotation is designed but not built (DM_V5 Appendix A), so changing
-  the encryption key orphans the DM v5 self-state, group secrets and
-  private-feed grants.
+A sign-in yields the three keys above (profile rules 3 to 7). Two things matter
+on a phone:
 
-Mobile uses (D6, proposed to the wallets as W2):
+- **Auth keys are new at every login.** A login with the same `CONNECTION_ID`
+  (one per app install and network, kept across sign-outs) disables the
+  previous grant's auth keys in the same update, so a re-login replaces this
+  device's keys and leaves other devices' keys alone. Platform keeps disabled
+  keys on the identity forever, so the old-key count grows with re-logins.
+  Expired and spent keys take no further action. The app can list the keys the
+  user's wallets granted it (`appConnectConnections()`), and the user revokes
+  them in the wallet.
+- **The encryption key is the same on every device and every login.** Peers
+  encrypt to it, so DM and private-feed history stays readable
+  ([profile rule 7](../APP_CONNECT_PROFILE.md#wallet-rules)). The profile
+  defines no rotation; replacing the key is not defined. DM v5 key rotation
+  (Y6) depends on such a mechanism, which does not exist yet.
 
-| Key | Derivation (wallet side) | Contract bound | Lifetime |
-| --- | --- | --- | --- |
-| Encryption key | `HKDF(loginKey(app, keyIndex=k), salt=identityId, info="encryption")`, where `k` is the keyIndex of the identity's **currently active** Yappr encryption key (0 for a first sign-in), so wallet-QR web users keep the key peers already encrypt to | None (read by peers for every Yappr contract) | Stable per identity and app. Never revoked by "disconnect device". Rotated only by an explicit "Reset messaging keys" action (1.x, Y6). |
-| Auth keys | `HKDF(loginKey(app, keyIndex=n), …, info="auth:<contract>")` with a **fresh `n` for each device** (the wallet tracks `n` and the device label in its Connections list) | One key each for social, DM v5, `yappr-push` and DashPay `profile` | One set per device. Revoking one device leaves the others working. |
+When a contract id changes (a social or DM re-cut, a new feature contract), the
+new contract joins the existing group ([APP_CONNECT_CONTRACTS.md](../APP_CONNECT_CONTRACTS.md))
+and the group key covers it, with no new grant. The app pins each member as
+`id:version` and blocks new logins on an unexpected group.
 
-**Why multi-bound.** A contract-bound key can only sign for its contract: a
-social-bound key writing the DashPay `profile` is refused (20014,
-`lib/profile/v10-profile.ts:325`). On v10 the DashPay `profile` *is* the Yappr
-base profile, and DMs live in their own contract, so one bound key is not
-enough.
+On App Connect builds the encryption key is the one bound to the anchor
+(`lib/crypto/encryption-key-lookup.ts`, via `identities.contractKeys`), and the
+first-active-key fallback applies to legacy builds only.
 
-Grant payload: five 32-byte keys (`authKey_social ‖ authKey_dm ‖
-authKey_push ‖ authKey_dashpay ‖ encKey`) plus the envelope overhead, about
-188 bytes, inside App Connect's 60–572-byte, 1–17-key range. An unbound
-shared encryption key next to bound auth keys departs from Platform's
-"session key plus bindings" model, so it is an explicit point to agree with
-the wallet teams in `APP_CONNECT_PROFILE.md`. Platform keeps disabled keys on
-the identity forever, so the auth-key count grows with re-logins. With limited
-keys (W7), expired auth keys take no further action. The old-key count is
-shown in Settings → Security.
-
-**When a contract id changes.** A binding names one contract id. A social or
-DM re-cut, a devnet wipe, a deploy to a new network, or a 1.x feature that
-writes a new contract (blog, pollr, storefront) leaves every device without a
-valid key for it. The app detects the missing binding, explains why ("Yappr
-moved to a new contract; approve once in DashPay"), and asks the wallet to
-**add the binding** to the device's existing key set. That re-grant is part of
-the App Connect profile and the W2 ask, and every coordinated contract release
-plans for it.
-
-**Encryption key selection (Y4).** `findEncryptionKey`
-(`lib/crypto/encryption-key-lookup.ts:28`) still returns the *first* active
-secp256k1 ENCRYPTION key and ignores contract bounds. Web and mobile share the
-fix: prefer a key bound to the contract in use (DM v5 for DMs, social for
-private feeds), then an unbound key, then the newest (highest key id).
-
-### Login contract: App Connect
-
-| | App Connect system contract `H8F9mP1B…` (chosen) | Yappr `key-exchange-v2` (fallback) |
-| --- | --- | --- |
-| Available on | Every network from protocol 14 (bonsia today); the same ID everywhere | Testnet (`7UaqHG…`) and bonsia (`9UgRuCx9…`); mainnet would need a deploy |
-| Wallet support today | None | DashConnect on both wallets, testnet in store builds |
-| Key provisioning | The wallet provisions the keys **before** it responds, so one handoff | The app builds `dash-st:` and a second handoff follows |
-| Limited keys (budget/expiry, protocol 14) | Designed for it | Not modeled |
-| Schema | `appEphemeralPubKeyHash`, `walletEphemeralPubKey`, `encryptedPayload` (60–572 bytes, 1–17 keys); `indexOnly` | Also has `contractId`, `keyIndex` |
-| Re-login | Delete plus create; one entry per request per identity. The wallets' current replace-based re-login does not carry over. | Replace; unique `[$ownerId, contractId]` |
-
-It cuts a handoff from every first sign-in, needs no contract deploy that
-Yappr owns, and suits other Dash apps too. The cost:
-
-- The wallets implement App Connect with the multi-bound key set (W2). Their
-  re-login logic changes too, which also retires the #1137 lookup bug (W4).
-- `vendor/platform-auth` gets an App Connect protocol module (Y3), which the
-  web app shares.
-
-`key-exchange-v2` keeps working for testnet interop until both wallets ship
-App Connect.
-
-### Fallback: key-exchange-v2
-
-If W2 is late, mobile signs in through `key-exchange-v2` the way web does
-today: the wallet derives one `loginKey` per identity and app, and from it one
-**unbound** auth key and the encryption key. Mobile derives those two from the
-response and then discards the `loginKey`. Every device and browser shares
-that key set, so the per-device revoke and the bindings above do not exist on
-this path. Revoking one device signs out all of them, and the lost-phone
-advice in [Sign-out](#sign-out-revocation-lost-phone) applies to the whole
-set. An unbound key can write the DashPay `profile` itself, so no extra
-handoff is needed. Bonsia's Beta 1 runs this path unless the W8 wallet builds
-already have App Connect.
-
-### Request format and return path
+### Return path
 
 | Field | Spec |
 | --- | --- |
-| Payload | Keep the existing `dash-key:` body: `0x01 ‖ appEphPub33 ‖ appContractId32 ‖ labelLen ‖ label`, plus `n=<m\|t\|d>` and `v=1`. The App Connect profile adds the list of contracts to bind (Phase 0, `APP_CONNECT_PROFILE.md`). |
-| `cb` (new) | An optional HTTPS URL that the wallet opens after the response is published, e.g. `https://yap.pr/app/connect?r=<hash160 hex>`. |
-| `cb` validation | Only accept `https` with a host on an allowlist the wallet ties to the app's contract ID. Until a manifest exists, the wallet's existing brand map (iOS `PlatformDashConnectDataSource.swift:35`) does this. Show the host on the approval sheet. |
-| Handling the `cb` link | A universal link (iOS) or verified App Link (Android) for `yap.pr`. It opens Yappr. If the app is not installed, or the OS falls back to the browser, the static `/app/connect` page just says "Return to the Yappr app". Only the app holds the ephemeral key, so the page cannot finish the sign-in. |
+| `cb` | `https://yap.pr[/prefix]/connect/?r=<hash160 hex>&app=<scheme>`. The wallet appends `ac=<status>` after the user's decision (profile, [Callback](../APP_CONNECT_PROFILE.md#callback)). |
+| Handling the `cb` link | The wallet opens the https link. The `/connect/` page reads `app=<scheme>` and hands the user straight back to the app with `<scheme>://connect?r=…&ac=…`. Universal links (iOS) and verified App Links (Android) for `yap.pr` are optional on top of that and need the owner's signing identifiers ([RELEASE.md](../../mobile/RELEASE.md)). If the page is reached without `app=`, it cannot finish the sign-in: only the app holds the ephemeral key. |
 | No `cb` | Yappr keeps the request alive for up to 10 minutes and polls whenever it returns to the foreground. The waiting screen says "Approve in DashPay, then come back here". |
-
-The existing web flow's `dash-key:` payload does not change; it just gains a
-query parameter. Wallets that ignore `cb` still work.
 
 ### Accepted risk: request hijack
 
-Nothing proves which app created a `dash-key:` request. The DashPay iOS source
-says so itself, in the `DashConnectDeepLink.swift` header. A malicious app can
-put Yappr's contract ID next to its own ephemeral key, and if the user
-approves, it receives Yappr's auth keys. `cb` allowlisting does not prevent
-this.
+Nothing proves which app created a request. A malicious app can put Yappr's
+contract id next to its own ephemeral key, and if the user approves, it
+receives keys bound to Yappr's group and the DashPay `profile`. This follows
+from the model: an app is its contract id, and the wallet shows the id and
+every scope instead of claiming to know who the app is
+([App identity](../APP_CONNECT_PROFILE.md#app-identity)). The `cb` host is
+shown, not trusted.
 
-Mitigations in 1.0:
+Mitigations:
 
-- The wallet approval sheet says "Only approve if you just tapped *Continue with
-  DashPay* in Yappr".
+- The wallet approval sheet says "Only approve if you just started signing in
+  on yap.pr".
 - The wallet shows the time the request was created, and rejects requests
   older than 10 minutes.
-- Per-device keys (above) let the user revoke just the stolen session.
-- Contract binding limits a stolen key set to Yappr's contracts and the
-  DashPay profile; it cannot touch other apps or funds.
-- Settings → Security lists "Devices signed in" with their last use. This is
-  the wallet's Connections list, reached by a link.
+- Every key carries a budget and an expiry that Platform enforces (profile
+  rule 5), so a stolen key stops on its own.
+- Contract binding limits a stolen key to Yappr's group and the DashPay
+  profile; it cannot touch other apps' contracts.
+- The user can disable a connection's keys in the wallet's Connections list.
 
-For 1.x, W7 limited keys (budget plus expiry) cap the damage from a hijacked
-key. OS-level attestation of the calling app is not available through a URL
+OS-level attestation of the calling app is not available through a URL
 handoff.
 
 This risk is recorded in the audit scope and in the wallet teams' threat
 model.
+
+### Legacy: the v1 key exchange
+
+Builds without `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` sign in through the v1
+key exchange, as the production web root still does. The wallet derives one
+`loginKey` per identity and app and, from it, one unbound auth key and the
+encryption key; the app derives the same two from the response and discards the
+`loginKey`. A first login can need a second hand-off, a `dash-st:`
+IdentityUpdate that registers the keys. Every device and browser shares that
+key set, so revoking one device signs out all of them. v1 and `dash-st:` are
+legacy and go before mainnet. The release set does not register the key
+exchange contract (D9, D10).
 
 ### Sign-in UX states
 
 | State | UI | Exit |
 | --- | --- | --- |
 | No wallet installed (the `canOpenURL("dash-key:")` / `queryIntentActivities` check fails) | "Yappr uses DashPay for your identity", with an App Store / Play button and a "Get help" link | The user comes back after installing |
-| Wallet has no identity | Detected by timeout plus a hint from the wallet, if W3 returns an error code | Deep link into DashPay's "Create username"; this costs DASH, and the screen explains it |
+| Wallet has no identity | Detected by timeout, because the `ac` statuses have no "no identity" code | Deep link into DashPay's "Create username"; this costs DASH, and the screen explains it |
 | Waiting for approval | Wallet icon, "Waiting for DashPay…", a Cancel button, and "Open DashPay again" | A response arrives, or the user cancels, or 10 minutes pass |
-| Provisioning keys (legacy contract) | "Finishing setup in DashPay (one more step)" | The keys are live on the identity |
+| Provisioning keys (legacy builds only) | "Finishing setup in DashPay (one more step)" | The keys are live on the identity |
 | Signed in | Home. There is no profile step (D15): the user shows by DashPay `displayName`, else the DPNS label, else `User <last6>`. | — |
 | Signed in, no DPNS name | An optional "Claim @name in DashPay" card on Home and the profile | — |
 
@@ -208,12 +171,12 @@ keys are stored under that identity's ID.
 | --- | --- | --- | --- |
 | Tip a profile in DASH | `dash:<address>?amount=<x>&label=Tip%20for%20@bob` (from `yapprProfile.paymentUris`) | Yes, both wallets, mainnet | No callback. Yappr shows "Tip sent?" and checks the address via Insight, as the checkout does (`lib/services/insight-api-service.ts`). |
 | Pay with txid callback (Android) | `dashwallet://?pay=<addr>&amount=<x>&sender=yappr` | Android returns the txid; iOS turns it into a `dash:` payment with no callback | Use it where supported |
-| Sign a MASTER, CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` | DashConnect (testnet) | Yappr polls for the expected state change. 1.0 uses it only for the legacy two-hop login's key registration and a missing encryption key, both MASTER-signed `IdentityUpdate`s. |
+| Sign a MASTER, CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` today; `dashpay://sign` planned ([profile](../APP_CONNECT_PROFILE.md#dashpaysign)) | DashConnect (testnet) | Yappr polls for the expected state change. On App Connect builds mobile uses `dash-st:` only for a missing encryption key in a raw-key session (D38), a MASTER-signed `IdentityUpdate`. Legacy builds also use it for first-login key registration. |
 | Add as DashPay contact | `dashpay://user?id=<identity>&username=<name>` | iOS parses it (`DashPayUserLink.swift`); Android unverified (W6) | None needed |
 | Top up credits | None today | — | W5; fallback: "Open DashPay" plus instructions |
 
 The **`dash-st:` nonce trap:** an unsigned transition embeds a nonce, and
-anything else that uses the same nonce in the meantime makes it stale. The two
+anything else that uses the same nonce in the meantime makes it stale. The
 1.0 uses are `IdentityUpdate`s, which take the **identity** nonce; Yappr's own
 document writes use per-contract nonces and cannot collide with them, but
 another app or the wallet itself can. So Yappr:
@@ -230,11 +193,11 @@ outstanding.
 
 | Item | iOS | Android |
 | --- | --- | --- |
-| Auth keys (HIGH, one per bound contract) | Keychain items, `WhenUnlockedThisDeviceOnly`, main app access group only. Each is ECIES-wrapped under SE key **A** (`WhenUnlockedThisDeviceOnly`, `.privateKeyUsage`, plus `.userPresence` when app lock is on). A LAContext reuse window equal to the app-lock timeout avoids a prompt on every like. | AES-256-GCM Keystore key (StrongBox where available). With app lock on: API 30+ uses `setUserAuthenticationParameters(timeout, BIOMETRIC_STRONG\|DEVICE_CREDENTIAL)`; API 29 uses `setUserAuthenticationValidityDurationSeconds(timeout)`. The timeout equals the app-lock timeout. |
+| Auth keys (the group key and the DashPay `profile` key) | Keychain items, `WhenUnlockedThisDeviceOnly`, main app access group only. Each is ECIES-wrapped under SE key **A** (`WhenUnlockedThisDeviceOnly`, `.privateKeyUsage`, plus `.userPresence` when app lock is on). A LAContext reuse window equal to the app-lock timeout avoids a prompt on every like. | AES-256-GCM Keystore key (StrongBox where available). With app lock on: API 30+ uses `setUserAuthenticationParameters(timeout, BIOMETRIC_STRONG\|DEVICE_CREDENTIAL)`; API 29 uses `setUserAuthenticationValidityDurationSeconds(timeout)`. The timeout equals the app-lock timeout. |
 | Encryption key (MEDIUM) | Keychain item, `AfterFirstUnlockThisDeviceOnly`, **main app access group only**, so the NSE never has it. It is wrapped under SE key **B** (`AfterFirstUnlockThisDeviceOnly`, `.privateKeyUsage`, no presence flag), so the main app's background task can use it while the device is locked. | Keystore key without an auth requirement, so WorkManager can decrypt |
 | Web Push key (P-256) and auth secret | **App Group** access group, so the NSE can decrypt pings. The P-256 private key *is* an SE key (C, `AfterFirstUnlockThisDeviceOnly`); `SecKeyCopyKeyExchangeResult` does the RFC 8291 ECDH without the key leaving the SE. The 16-byte auth secret is a Keychain item in the same group. | Keystore-wrapped file read by the FCM / UnifiedPush receiver |
 | Ephemeral sign-in request | Keychain, deleted on completion or after 10 minutes | Keystore-wrapped file, same lifetime |
-| loginKey | **Never stored** (the web app stores it; mobile does not) | Same |
+| `loginKey` | Legacy builds only: derived from the wallet's response and **never stored**. App Connect builds have none: the wallet returns the private keys. | Same |
 | Backup and transfer | Excluded (`ThisDeviceOnly`; files marked `isExcludedFromBackup`) | `dataExtractionRules` exclude them from cloud backup and device transfer |
 
 Note what the SE wrap buys, and what it doesn't:
@@ -257,8 +220,8 @@ chain data (DM v5 §1.5, private feed spec §8) without migrating anything.
 | Situation | What happens |
 | --- | --- |
 | Sign out | The app wipes its keys, caches, the push endpoint document (a best-effort delete) and relay registration. The keys stay on the identity; the app tells the user they can revoke them in DashPay → Connections. |
-| A key is disabled in the wallet | Each foreground start and each background run check that the device's auth keys are still enabled (`identities.fetch`, cached for 1 hour). If they have been revoked, the app shows "Signed out by DashPay" and wipes local data. |
-| Lost phone | The user revokes that device's key set in DashPay → Connections. Other devices keep working. The lost phone can still *read* DMs with the shared encryption key (if unlocked), so the revoke screen offers "Also reset messaging keys" (Y6, 1.x). Until Y6 ships, it tells the user plainly that past and future DMs are readable on that phone. The push endpoint stays until it expires (7 days), and relay pings to it show only generic text. |
+| A key is disabled in the wallet | Each foreground start and each background run check that the device's auth keys are still enabled (`identities.fetch`, cached for 1 hour). If they have been revoked or superseded, the app shows "Signed out by DashPay" and wipes local data. |
+| Lost phone | The user revokes that device's connection in DashPay → Connections. Other devices keep working. The lost phone can still *read* DMs with the shared encryption key (if unlocked). The profile defines no way to replace that key, so until one exists (Y6, 1.x) the app tells the user plainly that past and future DMs are readable on that phone. The push endpoint stays until it expires (7 days), and relay pings to it show only generic text. |
 
 ## DashPay social integration
 
@@ -284,37 +247,40 @@ chain data (DM v5 §1.5, private feed spec §8) without migrating anything.
 ## What we need from the wallets
 
 Tracked as external dependencies in [README.md](README.md#critical-dependencies-outside-the-mobile-apps).
+The asks below date from the 2026-09-30 plan. W2, W3 and W7 are now part of App
+Connect request v2 (the profile), and W4 applies to the legacy key exchange
+only. Per-wallet status is not repeated here; the profile's status box has the
+current builds.
 
-| ID | Ask | iOS status (2026-09-30) | Android status (2026-09-30) | Needed by |
-| --- | --- | --- | --- | --- |
-| W1 | DashConnect enabled on mainnet in a store release | 9.1.2 ships it on testnet only; mainnet draft #1133 waits on a login contract | 11.9.1 ships `SUPPORTS_CONNECT=false` in prod | G3 |
-| W2 | App Connect system contract, one-hop provisioning, the per-device multi-bound key set (social, DM v5, `yappr-push`, DashPay `profile`), delete-plus-create re-login | Not started | Not started | G3 |
-| W3 | `cb=` return URL, allowlisted per app; error codes (`cancelled`, `no-identity`, `wrong-network`); request-age limit and the "only approve if you just tapped" copy | Not started | Not started | G2 |
-| W4 | Re-login lookup fix (#1137 / platform #4822) | Open, no fix PR | Check | G2 (moot with W2) |
-| W5 | Top-up deep link, e.g. `dashwallet://topup?identity=<id>&amount=<credits>&sender=…` | — | — | 1.1 (nice to have) |
-| W6 | `dashpay://user` handling on Android | Supported | Unverified | 1.1 |
-| W7 | Limited keys (protocol 14 budget/expiry) for Yappr's keys, with a "Connections" list showing last use and a revoke action | #1138 (BLE) builds limited keys | — | 1.1 |
-| W8 | Devnet-capable internal/TestFlight builds that accept a custom devnet (DAPI list, quorum URL, devnet name), for Beta 1 on bonsia | Internal `DASH_DEVNET` builds exist; store builds cannot | Devnet flavor exists | G2 |
-| W9 | Confirm Yappr's dHash matches DashPay's `avatarFingerprint` | Check | Check | G2 |
+| ID | Ask | Needed by |
+| --- | --- | --- |
+| W1 | App Connect enabled on mainnet in a store release (the `dash-key:` / `dash-st:` carriers must be gone first; the profile has the migration) | G3 |
+| W2 | App Connect request v2 as the profile defines it: contract-group, DashPay `profile` and encryption keys in one hop, delete-plus-create re-login | G3 |
+| W3 | `cb` return URL and the `ac` statuses; request-age limit and the "only approve if you just started signing in" copy (in the profile) | G2 |
+| W4 | Re-login lookup fix (#1137 / platform #4822), legacy key exchange only | G2 (moot with W2) |
+| W5 | Top-up deep link, e.g. `dashwallet://topup?identity=<id>&amount=<credits>&sender=…` | 1.1 (nice to have) |
+| W6 | `dashpay://user` handling on Android | 1.1 |
+| W7 | Limited keys (budget and expiry): in request v2; plus a "Connections" list showing last use and a revoke action | 1.1 |
+| W8 | Devnet-capable internal/TestFlight builds that accept a custom devnet (DAPI list, quorum URL, devnet name) | G2 |
+| W9 | Confirm Yappr's dHash matches DashPay's `avatarFingerprint` | G2 |
 
 **Process.** Open one tracking issue per wallet repo in Phase 0, with an
 interop matrix both teams run in CI (see
-[QA_RELEASE.md](QA_RELEASE.md#wallet-interop)). Yappr maintains a small spec
-page, `docs/mobile/APP_CONNECT_PROFILE.md`, which is a Phase 0 deliverable. It
-pins the exact payload, the bound-key list, `cb`, error codes, key model and
-test vectors, so the three clients stay in step.
+[QA_RELEASE.md](QA_RELEASE.md#wallet-interop)). The spec the three clients
+share is [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md): it pins the
+request body, the key set, `cb`, the `ac` statuses, the key derivation and the
+test vectors.
 
 ## Testing without a human wallet
 
 Automated E2E cannot tap through DashPay. Yappr's tests therefore use a
-**test-wallet harness**: a tiny debug-only app (or a Maestro-driven mode of the
-Yappr debug build) that registers `dash-key`/`dash-st` on emulators only.
-
-- On bonsia it uses the devnet pool (`E2E_DEVNET_SEED_PHRASE`,
-  `docs/TESTING.md` §1); on testnet, the e2e identity pool (`docs/TESTING.md`
-  §4, derivation `m/9'/1'/5'/0'/<i>'/<k>'`).
-- It publishes real App Connect and `loginKeyResponse` documents.
+**test-wallet responder**: the Node tool `mobile/tools/test-wallet-responder.mjs`
+(ADR E5.4). It answers App Connect request v2 the way a wallet does, and the
+v1 key exchange for legacy builds, and publishes real `loginKeyResponse`
+documents. It is run against the sakura identity pool
+(`YAPPR_SAKURA_IDENTITIES`). `mobile/tools/README.md` is its manual, and the
+best description of wallet behaviour in this repo.
 
 Real-wallet interop runs manually on every release candidate: store builds on
-testnet, W8 builds on bonsia. See
+testnet, W8 builds on the devnet. See
 [QA_RELEASE.md](QA_RELEASE.md#wallet-interop).

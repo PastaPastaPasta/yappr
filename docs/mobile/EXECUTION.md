@@ -98,7 +98,7 @@ The common definition of done (§4) applies to every PR in addition to its row.
   - Root `npm run lint`, `npm run test`, `npm run build`, `npx tsc --noEmit` and `npm run lint:dead` all pass with **no change** in web output.
   - The new workflow is green.
 
-**M3 notes.**
+**M3 notes.** *(Amended 2026-10-27: the responder now also answers App Connect request v2, and the `dash-key:` v1 / `dash-st:` handling below is its legacy mode. [mobile/tools/README.md](../../mobile/tools/README.md) is its manual and [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md) the spec it follows.)*
 - **Scope:** `mobile/tools/test-wallet-responder.mjs`, a Node tool built over `vendor/platform-auth/src/key-exchange/yappr-protocol.ts` (bundled with the engine's esbuild).
   1. **`dash-key:` request.** It parses the URI (`parseYapprKeyExchangeUri`) and derives a **deterministic** login key per (identity, app contract) from the pool identity's CRITICAL key with HKDF. Deterministic means a re-login yields the same derived keys. It then does ECDH with the app's ephemeral public key, encrypts with AES-GCM, and writes the `loginKeyResponse` document on the key-exchange contract, signed with the identity's HIGH key.
   2. **`dash-st:` request.** It parses the unsigned IdentityUpdate, signs it with the MASTER key (keyId 0) and broadcasts it.
@@ -172,13 +172,13 @@ Every Wave 3 screen PR:
 
 **S1 notes.**
 - **Screens:** Welcome; the EULA and community-rules gate (stored in RN MMKV); signed-out browsing; sign-in.
-- **Key exchange:**
+- **Wallet sign-in** *(amended 2026-10-27: App Connect request v2 on App Connect builds; the legacy v1 key exchange below on the others)*:
   - Same device: `Linking.openURL('dash-key:…')`. Across devices: a QR code.
   - Polling runs with no visible countdown and times out silently into "Check again".
   - A dev-only testID exposes the URI for Maestro.
-- **Key registration:** the `dash-st:` step.
+- **Key registration (legacy builds only):** the `dash-st:` step.
 - **Other ways to sign in:** key entry (WIF or hex).
-- **Not yet shipped:** the App Connect button behind `FEATURE_APP_CONNECT=false`.
+- **App Connect:** shipped on the builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (it was planned behind a `FEATURE_APP_CONNECT` flag, which does not exist in the code).
 - **Accounts:** the account switcher and an optional biometric lock.
 
 **S4 notes.**
@@ -311,7 +311,7 @@ No barrel files (`index.ts` re-exports) in `mobile/app`; import by path. That ke
 | User story (ADR E7) | iOS light | iOS dark | Android light | Android dark | Variants |
 | --- | --- | --- | --- | --- | --- |
 | Signed-out browse: welcome, feed, thread, profile, explore | ✓ | ✓ | ✓ | ✓ | devnet, testnet |
-| Sign in: key exchange (responder on devnet; DashPay store wallet on testnet), key entry WIF and hex, key registration, restore, switch account, sign out | ✓ | ✓ | ✓ | ✓ | both (store wallet: testnet only) |
+| Sign in: wallet sign-in (App Connect through the responder on devnet; a DashPay wallet build on testnet; legacy key exchange and key registration on legacy builds), key entry WIF and hex, restore, switch account, sign out | ✓ | ✓ | ✓ | ✓ | both (store wallet: testnet only) |
 | EULA gate; Lockdown screen (physical iPhone, TestFlight) | ✓ | ✓ | ✓ | ✓ | devnet |
 | Home: For You and Following, Top where supported, pill, pull-to-refresh, infinite scroll | ✓ | ✓ | ✓ | ✓ | both |
 | Thread: replies, removed and deleted stubs, engagements | ✓ | ✓ | ✓ | ✓ | both |

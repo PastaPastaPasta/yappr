@@ -150,7 +150,7 @@ device: an iPhone 12 and a Pixel 6a.
 │   │   ├── ios/NotificationService/   Swift NSE target (config plugin)
 │   │   └── android/push/     FCM + UnifiedPush receivers (config plugin)
 │   ├── relay/                Go/Rust stateless wake-up relay + deploy/
-│   ├── test-wallet/          debug-only DashConnect responder for E2E (emulators/simulators)
+│   ├── tools/                Node test-wallet responder for E2E (App Connect request v2, legacy key exchange)
 │   └── e2e/                  Maestro flows + fixtures
 ├── contracts/                + yappr-push-contract.json, next social cut (IDs in lib/constants.ts)
 └── .github/workflows/mobile.yml   path-filtered: mobile/**, lib/**
@@ -251,7 +251,7 @@ PR 5, which moves every write.
 
 | Store | Tech | Contents | Survives sign-out? |
 | --- | --- | --- | --- |
-| Secrets | Keychain / Keystore | Auth keys (one per bound contract), encryption key, pending sign-in request | No |
+| Secrets | Keychain / Keystore | App Connect key ring (contract-group key, DashPay `profile` key), encryption key, pending sign-in request | No |
 | Shared DB | SQLite in the App Group container (iOS) / app files (Android), WAL | Notification cursors and seen table, known-identities cache (for NSE verification), prefs, mutes, DM v5 local cache | No |
 | KV | MMKV, per identity and network | zustand stores (feed settings, drafts, `payWith`), `storage-scope` keys | No |
 | Media cache | `expo-image` disk cache | Avatars, IPFS media | Yes (pruned) |
@@ -306,7 +306,7 @@ PR 5, which moves every write.
 
 | Variant | Network / contracts | Bundle / app ID | Distribution |
 | --- | --- | --- | --- |
-| `dev` | Bonsia (`.env.devnet`), test-wallet harness allowed | `pr.yap.app.dev` | Local, simulators |
+| `dev` | Bonsia (`.env.devnet`; now sakura), Node test-wallet responder allowed | `pr.yap.app.dev` | Local, simulators |
 | `beta` | Bonsia now; testnet once it runs protocol 14 with the Yappr contract set (D4) | `pr.yap.app.beta` | TestFlight, Play internal/closed |
 | `prod` | Launch network (see README › Still open, item 2) | `pr.yap.app` | Stores |
 | `foss` (Android) | Same as prod, no FCM, UnifiedPush only | `pr.yap.app` | F-Droid / GitHub releases (1.x; needs Android developer verification from 2026-09-30 in the first regions) |
