@@ -100,8 +100,8 @@ export function openWallet(): void {
   }
   installedCarriers()
     .then((installed) => {
-      // Cancelled, or replaced by a new request, while the schemes were asked about: open nothing.
-      if (get().flow !== flow) return;
+      // Cancelled, replaced by a new request, or switched to the QR code while the schemes were asked about: open nothing.
+      if (get().flow !== flow || get().mode !== 'wallet') return;
       openLink(pickWalletUri(options, installed) ?? uri, failed);
     })
     .catch(() => undefined);

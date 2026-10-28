@@ -41,3 +41,19 @@ export async function installedCarriers(): Promise<Partial<Record<WalletCarrier,
   const answers = await Promise.allSettled(carriers.map((carrier) => Linking.canOpenURL(WALLET_PROBE_URLS[carrier])));
   return Object.fromEntries(carriers.map((carrier, i) => [carrier, answers[i].status === 'fulfilled' && answers[i].value]));
 }
+
+/**
+ * Whether a wallet on this device can take the sign-in the engine chose. The
+ * legacy key exchange speaks only `dash-key:`. App Connect is `dashpay://connect`
+ * on mainnet and either carrier elsewhere (staging builds offer both, and
+ * `openWallet` picks the one installed).
+ */
+export function walletHandlesSignIn(
+  installed: Partial<Record<WalletCarrier, boolean>>,
+  walletSignIn: 'app-connect' | 'legacy',
+  network: string,
+): boolean {
+  if (walletSignIn === 'legacy') return installed['dash-key'] === true;
+  if (network === 'mainnet') return installed.dashpay === true;
+  return installed.dashpay === true || installed['dash-key'] === true;
+}

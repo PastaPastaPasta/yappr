@@ -140,6 +140,17 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(Linking.openURL).toHaveBeenCalledWith(URI);
     });
 
+    it('opens nothing when the user switches to the QR code while the schemes are being asked about', async () => {
+      let answer: (value: boolean) => void = () => undefined;
+      jest.spyOn(Linking, 'canOpenURL').mockImplementation(
+        (url) => (url.startsWith('dashpay') ? new Promise<boolean>((resolve) => { answer = resolve; }) : Promise.resolve(false)),
+      );
+      await open({ mode: 'wallet' }, both('c4'.repeat(20)));
+      await act(async () => fireEvent.press(screen.getByTestId('kx-other-device')));
+      await act(async () => answer(true));
+      expect(Linking.openURL).not.toHaveBeenCalled();
+    });
+
     it('shows the default (dash-key:) link as the QR code', async () => {
       installed({ dashpay: true });
       await open({ mode: 'qr' }, both('c3'.repeat(20)));

@@ -4,13 +4,14 @@ import { Pressable, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDownIcon, ChevronRightIcon, KeyIcon } from 'react-native-heroicons/outline';
 
+import { config } from '~/config';
 import { useCapabilities, useSessionStore } from '~/data/session';
 import { accountName, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import { links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
-import { installedCarriers } from '~/features/auth/wallet-uri';
+import { installedCarriers, walletHandlesSignIn, type WalletCarrier } from '~/features/auth/wallet-uri';
 import { cn } from '~/lib-allowlist';
 import { Lockup } from '~/ui/brand/Brand';
 import { Button } from '~/ui/Button';
@@ -18,18 +19,18 @@ import { Text } from '~/ui/Text';
 import { motion, tw, useColors, type IconComponent } from '~/ui/tokens';
 
 /**
- * Whether an app on this device handles `dashpay://connect` or `dash-key:`
- * links (AUTH-05); either scheme counts. iOS answers only for schemes listed
- * in LSApplicationQueriesSchemes, Android only for intents declared in
- * <queries> (both in app.config.ts). null while asking.
+ * Which of `dashpay://connect` and `dash-key:` an app on this device handles
+ * (AUTH-05). iOS answers only for schemes listed in LSApplicationQueriesSchemes,
+ * Android only for intents declared in <queries> (both in app.config.ts). null
+ * while asking.
  */
-function useWalletInstalled(): boolean | null {
-  const [installed, setInstalled] = useState<boolean | null>(null);
+function useInstalledCarriers(): Partial<Record<WalletCarrier, boolean>> | null {
+  const [installed, setInstalled] = useState<Partial<Record<WalletCarrier, boolean>> | null>(null);
   useEffect(() => {
     let live = true;
     // A scheme that fails to answer counts as no, without hiding the other's yes.
     installedCarriers().then((installedBy) => {
-      if (live) setInstalled(Object.values(installedBy).some(Boolean));
+      if (live) setInstalled(installedBy);
     });
     return () => {
       live = false;
@@ -76,12 +77,17 @@ function MethodRow({
 export default function SignInScreen() {
   const c = useColors();
   const close = useCloseSignIn();
-  const walletInstalled = useWalletInstalled();
+  const installedCarrierSchemes = useInstalledCarriers();
   const [showOther, setShowOther] = useState(false);
   const reauth = useReauthTarget();
   const reauthAccount = useSessionStore((s) => s.accounts.find((a) => a.identityId === reauth));
   const reauthName = reauth ? accountName(reauthAccount ?? { identityId: reauth, username: null }) : null;
   const walletSignIn = useCapabilities()?.walletSignIn ?? null;
+  // Only a wallet that speaks the carrier this sign-in uses counts (null while either is unknown).
+  const walletInstalled =
+    installedCarrierSchemes === null || walletSignIn === null
+      ? null
+      : walletHandlesSignIn(installedCarrierSchemes, walletSignIn, config.network);
   const sameDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=wallet' : '/sign-in/wallet';
   const otherDevice = walletSignIn === 'app-connect' ? '/sign-in/connect?mode=qr' : '/sign-in/qr';
 
