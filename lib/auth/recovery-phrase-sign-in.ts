@@ -14,9 +14,9 @@
  *    rotations 0', 1', ... at the 9-level path (while each is on the
  *    identity) and the pre-DIP key at the path without a rotation level. The
  *    account's current key is used when it is any candidate; rotation 0' is
- *    added (MASTER-signed) when the account has none and no candidate was ever
- *    on it; anything else is left alone (another wallet's key, or a disabled
- *    candidate).
+ *    added (MASTER-signed) when the account has none and no anchor-bound
+ *    encryption key was ever on it, the phrase's or another wallet's; anything
+ *    else is left alone (another wallet's key, or a disabled one).
  *
  * The phrase is passed in, never stored, logged or sent; derived key bytes are
  * zeroed once their WIFs are taken (best effort: see dip13.ts).

@@ -127,6 +127,16 @@ describe('phraseMessagingState (#1210 and DIP rules)', () => {
     expect(state([mine, rotated], null, [encryptionKey(5, mine, ANCHOR, { disabledAt: 1 }), encryptionKey(6, rotated, ANCHOR, { disabledAt: 2 })], ANCHOR).state)
       .toBe('another-wallet')
   })
+
+  it('does not register when the only anchor key on the identity is another wallet\'s disabled one (DIP rule 2)', () => {
+    const foreignDisabled = encryptionKey(5, foreign.publicKey, ANCHOR, { disabledAt: 1 })
+    expect(state([mine, legacy], null, [foreignDisabled], ANCHOR)).toEqual({ state: 'another-wallet', candidate: null })
+    // Whatever the disabled key's type, it is still a key for the contract and purpose.
+    expect(state([mine], null, [{ ...foreignDisabled, type: KeyType.ECDSA_HASH160 }], ANCHOR).state).toBe('another-wallet')
+    // A disabled key bound to another contract, or another purpose, does not block.
+    expect(state([mine], null, [encryptionKey(5, foreign.publicKey, OTHER_CONTRACT, { disabledAt: 1 })], ANCHOR).state).toBe('absent')
+    expect(state([mine], null, [{ ...foreignDisabled, purpose: KeyPurpose.DECRYPTION }], ANCHOR).state).toBe('absent')
+  })
 })
 
 describe('messagingKeyCandidates', () => {

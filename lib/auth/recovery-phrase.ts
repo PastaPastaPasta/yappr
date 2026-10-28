@@ -94,6 +94,17 @@ function isAnchorKeyOnIdentity(publicKey: Uint8Array, identityKeys: readonly Enc
 }
 
 /**
+ * Whether the identity has any ENCRYPTION key bound to the anchor, whoever's
+ * and in any state (DIP "Encryption Keys", rule 2). With none of them
+ * enabled, such a key still decides: under the anchor's requirement 0
+ * Platform would refuse a second key, and under 2 a new key is a rotation,
+ * which is the user's action in a wallet, never a login's.
+ */
+function hasAnchorEncryptionKeyInAnyState(identityKeys: readonly EncryptionKeyCandidate[], anchorId: string): boolean {
+  return identityKeys.some((key) => key.purpose === KeyPurpose.ENCRYPTION && isBoundToContract(key.contractBounds, anchorId))
+}
+
+/**
  * The keys a phrase may hold as its messaging key for the anchor, in the
  * order the DIP finds them:
  *
@@ -136,12 +147,13 @@ export interface PhraseMessagingDecision {
  * newest live anchor key stands in when that read finds none. `candidates` are
  * the public keys of {@link messagingKeyCandidates}.
  * - current: the identity's current key is one of the phrase's candidates: use it.
- * - absent: there is no current key, and none of the candidates was ever on
- *   the identity: add rotation 0 (the first candidate).
+ * - absent: there is no current key, and no anchor-bound ENCRYPTION key is on
+ *   the identity in any state, the phrase's or another wallet's: add rotation
+ *   0 (the first candidate).
  * - another-wallet: a current or live key is none of the candidates, or the
- *   candidates on the identity are all disabled. It is never replaced at
- *   sign-in: replacing it would orphan everything peers encrypted to it (a
- *   rotation, which only a wallet does, on request).
+ *   identity has anchor keys and all are disabled (DIP rule 2: omit). It is
+ *   never replaced at sign-in: replacing it would orphan everything peers
+ *   encrypted to it (a rotation, which only a wallet does, on request).
  */
 export function phraseMessagingState(
   candidates: readonly Uint8Array[],
@@ -161,7 +173,6 @@ export function phraseMessagingState(
     const data = normalizeBytes(newest.data)
     return data === null ? { state: 'another-wallet', candidate: null } : decide(data)
   }
-  // A candidate's anchor key, disabled: never added again.
-  const disabled = candidates.some((candidate) => isAnchorKeyOnIdentity(candidate, identityKeys, anchorId))
-  return { state: disabled ? 'another-wallet' : 'absent', candidate: null }
+  // Any anchor key on the identity, a candidate's or another wallet's, all disabled: never added beside them.
+  return { state: hasAnchorEncryptionKeyInAnyState(identityKeys, anchorId) ? 'another-wallet' : 'absent', candidate: null }
 }

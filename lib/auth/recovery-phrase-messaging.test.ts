@@ -147,6 +147,13 @@ describe('preparePhraseSession messaging key', () => {
     expect(state.added).toEqual([])
   })
 
+  it('registers nothing when the only anchor key on the identity is another wallet\'s disabled one', async () => {
+    state.publicKeys.push(anchorKey(5, foreignKey(), { disabledAt: 1 }))
+    const session = await preparePhraseSession(wallet, account)
+    expect(session).toMatchObject({ messaging: 'another-wallet', messagingKey: null })
+    expect(state.added).toEqual([])
+  })
+
   it('registers nothing when the rotations are all disabled', async () => {
     state.publicKeys.push(
       anchorKey(5, rotationKey(0).publicKey, { disabledAt: 1 }),
