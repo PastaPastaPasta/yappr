@@ -9,9 +9,14 @@
  *    (else CRITICAL) authentication key, as if that key had been typed in.
  *    A CRITICAL key it also holds is kept in the tab's memory for actions
  *    that need it (lib/auth/critical-key.ts).
- * 3. Its messaging key: the DIP-13 7' key for this build's anchor at rotation
- *    0. Used when it is current, added (MASTER-signed) when the account has
- *    none, and left alone when another wallet's key is there.
+ * 3. Its messaging key: the DIP-13 7' key for this build's anchor (DIP
+ *    dashpay/dips#181 "Encryption Keys"). The phrase's candidates are its
+ *    rotations 0', 1', ... at the 9-level path (while each is on the
+ *    identity) and the pre-DIP key at the path without a rotation level. The
+ *    account's current key is used when it is any candidate; rotation 0' is
+ *    added (MASTER-signed) when the account has none and no candidate was ever
+ *    on it; anything else is left alone (another wallet's key, or a disabled
+ *    candidate).
  *
  * The phrase is passed in, never stored, logged or sent; derived key bytes are
  * zeroed once their WIFs are taken (best effort: see dip13.ts).
@@ -22,12 +27,15 @@ import { keyNetwork } from '@/lib/constants'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { hash160 } from '@/lib/crypto/hash'
 import {
+  APP_KEY_PURPOSE,
   appEncryptionKeyPath,
   identityAuthKeyPath,
   IDENTITY_GAP_LIMIT,
   InvalidPhraseError,
+  legacyAppEncryptionKeyPath,
   MASTER_KEY_INDEX,
   openDip13Wallet,
+  type Dip13Key,
   type Dip13Wallet,
 } from '@/lib/crypto/dip13'
 import { privateKeyToWif } from '@/lib/crypto/wif'
@@ -43,7 +51,7 @@ import {
   type AnchorKeyState,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
-import { criticalKey, masterKey, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
+import { criticalKey, masterKey, messagingKeyCandidates, phraseKeys, phraseMessagingState, sessionKey, type PhraseKey } from './recovery-phrase'
 
 /** After adding the messaging key: how long to wait for Platform to show it as current (the setup dialog's pattern). */
 const CONFIRM_ATTEMPTS = 6
@@ -157,7 +165,7 @@ async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey, canc
   if (refused) return state
   // Added, but the current-key read still lags: the identity's own newest anchor key decides.
   const identity = await identityService.getIdentity(draft.identityId, { fresh: true }).catch(() => null)
-  return identity && phraseMessagingState(draft.publicKey, null, identity.publicKeys, draft.anchorId) === 'current' ? 'this-key' : state
+  return identity && phraseMessagingState([draft.publicKey], null, identity.publicKeys, draft.anchorId).state === 'current' ? 'this-key' : state
 }
 
 /**
@@ -176,6 +184,7 @@ export async function preparePhraseSession(
   if (!identity) throw new PhraseSignInError('This account couldn\'t be found. Try again in a moment.')
   const held = phraseKeys(identity.publicKeys, (keyIndex) => wallet.derive(identityAuthKeyPath(network, identityIndex, keyIndex)))
   let messagingKey: MessagingKeyDraft | null = null
+  let candidateKeys: Dip13Key[] = []
   try {
     const signIn = sessionKey(held)
     if (!signIn) throw new PhraseSignInError('This recovery phrase can\'t sign in to this account.')
@@ -190,10 +199,21 @@ export async function preparePhraseSession(
 
     const anchorId = messagingAnchorId()
     if (!anchorId) return { ...session, messagingKey: null, messaging: 'unavailable' }
-    const key = wallet.derive(appEncryptionKeyPath(network, bs58.decode(identityId), bs58.decode(anchorId)))
-    messagingKey = { identityId, anchorId, privateKey: key.privateKey, publicKey: key.publicKey }
+    const identityBytes = bs58.decode(identityId)
+    const anchorBytes = bs58.decode(anchorId)
+    // Wallets before the DIP registered keys without the rotation level on testnet and devnet only.
+    const candidates = messagingKeyCandidates(
+      (rotation) => wallet.derive(appEncryptionKeyPath(network, identityBytes, anchorBytes, APP_KEY_PURPOSE.ENCRYPTION, rotation)),
+      network === 'mainnet' ? null : () => wallet.derive(legacyAppEncryptionKeyPath(network, identityBytes, anchorBytes)),
+      identity.publicKeys,
+      anchorId,
+    )
+    candidateKeys = candidates
     const current = await resolveEncryptionPublicKey(identityId, async () => null)
-    const state = phraseMessagingState(key.publicKey, current, identity.publicKeys, anchorId)
+    const { state, candidate } = phraseMessagingState(candidates.map((key) => key.publicKey), current, identity.publicKeys, anchorId)
+    // The current key when the phrase holds it; else rotation 0, the only key ever registered.
+    const key = candidates[candidate ?? 0]
+    messagingKey = { identityId, anchorId, privateKey: key.privateKey.slice(), publicKey: key.publicKey }
     if (state === 'another-wallet') return { ...session, messagingKey: null, messaging: 'another-wallet' }
     if (state === 'absent') {
       const master = masterKey(held)
@@ -211,5 +231,6 @@ export async function preparePhraseSession(
     // Everything but a messaging key handed back is wiped, whichever way this ends.
     for (const key of held) key.privateKey.fill(0)
     messagingKey?.privateKey.fill(0)
+    for (const key of candidateKeys) key.privateKey.fill(0)
   }
 }

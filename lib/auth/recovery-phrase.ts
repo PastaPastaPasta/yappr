@@ -78,35 +78,90 @@ export function masterKey(keys: readonly PhraseKey[]): PhraseKey | undefined {
   return authenticationAt(keys, SecurityLevel.MASTER)
 }
 
-/** Where the phrase's messaging key stands (#1210 `EncryptionKeyState`). */
+/** Where the phrase's messaging key stands (#1210 `EncryptionKeyState`, DIP dashpay/dips#181 "Encryption Keys"). */
 export type PhraseMessagingState = 'current' | 'absent' | 'another-wallet'
+
+/**
+ * Whether `publicKey` is an ENCRYPTION key bound to the anchor on the
+ * identity, in any state. (The same point under another purpose or contract
+ * is no anchor key.)
+ */
+function isAnchorKeyOnIdentity(publicKey: Uint8Array, identityKeys: readonly EncryptionKeyCandidate[], anchorId: string): boolean {
+  return identityKeys.some((key) => {
+    const data = normalizeBytes(key.data)
+    return key.purpose === KeyPurpose.ENCRYPTION && isBoundToContract(key.contractBounds, anchorId) && data !== null && bytesEqual(data, publicKey)
+  })
+}
+
+/**
+ * The keys a phrase may hold as its messaging key for the anchor, in the
+ * order the DIP finds them:
+ *
+ * 1. Rotation 0' at the DIP's 9-level path, always: it is the key a sign-in
+ *    registers when there is none (index 0 of the result).
+ * 2. Rotations 1', 2', ... at that path, each only while the one before is on
+ *    the identity in any state (rotations are registered in order, so the
+ *    first one that is not on the identity ends the scan).
+ * 3. The pre-DIP key at the path without a rotation level (`deriveLegacy`;
+ *    testnet and devnet wallets registered keys there), last, when asked for.
+ *
+ * Callers wipe every returned key's private bytes.
+ */
+export function messagingKeyCandidates(
+  deriveRotation: (rotation: number) => Dip13Key,
+  deriveLegacy: (() => Dip13Key) | null,
+  identityKeys: readonly EncryptionKeyCandidate[],
+  anchorId: string,
+): Dip13Key[] {
+  const keys = [deriveRotation(0)]
+  for (let rotation = 0; isAnchorKeyOnIdentity(keys[rotation].publicKey, identityKeys, anchorId); rotation++) {
+    keys.push(deriveRotation(rotation + 1))
+  }
+  // The last rotation derived is the first that is not on the identity: it can match nothing, and only
+  // rotation 0 is ever registered.
+  if (keys.length > 1) keys.pop()?.privateKey.fill(0)
+  if (deriveLegacy) keys.push(deriveLegacy())
+  return keys
+}
+
+export interface PhraseMessagingDecision {
+  state: PhraseMessagingState
+  /** Index into the candidates of the key that is current, when `state` is `current`. */
+  candidate: number | null
+}
 
 /**
  * `current` is the anchor's current key as `identities.contractKeys` reports
  * it (null for none); `identityKeys` the identity's keys, read fresh, whose
- * newest live anchor key stands in when that read finds none.
- * - current: the phrase's key is the current one: use it.
- * - absent: there is none, and the phrase's key was never on the identity: add it.
- * - another-wallet: another key is current or live, or the phrase's key was
- *   disabled. It is never replaced at sign-in: replacing it would orphan
- *   everything peers encrypted to it (a rotation, which only a wallet does, on request).
+ * newest live anchor key stands in when that read finds none. `candidates` are
+ * the public keys of {@link messagingKeyCandidates}.
+ * - current: the identity's current key is one of the phrase's candidates: use it.
+ * - absent: there is no current key, and none of the candidates was ever on
+ *   the identity: add rotation 0 (the first candidate).
+ * - another-wallet: a current or live key is none of the candidates, or the
+ *   candidates on the identity are all disabled. It is never replaced at
+ *   sign-in: replacing it would orphan everything peers encrypted to it (a
+ *   rotation, which only a wallet does, on request).
  */
 export function phraseMessagingState(
-  derivedPublicKey: Uint8Array,
+  candidates: readonly Uint8Array[],
   current: Uint8Array | null,
   identityKeys: readonly EncryptionKeyCandidate[],
   anchorId: string,
-): PhraseMessagingState {
-  const isPhraseKey = (candidate: EncryptionKeyCandidate): boolean => {
-    const data = normalizeBytes(candidate.data)
-    return data !== null && bytesEqual(data, derivedPublicKey)
+): PhraseMessagingDecision {
+  const indexOf = (data: Uint8Array): number => candidates.findIndex((candidate) => bytesEqual(candidate, data))
+  const decide = (data: Uint8Array): PhraseMessagingDecision => {
+    const candidate = indexOf(data)
+    return candidate === -1 ? { state: 'another-wallet', candidate: null } : { state: 'current', candidate }
   }
-  if (current) return bytesEqual(current, derivedPublicKey) ? 'current' : 'another-wallet'
+  if (current) return decide(current)
   // The current-key read can lag the identity: its newest live anchor key decides then, as in #1210.
   const newest = findAnchorEncryptionKey([...identityKeys], anchorId)
-  if (newest) return isPhraseKey(newest) ? 'current' : 'another-wallet'
-  // The phrase's anchor key, disabled: never added again. The same point under another purpose or contract is no anchor key.
-  const disabledAnchorKey = identityKeys.some((key) => key.purpose === KeyPurpose.ENCRYPTION
-    && isBoundToContract(key.contractBounds, anchorId) && isPhraseKey(key))
-  return disabledAnchorKey ? 'another-wallet' : 'absent'
+  if (newest) {
+    const data = normalizeBytes(newest.data)
+    return data === null ? { state: 'another-wallet', candidate: null } : decide(data)
+  }
+  // A candidate's anchor key, disabled: never added again.
+  const disabled = candidates.some((candidate) => isAnchorKeyOnIdentity(candidate, identityKeys, anchorId))
+  return { state: disabled ? 'another-wallet' : 'absent', candidate: null }
 }

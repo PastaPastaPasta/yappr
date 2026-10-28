@@ -764,11 +764,13 @@ function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKe
 
 /**
  * Wallet rule 7: one encryption key per (identity, app), shared by every
- * device, with dashwallet-ios #1210's states: re-send the current key when
- * this wallet derives it (a legacy persona at any rotation an operator
- * registered, e.g. `scripts/verify-appconnect.mjs --restore-anchor-key`),
- * register rotation 0 when there is none, and leave the slot out when another
- * wallet made the current one or rotation 0 was disabled. Never rotate.
+ * device, with dashwallet-ios #1210's states and DIP dashpay/dips#181's
+ * "Encryption Keys": re-send the current key when this wallet derives it (any
+ * rotation at the DIP's path, the pre-DIP key without a rotation level, or a
+ * legacy persona's rotation an operator registered, e.g.
+ * `scripts/verify-appconnect.mjs --restore-anchor-key`), register rotation 0
+ * at the DIP's path when there is none, and leave the slot out when another
+ * wallet made the current one or any candidate was disabled. Never rotate.
  */
 async function prepareEncryptionKey(
   persona: Persona,
@@ -778,10 +780,12 @@ async function prepareEncryptionKey(
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
 ): Promise<{ slot: Slot; register?: NewIdentityKey } | undefined> {
-  // Rotation 0 first. A seeded persona holds rotation 0 only (#1210); a legacy one may hold later
-  // rotations an operator registered, each its own key added lowest first, so fewer exist than the keys it holds.
-  const held = persona.connect.encryptionKeys(binding.contractId, binding.purpose, chainKeys.length)
-  const privateKey = held[0]
+  // Rotation 0 first: the only key registered. Later rotations are each their own key added lowest first,
+  // so fewer exist than the keys the identity holds. The pre-DIP key (a seeded persona's, no rotation level) is last.
+  const rotations = persona.connect.encryptionKeys(binding.contractId, binding.purpose, chainKeys.length)
+  const legacy = persona.connect.legacyEncryptionKey?.(binding.contractId, binding.purpose)
+  const held = legacy ? [...rotations, legacy] : rotations
+  const privateKey = rotations[0]
   const publicKey = getYapprPublicKey(privateKey)
   const role: AppConnectSlotRole = binding.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption'
   const current = (await ports.contractKeys(persona.identityId, bs58.encode(binding.contractId), binding.purpose))
@@ -796,7 +800,7 @@ async function prepareEncryptionKey(
     ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} was made by another wallet; slot omitted`)
     return undefined
   }
-  if (chainKeys.some((key) => bytesEqual(key.data, publicKey))) {
+  if (held.some((candidate) => chainKeys.some((key) => bytesEqual(key.data, getYapprPublicKey(candidate))))) {
     ports.log(`persona ${persona.personaIdx}: the ${role} key for app ${plan.appId} is on the identity but not current (disabled?); slot omitted`)
     return undefined
   }

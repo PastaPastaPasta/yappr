@@ -7,7 +7,8 @@
  * `ConnectKey` and key-wallet), on the same wasm primitive as the web's
  * recovery-phrase sign-in (lib/crypto/dip13.ts):
  *
- *   encryption: m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'          (normative; rotation 0 only)
+ *   encryption: m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'/rotation'   (normative: DIP dashpay/dips#181)
+ *               (testnet and devnet wallets before the DIP used the same path without /rotation')
  *   auth i:     m/9'/coin'/5'/6'/0'/identityId'/hash256(appEphPub || u8(i))'   (#1210's leaf)
  *
  * Seedless personas (the sakura pool, and the testnet staging ledger whose keys
@@ -24,7 +25,7 @@
  */
 import { sha256 } from '@noble/hashes/sha2.js'
 import { concatBytes } from '@noble/hashes/utils.js'
-import { appEncryptionKeyPath, sessionAuthKeyPath, type AppKeyPurpose, type Dip13Network, type Dip13Wallet } from '../../../../lib/crypto/dip13'
+import { appEncryptionKeyPath, legacyAppEncryptionKeyPath, sessionAuthKeyPath, type AppKeyPurpose, type Dip13Network, type Dip13Wallet } from '../../../../lib/crypto/dip13'
 import { hkdfSecretKey, requireLength } from '../key-exchange'
 
 const encoder = new TextEncoder()
@@ -57,8 +58,16 @@ export interface AuthKeySource {
 export interface ConnectKeys {
   scheme: 'dip13' | 'legacy-hkdf'
   authKey(source: AuthKeySource, bindingIndex: number): Uint8Array
-  /** The encryption keys this wallet holds for (app, purpose), rotation 0 first; DIP-13 holds rotation 0 only (#1210). */
+  /**
+   * The encryption keys this wallet holds for (app, purpose), rotation 0 first: rotations `0..rotations`
+   * (DIP-13: at the DIP's 9-level path, where rotation 0 is the only key a login ever registers).
+   */
   encryptionKeys(appId: Uint8Array, purpose: number, rotations: number): Uint8Array[]
+  /**
+   * The key at the pre-DIP path without a rotation level, where wallets before the DIP registered
+   * theirs on testnet and devnet; absent where no such key exists. Found and re-sent, never registered.
+   */
+  legacyEncryptionKey?(appId: Uint8Array, purpose: number): Uint8Array
 }
 
 /** DIP-13 keys from the pool's recovery phrase, at the persona's identity. */
@@ -69,10 +78,20 @@ export function dip13ConnectKeys(wallet: Dip13Wallet, network: Dip13Network, ide
       if (!source.appEphemeralPubKey) throw new Error('this grant record predates the DIP-13 keys and cannot re-derive them')
       return wallet.derive(sessionAuthKeyPath(network, identityId, appConnectAuthKeyLeaf(source.appEphemeralPubKey, bindingIndex))).privateKey
     },
-    encryptionKeys(appId, purpose) {
+    encryptionKeys(appId, purpose, rotations) {
       requireLength(appId, 32, 'app id')
-      return [wallet.derive(appEncryptionKeyPath(network, identityId, appId, purpose as AppKeyPurpose)).privateKey]
+      return Array.from({ length: Math.max(1, rotations + 1) }, (_, rotation) =>
+        wallet.derive(appEncryptionKeyPath(network, identityId, appId, purpose as AppKeyPurpose, rotation)).privateKey)
     },
+    // The DIP's pre-DIP keys were testnet and devnet only.
+    ...(network === 'mainnet'
+      ? {}
+      : {
+          legacyEncryptionKey(appId: Uint8Array, purpose: number) {
+            requireLength(appId, 32, 'app id')
+            return wallet.derive(legacyAppEncryptionKeyPath(network, identityId, appId, purpose as AppKeyPurpose)).privateKey
+          },
+        }),
   }
 }
 

@@ -4,14 +4,17 @@
  * rs-platform-wallet `ConnectKey` -> rust-dashcore key-wallet `dip9.rs`):
  *
  *   identity auth key:   m/9'/coin'/5'/0'/0'/identity_index'/key_index'
- *   app encryption key:  m/9'/coin'/5'/7'/0'/identity_id'/contract_id'/purpose'
+ *   app encryption key:  m/9'/coin'/5'/7'/0'/identity_id'/contract_id'/purpose'/rotation'
  *
  * `identity_id'` and `contract_id'` are DIP-14 256-bit hardened children, so
  * the derivation runs on wasm-sdk's `deriveKeyFromSeedWithExtendedPath`
  * (key-wallet's own BIP-32), which the pinned vectors in dip13.test.ts check
  * byte for byte. coin is 5' on mainnet and 1' elsewhere. The encryption key is
- * normative (docs/APP_CONNECT_PROFILE.md section 7): peers and every wallet holding the
- * phrase must find the same key, so nothing here may change without new vectors.
+ * normative (DIP dashpay/dips#181 "Encryption Keys"): peers and every wallet
+ * holding the phrase must find the same key, so nothing here may change without
+ * new vectors. The `rotation'` level is the DIP's; wallets before it registered
+ * keys on testnet and devnet at the same path without that level
+ * (`legacyAppEncryptionKeyPath`), and rust-dashcore still pins that shorter path.
  *
  * No `@/` imports: the test wallet (mobile/tools) imports this file directly.
  */
@@ -47,8 +50,28 @@ export function identityAuthKeyPath(network: Dip13Network, identityIndex: number
   return `m/9'/${coinType(network)}'/5'/0'/0'/${hardened(identityIndex)}/${hardened(keyIndex)}`
 }
 
-/** `m/9'/coin'/5'/7'/0'/identity_id'/contract_id'/purpose'`: one half of an identity's encryption pair for a contract. */
+/**
+ * `m/9'/coin'/5'/7'/0'/identity_id'/contract_id'/purpose'/rotation'`: one half
+ * of an identity's encryption pair for a contract. `rotation` is a hardened
+ * 31-bit index: 0 for the first key, one higher for each rotation. The only
+ * path new keys are registered at.
+ */
 export function appEncryptionKeyPath(
+  network: Dip13Network,
+  identityId: Uint8Array,
+  contractId: Uint8Array,
+  purpose: AppKeyPurpose = APP_KEY_PURPOSE.ENCRYPTION,
+  rotation = 0,
+): string {
+  return `${legacyAppEncryptionKeyPath(network, identityId, contractId, purpose)}/${hardened(rotation)}`
+}
+
+/**
+ * `m/9'/coin'/5'/7'/0'/identity_id'/contract_id'/purpose'`: the path without
+ * the rotation level, where testnet and devnet wallets built before the DIP
+ * registered their keys. Such a key is found and kept, never newly registered.
+ */
+export function legacyAppEncryptionKeyPath(
   network: Dip13Network,
   identityId: Uint8Array,
   contractId: Uint8Array,
