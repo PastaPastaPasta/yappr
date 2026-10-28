@@ -1,3 +1,4 @@
+import type { AppConnectCarrier, YapprKeyExchangeNetworkName } from 'platform-auth'
 import { parseAppConnectPins as parsePins } from './pins.mjs'
 import { DASHPAY_CONTRACT_ID } from '@/lib/constants'
 
@@ -24,6 +25,25 @@ export function loginProtocol(): LoginProtocol {
 
 export function isAppConnectBuild(): boolean {
   return loginProtocol() === 'app-connect'
+}
+
+/**
+ * Which URI carries the request in the QR code (DIP dashpay/dips#181):
+ * `dashpay://connect` or the transitional `dash-key:`. Current testnet and
+ * devnet wallets accept only `dash-key:`, so that stays the default there;
+ * `NEXT_PUBLIC_APP_CONNECT_CARRIER=dashpay` switches a build to the DIP's URI.
+ * Mainnet is always `dashpay`, whatever the variable says.
+ */
+export function parseAppConnectCarrier(
+  value: string | undefined,
+  network: YapprKeyExchangeNetworkName,
+): AppConnectCarrier {
+  if (network === 'mainnet') return 'dashpay'
+  return value?.trim() === 'dashpay' ? 'dashpay' : 'dash-key'
+}
+
+export function appConnectCarrier(network: YapprKeyExchangeNetworkName): AppConnectCarrier {
+  return parseAppConnectCarrier(process.env.NEXT_PUBLIC_APP_CONNECT_CARRIER, network)
 }
 
 /** Platform's App Connect system contract, where wallets publish `loginKeyResponse` documents. */

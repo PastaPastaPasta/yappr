@@ -1,13 +1,16 @@
 /**
  * Lets the app ask whether a Dash wallet is installed (PRD AUTH-05):
- * `Linking.canOpenURL('dash-key:…')` answers only for schemes the app
+ * `Linking.canOpenURL('dashpay://connect')` or `('dash-key:…')` answers only for schemes the app
  * declares, in LSApplicationQueriesSchemes on iOS and in <queries> on
  * Android 11+. Without them both platforms always say "no wallet".
  */
 const { withAndroidManifest, withInfoPlist } = require('expo/config-plugins');
 
-/** Wallet sign-in (`dash-key:`) and key registration (`dash-st:`). */
-const WALLET_SCHEMES = ['dash-key', 'dash-st'];
+/**
+ * Wallet sign-in (`dashpay://connect`, and the transitional `dash-key:`) and
+ * key registration (`dash-st:`).
+ */
+const WALLET_SCHEMES = ['dashpay', 'dash-key', 'dash-st'];
 
 /** @type {import('expo/config-plugins').ConfigPlugin} */
 const withWalletSchemes = (config) => {

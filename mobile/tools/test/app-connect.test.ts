@@ -332,6 +332,27 @@ describe('App Connect wallet rules', () => {
     expect(chain.calls).toEqual(['update 90 +3 -[]', 'create 90'])
   })
 
+  it('answers a dashpay://connect request like the dash-key: one, and routes it from respond()', async () => {
+    const chain = newChain()
+    const { request, appPrivateKey } = newRequest()
+    const uri = buildAppConnectUri(request, 'testnet', CALLBACK, 'dashpay')
+    expect(uri.startsWith('dashpay://connect?v=2&n=t&r=')).toBe(true)
+    expect(isAppConnectUri(uri)).toBe(true)
+    expect(isAppConnectUri(uri.replace('dashpay://connect', 'DASHPAY://Connect'))).toBe(true)
+    expect(isAppConnectUri('dashpay://sign?v=2&n=t')).toBe(false)
+    await answer(chain, uri, { network: 'testnet' })
+    expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
+    expect(chain.calls).toEqual(['update 90 +3 -[]', 'create 90'])
+  })
+
+  it('refuses a mainnet dash-key: request without touching the chain', async () => {
+    const chain = newChain()
+    const { request } = newRequest()
+    const uri = buildAppConnectUri(request, 'testnet', CALLBACK).replace('n=t', 'n=m')
+    await refusalOf(answer(chain, uri, { network: 'testnet' }))
+    expect(chain.calls).toEqual([])
+  })
+
   it.each(['devnet', 'mainnet'] as const)('refuses %s requests in testnet mode before writing', async (network) => {
     const chain = newChain()
     const { request } = newRequest()

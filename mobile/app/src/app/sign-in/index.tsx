@@ -17,22 +17,21 @@ import { Text } from '~/ui/Text';
 import { motion, tw, useColors, type IconComponent } from '~/ui/tokens';
 
 /**
- * Whether an app on this device handles `dash-key:` links (AUTH-05). iOS
- * answers only for schemes listed in LSApplicationQueriesSchemes, Android
- * only for intents declared in <queries> (both in app.config.ts). null
- * while asking.
+ * Whether an app on this device handles `dashpay://connect` or `dash-key:`
+ * links (AUTH-05); either scheme counts. iOS answers only for schemes listed
+ * in LSApplicationQueriesSchemes, Android only for intents declared in
+ * <queries> (both in app.config.ts). null while asking.
  */
 function useWalletInstalled(): boolean | null {
   const [installed, setInstalled] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
-    Linking.canOpenURL('dash-key:yappr')
-      .then((can) => {
-        if (live) setInstalled(can);
-      })
-      .catch(() => {
-        if (live) setInstalled(false);
-      });
+    // One scheme failing to answer must not hide the other's yes.
+    Promise.allSettled([Linking.canOpenURL('dashpay://connect'), Linking.canOpenURL('dash-key:yappr')]).then(
+      (answers) => {
+        if (live) setInstalled(answers.some((answer) => answer.status === 'fulfilled' && answer.value));
+      },
+    );
     return () => {
       live = false;
     };

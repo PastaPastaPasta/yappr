@@ -98,7 +98,7 @@ export async function respond(input: RespondInput, ports: ResponderPorts): Promi
   if (input.faults || input.otherPersona || input.spamPersonas) throw new Error('Fault flags apply to App Connect (v=2) requests only')
   if (uri.startsWith('dash-key:')) return respondToKeyExchange(input, ports)
   if (uri.startsWith('dash-st:')) return respondToStateTransition(input, ports)
-  throw new Error('Unsupported URI: expected dash-key: or dash-st:')
+  throw new Error('Unsupported URI: expected dashpay://connect, dash-key: or dash-st:')
 }
 
 async function respondToKeyExchange(input: RespondInput, ports: ResponderPorts): Promise<RespondResult> {

@@ -9,7 +9,12 @@ import { KeyPurpose, KeySecurityLevel, type AppConnectKeyBounds } from './types'
  *
  *   body = 0x02 ‖ appEphPub(33) ‖ appId(32) ‖ labelLen(1) ‖ label ‖ TLV*
  *   TLV  = type(1) ‖ len(1) ‖ value
- *   uri  = dash-key:<base58(body)>?n=<m|t|d>&v=2[&cb=<https URL>]
+ *   uri  = dashpay://connect?v=2&n=<m|t|d>&r=<base64url(body)>[&cb=<https URL>]
+ *          (the transitional carrier, testnet and devnet only:
+ *           dash-key:<base58(body)>?n=<m|t|d>&v=2[&cb=<https URL>])
+ *
+ * Local divergence from upstream platform-auth: the dashpay://connect carrier
+ * and the canonical base64url codec follow DIP dashpay/dips#181.
  *
  * Even TLV types must be understood (a decoder refuses unknown ones); odd
  * types are optional and unknown ones are skipped. TLVs appear in ascending
@@ -431,34 +436,104 @@ function checkCallbackUrl(callbackUrl: string): void {
   }
 }
 
+const BASE64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+const BASE64URL_CHARS = /^[A-Za-z0-9_-]*$/
+
+/** Canonical base64url (RFC 4648 section 5) without padding. */
+export function base64urlEncode(bytes: Uint8Array): string {
+  let out = ''
+  for (let i = 0; i < bytes.length; i += 3) {
+    const chunk = (bytes[i] << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0)
+    out += BASE64URL_ALPHABET[(chunk >> 18) & 63] + BASE64URL_ALPHABET[(chunk >> 12) & 63]
+    if (i + 1 < bytes.length) out += BASE64URL_ALPHABET[(chunk >> 6) & 63]
+    if (i + 2 < bytes.length) out += BASE64URL_ALPHABET[chunk & 63]
+  }
+  return out
+}
+
+/**
+ * Decodes canonical base64url. Refuses `=`, `+`, `/`, any other character
+ * outside the alphabet, a length of 1 mod 4 and non-zero trailing bits, so
+ * every value has exactly one encoding.
+ */
+export function base64urlDecode(text: string): Uint8Array {
+  if (!BASE64URL_CHARS.test(text)) invalid('value is not canonical base64url')
+  if (text.length % 4 === 1) invalid('base64url value has an impossible length')
+  const out = new Uint8Array(Math.floor((text.length * 3) / 4))
+  let outAt = 0
+  for (let i = 0; i < text.length; i += 4) {
+    const group = text.slice(i, i + 4)
+    let chunk = 0
+    for (let j = 0; j < 4; j++) {
+      chunk = (chunk << 6) | (j < group.length ? BASE64URL_ALPHABET.indexOf(group[j]) : 0)
+    }
+    // Characters past the last full byte only pad the final group; they must be zero.
+    const bytes = Math.floor((group.length * 6) / 8)
+    if (bytes < 3 && (chunk & ((1 << (24 - bytes * 8)) - 1)) !== 0) {
+      invalid('base64url value has non-zero trailing bits')
+    }
+    out[outAt++] = (chunk >> 16) & 255
+    if (bytes > 1) out[outAt++] = (chunk >> 8) & 255
+    if (bytes > 2) out[outAt++] = chunk & 255
+  }
+  return out
+}
+
+/**
+ * Which URI wraps the request: `dashpay://connect` (DIP: App Connect, required
+ * on mainnet) or the transitional `dash-key:` (testnet and devnet only).
+ */
+export type AppConnectCarrier = 'dashpay' | 'dash-key'
+
+export const APP_CONNECT_MAX_URI_BYTES = 4096
+export const APP_CONNECT_MAX_R_LENGTH = 1366
+export const APP_CONNECT_MAX_BODY_BYTES = 1024
+
 export function buildAppConnectUri(
   request: AppConnectRequest,
   network: YapprKeyExchangeNetworkName,
   callbackUrl?: string,
+  carrier: AppConnectCarrier = network === 'mainnet' ? 'dashpay' : 'dash-key',
 ): string {
-  const body = bs58.encode(encodeAppConnectRequest(request))
-  let uri = `dash-key:${body}?n=${YAPPR_NETWORK_IDS[network]}&v=${APP_CONNECT_REQUEST_VERSION}`
+  if (carrier === 'dash-key' && network === 'mainnet') invalid('the dash-key: carrier is not allowed on mainnet')
+  const bodyBytes = encodeAppConnectRequest(request)
+  let uri: string
+  if (carrier === 'dashpay') {
+    if (bodyBytes.length > APP_CONNECT_MAX_BODY_BYTES) invalid('request body is too long')
+    uri = `dashpay://connect?v=${APP_CONNECT_REQUEST_VERSION}&n=${YAPPR_NETWORK_IDS[network]}&r=${base64urlEncode(bodyBytes)}`
+  } else {
+    uri = `dash-key:${bs58.encode(bodyBytes)}?n=${YAPPR_NETWORK_IDS[network]}&v=${APP_CONNECT_REQUEST_VERSION}`
+  }
   if (callbackUrl !== undefined) {
     checkCallbackUrl(callbackUrl)
     uri += `&cb=${encodeURIComponent(callbackUrl)}`
   }
+  if (carrier === 'dashpay' && encoder.encode(uri).length > APP_CONNECT_MAX_URI_BYTES) invalid('URI is too long')
   return uri
 }
 
 /**
- * Parses a `dash-key:` v2 URI. Throws {@link AppConnectRequestError}; a v1 URI
- * is `unsupported` here (it belongs to the legacy key exchange).
+ * Parses an App Connect v2 URI: `dashpay://connect?...` or the transitional
+ * `dash-key:<base58>?...` (refused when `n=m`). Throws
+ * {@link AppConnectRequestError}; a v1 URI is `unsupported` here (it belongs to
+ * the legacy key exchange).
  */
 export function parseAppConnectUri(uri: string): ParsedAppConnectUri {
-  if (!uri.startsWith('dash-key:')) invalid('not a dash-key URI')
-  const rest = uri.slice('dash-key:'.length)
-  const queryStart = rest.indexOf('?')
-  if (queryStart === -1) invalid('URI has no query')
+  if (uri.startsWith('dash-key:')) return parseDashKeyUri(uri)
+  if (/^dashpay:/i.test(uri)) return parseDashpayConnectUri(uri)
+  return invalid('not an App Connect URI')
+}
 
-  const params = new URLSearchParams(rest.slice(queryStart + 1))
-  for (const name of ['n', 'v', 'cb']) {
+/** Parses the query; a repeated `known` parameter makes the URI invalid, unknown ones are ignored. */
+function parseQuery(query: string, known: readonly string[]): URLSearchParams {
+  const params = new URLSearchParams(query)
+  for (const name of known) {
     if (params.getAll(name).length > 1) invalid(`query parameter ${name} is repeated`)
   }
+  return params
+}
+
+function readVersionAndNetwork(params: URLSearchParams): YapprKeyExchangeNetworkName {
   const version = params.get('v')
   if (version !== String(APP_CONNECT_REQUEST_VERSION)) {
     throw new AppConnectRequestError('unsupported', `unsupported URI version ${version ?? '(none)'}`)
@@ -467,6 +542,23 @@ export function parseAppConnectUri(uri: string): ParsedAppConnectUri {
   const network = (Object.keys(YAPPR_NETWORK_IDS) as YapprKeyExchangeNetworkName[])
     .find((name) => YAPPR_NETWORK_IDS[name] === networkId)
   if (network === undefined) invalid(`unknown network ${networkId ?? '(none)'}`)
+  return network
+}
+
+function readCallback(params: URLSearchParams): string | undefined {
+  const callbackUrl = params.get('cb') ?? undefined
+  if (callbackUrl !== undefined) checkCallbackUrl(callbackUrl)
+  return callbackUrl
+}
+
+function parseDashKeyUri(uri: string): ParsedAppConnectUri {
+  const rest = uri.slice('dash-key:'.length)
+  const queryStart = rest.indexOf('?')
+  if (queryStart === -1) invalid('URI has no query')
+
+  const params = parseQuery(rest.slice(queryStart + 1), ['n', 'v', 'cb'])
+  const network = readVersionAndNetwork(params)
+  if (network === 'mainnet') invalid('the dash-key: carrier is not accepted on mainnet')
 
   let requestBytes: Uint8Array
   try {
@@ -475,9 +567,29 @@ export function parseAppConnectUri(uri: string): ParsedAppConnectUri {
     invalid('request is not base58')
   }
 
-  const callbackUrl = params.get('cb') ?? undefined
-  if (callbackUrl !== undefined) checkCallbackUrl(callbackUrl)
+  const callbackUrl = readCallback(params)
+  return { request: decodeAppConnectRequest(requestBytes), requestBytes, network, callbackUrl }
+}
 
+function parseDashpayConnectUri(uri: string): ParsedAppConnectUri {
+  if (encoder.encode(uri).length > APP_CONNECT_MAX_URI_BYTES) invalid('URI is too long')
+  if (uri.includes('#')) invalid('URI has a fragment')
+  const match = /^dashpay:\/\/([^/?#]*)\/?(?:\?([\s\S]*))?$/i.exec(uri)
+  if (!match) invalid('not a dashpay://connect URI')
+  const [, authority, query] = match
+  // Case-insensitive host; userinfo or a port would make the authority differ.
+  if (authority.toLowerCase() !== 'connect') invalid('not a dashpay://connect URI')
+  if (query === undefined) invalid('URI has no query')
+
+  const params = parseQuery(query, ['n', 'v', 'r', 'cb'])
+  const network = readVersionAndNetwork(params)
+  const r = params.get('r')
+  if (r === null) invalid('URI has no request')
+  if (r.length > APP_CONNECT_MAX_R_LENGTH) invalid('request is too long')
+  const requestBytes = base64urlDecode(r)
+  if (requestBytes.length > APP_CONNECT_MAX_BODY_BYTES) invalid('request body is too long')
+
+  const callbackUrl = readCallback(params)
   return { request: decodeAppConnectRequest(requestBytes), requestBytes, network, callbackUrl }
 }
 

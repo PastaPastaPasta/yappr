@@ -309,6 +309,14 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     expect(router.push).toHaveBeenCalledWith('/sign-in/key');
   });
 
+  it.each([['dashpay://connect'], ['dash-key:yappr']])('counts a wallet that answers only for %s', async (scheme) => {
+    jest.spyOn(Linking, 'canOpenURL').mockImplementation(async (url) => url === scheme);
+    render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.getByTestId('sign-in-open-wallet')).toBeTruthy();
+    expect(screen.queryByTestId('sign-in-no-wallet')).toBeNull();
+  });
+
   it('signs in with App Connect where the network runs it, on this device or another', async () => {
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
     walletSignIn('app-connect');

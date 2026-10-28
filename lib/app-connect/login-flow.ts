@@ -10,6 +10,7 @@ import {
   listAppConnectCandidates,
   verifyAppConnectCandidate,
   type AppConnectCandidate,
+  type AppConnectCarrier,
   type AppConnectGrant,
   type AppConnectRequest,
   type AppConnectVerification,
@@ -17,7 +18,7 @@ import {
   type YapprKeyExchangeNetworkName,
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
-import { APP_CONNECT_MIN_PROTOCOL_VERSION, type AppConnectPins } from './config'
+import { APP_CONNECT_MIN_PROTOCOL_VERSION, appConnectCarrier, type AppConnectPins } from './config'
 import type { AppConnectTrust } from './group-trust'
 import type { AppConnectPlatformPort } from './platform-port'
 import { appConnectCallbackUrl, buildYapprAppConnectRequest } from './yappr-request'
@@ -83,6 +84,8 @@ export interface AppConnectLoginDeps {
   /** Origin and base path for the wallet's return link. */
   origin: string
   basePath: string
+  /** Which URI the QR code carries; defaults to the build's `NEXT_PUBLIC_APP_CONNECT_CARRIER` (always `dashpay` on mainnet). */
+  carrier?: AppConnectCarrier
   /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
   callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
@@ -256,7 +259,9 @@ export class AppConnectLogin {
     const callbackUrl = this.deps.callbackUrl
       ? this.deps.callbackUrl(bytesToHex(hash))
       : appConnectCallbackUrl(this.deps.origin, this.deps.basePath, bytesToHex(hash))
-    this.active = { record, privateKey, request, hash, uri: buildAppConnectUri(request, this.deps.network, callbackUrl) }
+    const carrier = this.deps.carrier ?? appConnectCarrier(this.deps.network)
+    const uri = buildAppConnectUri(request, this.deps.network, callbackUrl, carrier)
+    this.active = { record, privateKey, request, hash, uri }
     this.progress = new Map()
     this.discardVerified()
     this.set({ phase: 'waiting', uri: this.active.uri })

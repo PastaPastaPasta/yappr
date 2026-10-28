@@ -31,6 +31,8 @@ interface Harness {
 function harness(options: {
   protocolVersion?: number
   trusted?: boolean
+  network?: 'mainnet' | 'testnet' | 'devnet'
+  carrier?: 'dashpay' | 'dash-key'
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
@@ -43,7 +45,8 @@ function harness(options: {
   } as unknown as AppConnectPlatformPort
   const login = new AppConnectLogin({
     pins,
-    network: 'devnet',
+    network: options.network ?? 'devnet',
+    ...(options.carrier ? { carrier: options.carrier } : {}),
     port,
     trust: async () => (options.trusted === false
       ? { ok: false, reason: 'unexpected-members', group: { groupId: pins.groupId, members: [] } }
@@ -97,6 +100,16 @@ describe('AppConnectLogin', () => {
     h.login.pollNow()
     await h.flush()
     expect(last(h)).toMatchObject({ phase: 'confirm', candidates: [{ identityId: ALICE }] })
+  })
+
+  it('shows a dashpay://connect QR code when the carrier is dashpay, and on mainnet by default', async () => {
+    const devnet = harness({ carrier: 'dashpay' })
+    await devnet.login.start()
+    expect((last(devnet) as { uri: string }).uri).toMatch(/^dashpay:\/\/connect\?v=2&n=d&r=[\w-]+&cb=https%3A%2F%2Fyap\.pr%2Fdevnet%2Fconnect%2F%3Fr%3D[0-9a-f]{40}$/)
+
+    const mainnet = harness({ network: 'mainnet' })
+    await mainnet.login.start()
+    expect((last(mainnet) as { uri: string }).uri).toMatch(/^dashpay:\/\/connect\?v=2&n=m&r=/)
   })
 
   it('offers a chooser when several identities answer, and wipes the ones not chosen', async () => {

@@ -228,8 +228,13 @@ interface Slot {
   bounds?: AppConnectKeyBounds
 }
 
-/** True for a `dash-key:` URI of request v2 (`v=2`); v1 belongs to the legacy key exchange. */
+/**
+ * True for an App Connect request v2 URI: `dashpay://connect` (scheme and host
+ * compared case-insensitively) or the transitional `dash-key:` with `v=2`; v1
+ * `dash-key:` belongs to the legacy key exchange.
+ */
 export function isAppConnectUri(uri: string): boolean {
+  if (/^dashpay:\/\/connect(?=[/?#]|$)/i.test(uri)) return true
   if (!uri.startsWith('dash-key:')) return false
   const query = uri.indexOf('?')
   return query !== -1 && new URLSearchParams(uri.slice(query + 1)).getAll('v').includes('2')

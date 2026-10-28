@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { describe, expect, it } from 'vitest'
-import { parseAppConnectPins, parseLoginProtocol } from './config'
+import { parseAppConnectCarrier, parseAppConnectPins, parseLoginProtocol } from './config'
 
 const id = (n: number) => bs58.encode(new Uint8Array(32).fill(n))
 const APP = id(1)
@@ -15,6 +15,24 @@ describe('parseLoginProtocol', () => {
     expect(parseLoginProtocol('legacy')).toBe('legacy')
     expect(parseLoginProtocol('App-Connect')).toBe('legacy')
     expect(parseLoginProtocol(' app-connect ')).toBe('app-connect')
+  })
+})
+
+describe('parseAppConnectCarrier', () => {
+  it('keeps dash-key: on testnet and devnet unless dashpay is asked for', () => {
+    for (const network of ['testnet', 'devnet'] as const) {
+      expect(parseAppConnectCarrier(undefined, network)).toBe('dash-key')
+      expect(parseAppConnectCarrier('', network)).toBe('dash-key')
+      expect(parseAppConnectCarrier('dash-key', network)).toBe('dash-key')
+      expect(parseAppConnectCarrier('bogus', network)).toBe('dash-key')
+      expect(parseAppConnectCarrier(' dashpay ', network)).toBe('dashpay')
+    }
+  })
+
+  it('is always dashpay on mainnet', () => {
+    for (const value of [undefined, '', 'dash-key', 'dashpay']) {
+      expect(parseAppConnectCarrier(value, 'mainnet')).toBe('dashpay')
+    }
   })
 })
 
