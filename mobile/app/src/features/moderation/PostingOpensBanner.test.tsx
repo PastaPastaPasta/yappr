@@ -12,7 +12,10 @@ jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').eng
 const closedCapabilities = { postingMayBeClosed: true } as CapabilitiesDTO;
 const openCapabilities = { postingMayBeClosed: false } as CapabilitiesDTO;
 
-const ATMS = new Date(2026, 9, 23, 15, 40).getTime();
+// A week ahead: a fixed date turns "Posting opens on …" into "shortly" once it passes.
+const AT = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+AT.setHours(15, 40, 0, 0);
+const ATMS = AT.getTime();
 
 function setup(capabilities: CapabilitiesDTO, answer?: PostingOpeningDTO | Promise<PostingOpeningDTO>) {
   fakeEngine.setStatus({ state: 'ready', info: { capabilities } });
@@ -40,7 +43,7 @@ describe('PostingOpensBanner', () => {
     setup(closedCapabilities, { kind: 'at', atMs: ATMS });
     await act(async () => {});
     const banner = screen.getByTestId('posting-opens-banner');
-    expect(banner).toHaveAccessibleName(/^Posting opens on .*2026/);
+    expect(banner).toHaveAccessibleName(new RegExp(`^Posting opens on .*${AT.getFullYear()}`));
     expect(screen.getByText(/^Posting opens on /)).toBeTruthy();
   });
 
