@@ -36,15 +36,22 @@ deliverable. It runs on bonsia (D4), needs Y0, and covers:
 
 ### Test-wallet harness
 
-- A debug-only app at `mobile/test-wallet/`, installed on simulators and
-  emulators only and never shipped.
-- It registers `dash-key` and `dash-st`, approves each request automatically
-  or on a Maestro tap, and derives keys from a pool identity.
-- It publishes real responses on bonsia (and on testnet for interop) in both
-  the App Connect and key-exchange-v2 formats, provisions the per-device
-  multi-bound key set (D6), and honors `cb=`.
-- Maestro drives the whole "open wallet → approve → return" loop across the
-  two apps.
+*Amended 2026-10-27.* The harness is the Node responder in `mobile/tools/`
+(`mobile/tools/test-wallet-responder.mjs`, ADR E5.4), not a debug-only app.
+[mobile/tools/README.md](../../mobile/tools/README.md) is its manual.
+
+- It runs on the host, not on a simulator or emulator, and is never shipped.
+  The CLI and an HTTP server (`POST /respond`) let Maestro `runScript` drive
+  it.
+- It answers App Connect request v2 (the `dash-key:` carrier today), and the
+  legacy v1 key exchange and `dash-st:` for legacy builds. It approves each
+  request on its own, and derives keys from a pool identity.
+- For App Connect it registers the key set the profile defines (the
+  contract-group key, the DashPay `profile` key and the anchor encryption
+  key), publishes real `loginKeyResponse` documents on the sakura pool
+  (`YAPPR_SAKURA_IDENTITIES`), and honours `cb`.
+- Maestro drives the whole "open wallet → approve → return" loop: the Yappr
+  app on the device or simulator, and the responder on the host.
 
 ## Scenario matrix (release candidate)
 
@@ -115,8 +122,9 @@ last release baseline.
   builds on bonsia, the store builds on testnet, and both on mainnet once it
   is available. That is 2 wallets × 2 channels × the sign-in and payment
   scenarios above.
-- **Shared test plan.** One test plan, `docs/mobile/APP_CONNECT_PROFILE.md`,
-  with test vectors (request payload, derived keys, envelope) that all three
+- **Shared test plan.** One spec, [`docs/APP_CONNECT_PROFILE.md`](../APP_CONNECT_PROFILE.md),
+  with test vectors (request payload, derived keys, envelope; also in
+  `vendor/platform-auth/src/app-connect/vectors.json`) that all three
   codebases run in unit tests.
 - **Escalation.** Any interop failure is P0 for the release unless both teams
   agree on a documented workaround.

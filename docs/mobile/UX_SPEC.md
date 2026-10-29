@@ -673,7 +673,7 @@ Every inbound link goes through `src/app/+native-intent.tsx`, which rewrites the
 | `/settings?section=S` | `/settings/account`, `/settings/notifications`, `/settings/privacy`, `/settings/appearance`, `/settings/about` for S = `account`, `notifications`, `privacy`, `appearance`, `about` | Any other section → `/settings` |
 | `/terms`, `/privacy`, `/about`, `/about/*`, `/cookies`, `/contract` | In-app browser | |
 | `/dpns/register`, `/store*`, `/item`, `/cart`, `/checkout`, `/orders*`, `/blog*`, `/embed` | In-app browser | Web-only in 1.0 |
-| `/app/connect?r=…` | Sign-in return (resumes `/sign-in/wallet`) | Only with `FEATURE_APP_CONNECT` |
+| `/connect/?r=…` (with `app=<scheme>` from the wallet's return link) | Sign-in return (resumes `/sign-in/connect` on App Connect builds) | Only on App Connect builds (`NEXT_PUBLIC_LOGIN_PROTOCOL`) |
 | anything else | `/(tabs)/home` + toast "This link isn't supported in the app" with "Open in browser" | |
 
 Signed out, links to the Notifications or Messages tab open that tab's signed-out placeholder (4.37); links to bookmarks, `startConversation`, and settings sections other than appearance, about and privacy open `/sign-in` first and continue to the target after sign-in.
@@ -1473,7 +1473,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | signin.wrongNetwork | This wallet is on a different network. Switch your wallet to {network} and try again. |
 | signin.noIdentity | No identity was found for this wallet on {network}. |
 | keyreg.title | First time login (web: "First Time Login", sentence-cased here) |
-| keyreg.body | Yappr needs to add keys to your identity. Your wallet signs this once. |
+| keyreg.body | Yappr needs to add keys to your identity. Your wallet signs this once. (legacy builds only) |
 | keyreg.list | Keys to be added: **(web)** |
 | keyreg.continue | Continue in wallet |
 | keyreg.finishing | Finishing setup… This can take up to a minute. |

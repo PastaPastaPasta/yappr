@@ -98,7 +98,7 @@ The common definition of done (§4) applies to every PR in addition to its row.
   - Root `npm run lint`, `npm run test`, `npm run build`, `npx tsc --noEmit` and `npm run lint:dead` all pass with **no change** in web output.
   - The new workflow is green.
 
-**M3 notes.**
+**M3 notes.** *(Amended 2026-10-27: the responder now also answers App Connect request v2, and the `dash-key:` v1 / `dash-st:` handling below is its legacy mode. [mobile/tools/README.md](../../mobile/tools/README.md) is its manual and [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md) the spec it follows.)*
 - **Scope:** `mobile/tools/test-wallet-responder.mjs`, a Node tool built over `vendor/platform-auth/src/key-exchange/yappr-protocol.ts` (bundled with the engine's esbuild).
   1. **`dash-key:` request.** It parses the URI (`parseYapprKeyExchangeUri`) and derives a **deterministic** login key per (identity, app contract) from the pool identity's CRITICAL key with HKDF. Deterministic means a re-login yields the same derived keys. It then does ECDH with the app's ephemeral public key, encrypts with AES-GCM, and writes the `loginKeyResponse` document on the key-exchange contract, signed with the identity's HIGH key.
   2. **`dash-st:` request.** It parses the unsigned IdentityUpdate, signs it with the MASTER key (keyId 0) and broadcasts it.
@@ -179,6 +179,7 @@ Every Wave 3 screen PR:
 - **Key registration:** the `dash-st:` step.
 - **Other ways to sign in:** key entry (WIF or hex).
 - **Not yet shipped:** the App Connect button behind `FEATURE_APP_CONNECT=false`.
+- *Amended 2026-10-27:* wallet sign-in is App Connect request v2 on the builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, with no key-registration step, and the App Connect button shipped (it was planned behind a `FEATURE_APP_CONNECT` flag, which does not exist in the code). The key exchange and `dash-st:` registration above are the legacy path.
 - **Accounts:** the account switcher and an optional biometric lock.
 
 **S4 notes.**

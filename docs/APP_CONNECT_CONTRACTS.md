@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members joined it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there (32/0). `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values, and `/devnet` signs in with App Connect (`NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`).** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](archive/PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
+**Deployments.** The testnet release set (anchor, group and members) was registered on 2026-10-21; see [TESTNET_RELEASE.md](TESTNET_RELEASE.md). Sakura's Platform chain was wiped for 5.0.0-beta.6 on 2026-10-13, and the set is registered again on the new genesis with social v16 in v15's slot: the anchor at maker nonce 24 (`APP_ID` `BbWcUA8M…`) registers the group `7iM9B6WD…`, and the seven members joined it at nonces 25-31 ([SAKURA_BETA6_DEPLOY.md](SAKURA_BETA6_DEPLOY.md), which records why no beta.5 id is reproduced). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there (32/0). `.env.devnet` and `.env.testnet` carry the four `NEXT_PUBLIC_APP_CONNECT_*` values, and builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` sign in with App Connect ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md)). The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](archive/PLATFORM_V5_BETA5_UPGRADE.md), social v16 in [SOCIAL_V16.md](SOCIAL_V16.md).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -10,9 +10,9 @@ Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
 The group has to be registered by some contract's create transition, and its id is `contractGroupId(owner, nonce)` of that create. Yappr registers it from a dedicated contract, `yappr-app` (`contracts/yappr-app-contract.json`), rather than from social or from the first feature contract as the sakura deploys did:
 
-- **A stable app id.** The anchor's id is the App Connect app id: the id a wallet's brand map is keyed by, the id the login request names, and the id grant records point at. Social is re-cut every few weeks and gets a new id each time; the anchor has no reason to change.
+- **A stable app id.** The anchor's id is the App Connect app id: the id the login request names, the id grant records point at, and the only identity the app has. A wallet shows it, and may map it to a friendlier name of its own, but nothing on chain describes the app ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md#app-identity)). Social is re-cut every few weeks and gets a new id each time; the anchor has no reason to change.
 - **A home for the encryption key.** Peers find a user's messaging key with `identities.contractKeys([...ids], APP_ID, [ENCRYPTION])`. Encryption keys can only be bound to a contract, never to a group (`InvalidKeyPurposeForContractBoundsError`), and only to one that opts in. The anchor is the contract that opts in, so the binding survives every re-cut of the contracts that use it.
-- **A narrow group.** Memberships can never be removed. Before App Connect, Sakura's old group (`Cxxdiq5b…`, registered by key backup) held twelve contracts, including the retired password vault and key backup. That group was replaced at genesis; the current beta.6 group is the anchor-owned set in the status above. The release also uses a fresh anchor group containing only its intended members.
+- **A narrow group.** Memberships can never be removed. Before App Connect, Sakura's old group (`Cxxdiq5b…`, registered by key backup) held twelve contracts, including the retired password vault and key backup. That group was replaced at genesis; the current beta.6 group is the anchor-owned set in the Deployments paragraph above. The release also uses a fresh anchor group containing only its intended members.
 
 The cost is that every member is registered again, into the new group, at the cut-over. Their data starts empty (re-seeded on devnet). This was approved on 2026-10-11.
 
@@ -33,9 +33,9 @@ The cost is that every member is registered again, into the new group, at the cu
 - Drive's own test (`test_identity_update_adding_contract_bound_key_multiple_reference_to_latest`) pins it: the current key is the newest whatever the order inside an update, and disabling an older key leaves the pointer on the newer one.
 - The opt-in can never change: a contract update that changes `requiresIdentityEncryptionBoundedKey` is refused (`DataContractConfig::validate_update_v0`).
 
-No decryption opt-in: App Connect has no DECRYPTION twin.
+No decryption opt-in: Yappr's anchor has no DECRYPTION twin, so Yappr asks for no DECRYPTION binding. (The App Connect DIP allows a DECRYPTION `ENC_BINDING` for any contract whose decryption requirement is 0 or 2, and today's wallets grant one only for `appId`. Yappr's choice to name its anchor is not a DIP rule: an encryption binding may name any qualifying contract, whoever owns it.)
 
-**`appInfo`**, the one document type. It is deliberately small.
+**`appInfo`**, the one document type. It is deliberately small, and it is **not an app manifest**. It is owner-only metadata about the app. Wallets and apps do not read it, and a wallet must not use it to identify the app, to authorise a callback host or to set limits: an app is identified by its contract id alone, because anyone could publish an owner-only record that names itself "Yappr" ([APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md#app-identity)). The type exists because the anchor was registered with it; its schema is not extended.
 
 | Property | |
 | --- | --- |
@@ -45,7 +45,7 @@ No decryption opt-in: App Connect has no DECRYPTION twin.
 
 - `creationRestrictionMode: 1` (owner only). Batch validation refuses a create whose owner is not the contract owner (`DocumentCreationNotAllowedError`, `document_create_transition_action/advanced_structure_v1`).
 - A unique `byOwner` index, so there is at most one, and it is the maker's.
-- Mutable, never deleted. Nothing reads it yet; a wallet may show it beside its own brand-map entry.
+- Mutable, never deleted. Nothing reads it.
 
 The anchor uses no byte arrays, so no property type shorthand applies. It is not `readonly`, which keeps additive updates possible (a later document type). Group memberships can only be declared at create, so an update never changes the member list. It can still widen the group: a whole-contract membership covers every type the contract has or will have (see "Group trust model").
 
@@ -78,7 +78,7 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | N+6 | `storefront` (v10) | `yappr-storefront-contract.json` | `69daf979…` | ~18,704 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `passkeyVault` ([PASSKEY_VAULT.md](PASSKEY_VAULT.md)) | `yappr-passkey-vault-contract.json` | `14094cad…` | 1,008 B | `NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID` |
 
-- This is the **testnet release set** (social v17, blog v9, pollr v8, storefront v10; [SOCIAL_V17.md](SOCIAL_V17.md)). The password-era `authVault` is out (R-M6, D10): the passkey vault (`yappr-passkey-vault-contract.json`, [PASSKEY_VAULT.md](PASSKEY_VAULT.md)) joins at N+7 instead. Sakura's beta.6 genesis registered the previous set (social v16 at N+1, blog v8, pollr v7, storefront v8 and `authVault` at N+7; the ids below).
+- This is the **testnet release set** as first registered on 2026-10-21 (social v17, blog v9, pollr v8, storefront v10; [SOCIAL_V17.md](SOCIAL_V17.md)). The owner then abandoned social v17, blog v9 and storefront v10 (D42, [TESTNET_RELEASE.md](TESTNET_RELEASE.md)): they stay in the group for good, unused. Social v18, blog v10 and storefront v11 ([SOCIAL_V18.md](SOCIAL_V18.md)) are the appended entries of `APP_CONNECT_ENTRIES`; they join the same group when registered with `--append-after passkeyVault`. The password-era `authVault` is out (R-M6, D10): the passkey vault (`yappr-passkey-vault-contract.json`, [PASSKEY_VAULT.md](PASSKEY_VAULT.md)) joins at N+7 instead. Sakura's beta.6 genesis registered the previous set (social v16 at N+1, blog v8, pollr v7, storefront v8 and `authVault` at N+7; the ids below).
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create. The release cut's `~` sizes are `validate-contract-offline.mjs`'s estimates on the 5.0.0-rc.3 wasm-sdk.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
 - The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. Social v16's is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.6 wasm-sdk, plus the membership; it passes the two 5.0.0-beta.6 wasm full parses and the node-rule audit, devnet and mainnet renderings alike.
@@ -103,7 +103,7 @@ In the group, each would permanently widen what every group-bound key can sign. 
 ## Registering the set
 
 Prerequisites:
-- Every node of the target network runs 5.0.0-beta.6 (social v16's typed-array `where` and indexOnly element indexes are refused before it; social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 to beta.5 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.6 or newer. The publisher itself needs the 5.0.0-beta.6 SDK: even `--plan` decodes every create with wasm-dpp2, and the beta.5 one refuses v16 (10231). The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
+- Every node of the target network runs 5.0.0-beta.6 or newer (testnet runs 5.0.0-rc.4: [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md); social v16's typed-array `where` and indexOnly element indexes are refused before it; social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 to beta.5 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.6 or newer. The publisher itself needs the 5.0.0-beta.6 SDK: even `--plan` decodes every create with wasm-dpp2, and the beta.5 one refuses v16 (10231). The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
 - The maker holds the cost above. Every connected mode prints each create's estimate (its registration fee plus a storage allowance) beside the maker's balance, and `--signed-dry-run` and `--live` refuse to sign unless the balance covers the estimate plus 20%.
 - NETWORK is required (no script defaults to a network). On testnet and mainnet the run must also name, explicitly: `--maker <id>`; `--interim <kind>`, `--election-windows <join>,<vote>`, `--election-delay <seconds>` and `--challenge-cool-down <seconds>`, which render every elected contract (social, blog, storefront) and are frozen into it (mainnet needs at least 86400 s per window); for `--signed-dry-run` and `--live`, `--maker-key-file <path> --maker-key-id <n>` (a key file of this user's with mode 0600 or tighter; there is no default path and no seed derivation off devnet); and for `--live`, `--production`. The journal's directory must be private (0700; created so when missing). The interim, windows and election delay are printed by every mode and recorded in the journal, and a resumed run must name the same ones. On a devnet they are optional and default to the files' own.
 - The connected modes gate on the protocol version of the proved current epoch, never on a status page.
@@ -222,10 +222,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal 
   - every member of the group must be pinned.
 
   A different owner, an admin, or a member the app does not pin blocks **new** logins. The user is not asked to approve a key that could sign for a contract the app does not know.
-- **Verified per candidate.** A wallet's response is accepted only if:
-  - the group key is AUTH, bound `contractGroup(GROUP_ID)`;
-  - the encryption key is bound `singleContract(APP_ID)` and is the current one according to `contractKeys`;
-  - nothing is unbound, CRITICAL outside the group key, or foreign-bound.
+- **Verified per candidate.** A wallet's response is accepted only if every granted key passes the verifier (hint, framing and AAD, bounds, levels, limits, the primary binding, and the anchor encryption key being the current one). The full list is in [APP_CONNECT_PROFILE.md](APP_CONNECT_PROFILE.md#app-rules), "Verification".
 - **The maker key is the root of trust.** Anything that can create contracts as the maker can grow the group. On mainnet the publisher should be a dedicated identity with cold MASTER and CRITICAL keys, used only for registrations.
 
 `verify-appconnect.mjs` checks the same invariants from outside after a registration:

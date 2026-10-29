@@ -100,6 +100,12 @@ Errors keep **verbatim evo-sdk messages**, so `lib/error-utils.ts` classificatio
 3. **App Connect.** The method, return route and session model are implemented against `platform/docs/protocol/app-connect.md` behind `FEATURE_APP_CONNECT`. It stays off until a wallet ships it.
 4. **Testing without a wallet.** A Node **test-wallet responder** (`mobile/tools/test-wallet-responder.mjs`) answers `dash-key:` and `dash-st:` requests for a pool identity on sakura. Maestro and agents drive real wallet-style round trips with it. No dev backdoor URLs and no secrets baked into builds.
 
+> **Amended 2026-10-27 (E5).** The decision above stands as the 2026-10-01 record. Since then sign-in has changed:
+> - Wallet sign-in is **App Connect request v2**, defined in [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md). It is implemented, not behind a flag: `FEATURE_APP_CONNECT` does not exist in the code. Builds choose by `NEXT_PUBLIC_LOGIN_PROTOCOL`, the engine reports `capabilities.walletSignIn` (`'app-connect'` or `'legacy'`), and the devnet, testnet and beta builds use App Connect.
+> - The v1 key exchange in item 1 (`dash-key:` v1, `dash-st:` first-login registration) is **legacy**. It is `NOT_SUPPORTED` on App Connect builds, is not registered on the release set, and goes before mainnet.
+> - The responder in item 4 answers request v2 as well as the legacy exchange ([mobile/tools/README.md](../../mobile/tools/README.md)).
+> - The Context line "No wallet does App Connect yet" dates from 2026-10-01. Current wallet builds are in the status box of the profile.
+
 - **Accounts.** Multiple accounts, each scoped by network and identity. Optional biometric unlock.
 - **Not on mobile in 1.0:** passkey and password vaults.
 

@@ -8,7 +8,8 @@
  * without needing to know the user's identity upfront. Identity is discovered
  * from the response document's $ownerId.
  *
- * Spec: YAPPR_DET_SIGNER_SPEC.md
+ * Legacy v1 key exchange (the v1 spec, YAPPR_DET_SIGNER_SPEC.md, is not in this
+ * repo). App Connect is the current login: docs/APP_CONNECT_PROFILE.md.
  */
 
 import bs58 from 'bs58'

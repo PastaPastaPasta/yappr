@@ -38,7 +38,7 @@ Yappr Mobile 1.0 is a native iOS and Android client for Yappr, the social app on
 | G2 | It feels like a native app, not a website | Native tabs, stacks, sheets, gestures, haptics, share sheet, pull to refresh, Dynamic Type; App Review guideline 4.2 risk is nil |
 | G3 | Dash Platform's realities are handled honestly | Every write shows its real state (posting, not confirmed, failed); no write is replayed blindly; every error says what happened and whether anything was charged |
 | G4 | Contract churn costs mobile nothing but a rebuild | No screen checks a build variant or a topology name; screens read capabilities from the engine (section 3) |
-| G5 | Agents and QA can test everything without a human wallet | The test-wallet responder drives key exchange; Maestro covers the ADR E8 flows |
+| G5 | Agents and QA can test everything without a human wallet | The test-wallet responder drives wallet sign-in (App Connect request v2; the legacy key exchange on legacy builds); Maestro covers the ADR E8 flows |
 
 ### Non-goals for 1.0
 
@@ -113,7 +113,7 @@ In story **Gating** lines: `all` = every build; `v2` = testnet build; `dev` = de
 
 - **Situation.** Runs Maestro flows and agent QA on simulators and emulators against sakura pool identities. Has no human wallet.
 - **Wants.** Deterministic sign-in, visible engine state, a way to export diagnostics, and stable accessibility identifiers.
-- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Troubleshooting (diagnostics, SET-08); give every interactive element a stable `testID` (A11Y-08).
+- **1.0 must:** support wallet sign-in through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Troubleshooting (diagnostics, SET-08); give every interactive element a stable `testID` (A11Y-08).
 
 ## 5. Success metrics
 
@@ -208,6 +208,7 @@ As a lurker, I want to read Yappr without an account, so that I can decide wheth
 
 #### AUTH-03 · Sign in with a wallet on this phone · P0 · all
 As Dana, I want to sign in by approving a request in my Dash wallet on the same phone, so that I never handle a key.
+- *Amended 2026-10-27.* The criteria below describe the **legacy v1 key exchange** (builds without `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`). On App Connect builds the request is App Connect request v2 ([APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md)): the app polls as the profile's "App rules" say (every 2 s, then 4 s, up to 10 minutes) instead of the 120 s run below, there is no key-registration step (AUTH-06), and the flow ends with "Is this you?" ([UX_SPEC.md](UX_SPEC.md), sign-in sheet; AUTH-13).
 - The sign-in screen leads with "Sign in with your Dash wallet". Tapping "Open wallet" creates a `dash-key:` request through `vendor/platform-auth` and opens it with the OS URL handler.
 - While waiting, the screen shows "Waiting for your wallet…", the wallet hint "Approve the request in your wallet, then come back here", a "Cancel" button and an "Open wallet again" button. There is no visible countdown.
 - The app polls for the response while in the foreground and polls again immediately each time it returns to the foreground.
@@ -232,6 +233,7 @@ As Dana, if I have no Dash wallet on this phone, I want to be told what to do, s
 
 #### AUTH-06 · First-time key registration · P0 · all
 As a user whose identity has never used Yappr, I want the app to add its keys in one more wallet step, so that I can sign in.
+- *Legacy builds only (amended 2026-10-27).* On App Connect builds the wallet registers the keys before it answers, so this step does not exist.
 - When the identity lacks the keys Yappr needs, the app shows "First time login" with "Keys to be added:" listing each key's purpose, and "Continue in wallet", which opens the unsigned `dash-st:` IdentityUpdate.
 - After the wallet signs and broadcasts, the screen shows "Finishing setup… This can take up to a minute." and polls the identity until the keys are on chain.
 - After 60 s without the keys, it shows "Still confirming. We'll keep checking." and keeps polling in the foreground for up to 10 minutes, with a "Check now" button.
@@ -287,6 +289,7 @@ As a user with a shared phone, I want Face ID or fingerprint before Yappr opens,
 As the team, we want App Connect implemented behind `FEATURE_APP_CONNECT`, so that we can turn it on when a wallet ships it.
 - With the flag off (every 1.0 build), no App Connect UI appears anywhere.
 - With the flag on in a dev build, a third method "Connect with App Connect" follows `platform/docs/protocol/app-connect.md`, and the `https://yap.pr/app/connect?r=` return route resumes the waiting screen.
+- *Amended 2026-10-27:* App Connect request v2 is the wallet sign-in on builds that set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect` (the devnet, testnet and beta builds); the engine reports `capabilities.walletSignIn` as `'app-connect'` or `'legacy'`. `FEATURE_APP_CONNECT` does not exist in the code. Both wallet buttons open `/sign-in/connect` ([UX_SPEC.md](UX_SPEC.md)). The spec is [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md); the platform document defines only where the response is stored. The wallet's return link is `https://yap.pr[/prefix]/connect/?r=<hash>&app=<scheme>`, which opens the app, and the legacy key exchange methods are `NOT_SUPPORTED` on App Connect builds.
 
 #### AUTH-14 · Session expired or key revoked · P1 · all
 As any user, I want to be told when my stored key no longer works, so that I can sign in again.
@@ -1130,7 +1133,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | Account deletion | No | ADR E7; required before a public store release (COMPLIANCE C5) | Before store |
 | Moderator tools: remove, restore, report queue, elections, bans, warnings | Yes | ADR E7 | Web only for now |
 | Passkey and password-vault sign-in, key backup | Yes | ADR E5; devnet/testnet artefact (README D9) | Never on mobile |
-| App Connect enabled | No | No wallet ships it yet (ADR E5) | When a wallet does |
+| App Connect on mainnet | No | Wallets must ship it first, and the `dash-key:` / `dash-st:` carriers are removed before mainnet (ADR E5, amended 2026-10-27) | When a wallet does |
 | Following other users' block lists (management UI) | Yes | Inherited blocks are honoured; management stays on web | 1.1 |
 | DashPay contacts import | Yes | Not in E7 | 1.1 |
 | YAPP purchase, starter-grant claim, "Pay with" setting | Yes | PD-11; App Review 3.1.1; YAPP locked on dev | Not planned on iOS |

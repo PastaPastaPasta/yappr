@@ -7,7 +7,7 @@ nightly (`.github/workflows/mobile-e2e.yml`).
 | Suite | Flows | Needs |
 | --- | --- | --- |
 | `smoke` | `flows/smoke/`: signed-out browse (Home, a thread, a profile), Explore and search, the signed-out tabs, settings toggles (theme, NSFW mode), the network sheet, About and its licenses list, deep links (cold and warm). Read only. | Nothing secret; any variant |
-| `full` | `smoke`, then `flows/full/`: key exchange through the test-wallet responder, key sign-in, post (deleted again), like and unlike, reply, follow and unfollow, a DM round trip, block and unblock, report, notifications, sign out. | The devnet variant (sakura) and two pool personas |
+| `full` | `smoke`, then `flows/full/`: wallet sign-in through the test-wallet responder (App Connect request v2 on the devnet variant), key sign-in, post (deleted again), like and unlike, reply, follow and unfollow, a DM round trip, block and unblock, report, notifications, sign out. | The devnet variant (sakura) and two pool personas |
 
 The full suite writes to sakura as pool personas (90–98; never 99, never
 testnet; 97 and 98 by default, since the engine's write suite uses 92–96).
@@ -44,7 +44,7 @@ writes, and only ever to sakura.
 repo root, `mobile/engine` and `mobile/tools`. It starts:
 
 - the **test-wallet responder** (`mobile/tools`, `E2E_RESPONDER_ADDR`), which
-  answers the sign-in QR's `dash-key:` and `dash-st:` links as the app's persona;
+  answers the sign-in QR's `dash-key:` link (App Connect request v2; the legacy v1 exchange and `dash-st:` only for legacy builds) as the app's persona;
 - the **peer** (`mobile/engine/harness/e2e-peer.ts`, `E2E_PEER_ADDR`): the engine
   in Node, signed in as the second persona. Flows reach it through
   `scripts/peer.js`: it publishes the posts that like, reply and report act

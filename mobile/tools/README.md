@@ -6,8 +6,8 @@ a human tapping through a wallet (ADR-001 E5.4). Given a `dashpay://connect`,
 
 | URI | What the responder does |
 | --- | --- |
-| `dashpay://connect?v=2&n=…&r=…` or `dash-key:…&v=2` App Connect request (`dash-key:` is refused when `n=m`) | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then replaces the persona's `loginKeyResponse` on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
-| `dash-key:…&v=1` legacy key-exchange request | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
+| `dashpay://connect?v=2&n=…&r=…` or `dash-key:…&v=2` App Connect request (`dash-key:` is refused when `n=m`) | Follows [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md): checks the request, registers the granted V1 keys in one MASTER-signed IdentityUpdate, then deletes its previous `loginKeyResponse` (by its values) and creates the new one on the App Connect system contract. See [App Connect](#app-connect-request-v2). |
+| `dash-key:…&v=1` legacy key-exchange request (legacy; goes before mainnet) | Parses it with `parseYapprKeyExchangeUri`. Derives the persona's login key for the app contract (see [Derivation](#derivation-legacy-v1-key-exchange)). Does ECDH with the app's ephemeral key and encrypts the login key with AES-GCM. Then it creates the persona's `loginKeyResponse` on the key-exchange contract, or replaces it on a re-login, signed with keyId 2 (AUTHENTICATION/HIGH). |
 | `dash-st:` unsigned IdentityUpdate | Decodes it. Checks that it updates the persona's identity, that it only adds AUTHENTICATION/HIGH and ENCRYPTION/MEDIUM keys and disables none (the 1.0 key registration), and that its identity nonce is not stale. Signs it with keyId 0 (MASTER), broadcasts it, and waits for the result. |
 
 It serves **devnet** or **testnet**, selected by one explicit env file. Requests for another network are refused before any write. Mainnet is always refused.
@@ -41,7 +41,7 @@ catches a stale `.env.devnet`: staging's still points at the abandoned bonsia.
 ## Usage
 
 ```bash
-export YAPPR_SAKURA_IDENTITIES=/Users/pasta/.local/share/yappr-sakura-20261001/identities.json
+export YAPPR_SAKURA_IDENTITIES=~/.local/share/yappr-sakura-<date>/identities.json   # the sakura pool file
 
 # One request (the answer is one JSON line on stdout; logs go to stderr)
 node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=1' --persona 90
@@ -53,12 +53,16 @@ curl -s -XPOST 127.0.0.1:8789/respond -H 'content-type: application/json' -d '{"
 curl -s 127.0.0.1:8789/health
 ```
 
-- `--key-index <n>` (CLI) or `"keyIndex"` (HTTP) requests a key rotation. By
-  default the responder reuses the keyIndex stored in the persona's existing
-  response for that app contract, or 0 if there is none. An index below the
-  stored one is refused (spec §12.2). The spec's request (§8.1) carries a
-  keyIndex; the request format Yappr ships (`vendor/platform-auth`) does not,
-  so the index is chosen on the responder side, as the wallets do.
+- `--key-index <n>` (CLI) or `"keyIndex"` (HTTP) requests a key rotation on
+  the **legacy v1 key exchange only**. By default the responder reuses the
+  keyIndex stored in the persona's existing response for that app contract, or
+  0 if there is none. An index below the stored one is refused (v1 spec
+  §12.2). The v1 spec's request (§8.1) carries a keyIndex; the v1 request
+  Yappr ships (`vendor/platform-auth`) does not, so the index is chosen on the
+  responder side, as the wallets do. App Connect request v2 has no key index.
+  The App Connect DIP adds a rotation level to the encryption path, a
+  wallet-side action for requirement-2 contracts, and the responder never
+  rotates the key.
 - Routes: `POST /respond` (any URI above; App Connect also takes `faults`,
   `otherPersona` and `spamPersonas`), `POST /revoke` (App Connect,
   [below](#renew-and-revoke)) and `GET /health`.
@@ -71,7 +75,7 @@ curl -s 127.0.0.1:8789/health
 - Use personas **90–99**, the mobile reservation (ENGINE.md §12.3), so mobile
   writes never collide with corpus seeding.
 
-A first sign-in takes two calls, just as with a real wallet:
+Legacy v1: a first sign-in takes two calls, just as with a real wallet:
 1. The app shows `dash-key:`. The responder publishes the response.
 2. The app finds that the derived keys are not on the identity yet, and shows
    `dash-st:`. The responder signs the IdentityUpdate with MASTER and
@@ -79,12 +83,20 @@ A first sign-in takes two calls, just as with a real wallet:
 
 A re-login needs only step 1. It derives the same keys.
 
-## Derivation
+App Connect v2 needs one call: the responder registers the keys before it
+publishes the response.
 
-The responder follows `YAPPR_DET_SIGNER_SPEC.md` §5.1 step 2, §6 and §9: the
-"Dash Platform Application Key Exchange Protocol", which `vendor/platform-auth`
-and `lib/services/key-exchange-service.ts` implement on the app side. It
-departs from the spec in one place. A real wallet takes the HKDF input key from
+## Derivation (legacy v1 key exchange)
+
+This section is the **legacy v1** exchange. App Connect request v2 derives its
+keys as [`docs/APP_CONNECT_PROFILE.md`](../../docs/APP_CONNECT_PROFILE.md)
+wallet rules 6 and 7 say (`src/app-connect/derive.ts`).
+
+For v1 the responder follows `YAPPR_DET_SIGNER_SPEC.md` §5.1 step 2, §6 and §9,
+the "Dash Platform Application Key Exchange Protocol", which
+`vendor/platform-auth` and `lib/services/key-exchange-service.ts` implement on
+the app side. That spec is not in this repository, and v1 is legacy. The
+responder departs from it in one place. A real wallet takes the HKDF input key from
 BIP32 (`m/9'/coin'/21'/account'`), but the pool holds no seed, so the responder
 uses the persona's AUTHENTICATION/CRITICAL key (keyId 1) instead:
 
@@ -117,9 +129,10 @@ codec and the response crypto, so it cannot drift from the app side:
    Another persona is refused as `invalid`.
 4. **Owner consistency** (chain reads): the group's owner, and the owner of
    every singleContract or documentType contract, must be the owner of
-   `appId`. The only foreign document type allowed is DashPay `profile`. An
-   `ENC_BINDING` must name `appId`, and `appId` must opt in to bounded keys of
-   that purpose. A proposed expiry in the past is `invalid`.
+   `appId`. The only foreign document type allowed is DashPay `profile`. Like
+   today's wallets, it accepts an `ENC_BINDING` for `appId` only, and `appId`
+   must opt in to bounded keys of that purpose (the DIP allows any contract
+   whose requirement is 0 or 2). A proposed expiry in the past is `invalid`.
 5. **Limits**: each auth key gets the binding's level and its proposals,
    clamped to 5 DASH and 365 days. A binding without an expiry gets the
    90-day preset, so every auth key is V1.
@@ -220,7 +233,7 @@ DIP-13 `"identityIndex"`. The persona's keyId 0 must be the phrase's MASTER key
 at that index, or the persona is refused:
 
 ```
-enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (rotation 0 only, as #1210)
+enc    = m/9'/coin'/5'/7'/0'/identityId'/appId'/purpose'                 (no rotation level, as #1210; the DIP appends `/rotation'`, and this key stays valid as a current key at another path)
 auth_i = m/9'/coin'/5'/6'/0'/identityId'/hash256(appEphPub || u8(i))'      (#1210's leaf)
 ```
 
@@ -271,15 +284,13 @@ for it. A lock left by a process that is gone is taken over.
 
 ### Running it live
 
-Not possible yet: sakura runs Platform 5.0.0-beta.3, and the `yappr-app`
-anchor contract and its group are not registered. The App Connect system
-contract (`H8F9…`) exists, and the responder's chain reads were checked
-against sakura (read-only). Once sakura runs beta.4 and the anchor is
-registered, answer a request from the app (or one built with
+Sakura's beta.6 genesis (2026-10-13) registered the `yappr-app` anchor and its
+group, and the App Connect system contract (`H8F9…`) exists on every
+protocol-14 network. Answer a request from the app (or one built with
 `buildAppConnectUri`) like this:
 
 ```bash
-export YAPPR_SAKURA_IDENTITIES=~/.local/share/yappr-sakura-<date>/identities.json
+export YAPPR_SAKURA_IDENTITIES=<path to the sakura identities file>
 node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2&cb=…' --persona 90
 node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2' --persona 90 --fault expires-in=120
 node mobile/tools/test-wallet-responder.mjs --uri 'dash-key:…?n=d&v=2' --persona 90 --fault second-identity --other-persona 91
@@ -291,21 +302,10 @@ curl -s -XPOST 127.0.0.1:8789/respond -H 'content-type: application/json' \
   -d '{"uri":"dash-key:…&v=2","persona":90,"faults":["budget=1000"]}'
 ```
 
-## Live status
-
-The live legacy `dash-key:` (`v=1`) path is **blocked until W-SAKURA**: the sakura Yappr
-contracts, including key-exchange, are not published yet. Until then, a
-`dash-key:` request fails before it connects to the network:
-
-```
-NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID is unset in <env file>: the key-exchange contract is not
-published on devnet sakura yet (W-SAKURA), so dash-key: requests cannot be answered.
-```
-
-Once W-SAKURA lands, run it with the cut-over `.env.devnet`, which needs no
-`--env-file`. Until then, use the sakura template
-(`--env-file /Users/pasta/.local/share/yappr-sakura-20261001/env.devnet.template`)
-for `dash-st:`.
+The legacy `dash-key:` v1 path needs a key exchange contract id
+(`NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID`). The release env files leave it blank
+([TESTNET_RELEASE.md](../../docs/TESTNET_RELEASE.md) D9), and the responder
+then refuses a v1 request with "NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID is unset".
 
 ## Layout
 
