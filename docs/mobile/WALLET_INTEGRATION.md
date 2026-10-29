@@ -89,7 +89,8 @@ exchange, described at the end of this section.
 
 ### Keys and re-login
 
-A sign-in yields the three keys above (profile rules 3 to 7). Two things matter
+A sign-in yields the two auth keys above, and the encryption key when the wallet
+grants it (profile rules 3 to 7). Two things matter
 on a phone:
 
 - **Auth keys are new at every login.** A login with the same `CONNECTION_ID`
