@@ -5,8 +5,11 @@ never imports a recovery phrase, WIF, or password-vault or passkey-vault key on
 production builds; non-production builds also allow raw-key sessions (README D9,
 D20). A wallet sign-in holds only the keys the wallet provisions through App Connect: a
 CRITICAL key bound to Yappr's contract group, a HIGH key bound to the DashPay
-`profile` document type, and one ENCRYPTION/MEDIUM key bound to the
-`yappr-app` anchor contract. It sends anything more privileged to the wallet.
+`profile` document type, and, when the wallet grants it, one ENCRYPTION/MEDIUM
+key bound to the `yappr-app` anchor contract. A wallet omits that key when the
+identity's current one is another wallet's, or when only disabled ones exist
+(profile wallet rule 7); messaging then needs setting up before it works. It
+sends anything more privileged to the wallet.
 The request, the keys and how the app verifies them are defined in
 [APP_CONNECT_PROFILE.md](../APP_CONNECT_PROFILE.md), and this document does not
 restate them. It covers what is specific to the mobile apps.
@@ -44,9 +47,10 @@ these schemes, or the OS may send the request back to Yappr. The planned
 scheme belongs to the wallet.
 
 The request is App Connect request v2
-([profile](../APP_CONNECT_PROFILE.md#request)). It travels today as a
-`dash-key:` link, which is allowed on testnet and devnet only. `dashpay://connect`
-is the protocol carrier and the only one on mainnet; no wallet handles it yet.
+([profile](../APP_CONNECT_PROFILE.md#request)). It travels as
+`dashpay://connect`, the protocol carrier and the only one on mainnet, or on
+testnet and devnet as the transitional `dash-key:` link (see the note under the
+flow). No wallet handles `dashpay://connect` yet.
 
 ```
 Yappr                                         DashPay
@@ -55,7 +59,7 @@ Yappr                                         DashPay
    and save the request context (ephemeral
    private key, created time, network,
    connection id) in the Keychain/Keystore.
-2. Open dash-key:<body>?n=t&v=2&cb=…        ──▶ 3. Approval sheet: "Yappr wants to sign
+2. Open the request's link (note below)    ──▶ 3. Approval sheet: "Yappr wants to sign
    (UIApplication.open / ACTION_VIEW)             in as @alice" with the app id, network
                                                    and permissions; the user picks an
                                                    identity if they have several.
@@ -69,6 +73,13 @@ Yappr                                         DashPay
    chain, decrypt, keep the key ring, throw
    away the ephemeral key.
 ```
+
+Step 2's link is the carrier the build offers: `dashpay://connect?v=2&n=…&r=…`
+on mainnet, either it or `dash-key:<body>?n=…&v=2` elsewhere
+(`NEXT_PUBLIC_APP_CONNECT_CARRIER`). Where a build offers both, the app opens
+the one a wallet on the device handles, and `dash-key:` when no wallet or both
+answer (`pickWalletUri`, `mobile/app/src/features/auth/wallet-uri.ts`). Either
+way it is the same request body, and the app polls for the same response.
 
 There is no second hand-off: the wallet registers the keys before it
 responds. A build picks its sign-in by `NEXT_PUBLIC_LOGIN_PROTOCOL`: the engine

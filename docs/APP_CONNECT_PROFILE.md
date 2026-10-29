@@ -104,7 +104,7 @@ Yappr's request (two auth bindings, one encryption binding, a connection id) is 
 
 ## Carriers in the DIP
 
-> **Not implemented in any wallet or app yet.** The body is the request v2 body above, unchanged. Only the carrier changes. The DIP is the reference for these URIs (its URIs section); the tables below summarise it. Its Request Vector section has the `dashpay://connect` URI for the test-vector request.
+> **No wallet accepts these yet.** Yappr builds and parses `dashpay://connect` (`buildAppConnectUri` in vendored platform-auth; see the status box for which builds emit it); `dashpay://sign` is not implemented on either side. The body is the request v2 body above, unchanged. Only the carrier changes. The DIP is the reference for these URIs (its URIs section); the tables below summarise it. Its Request Vector section has the `dashpay://connect` URI for the test-vector request.
 
 ### `dashpay://connect`
 
