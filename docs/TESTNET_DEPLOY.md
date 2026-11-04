@@ -7,8 +7,8 @@
 Testnet registration must pass `--election-delay 86400 --challenge-cool-down 1209600` with the one-day join
 and vote windows. The first charter is filed only after the registration
 contract's creation block plus that delay; the charter tool reads proved chain
-time and waits before broadcasting. Mainnet uses `--election-delay 259200 --challenge-cool-down 2592000` (three days) with one-week join and
-vote windows.
+time and waits before broadcasting. Mainnet uses `--election-delay 604800` (seven days; the publisher refuses any other
+mainnet delay) and `--challenge-cool-down 2592000`, with one-week join and vote windows.
 
 The release build mechanism landed first (#794); the activation PR filled
 `.env.testnet` and switched `build` to it. Native testnet builds use the same

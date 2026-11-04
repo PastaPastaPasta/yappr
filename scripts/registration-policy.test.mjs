@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   balanceGate, createCostEstimate, directoryProblem, electionWindowProblems, formatCredits, keyFileProblem,
-  parseChallengeCoolDown, parseElectionDelay, parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withChallengeCoolDown, withElectionDelay, withElectionWindows,
+  MAINNET_ELECTION_DELAY, parseChallengeCoolDown, parseElectionDelay, parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withChallengeCoolDown, withElectionDelay, withElectionWindows,
 } from './registration-policy.mjs';
 
 const MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
@@ -78,7 +78,18 @@ describe('registrationPolicy', () => {
   });
   it('refuses testnet windows on mainnet', () => {
     expect(() => registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '3600,3600', mode: 'plan' })).toThrow(/joinWindow 3600 s is outside 86400/);
-    expect(registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '604800,604800', electionDelay: '259200', challengeCoolDown: '2592000', mode: 'plan' }).electionWindows).toEqual({ joinWindow: 604800, voteWindow: 604800 });
+    expect(registrationPolicy({ ...TESTNET, network: 'mainnet', electionWindows: '604800,604800', electionDelay: '604800', challengeCoolDown: '2592000', mode: 'plan' }).electionWindows).toEqual({ joinWindow: 604800, voteWindow: 604800 });
+  });
+  it('holds mainnet to a seven-day election delay and leaves testnet its own', () => {
+    const MAINNET = { ...TESTNET, network: 'mainnet', electionWindows: '604800,604800', challengeCoolDown: '2592000', mode: 'plan' };
+    expect(MAINNET_ELECTION_DELAY).toBe(604800);
+    expect(registrationPolicy({ ...MAINNET, electionDelay: '604800' }).electionDelay).toBe(604800);
+    for (const delay of ['259200', '86400', '0', '604801']) {
+      expect(() => registrationPolicy({ ...MAINNET, electionDelay: delay })).toThrow(/--election-delay on mainnet is 604800 s/);
+    }
+    expect(() => registrationPolicy({ ...MAINNET, electionDelay: null })).toThrow(/--election-delay <seconds> is required on mainnet/);
+    expect(registrationPolicy({ ...TESTNET, mode: 'plan' }).electionDelay).toBe(86400);
+    expect(registrationPolicy({ network: 'devnet', mode: 'plan', electionDelay: '3600' }).electionDelay).toBe(3600);
   });
   it('signs off devnet only from an explicit key file and key id', () => {
     for (const mode of ['signed-dry-run', 'live']) {

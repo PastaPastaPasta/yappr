@@ -22,6 +22,8 @@
  * in register-lib.mjs): on mainnet `notYetUsable`, elsewhere the file's own
  * (the committed social cut says `contractOwner`, which a devnet needs).
  * `--interim <kind>` overrides it (testnet's interim is undecided).
+ * On mainnet it also registers with the seven-day first-election delay
+ * (`MAINNET_ELECTION_DELAY`, registration-policy.mjs).
  *
  * Run:
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --dry-run
@@ -39,6 +41,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { REPO_ROOT, createSdkHandle, ledgerEntry, loadLedger, socialContractId, wifFromHex } from './seed/seed-lib.mjs';
 import { network } from './sdk-env.mjs';
 import { auditModeration, contractSource, registrationJson, requireModeratorsExist, renderModeration, withInterim, withModerators } from './register-lib.mjs';
+import { MAINNET_ELECTION_DELAY, withElectionDelay } from './registration-policy.mjs';
 
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
@@ -63,7 +66,8 @@ export function loadSchemas(file, socialId) {
 
 function buildContract({ file, ownerId, identityNonce, socialId, platformVersion, moderators, interim }) {
   const source = loadContractFile(file, socialId);
-  const config = withModerators(withInterim(source.config, { network: network(), interim }), moderators);
+  const rendered = withModerators(withInterim(source.config, { network: network(), interim }), moderators);
+  const config = network() === 'mainnet' ? withElectionDelay(rendered, MAINNET_ELECTION_DELAY) : rendered;
   const json = registrationJson({ ...source, config }, { id: DataContract.generateId(ownerId, identityNonce).toBase58(), ownerId });
   if (config.moderation) console.log(`  registers with moderation ${renderModeration(config.moderation)} on ${network()}`);
   const dataContract = DataContract.fromJSON(json, true, platformVersion);
