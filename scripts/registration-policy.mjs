@@ -18,6 +18,9 @@ import { INTERIM_KINDS, electionWindowBounds } from './contract-probes.mjs';
 
 const NETWORKS = ['testnet', 'mainnet', 'devnet'];
 
+/** Mainnet's wait from contract creation to the first team's charter: seven days. */
+export const MAINNET_ELECTION_DELAY = 604_800;
+
 /** The network named by `value` (NETWORK, or an explicit override); unset is an error, never testnet. */
 export function requireNetwork(value) {
   const name = (value ?? '').trim();
@@ -108,6 +111,7 @@ export function registrationPolicy(options) {
     if (interim === null) problems.push(`--interim <kind> is required on ${network}: it is frozen into every elected contract`);
     if (rawWindows === null) problems.push(`--election-windows <join>,<vote> is required on ${network}: they are frozen into every elected contract`);
     if (rawDelay === null) problems.push(`--election-delay <seconds> is required on ${network}: it is frozen into every elected contract`);
+    else if (network === 'mainnet' && electionDelay !== null && electionDelay !== MAINNET_ELECTION_DELAY) problems.push(`--election-delay on mainnet is ${MAINNET_ELECTION_DELAY} s (got ${electionDelay})`);
     if (rawCoolDown === null) problems.push(`--challenge-cool-down <seconds> is required on ${network}: it is frozen into every contestable elected contract`);
     if (SIGNING_MODES.includes(mode) && keyFile === null) problems.push(`--${mode} on ${network} signs with --maker-key-file <path> --maker-key-id <id>; no key is ever derived or looked up`);
     if (mode === 'live' && !production) problems.push(`--live on ${network} broadcasts to a production network: add --production`);
