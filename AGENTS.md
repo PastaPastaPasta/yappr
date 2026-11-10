@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to coding agents (Claude Code, Codex and others) working in this repository. `CLAUDE.md` imports it.
+This file provides guidance to coding agents (Claude Code, Codex and others) working in this repository. `CLAUDE.md` is a symlink to it.
 
 ## Development Commands
 
