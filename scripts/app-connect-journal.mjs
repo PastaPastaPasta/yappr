@@ -19,12 +19,13 @@ export const policyKey = (recorded) => JSON.stringify({ interim: recorded.interi
  * be registered by mistake. It also holds the D36 rehearsal's anchor and
  * group ({@link TESTNET_REHEARSAL_SET}): a run appends to those only when it
  * names them (`testnetSet` 'rehearsal') AND signs as the rehearsal maker, and
- * the rehearsal maker never runs without naming them.
+ * the rehearsal maker never runs without naming them. An offline release
+ * plan needs no append target because it cannot register another anchor.
  */
-export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null } = {}) {
+export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null, mode = null } = {}) {
   if (network !== 'testnet') return testnetSet === null ? null : '--testnet-set is for testnet';
   if (testnetSet !== null && testnetSet !== 'rehearsal') return `--testnet-set takes rehearsal (got "${testnetSet}"); leave it out for the release set`;
-  if (appendAfter !== TESTNET_REGISTERED_THROUGH) {
+  if (appendAfter !== TESTNET_REGISTERED_THROUGH && !(mode === 'plan' && testnetSet === null && appendAfter === null)) {
     const startNonce = testnetSet === 'rehearsal' ? TESTNET_REHEARSAL_SET.startNonce : 57;
     return `testnet already holds the App Connect anchor and group: pass --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce ${startNonce})`;
   }
@@ -33,6 +34,9 @@ export function testnetAppendProblem(network, appendAfter, { testnetSet = null, 
   if (testnetSet === null && rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
   return null;
 }
+
+/** Whether every member of the selected set has been verified in its journal. */
+export const journalIsComplete = (plan, journal) => plan.contracts.every((c) => journal.contracts[c.name]?.state === 'verified');
 
 /** Whether an append run resumes a batch: its journal already holds one of the entries it creates. */
 export const isResumedAppend = (created, journal) => created.some((c) => journal?.contracts?.[c.name] !== undefined);
@@ -73,6 +77,8 @@ export function checkJournal(journal, plan, { path, policy, appendAfter, network
   for (const [key, want] of [['network', network], ['makerId', plan.groupOwner], ['startNonce', String(plan.anchor.nonce)], ['groupId', plan.groupId]]) {
     if (journal[key] !== want) throw new Error(`journal ${path}: ${key} is ${journal[key]}, this run's is ${want}`);
   }
+  const unknown = Object.keys(journal.contracts).filter((name) => !plan.contracts.some((c) => c.name === name));
+  if (unknown.length) throw new Error(`journal ${path}: ${unknown.join(', ')} is outside the selected set; refusing to mix`);
   const appends = journal.appends ?? [];
   if (appendAfter === null && appends.length > 0) throw new Error(`journal ${path} holds append batches (after ${appends.map((b) => b.after).join(', ')}); resume it with the same --append-after`);
   // An append batch renders its own new entries: its policy is recorded under `appends`, apart

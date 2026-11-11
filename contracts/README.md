@@ -33,15 +33,21 @@ network-specific moderation configuration.
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
 | storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
 | passkeyVault | [yappr-passkey-vault-contract.json](yappr-passkey-vault-contract.json) | `14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5` |
+
+These eight entries are the default set on every network and the mainnet
+release set (D45), matching the 2026-10-21 testnet registration. The publisher
+restores every member's env key and completes the journal at `passkeyVault`.
+
+The following experimental cuts are excluded from the release. Only testnet's
+`/beta` rehearsal plan includes them, after its eight historical members;
+select it with `--testnet-set rehearsal --append-after passkeyVault` and its
+own journal. The selector is refused on mainnet.
+
+| Rehearsal-only role | Source file | SHA-256 |
+| --- | --- | --- |
 | socialV18 | [yappr-social-contract-v18.json](yappr-social-contract-v18.json) | `71e4d4b3353965cf343448e254150d0a4ff183a17384d53c437b4c6eefb6604d` |
 | blogV10 | [yappr-blog-contract-v10.json](yappr-blog-contract-v10.json) | `8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159` |
 | storefrontV11 | [yappr-storefront-contract-v11.json](yappr-storefront-contract-v11.json) | `645a51a475a33794d713e23d9b27fd9a54531920e61c37e8e34c74b46f70b167` |
-
-The first eight rows are registered on testnet. `social`, `blog` and
-`storefront` (v17, v9, v10) are replaced members: they keep their files and
-pins so the set stays reproducible, but no variable names them and no charter
-is filed on them. The last three are the "hide, don't delete" members,
-appended with `register-app-connect-contracts --append-after passkeyVault`.
 
 The password-era vault is not a release member.
 
