@@ -8,20 +8,26 @@ import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 import releaseConfig from './release-config.cjs'
 import { snapshotContractIds, snapshotEnvFiles } from './snapshot-contract-config.mjs'
+import { APP_CONNECT_ENTRIES, appConnectEnvLines, planAppConnectSet } from './app-connect-set.mjs'
 
 const read = file => parseEnv(readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'))
 const template = read('.env.mainnet.template')
 const otherFiles = ['.env.testnet', '.env.beta', '.env.staging-old', '.env.testing', '.env.devnet']
 const systemKeys = ['NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID', 'NEXT_PUBLIC_DPNS_CONTRACT_ID', 'NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID']
-const memberKeys = ['APP_CONNECT_APP_ID', 'YAPPR_CONTRACT_ID', 'YAPPR_BLOCKS_CONTRACT_ID', 'YAPPR_DM_V5_CONTRACT_ID',
-  'YAPPR_BLOG_CONTRACT_ID', 'POLLR_CONTRACT_ID', 'YAPPR_STOREFRONT_CONTRACT_ID', 'YAPPR_PASSKEY_VAULT_CONTRACT_ID']
-const idKeys = [...memberKeys, 'APP_CONNECT_GROUP_ID', 'APP_CONNECT_GROUP_OWNER', 'YAPP_TOKEN_ID', 'YAPP_TOKEN_AUTHORITY_ID']
-  .map(name => `NEXT_PUBLIC_${name}`)
+const memberKeys = APP_CONNECT_ENTRIES.map(entry => entry.envKey)
+const idKeys = [...memberKeys, ...['APP_CONNECT_GROUP_ID', 'APP_CONNECT_GROUP_OWNER', 'YAPP_TOKEN_ID', 'YAPP_TOKEN_AUTHORITY_ID']
+  .map(name => `NEXT_PUBLIC_${name}`)]
+const plan = planAppConnectSet({
+  makerId: bs58.encode(new Uint8Array(32).fill(100)), startNonce: 1n,
+  generateId: (_owner, nonce) => bs58.encode(new Uint8Array(32).fill(100 + Number(nonce))),
+})
+const plannedEnv = parseEnv(appConnectEnvLines(plan).join('\n'))
 
 function completeMainnet() {
-  const env = { ...template, NEXT_PUBLIC_MASTERNODE_VOTE_URL: 'https://vote.example.org/#/m/{contract}' }
-  idKeys.forEach((key, i) => { env[key] = bs58.encode(new Uint8Array(32).fill(100 + i)) })
-  env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = memberKeys.map(key => `${env[`NEXT_PUBLIC_${key}`]}:1`).join(',')
+  const env = { ...template, ...plannedEnv, NEXT_PUBLIC_MASTERNODE_VOTE_URL: 'https://vote.example.org/#/m/{contract}',
+    NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID: plan.groupOwner,
+    NEXT_PUBLIC_YAPP_TOKEN_ID: bs58.encode(new Uint8Array(32).fill(120)) }
+  env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = plannedEnv.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(id => `${id}:1`).join(',')
   return env
 }
 
@@ -30,6 +36,26 @@ function writeEnv(file, env) {
 }
 
 describe('mainnet release', () => {
+  it('accepts the registrar mainnet release plan with explicit versions, refusing v18, missing or reordered members', () => {
+    const env = completeMainnet()
+    expect(env.NEXT_PUBLIC_NETWORK).toBe('mainnet')
+    expect(() => releaseConfig.assertReleaseConfig(env)).not.toThrow()
+    // Registrar output needs the explicit versions read back after registration.
+    expect(() => releaseConfig.assertReleaseConfig({ ...env,
+      NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: plannedEnv.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS })).toThrow('id:version pins')
+    const members = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',')
+    expect(members.map(pin => pin.split(':')[0])).toEqual(plan.contracts.map(contract => contract.id))
+    const v18 = read('.env.beta').NEXT_PUBLIC_YAPPR_CONTRACT_ID
+    expect(() => releaseConfig.assertReleaseConfig({ ...env,
+      NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: [...members, `${v18}:1`].join(',') })).toThrow(`unexpected member ${v18}`)
+    for (const [index, key] of memberKeys.entries()) {
+      expect(() => releaseConfig.assertReleaseConfig({ ...env,
+        NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: members.filter((_, i) => i !== index).join(',') })).toThrow(`must pin ${key}`)
+    }
+    expect(() => releaseConfig.assertReleaseConfig({ ...env,
+      NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: members.toReversed().join(',') })).toThrow('registrar release order')
+  })
+
   it('keeps every application id blank in the template and pins only verified system ids', () => {
     expect(Object.keys(template).sort()).toEqual(Object.keys(read('.env.testnet.template')).sort())
     for (const key of idKeys) expect(template[key], key).toBe('')
@@ -100,8 +126,7 @@ describe('mainnet release', () => {
       env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.replace(':1', ':0')]) {
       expect(() => releaseConfig.assertReleaseConfig({ ...env, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: pins })).toThrow('GROUP_MEMBERS')
     }
-    const keys = memberKeys.map(key => `NEXT_PUBLIC_${key}`)
-    env[keys[1]] = env[keys[0]]
+    env[memberKeys[1]] = env[memberKeys[0]]
     expect(() => releaseConfig.assertReleaseConfig(env)).toThrow('distinct')
   })
 
@@ -114,8 +139,9 @@ describe('mainnet release', () => {
   it('snapshots mainnet from its own pins and checks the exact network, membership and versions', () => {
     const env = completeMainnet()
     expect(snapshotEnvFiles('mainnet')).toEqual(['.env.mainnet'])
-    const ids = snapshotContractIds([env], '', env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID, ['v17'])
-    expect(ids).toHaveLength(11)
+    const ids = snapshotContractIds([{ ...env, NEXT_PUBLIC_SOCIAL_V18_CONTRACT_ID: read('.env.beta').NEXT_PUBLIC_YAPPR_CONTRACT_ID }],
+      '', env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID, ['v17'])
+    expect(ids).toEqual([...plan.contracts.map(contract => contract.id), ...systemKeys.map(key => template[key])].sort())
     const snapshot = { network: 'mainnet', contracts: Object.fromEntries(ids.map(id => [id, { version: 1, bytes: 'fixture' }])) }
     expect(() => releaseConfig.assertSnapshotPins(snapshot, env)).not.toThrow()
     expect(() => releaseConfig.assertSnapshotPins({ ...snapshot, network: 'testnet' }, env)).toThrow('exact contract pins')
@@ -130,7 +156,7 @@ describe('mainnet release', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-mainnet-cli-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const file of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const file of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
       }
       mkdirSync(join(dir, 'lib'))

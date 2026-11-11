@@ -68,6 +68,9 @@ describe('release build configuration', () => {
 
   it('accepts complete explicit testnet release configuration', () => {
     expect(() => assertReleaseConfig(completeEnv())).not.toThrow()
+    const env = completeEnv()
+    env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').reverse().join(',')
+    expect(() => assertReleaseConfig(env)).not.toThrow()
   })
 
   it('reports all absent required keys together', () => {
@@ -125,7 +128,7 @@ describe('release build configuration', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-release-env-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const file of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const file of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
       }
       symlinkSync(fileURLToPath(new URL('../node_modules', import.meta.url)), join(dir, 'node_modules'), 'dir')
@@ -154,7 +157,7 @@ describe('release build configuration', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-release-404-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const file of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const file of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
       }
       mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
@@ -200,7 +203,7 @@ describe('release build configuration', () => {
     function scratchRelease(file = '.env.testnet') {
       const dir = mkdtempSync(join(tmpdir(), 'yappr-release-archive-'))
       mkdirSync(join(dir, 'scripts'))
-      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
       }
       mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
@@ -319,7 +322,7 @@ describe('release build configuration', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-release-entry-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
       }
       mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })
@@ -368,7 +371,7 @@ describe('release build configuration', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-qa-build-entry-'))
     try {
       mkdirSync(join(dir, 'scripts'))
-      for (const name of ['build-release.mjs', 'release-config.cjs', 'write-static-404.mjs']) {
+      for (const name of ['build-release.mjs', 'release-config.cjs', 'app-connect-entries.cjs', 'write-static-404.mjs']) {
         copyFileSync(new URL(name, import.meta.url), join(dir, 'scripts', name))
       }
       mkdirSync(join(dir, 'node_modules/next/dist/bin'), { recursive: true })

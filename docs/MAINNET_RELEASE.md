@@ -11,7 +11,8 @@ registration journal and its verified readback. Use social **v17**, blog **v9**,
 storefront **v10**, Pollr **v8**, DM **v5** and DashPay profile **v2**. Store and
 Blog stay `beta`; credit tips stay `off`.
 
-Pin exactly eight group members as `id:version`: the App Connect anchor,
+Pin exactly the registrar's eight release members, in registration order, as
+`id:version`: the App Connect anchor,
 social, blocks, DM v5, blog, Pollr, storefront and passkey vault. Profile and
 system contracts are separate grants. Use the registered versions, including
 an explicit `:1`. Do not copy ids from another network or publish the journal

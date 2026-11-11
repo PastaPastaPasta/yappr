@@ -4,6 +4,9 @@ const bs58 = require('bs58').default
 const { readFileSync } = require('node:fs')
 const { parseEnv } = require('node:util')
 const { join } = require('node:path')
+const { APP_CONNECT_ENTRIES } = require('./app-connect-entries.cjs')
+
+const MAINNET_MEMBER_KEYS = APP_CONNECT_ENTRIES.map(entry => entry.envKey)
 
 const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_CONTRACT_ID',
@@ -16,7 +19,6 @@ const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID',
 ]
 const IDENTIFIER_KEYS = [
-  ...CONTRACT_KEYS,
   'NEXT_PUBLIC_DPNS_CONTRACT_ID',
   'NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID',
   'NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID',
@@ -55,7 +57,7 @@ const MAINNET_SYSTEM_IDS = {
 }
 const NON_MAINNET_FILES = ['.env.testnet', '.env.beta', '.env.staging-old', '.env.testing', '.env.devnet']
 
-function mainnetErrors(env) {
+function mainnetErrors(env, identifierKeys) {
   const errors = []
   const nonMainnetIds = new Set()
   for (const file of NON_MAINNET_FILES) {
@@ -72,7 +74,7 @@ function mainnetErrors(env) {
     if (isIdentifier(id)) nonMainnetIds.add(id)
   }
   if (['/staging', '/testing', '/devnet'].includes(env.BASE_PATH)) errors.push('BASE_PATH must not reuse a testnet/devnet deployment path on mainnet')
-  for (const key of IDENTIFIER_KEYS) {
+  for (const key of identifierKeys) {
     if (Object.hasOwn(MAINNET_SYSTEM_IDS, key)) {
       if (env[key] !== MAINNET_SYSTEM_IDS[key]) errors.push(`${key} must be the verified mainnet system id ${MAINNET_SYSTEM_IDS[key]}`)
     } else if (nonMainnetIds.has(env[key]) || Object.values(MAINNET_SYSTEM_IDS).includes(env[key])) {
@@ -162,7 +164,12 @@ function assertReleaseConfig(env) {
   if (env.NEXT_PUBLIC_RELEASE === undefined || env.NEXT_PUBLIC_RELEASE === '0') return
   const errors = []
   const qa = qaBuildOf(env)
-  if (env.NEXT_PUBLIC_NETWORK === 'mainnet') errors.push(...mainnetErrors(env))
+  const mainnet = env.NEXT_PUBLIC_NETWORK === 'mainnet'
+  const contractKeys = mainnet
+    ? [...MAINNET_MEMBER_KEYS.filter(key => key !== 'NEXT_PUBLIC_APP_CONNECT_APP_ID'), 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID']
+    : CONTRACT_KEYS
+  const identifierKeys = [...contractKeys, ...IDENTIFIER_KEYS]
+  if (mainnet) errors.push(...mainnetErrors(env, identifierKeys))
   if (env.NEXT_PUBLIC_RELEASE !== '1') errors.push('NEXT_PUBLIC_RELEASE must be 0 or 1')
   const qaPath = Object.entries(QA_BUILDS).find(([, build]) => build.basePath === env.BASE_PATH)
   if (!qa && qaPath) errors.push(`BASE_PATH=${env.BASE_PATH} serves only the ${qaPath[0]} QA build (npm run build:${qaPath[0]})`)
@@ -176,7 +183,7 @@ function assertReleaseConfig(env) {
   if (!['testnet', 'mainnet'].includes(env.NEXT_PUBLIC_NETWORK)) {
     errors.push('NEXT_PUBLIC_NETWORK must be testnet or mainnet')
   }
-  for (const key of IDENTIFIER_KEYS) {
+  for (const key of identifierKeys) {
     if (!isIdentifier(env[key])) errors.push(`${key} must be a base58 identifier encoding 32 bytes`)
   }
   for (const [key, value] of Object.entries({ ...RELEASE_VALUES, ...qa?.values })) {
@@ -201,7 +208,8 @@ function assertReleaseConfig(env) {
     members.add(id)
   }
   // Profile and system contracts are separately granted, not group members.
-  const expected = ['NEXT_PUBLIC_APP_CONNECT_APP_ID', ...CONTRACT_KEYS.filter(key => key !== 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')]
+  const expected = mainnet ? MAINNET_MEMBER_KEYS
+    : ['NEXT_PUBLIC_APP_CONNECT_APP_ID', ...CONTRACT_KEYS.filter(key => key !== 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')]
   for (const key of expected) {
     if (isIdentifier(env[key]) && !members.has(env[key])) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${key}`)
   }
@@ -214,7 +222,10 @@ function assertReleaseConfig(env) {
   for (const id of members) {
     if (!expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS has unexpected member ${id}`)
   }
-  const contractIds = [...CONTRACT_KEYS, 'NEXT_PUBLIC_APP_CONNECT_APP_ID'].map(key => env[key]).filter(isIdentifier)
+  if (mainnet && entries.some((entry, index) => entry.split(':')[0] !== env[expected[index]])) {
+    errors.push('NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must follow the registrar release order on mainnet')
+  }
+  const contractIds = [...contractKeys, 'NEXT_PUBLIC_APP_CONNECT_APP_ID'].map(key => env[key]).filter(isIdentifier)
   if (new Set(contractIds).size !== contractIds.length) errors.push('Release contract ids must be distinct')
   if (errors.length) {
     throw new Error(`Release configuration is incomplete or malformed:\n - ${errors.join('\n - ')}\nSee docs/TESTNET_DEPLOY.md or docs/MAINNET_RELEASE.md; defaults are forbidden in release mode.`)
