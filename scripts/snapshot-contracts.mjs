@@ -39,11 +39,15 @@ if (qaAt !== -1 && (!qa || network() !== 'testnet')) {
   console.error(`--qa takes ${Object.keys(releaseConfig.QA_BUILDS).join(' or ')}, on NETWORK=testnet`);
   process.exit(1);
 }
-const prune = qa !== null || process.argv.includes('--prune');
 const net = network();
+const prune = net === 'mainnet' || qa !== null || process.argv.includes('--prune');
 const key = net === 'devnet' ? `devnet-${devnetName()}` : net;
+const envs = net === 'mainnet'
+  ? [releaseConfig.loadReleaseEnv(process.env.MAINNET_ENV_FILE ?? join(REPO_ROOT, '.env.mainnet'), {}, null, 'mainnet')]
+  : qa ? [readEnvFile(join(REPO_ROOT, qa.envFile))] : snapshotEnvFiles(net).map(file => readEnvFile(join(REPO_ROOT, file)));
+if (net === 'mainnet' && process.env.CONTRACT_IDS) throw new Error('Mainnet snapshots use only the release env pins, not CONTRACT_IDS');
 const ids = snapshotContractIds(
-  qa ? [readEnvFile(join(REPO_ROOT, qa.envFile))] : snapshotEnvFiles(net).map(file => readEnvFile(join(REPO_ROOT, file))),
+  envs,
   qa ? '' : process.env.CONTRACT_IDS ?? '', DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES,
 );
 if (ids.length === 0) {
@@ -77,6 +81,7 @@ for (const id of ids) {
 }
 bundle.contracts = Object.fromEntries(Object.entries(bundle.contracts).sort(([a], [b]) => a.localeCompare(b)));
 bundle.generatedAt = new Date().toISOString();
+if (net === 'mainnet') releaseConfig.assertSnapshotPins(bundle, envs[0]);
 writeFileSync(outPath, `${JSON.stringify(bundle, null, 2)}\n`);
 console.log(`${refreshed}/${ids.length} contracts written to ${outPath} (${Object.keys(bundle.contracts).length} in bundle)`);
 process.exit(0);

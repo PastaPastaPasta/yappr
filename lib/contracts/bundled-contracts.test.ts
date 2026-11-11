@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { bundleKey, bundledContractsFor, staleContractIds } from './bundled-contracts';
 
 describe('bundleKey', () => {
@@ -21,7 +21,15 @@ describe('bundledContractsFor', () => {
         expect(entry.bytes.length).toBeGreaterThan(0);
       }
     }
-    expect(await bundledContractsFor('mainnet')).toBeUndefined();
+  });
+
+  it('leaves mainnet contracts to chain reads when no snapshot was available at build time', async () => {
+    vi.stubEnv('NEXT_PUBLIC_HAS_MAINNET_BUNDLE', '0');
+    try {
+      expect(await bundledContractsFor('mainnet')).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

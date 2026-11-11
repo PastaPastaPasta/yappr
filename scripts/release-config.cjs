@@ -3,6 +3,10 @@
 const bs58 = require('bs58').default
 const { readFileSync } = require('node:fs')
 const { parseEnv } = require('node:util')
+const { join } = require('node:path')
+const { APP_CONNECT_ENTRIES } = require('./app-connect-entries.cjs')
+
+const MAINNET_MEMBER_KEYS = APP_CONNECT_ENTRIES.map(entry => entry.envKey)
 
 const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_CONTRACT_ID',
@@ -15,7 +19,6 @@ const CONTRACT_KEYS = [
   'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID',
 ]
 const IDENTIFIER_KEYS = [
-  ...CONTRACT_KEYS,
   'NEXT_PUBLIC_DPNS_CONTRACT_ID',
   'NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID',
   'NEXT_PUBLIC_YAPP_TOKEN_AUTHORITY_ID',
@@ -47,6 +50,49 @@ const EMPTY_KEYS = [
   'NEXT_PUBLIC_QUORUM_URL',
   'NEXT_PUBLIC_INSIGHT_API_URL',
 ]
+const MAINNET_SYSTEM_IDS = {
+  NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID: 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7',
+  NEXT_PUBLIC_DPNS_CONTRACT_ID: 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec',
+  NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID: '43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF',
+}
+const NON_MAINNET_FILES = ['.env.testnet', '.env.beta', '.env.staging-old', '.env.testing', '.env.devnet']
+
+function mainnetErrors(env, identifierKeys) {
+  const errors = []
+  const nonMainnetIds = new Set()
+  for (const file of NON_MAINNET_FILES) {
+    const configured = parseEnv(readFileSync(join(__dirname, '..', file), 'utf8'))
+    for (const value of Object.values(configured)) {
+      for (const part of value.split(',')) {
+        const id = part.split(':')[0]
+        if (isIdentifier(id)) nonMainnetIds.add(id)
+      }
+    }
+  }
+  const defaults = readFileSync(join(__dirname, '../lib/constants.ts'), 'utf8')
+  for (const [, id] of defaults.matchAll(/['"]([1-9A-HJ-NP-Za-km-z]{32,44})['"]/g)) {
+    if (isIdentifier(id)) nonMainnetIds.add(id)
+  }
+  if (['/staging', '/testing', '/devnet'].includes(env.BASE_PATH)) errors.push('BASE_PATH must not reuse a testnet/devnet deployment path on mainnet')
+  for (const key of identifierKeys) {
+    if (Object.hasOwn(MAINNET_SYSTEM_IDS, key)) {
+      if (env[key] !== MAINNET_SYSTEM_IDS[key]) errors.push(`${key} must be the verified mainnet system id ${MAINNET_SYSTEM_IDS[key]}`)
+    } else if (nonMainnetIds.has(env[key]) || Object.values(MAINNET_SYSTEM_IDS).includes(env[key])) {
+      errors.push(`${key} names a testnet/devnet or system id instead of a mainnet registration`)
+    }
+  }
+  if (env.NEXT_PUBLIC_APP_CONNECT_CARRIER !== 'dashpay') errors.push('NEXT_PUBLIC_APP_CONNECT_CARRIER must be dashpay on mainnet')
+  if (!/^mainnet[-_]/.test(env.STORAGE_EPOCH ?? '')) errors.push('STORAGE_EPOCH must start with mainnet- or mainnet_ on mainnet')
+  try {
+    const template = env.NEXT_PUBLIC_MASTERNODE_VOTE_URL
+    const url = new URL(template)
+    if (url.protocol !== 'https:' || url.username || url.password || /testnet|devnet/i.test(decodeURIComponent(template))) throw new Error('invalid voting URL')
+  } catch {
+    errors.push('NEXT_PUBLIC_MASTERNODE_VOTE_URL must be an explicit HTTPS mainnet URL, without testnet/devnet links or credentials')
+  }
+  return errors
+}
+
 const STORAGE_EPOCH_PATTERN = /^[a-zA-Z0-9_-]+$/
 // The archival ("uncensored") frontend flags (docs/ARCHIVE_FRONTEND.md). yap.pr
 // and the official apps never enable them: a release build refuses any value
@@ -118,6 +164,12 @@ function assertReleaseConfig(env) {
   if (env.NEXT_PUBLIC_RELEASE === undefined || env.NEXT_PUBLIC_RELEASE === '0') return
   const errors = []
   const qa = qaBuildOf(env)
+  const mainnet = env.NEXT_PUBLIC_NETWORK === 'mainnet'
+  const contractKeys = mainnet
+    ? [...MAINNET_MEMBER_KEYS.filter(key => key !== 'NEXT_PUBLIC_APP_CONNECT_APP_ID'), 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID']
+    : CONTRACT_KEYS
+  const identifierKeys = [...contractKeys, ...IDENTIFIER_KEYS]
+  if (mainnet) errors.push(...mainnetErrors(env, identifierKeys))
   if (env.NEXT_PUBLIC_RELEASE !== '1') errors.push('NEXT_PUBLIC_RELEASE must be 0 or 1')
   const qaPath = Object.entries(QA_BUILDS).find(([, build]) => build.basePath === env.BASE_PATH)
   if (!qa && qaPath) errors.push(`BASE_PATH=${env.BASE_PATH} serves only the ${qaPath[0]} QA build (npm run build:${qaPath[0]})`)
@@ -131,7 +183,7 @@ function assertReleaseConfig(env) {
   if (!['testnet', 'mainnet'].includes(env.NEXT_PUBLIC_NETWORK)) {
     errors.push('NEXT_PUBLIC_NETWORK must be testnet or mainnet')
   }
-  for (const key of IDENTIFIER_KEYS) {
+  for (const key of identifierKeys) {
     if (!isIdentifier(env[key])) errors.push(`${key} must be a base58 identifier encoding 32 bytes`)
   }
   for (const [key, value] of Object.entries({ ...RELEASE_VALUES, ...qa?.values })) {
@@ -156,7 +208,8 @@ function assertReleaseConfig(env) {
     members.add(id)
   }
   // Profile and system contracts are separately granted, not group members.
-  const expected = ['NEXT_PUBLIC_APP_CONNECT_APP_ID', ...CONTRACT_KEYS.filter(key => key !== 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')]
+  const expected = mainnet ? MAINNET_MEMBER_KEYS
+    : ['NEXT_PUBLIC_APP_CONNECT_APP_ID', ...CONTRACT_KEYS.filter(key => key !== 'NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')]
   for (const key of expected) {
     if (isIdentifier(env[key]) && !members.has(env[key])) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${key}`)
   }
@@ -169,10 +222,13 @@ function assertReleaseConfig(env) {
   for (const id of members) {
     if (!expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS has unexpected member ${id}`)
   }
-  const contractIds = [...CONTRACT_KEYS, 'NEXT_PUBLIC_APP_CONNECT_APP_ID'].map(key => env[key]).filter(isIdentifier)
+  if (mainnet && entries.some((entry, index) => entry.split(':')[0] !== env[expected[index]])) {
+    errors.push('NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must follow the registrar release order on mainnet')
+  }
+  const contractIds = [...contractKeys, 'NEXT_PUBLIC_APP_CONNECT_APP_ID'].map(key => env[key]).filter(isIdentifier)
   if (new Set(contractIds).size !== contractIds.length) errors.push('Release contract ids must be distinct')
   if (errors.length) {
-    throw new Error(`Release configuration is incomplete or malformed:\n - ${errors.join('\n - ')}\nSee docs/TESTNET_DEPLOY.md; defaults are forbidden in release mode.`)
+    throw new Error(`Release configuration is incomplete or malformed:\n - ${errors.join('\n - ')}\nSee docs/TESTNET_DEPLOY.md or docs/MAINNET_RELEASE.md; defaults are forbidden in release mode.`)
   }
 }
 
@@ -182,16 +238,16 @@ function storageScope(basePath, epoch = '') {
   return [epoch, basePath.replace(/^\//, '')].filter(Boolean).join(':')
 }
 
-/** A QA build's snapshot must contain exactly the pinned contracts it reads, plus the profile and system contracts. */
+/** A snapshot must contain exactly the pinned contracts it reads, plus the profile and system contracts. */
 function assertSnapshotPins(snapshot, env) {
   const unused = new Set(qaBuildOf(env)?.unusedMembers ?? [])
   const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':')).filter(([id]) => !unused.has(id))
   const expectedIds = new Set([...pins.map(([id]) => id), env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
     env.NEXT_PUBLIC_DPNS_CONTRACT_ID, env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
-  if (snapshot.network !== 'testnet' || Object.keys(snapshot.contracts).length !== expectedIds.size ||
+  if (snapshot.network !== env.NEXT_PUBLIC_NETWORK || Object.keys(snapshot.contracts).length !== expectedIds.size ||
       Object.keys(snapshot.contracts).some(id => !expectedIds.has(id)) ||
       pins.some(([id, version]) => snapshot.contracts[id]?.version !== Number(version))) {
-    throw new Error(`The ${env.BASE_PATH} snapshot must match the exact contract pins of its env file`)
+    throw new Error(`The ${env.BASE_PATH || env.NEXT_PUBLIC_NETWORK} snapshot must match the exact contract pins of its env file`)
   }
 }
 
@@ -200,7 +256,7 @@ function assertSnapshotPins(snapshot, env) {
  * build names itself (`qaBuild`, a QA_BUILDS key) and must load its own file;
  * neither the file nor the ambient environment can name one.
  */
-function loadReleaseEnv(file, ambient = process.env, qaBuild = null) {
+function loadReleaseEnv(file, ambient = process.env, qaBuild = null, releaseNetwork = 'testnet') {
   let configured
   try {
     configured = parseEnv(readFileSync(file, 'utf8'))
@@ -220,6 +276,10 @@ function loadReleaseEnv(file, ambient = process.env, qaBuild = null) {
     if (!Object.hasOwn(QA_BUILDS, qaBuild) || !file.endsWith(`/${QA_BUILDS[qaBuild].envFile}`)) throw new Error(`the ${qaBuild} build loads only ${QA_BUILDS[qaBuild]?.envFile ?? 'its own env file'}`)
     env.YAPPR_QA_BUILD = qaBuild
   }
+  if (!['testnet', 'mainnet'].includes(releaseNetwork) || env.NEXT_PUBLIC_NETWORK !== releaseNetwork) {
+    throw new Error(`This build requires NEXT_PUBLIC_NETWORK=${releaseNetwork}`)
+  }
+  if (releaseNetwork === 'mainnet') env.NETWORK = 'mainnet'
   assertReleaseConfig(env)
   // Pin the flags to an explicit "off" in the environment `next build` inherits.
   // Next loads .env.local, .env.production and .env for any variable that is

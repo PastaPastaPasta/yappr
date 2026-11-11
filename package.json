@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "npm run build:release",
+    "build:mainnet": "node scripts/build-release.mjs --mainnet",
     "build:release": "node scripts/build-release.mjs",
     "build:staging": "BASE_PATH=/staging npm run build",
     "build:staging-old": "BASE_PATH=/staging-old node scripts/build-release.mjs .env.staging-old",

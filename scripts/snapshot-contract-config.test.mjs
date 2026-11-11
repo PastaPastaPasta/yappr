@@ -4,7 +4,7 @@ import { snapshotContractIds, snapshotEnvFiles } from './snapshot-contract-confi
 it('collects both testnet deployments without ever loading the placeholder template', () => {
   expect(snapshotEnvFiles('testnet')).toEqual(['.env.testing', '.env.testnet'])
   expect(snapshotEnvFiles('devnet')).toEqual(['.env.devnet'])
-  expect(snapshotEnvFiles('mainnet')).toEqual([])
+  expect(snapshotEnvFiles('mainnet')).toEqual(['.env.mainnet'])
 })
 
 it('pruning retains the union of requested deployment contracts and anchor, not tokens or retired blanks', () => {
