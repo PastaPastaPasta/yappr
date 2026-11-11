@@ -14,6 +14,7 @@ import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
+import type { WalletTransitionRequest } from '@/lib/services/token-transition-builder'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -84,6 +85,7 @@ export function BuyYappModal() {
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
   // baseline after its awaits resolve.
   const walletSessionRef = useRef(0)
+  const walletRequestsRef = useRef(new Map<string, WalletTransitionRequest>())
 
   useEffect(() => {
     if (isOpen && user) {
@@ -106,6 +108,7 @@ export function BuyYappModal() {
       setWalletExpired(false)
       walletBaselineRef.current = null
       walletSessionRef.current++
+      walletRequestsRef.current.clear()
     }
   }, [isOpen])
 
@@ -114,6 +117,7 @@ export function BuyYappModal() {
   const amountBig = /^\d+$/.test(amount) ? BigInt(amount) : BigInt(0)
   const costCredits = pricePerToken !== null ? pricePerToken * amountBig : null
   const costDashLabel = costCredits !== null ? formatCreditsAsDash(costCredits) : '—'
+  const walletPaymentKey = JSON.stringify([user?.identityId, amountBig.toString(), costCredits?.toString()])
 
   const handleAmountChange = (value: string) => {
     if (/^\d*$/.test(value)) {
@@ -154,7 +158,7 @@ export function BuyYappModal() {
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, walletRequestsRef.current.get(walletPaymentKey))
     if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase()
@@ -203,12 +207,14 @@ export function BuyYappModal() {
       const baseline = await tokenService.getBalance(user.identityId)
       if (walletSessionRef.current !== session) return
       walletBaselineRef.current = baseline
-      const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
+      const existingRequest = walletRequestsRef.current.get(walletPaymentKey)
+      const request = existingRequest ?? await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
       if (walletSessionRef.current !== session) {
-        await request.discard()
+        if (!existingRequest) await request.discard()
         return
       }
+      walletRequestsRef.current.set(walletPaymentKey, request)
       setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return

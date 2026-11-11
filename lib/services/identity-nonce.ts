@@ -520,6 +520,21 @@ async function settleChosenNonce(ownerId: string, contractId: string, entry: Pen
   }
 }
 
+/** Re-sign the same wallet payment; even a local refusal cannot retire the wallet's copy. */
+export async function withWalletTokenNonce<T>(ownerId: string, contractId: string, entry: PendingTransition, write: (nonce: bigint) => Promise<T>): Promise<T> {
+  if (entry.scope !== WALLET_TOKEN_SCOPE || entry.nonce === null) throw new Error('Invalid wallet payment reservation');
+  const nonce = entry.nonce;
+  return withIdentityWriteLock(ownerId, contractId, async () => {
+    try {
+      return await write(nonce);
+    } catch (error) {
+      throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
+    } finally {
+      await settleChosenNonce(ownerId, contractId, entry);
+    }
+  });
+}
+
 /**
  * Drop every pending transition of the identity on the contract that Platform
  * shows can no longer execute (see {@link stillPending}), and resolve to how

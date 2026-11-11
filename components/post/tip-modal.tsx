@@ -18,6 +18,7 @@ import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { tipHistoryService, matchesSentTip, type SentTipMatch } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
+import type { WalletTransitionRequest } from '@/lib/services/token-transition-builder'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -164,6 +165,7 @@ export function TipModal() {
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
   const walletSessionRef = useRef(0)
+  const walletRequestsRef = useRef(new Map<string, WalletTransitionRequest>())
 
   // Transfer key persistence (credits tab only)
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -239,6 +241,7 @@ export function TipModal() {
       setCanSignLocally(null)
       walletMatchRef.current = null
       walletSessionRef.current++
+      walletRequestsRef.current.clear()
       usedTransferKeyRef.current = null
     }
   }, [isOpen])
@@ -247,6 +250,7 @@ export function TipModal() {
   // The text that rides along in the tip note, normalised once: the note that
   // gets signed and the match used to find it again must never disagree.
   const noteMessage = tipMessage.trim() || undefined
+  const walletPaymentKey = JSON.stringify([user?.identityId, recipientInfo?.id, yappAmountBig.toString(), tipService.tipNoteFor(tipTarget, noteMessage)])
 
   const handleAmountChange = (value: string) => {
     // Only allow valid decimal numbers with up to 8 decimal places
@@ -345,7 +349,8 @@ export function TipModal() {
       recipientInfo.id,
       yappAmountBig,
       tipTarget,
-      noteMessage
+      noteMessage,
+      walletRequestsRef.current.get(walletPaymentKey)
     )
 
     if (result.errorCode === 'CANCELLED') {
@@ -446,7 +451,8 @@ export function TipModal() {
         noteMessage,
         Date.now() - CLOCK_SKEW_MARGIN_MS
       )
-      const request = await buildUnsignedYappTipTransition(
+      const existingRequest = walletRequestsRef.current.get(walletPaymentKey)
+      const request = existingRequest ?? await buildUnsignedYappTipTransition(
         user.identityId,
         recipientInfo.id,
         yappAmountBig,
@@ -454,9 +460,10 @@ export function TipModal() {
       )
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
       if (walletSessionRef.current !== session) {
-        await request.discard()
+        if (!existingRequest) await request.discard()
         return
       }
+      walletRequestsRef.current.set(walletPaymentKey, request)
       setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
