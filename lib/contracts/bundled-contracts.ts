@@ -22,7 +22,7 @@ export interface ContractBundle {
 }
 
 /** Networks with a snapshot under `./bundled/`. */
-const BUNDLED_NETWORKS: readonly string[] = ['devnet-sakura', 'testnet'];
+const BUNDLED_NETWORKS: readonly string[] = ['devnet-sakura', 'testnet', 'mainnet'];
 
 /** The bundle slot for a network: `devnet-<name>`, or the network's name. */
 export function bundleKey(network: AppNetwork, devnetName?: string): string {
@@ -35,6 +35,7 @@ export function bundleKey(network: AppNetwork, devnetName?: string): string {
  */
 export async function bundledContractsFor(key: string): Promise<ContractBundle | undefined> {
   if (!BUNDLED_NETWORKS.includes(key)) return undefined;
+  if (key === 'mainnet' && process.env.NEXT_PUBLIC_HAS_MAINNET_BUNDLE !== '1') return undefined;
   const loaded = await import(`./bundled/${key}.json`);
   return loaded.default as ContractBundle;
 }

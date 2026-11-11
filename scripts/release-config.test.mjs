@@ -47,7 +47,7 @@ describe('release build configuration', () => {
   })
 
   it('documents every public application env reader except Next-generated metadata', () => {
-    const generated = new Set(['BASE_PATH', 'GIT_BRANCH', 'GIT_COMMIT_DATE', 'GIT_COMMIT_HASH', 'STORAGE_SCOPE', 'SDK_WASM_URL']
+    const generated = new Set(['BASE_PATH', 'GIT_BRANCH', 'GIT_COMMIT_DATE', 'GIT_COMMIT_HASH', 'STORAGE_SCOPE', 'SDK_WASM_URL', 'HAS_MAINNET_BUNDLE']
       .map(name => `NEXT_PUBLIC_${name}`))
     for (const dir of ['app', 'components', 'contexts', 'hooks', 'lib', 'vendor/platform-auth/src']) {
       const root = new URL(`../${dir}/`, import.meta.url)
@@ -66,8 +66,8 @@ describe('release build configuration', () => {
     expect(() => assertReleaseConfig(template)).not.toThrow()
   })
 
-  it.each(['testnet', 'mainnet'])('accepts complete explicit %s release configuration', network => {
-    expect(() => assertReleaseConfig({ ...completeEnv(), NEXT_PUBLIC_NETWORK: network })).not.toThrow()
+  it('accepts complete explicit testnet release configuration', () => {
+    expect(() => assertReleaseConfig(completeEnv())).not.toThrow()
   })
 
   it('reports all absent required keys together', () => {

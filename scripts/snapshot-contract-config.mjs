@@ -1,5 +1,6 @@
 /** Every deployment on a network shares a bundled snapshot; keep their union. */
 export function snapshotEnvFiles(network) {
+  if (network === 'mainnet') return ['.env.mainnet']
   if (network === 'devnet') return ['.env.devnet']
   if (network === 'testnet') return ['.env.testing', '.env.testnet']
   return []

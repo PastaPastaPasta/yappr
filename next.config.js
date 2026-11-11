@@ -1,10 +1,11 @@
 const { execSync } = require('child_process')
 const path = require('path')
-const { readFileSync } = require('fs')
+const { existsSync, readFileSync } = require('fs')
 const { PHASE_PRODUCTION_BUILD } = require('next/constants')
 const { assertReleaseConfig, storageScope, assertSnapshotPins, qaBuildOf } = require('./scripts/release-config.cjs')
 const { sdkWasmAsset } = require('./scripts/sdk-wasm-asset.cjs')
 const wasmAsset = sdkWasmAsset(__dirname)
+const mainnetSnapshotPath = path.join(__dirname, 'lib/contracts/bundled/mainnet.json')
 
 // Get git info at build time
 const getGitInfo = () => {
@@ -31,6 +32,7 @@ const nextConfig = {
   trailingSlash: true,
   generateBuildId: async () => gitInfo.commitHash,
   env: {
+    NEXT_PUBLIC_HAS_MAINNET_BUNDLE: existsSync(mainnetSnapshotPath) ? '1' : '0',
     NEXT_PUBLIC_SDK_WASM_URL: `${basePath}/_next/${wasmAsset.name}`,
     NEXT_PUBLIC_BASE_PATH: basePath,
     NEXT_PUBLIC_GIT_COMMIT_HASH: gitInfo.commitHash,
@@ -127,6 +129,11 @@ const nextConfig = {
 module.exports = (phase) => {
   // Next has loaded env files before evaluating this config. Keep the check
   // out of application module scope and out of next dev / lint / unit tests.
-  if (phase === PHASE_PRODUCTION_BUILD) assertReleaseConfig(process.env)
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    assertReleaseConfig(process.env)
+    if (process.env.NEXT_PUBLIC_RELEASE === '1' && process.env.NEXT_PUBLIC_NETWORK === 'mainnet' && existsSync(mainnetSnapshotPath)) {
+      assertSnapshotPins(JSON.parse(readFileSync(mainnetSnapshotPath, 'utf8')), process.env)
+    }
+  }
   return nextConfig
 }
