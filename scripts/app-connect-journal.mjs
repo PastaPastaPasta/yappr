@@ -19,10 +19,16 @@ export const policyKey = (recorded) => JSON.stringify({ interim: recorded.interi
  * be registered by mistake. It also holds the D36 rehearsal's anchor and
  * group ({@link TESTNET_REHEARSAL_SET}): a run appends to those only when it
  * names them (`testnetSet` 'rehearsal') AND signs as the rehearsal maker, and
- * the rehearsal maker never runs without naming them.
+ * the rehearsal maker never runs without naming them. The date-named fresh
+ * rehearsal is restricted to its own throwaway maker and the staging-v17 set.
  */
-export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null } = {}) {
+export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null, set = 'current' } = {}) {
   if (network !== 'testnet') return testnetSet === null ? null : '--testnet-set is for testnet';
+  if (testnetSet === 'throwaway-20261111') {
+    if (maker !== 'Gi5CWmUsizyg8C2VYfjUevAg1tMyh33QTADM2FVQnJwA') return 'the throwaway rehearsal requires its dedicated maker';
+    if (set !== 'staging-v17') return 'the throwaway rehearsal requires --set staging-v17';
+    return appendAfter === null ? null : 'the throwaway rehearsal registers a fresh set, without --append-after';
+  }
   if (testnetSet !== null && testnetSet !== 'rehearsal') return `--testnet-set takes rehearsal (got "${testnetSet}"); leave it out for the release set`;
   if (appendAfter !== TESTNET_REGISTERED_THROUGH) {
     const startNonce = testnetSet === 'rehearsal' ? TESTNET_REHEARSAL_SET.startNonce : 57;
@@ -70,6 +76,7 @@ export function rebaseAppend(plan, created, chainNonce, generateId) {
  * the run's rendering, since its saved bytes are re-broadcast as they are.
  */
 export function checkJournal(journal, plan, { path, policy, appendAfter, network, generateId }) {
+  if ((journal.registrationSet ?? 'current') !== (plan.registrationSet ?? 'current')) throw new Error(`journal ${path}: contract set differs (journal ${journal.registrationSet ?? 'current'}, run ${plan.registrationSet ?? 'current'}); resume with --set ${journal.registrationSet ?? 'current'}`);
   for (const [key, want] of [['network', network], ['makerId', plan.groupOwner], ['startNonce', String(plan.anchor.nonce)], ['groupId', plan.groupId]]) {
     if (journal[key] !== want) throw new Error(`journal ${path}: ${key} is ${journal[key]}, this run's is ${want}`);
   }

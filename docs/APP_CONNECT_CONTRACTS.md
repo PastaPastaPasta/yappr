@@ -102,6 +102,23 @@ In the group, each would permanently widen what every group-bound key can sign. 
 
 ## Registering the set
 
+For the owner-selected mainnet set matching the live staging deployment, pass
+`--set staging-v17` in **every mode**. This selects exactly the eight pinned
+creates through `passkeyVault` (social v17, blog v9, storefront v10), restores
+those contracts' client env variables, and excludes the three later re-cuts.
+`--upto app` still stops a live run after its anchor; resume the same journal
+with `--set staging-v17` to register the seven remaining members. A journal
+cannot switch between this selection and the default eleven-entry set. All
+mainnet policy, key, balance, protocol and journal guards apply unchanged.
+The publisher prints group members as bare ids; add `:1` to each member when
+preparing the version-pinned activation environment.
+
+A fresh testnet rehearsal of this selection can use
+`--testnet-set throwaway-20261111` only with the dedicated throwaway maker
+`Gi5CWmUsizyg8C2VYfjUevAg1tMyh33QTADM2FVQnJwA`, without `--append-after`.
+This exception is refused on mainnet and devnet; normal testnet runs retain
+the existing append-only guard.
+
 Prerequisites:
 - Every node of the target network runs 5.0.0-beta.6 or newer (testnet runs 5.0.0-rc.4: [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md); social v16's typed-array `where` and indexOnly element indexes are refused before it; social v15's format-1 token is undecodable on beta.3, and the beta.5 SDK cannot read beta.3 nodes). Beta.3 to beta.5 nodes report protocol version 14 too, so the publisher reads the Drive version from the status API and refuses to run in any connected mode (`--dry-run`, `--signed-dry-run`, `--live`) unless it is 5.0.0-beta.6 or newer. The publisher itself needs the 5.0.0-beta.6 SDK: even `--plan` decodes every create with wasm-dpp2, and the beta.5 one refuses v16 (10231). The status answers for the one node that responded, so confirm the rest with `ops/status.mjs` first.
 - The maker holds the cost above. Every connected mode prints each create's estimate (its registration fee plus a storage allowance) beside the maker's balance, and `--signed-dry-run` and `--live` refuse to sign unless the balance covers the estimate plus 20%.
@@ -115,7 +132,7 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --maker <m
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --plan --start-nonce <N>   # devnet maker from .env.devnet
 NETWORK=testnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
   --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600              # testnet (D41)
-NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --plan --maker <makerId> --start-nonce <N> \
+NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --plan --set staging-v17 --maker <makerId> --start-nonce <N> \
   --interim notYetUsable --election-windows 604800,604800 --election-delay 604800 --challenge-cool-down 2592000 # mainnet (D41; seven-day delay 2026-11-04)
 
 # 2. Read-only against the network: the maker's nonce (N defaults to chain nonce + 1), and that no

@@ -158,3 +158,36 @@ describe('the D36 rehearsal set', () => {
     expect(checkRehearsal(rehearsalJournal(), releasePlan)).toThrow(/prepared from another file/);
   });
 });
+
+
+describe('the explicitly selected staging v17 set', () => {
+  const selected = () => planAppConnectSet({ makerId: MAKER, startNonce: 57n, generateId, set: 'staging-v17' });
+  it('keeps the original eight nonces, ids and pins and restores their client variables', () => {
+    const v17 = selected();
+    expect(v17.contracts).toHaveLength(8);
+    expect(v17.contracts.map((c) => [c.name, c.id, c.nonce, c.sha256])).toEqual(plan.contracts.slice(0, 8).map((c) => [c.name, c.id, c.nonce, c.sha256]));
+    expect(v17.contracts.some((c) => c.replacedBy)).toBe(false);
+    for (const [name, env] of [['social', 'NEXT_PUBLIC_YAPPR_CONTRACT_ID'], ['blog', 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID'], ['storefront', 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID']]) {
+      expect(appConnectEnvLines(v17)).toContain(`${env}=${v17.contracts.find((c) => c.name === name).id}`);
+    }
+    expect(planAppConnectSet({ makerId: MAKER, startNonce: 57n, generateId }).contracts).toHaveLength(11);
+    expect(() => planAppConnectSet({ makerId: MAKER, startNonce: 57n, generateId, set: 'v17' })).toThrow(/unknown contract set/);
+  });
+  it('never resumes a journal under another set selection', () => {
+    const journal = registeredJournal();
+    const options = { path: 'j.json', policy: D41, appendAfter: null, network: 'testnet', generateId };
+    expect(() => checkJournal(journal, selected(), options)).toThrow(/contract set differs/);
+    journal.registrationSet = 'staging-v17';
+    expect(() => checkJournal(journal, selected(), options)).not.toThrow();
+    expect(() => checkJournal(journal, plan, options)).toThrow(/contract set differs/);
+  });
+  it('allows a fresh testnet run only for the named throwaway maker and v17 set', () => {
+    const named = { testnetSet: 'throwaway-20261111', maker: 'Gi5CWmUsizyg8C2VYfjUevAg1tMyh33QTADM2FVQnJwA', set: 'staging-v17' };
+    expect(testnetAppendProblem('testnet', null, named)).toBeNull();
+    expect(testnetAppendProblem('mainnet', null, { set: 'staging-v17' })).toBeNull();
+    for (const maker of [MAKER, TESTNET_REHEARSAL_SET.makerId, null]) expect(testnetAppendProblem('testnet', null, { ...named, maker })).toMatch(/dedicated maker/);
+    expect(testnetAppendProblem('testnet', null, { ...named, set: 'current' })).toMatch(/requires --set/);
+    expect(testnetAppendProblem('testnet', 'passkeyVault', named)).toMatch(/without --append-after/);
+    for (const net of ['mainnet', 'devnet']) expect(testnetAppendProblem(net, null, named)).toMatch(/for testnet/);
+  });
+});

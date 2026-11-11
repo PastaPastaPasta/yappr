@@ -226,14 +226,23 @@ export function contractGroupId(ownerId, identityNonce) {
  * nonce `startNonce` produces when nothing else takes a maker nonce in between.
  * `generateId` is `DataContract.generateId` (passed in so this module needs no wasm).
  */
-export function planAppConnectSet({ makerId, startNonce, generateId }) {
+export function planAppConnectSet({ makerId, startNonce, generateId, set = 'current' }) {
+  if (!['current', 'staging-v17'].includes(set)) throw new Error(`unknown contract set: ${set}`);
+  const entries = set === 'staging-v17' ? APP_CONNECT_ENTRIES.slice(0, APP_CONNECT_ENTRIES.findIndex((c) => c.name === 'passkeyVault') + 1).map((entry) => {
+    const envKey = entry.replacedBy ? APP_CONNECT_ENTRIES.find((replacement) => replacement.name === entry.replacedBy)?.envKey : null;
+    if (!envKey) return entry;
+    const active = { ...entry, envKey };
+    delete active.replacedBy;
+    return active;
+  }) : APP_CONNECT_ENTRIES;
   const start = BigInt(startNonce);
   if (start < 1n) throw new Error('the anchor nonce must be at least 1 (an identity\'s first create uses nonce 1)');
-  const contracts = APP_CONNECT_ENTRIES.map((entry, index) => {
+  const contracts = entries.map((entry, index) => {
     const nonce = start + BigInt(index);
     return { ...entry, nonce, id: generateId(makerId, nonce) };
   });
   return {
+    registrationSet: set,
     anchor: contracts[0],
     appId: contracts[0].id,
     groupId: contractGroupId(makerId, start),

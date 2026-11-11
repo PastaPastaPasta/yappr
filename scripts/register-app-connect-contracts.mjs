@@ -11,6 +11,11 @@
  * app-connect-set.mjs). Member i is planned at N + i, which holds as long as
  * the maker spends no other identity nonce between the creates.
  *
+ * --set staging-v17 selects exactly the eight creates through passkeyVault,
+ * with the v17/blog-v9/storefront-v10 env variables. The default set is unchanged.
+ * --testnet-set throwaway-20261111 permits that fresh set only on testnet,
+ * from its dedicated throwaway maker; it is rejected on every other network.
+ *
  * Modes (exactly one):
  *   --plan                offline: prints the ids for --maker and --start-nonce, then builds,
  *                         decodes and audits every unsigned create (no network, no keys)
@@ -123,7 +128,7 @@ function parseArgs(argv) {
   const args = {
     mode: null, maker: null, startNonce: null, journal: null, upto: null, retryRefused: false, appendAfter: null,
     interim: null, electionWindows: null, electionDelay: null, challengeCoolDown: null, production: false, keyFile: null, keyId: null,
-    testnetSet: null,
+    testnetSet: null, set: 'current',
   };
   const value = (i, flag) => {
     const next = argv[i];
@@ -149,12 +154,15 @@ function parseArgs(argv) {
       case '--election-delay': args.electionDelay = value(++i, arg); break;
       case '--challenge-cool-down': args.challengeCoolDown = value(++i, arg); break;
       case '--production': args.production = true; break;
+      case '--set': args.set = value(++i, arg); break;
       case '--testnet-set': args.testnetSet = value(++i, arg); break;
       case '--maker-key-file': args.keyFile = value(++i, arg); break;
       case '--maker-key-id': args.keyId = value(++i, arg); break;
       default: throw new Error(`Unknown argument: ${arg}`);
     }
   }
+  if (!['current', 'staging-v17'].includes(args.set)) throw new Error('--set takes current or staging-v17');
+  if (args.set !== 'current' && args.appendAfter !== null) throw new Error('--set staging-v17 registers a fresh set; it cannot append');
   if (!args.mode) throw new Error(`pass exactly one of ${MODES.join(' | ')}`);
   if (args.mode === 'live' && !args.journal) throw new Error('--live needs --journal <file> (it keeps the signed bytes of every create)');
   if (args.mode !== 'live' && (args.journal || args.upto || args.retryRefused)) throw new Error('--journal, --upto and --retry-refused belong to --live');
@@ -599,7 +607,7 @@ async function main() {
   const policy = registrationPolicy({ ...args, network: network() });
   // Testnet already holds the set's anchor and group (2026-10-21): a run there may only append to
   // them, so a second anchor or group can never be registered by mistake.
-  const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker });
+  const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker, set: args.set });
   if (appendProblem) throw new Error(appendProblem);
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const platformVersion = PlatformVersion.latest();
@@ -638,7 +646,7 @@ async function main() {
   }
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
-  const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId }) : planAppConnectSet({ makerId: maker.id, startNonce, generateId });
+  const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId }) : planAppConnectSet({ makerId: maker.id, startNonce, generateId, set: args.set });
   // The entries this run creates: all of them, or (--append-after) those the group does not hold yet.
   let plan = planned;
   let created = entriesToCreate(planned.contracts, args.appendAfter);
@@ -698,7 +706,7 @@ async function main() {
     return;
   }
 
-  const state = journal ?? { network: network(), makerId: plan.groupOwner, startNonce: String(plan.anchor.nonce), groupId: plan.groupId, ...journalPolicy(policy), contracts: {} };
+  const state = journal ?? { registrationSet: args.set, network: network(), makerId: plan.groupOwner, startNonce: String(plan.anchor.nonce), groupId: plan.groupId, ...journalPolicy(policy), contracts: {} };
   if (args.appendAfter !== null && !(state.appends ?? []).some((b) => b.after === args.appendAfter)) {
     state.appends = [...(state.appends ?? []), { after: args.appendAfter, policy: journalPolicy(policy), startedAt: new Date().toISOString() }];
   }
