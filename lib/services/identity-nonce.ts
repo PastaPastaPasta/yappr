@@ -56,7 +56,12 @@ export interface PendingTransition {
   /**
    * What the transition writes, as an opaque key its caller chose (a Pollr
    * ballot names its poll), so a caller can tell which pending transitions can
-   * touch what it is about to do. Absent means unknown: it may touch anything.
+   * touch what it is about to do. App writes may bypass each other only when
+   * both scopes are present and differ. Absent means unknown: it may touch
+   * anything. Moderation uses `moderation:<contract>:identity:<identity>` or
+   * `moderation:<contract>:document:<type>:<id>` across all actions on a target.
+   * Fee claims use `moderation:<contract>:pot:<pot>`.
+   * Wallet requests use WALLET_TOKEN_SCOPE and impose no ordering constraint.
    */
   scope?: string;
 }
@@ -425,7 +430,10 @@ function isVerdict(error: unknown): boolean {
  *
  * `writeWithNonce`, when supplied, builds the same action with a chosen nonce
  * past the mark if known-nonce transitions remain outstanding after the normal
- * wait. Wallet requests need no ordering wait. Their nonces
+ * wait, but only when both app writes have scopes and those scopes differ.
+ * Same-scope writes, or app writes unscoped on either side, keep waiting and
+ * fail unsent with PENDING_WRITE_ERROR if they do not settle. Wallet requests
+ * never impose ordering and need no ordering wait. Their nonces
  * stay reserved until consumed, including after a QR closes or a page reloads.
  * Unknown SDK nonces still hold writes back.
  *
@@ -451,6 +459,8 @@ export async function withSdkSignedWrite<T>(
     const { current, value } = await awaitNonce<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
       const pending = stillPending(tip, reservation);
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
+      if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
+        (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
       if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
         const nonce = allocateNonce(tip, reservation);
         return nonce === null ? null : { nonce };

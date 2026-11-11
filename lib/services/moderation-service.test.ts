@@ -51,9 +51,10 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 const live = vi.hoisted(() => ({ signOutAtSigner: false, signedOut: false }))
 vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => (live.signedOut ? null : sdk.identities.fetch.mock.lastCall?.[0] ?? null) }))
 // The nonce lock reads Platform's nonce; these tests are about moderation, so it just runs the write.
-const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false }))
+const sdkSignedWrites = vi.hoisted(() => ({ count: 0, locked: false, scopes: [] as (string | undefined)[] }))
 vi.mock('./identity-nonce', () => ({
-  withSdkSignedWrite: async (...args: [string, string, () => Promise<unknown>]) => {
+  withSdkSignedWrite: async (...args: [string, string, () => Promise<unknown>, string?]) => {
+    sdkSignedWrites.scopes.push(args[3])
     sdkSignedWrites.count++
     sdkSignedWrites.locked = true
     try {
@@ -113,6 +114,7 @@ const TARGET = 'Tgt111111111111111111111111111111111111111'
 
 beforeEach(() => {
   storage.clear()
+  sdkSignedWrites.scopes = []
   topology.moderated = true
   topology.lists = ['banlist', 'suspensions']
   topology.resolvesReports = false
@@ -122,11 +124,57 @@ beforeEach(() => {
   for (const group of [sdk.contracts, sdk.documents, sdk.identities, sdk.moderationCharters]) {
     for (const fn of Object.values(group)) fn.mockReset()
   }
+  sdk.contracts.teamActions.mockResolvedValue({ actions: [] })
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
   walletSession.active = false
   live.signOutAtSigner = false
   live.signedOut = false
   moderationService.invalidateTeam()
+})
+
+describe('moderation target scopes', () => {
+  it('orders every identity action on the same target together', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    await moderationService.ban(MODERATOR, TARGET, 'spam')
+    await moderationService.unban(MODERATOR, TARGET)
+    await moderationService.suspend(MODERATOR, TARGET, Date.now() + 60_000, 'spam')
+    await moderationService.unsuspend(MODERATOR, TARGET)
+    await moderationService.warn(MODERATOR, TARGET, 'spam')
+    await moderationService.clearWarnings(MODERATOR, TARGET)
+    const contract = sdk.contracts.warnUser.mock.calls[0][0].contractId
+    expect(sdkSignedWrites.scopes).toEqual(Array(6).fill(`moderation:${contract}:identity:${TARGET}`))
+    await moderationService.warn(MODERATOR, 'other', 'spam')
+    expect(sdkSignedWrites.scopes[6]).toBe(`moderation:${contract}:identity:other`)
+  })
+
+  it('uses the same document scope for a removal, team proposal and approval', async () => {
+    topology.v11 = true
+    sdk.contracts.moderatorDeleteSettledDocument.mockResolvedValue({ actionId: { toBase58: () => 'A1' }, status: 'active' })
+    sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ status: 'closed' })
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [{ actionId: 'A1', event: { documentTypeName: 'post', documentId: 'P1' } }] })
+    await moderationService.removeDocument(MODERATOR, 'post', 'P1', 'spam')
+    await moderationService.proposeSettledDeletion(MODERATOR, 'post', 'P1', { text: 'spam', reasonDocumentId: 'R1' })
+    await moderationService.approveTeamAction(MODERATOR, 'A1')
+    const contract = sdk.contracts.moderatorDeleteDocument.mock.calls[0][0].contractId
+    expect(sdkSignedWrites.scopes).toEqual(Array(3).fill(`moderation:${contract}:document:post:P1`))
+    expect(sdk.contracts.teamActions).toHaveBeenCalledWith({ contractId: contract, status: 'active', startAtActionId: 'A1', startAtActionIdIncluded: true, limit: 1 })
+  })
+
+  it('keeps approvals unscoped when the target read fails', async () => {
+    topology.v11 = true
+    sdk.contracts.teamActions.mockRejectedValue(new Error('proof unavailable'))
+    sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ status: 'closed' })
+    expect(await moderationService.approveTeamAction(MODERATOR, 'A1')).toMatchObject({ success: true })
+    expect(sdkSignedWrites.scopes).toEqual([undefined])
+  })
+
+  it('keeps approvals unscoped when their target cannot be identified', async () => {
+    topology.v11 = true
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [{ actionId: 'other' }] })
+    sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ status: 'closed' })
+    expect(await moderationService.approveTeamAction(MODERATOR, 'A1')).toMatchObject({ success: true })
+    expect(sdkSignedWrites.scopes).toEqual([undefined])
+  })
 })
 
 const moderationWrites = [
