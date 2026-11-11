@@ -135,12 +135,12 @@ describe('replacement and untrusted sources', () => {
 
 
 describe('per-document export evidence', () => {
-  it('keeps quorum/contract evidence and drops every earlier document read before a new bundle', () => {
+  it('keeps quorum evidence and drops the contract and every document read before a new bundle', () => {
     const entries = structuredClone(fixture.transport);
-    const baseCount = entries.length - 2;
+    const baseCount = entries.length - 3;
     resetDocumentEvidence(entries);
     expect(entries).toHaveLength(baseCount);
-    expect(entries.some((entry) => /\/(getDocuments|getContractDocumentRemovals) /u.test(entry.key))).toBe(false);
+    expect(entries.some((entry) => /\/(getDataContract|getDocuments|getContractDocumentRemovals) /u.test(entry.key))).toBe(false);
     entries.push({ key: 'POST /org.dash.platform.dapi.v0.Platform/getDocuments new-document', url: 'https://dapi.example/org.dash.platform.dapi.v0.Platform/getDocuments', body: 'new' });
     const bundle = structuredClone(entries);
     resetDocumentEvidence(entries);

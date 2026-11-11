@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterAll, describe, expect, it } from 'vitest';
-import { readPages } from '../recover-deleted.mjs';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { captureEvidence, readPages } from '../recover-deleted.mjs';
 
 const directory = mkdtempSync(join(tmpdir(), 'yappr-recovery-test-'));
 const original = JSON.parse(readFileSync(new URL('./fixtures/blog-testnet.json', import.meta.url), 'utf8'));
@@ -85,5 +85,38 @@ describe('CLI argument checks before network calls', () => {
       expect(result.status, result.stderr).toBe(1);
       expect(result.stderr).toMatch(/positive safe integer|--transition needs --id/);
     }
+  });
+});
+
+describe('per-bundle proof capture', () => {
+  const record = { documentId: 'doc', documentOwnerId: 'owner', documentHash: 'hash' };
+  const entry = (method, body) => ({ key: `POST /org.dash.platform.dapi.v0.Platform/${method} ${body}`, url: `https://dapi.example/org.dash.platform.dapi.v0.Platform/${method}`, body });
+  function fakeSdk(entries, { removed = record, onCurrent = () => {} } = {}) {
+    return {
+      contracts: {
+        fetch: async () => { entries.push(entry('getDataContract', 'fresh')); return {}; },
+        documentRemovalsWithProof: async () => { entries.push(entry('getContractDocumentRemovals', 'fresh')); return { toJSON: () => ({ data: { removals: [removed] } }) }; },
+      },
+      documents: { getWithProof: async () => { onCurrent(); entries.push(entry('getDocuments', 'fresh')); return { data: null, toJSON: () => ({ metadata: {}, proof: {} }) }; } },
+    };
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  it('re-fetches the contract with the removal and current-state proofs, long after the first contract read', async () => {
+    const quorum = { key: 'GET https://quorums.testnet.networks.dash.org/quorums x', url: 'https://quorums.testnet.networks.dash.org/quorums', body: 'q' };
+    const entries = [quorum, entry('getDataContract', 'stale'), entry('getContractDocumentRemovals', 'stale'), entry('getDocuments', 'stale')];
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 45 * 60 * 1000);
+    const result = await captureEvidence(fakeSdk(entries), entries, { contractId: 'contract', type: 'post' }, record);
+    expect(result.record).toEqual(record);
+    expect(entries.map((item) => item.body)).toEqual(['q', 'fresh', 'fresh', 'fresh']);
+  });
+  it('refuses a record that changed since listing and a capture too slow to verify offline', async () => {
+    await expect(captureEvidence(fakeSdk([], { removed: { ...record, documentHash: 'other' } }), [], { contractId: 'contract', type: 'post' }, record))
+      .rejects.toThrow('changed while recovering');
+    let clock = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    await expect(captureEvidence(fakeSdk([], { onCurrent: () => { clock = 21 * 60 * 1000; } }), [], { contractId: 'contract', type: 'post' }, record))
+      .rejects.toThrow('took too long');
   });
 });

@@ -67,6 +67,23 @@ async function verifyBundle(path, trust) {
   } finally { transport.restore(); }
 }
 
+// Offline replay checks every response against one capture time, so the SDK's 31-minute tolerance bounds the capture.
+const CAPTURE_LIMIT_MS = 20 * 60 * 1000;
+
+export async function captureEvidence(sdk, entries, { contractId, type }, listedRecord) {
+  const started = Date.now();
+  resetDocumentEvidence(entries);
+  if (!await sdk.contracts.fetch(contractId)) throw new Error('Contract not found');
+  const query = { contractId, documentTypeName: type, documentIds: [listedRecord.documentId] };
+  const removal = { query, response: (await sdk.contracts.documentRemovalsWithProof(query)).toJSON() };
+  const record = removal.response.data.removals.find((item) => item.documentId === listedRecord.documentId);
+  if (!record) throw new Error('Removal record disappeared after listing');
+  if (json(record) !== json(listedRecord)) throw new Error('Removal record changed while recovering; run recover again');
+  const current = proofSnapshot(await sdk.documents.getWithProof(contractId, type, record.documentId));
+  if (Date.now() - started > CAPTURE_LIMIT_MS) throw new Error('Proof capture took too long to verify offline; run recover again');
+  return { record, removal, current };
+}
+
 function proofSnapshot(response) {
   const snapshot = response.toJSON();
   return { absent: response.data == null, metadata: snapshot.metadata, proof: snapshot.proof };
@@ -149,13 +166,8 @@ export async function main(args = process.argv.slice(2)) {
     let recovered = 0;
     for (const { record: listedRecord } of records) {
       try {
-        resetDocumentEvidence(transport.entries);
-        const query = { contractId: values.contract, documentTypeName: values.type, documentIds: [listedRecord.documentId] };
-        const removal = { query, response: (await sdk.contracts.documentRemovalsWithProof(query)).toJSON() };
-        const record = removal.response.data.removals.find((item) => item.documentId === listedRecord.documentId);
-        if (!record) throw new Error('Removal record disappeared after listing');
-        const { candidate, result } = await findContent({ ...context, record }, contract, values, network, serialization);
-        const current = proofSnapshot(await sdk.documents.getWithProof(values.contract, values.type, record.documentId));
+        const { candidate, result } = await findContent({ ...context, record: listedRecord }, contract, values, network, serialization);
+        const { record, removal, current } = await captureEvidence(sdk, transport.entries, context, listedRecord);
         const bundle = plain({ format: BUNDLE_FORMAT, sdkVersion, network, ...context, record,
           removal, candidate, platformVersion: result.platformVersion, system: result.system,
           document: result.document, documentBase64: Buffer.from(result.bytes).toString('base64'), current,

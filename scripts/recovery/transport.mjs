@@ -69,7 +69,8 @@ export function installTransport({ network, replay, clockMs } = {}) {
   return { entries, restore: () => { globalThis.fetch = original; globalThis.Date = RealDate; } };
 }
 
+// Each bundle re-fetches its contract too, so every proof it holds is from one short capture.
 export function resetDocumentEvidence(entries) {
-  const base = entries.filter((entry) => !/\/(getDocuments|getContractDocumentRemovals) /u.test(entry.key));
+  const base = entries.filter((entry) => !/\/(getDataContract|getDocuments|getContractDocumentRemovals) /u.test(entry.key));
   entries.splice(0, entries.length, ...base);
 }
