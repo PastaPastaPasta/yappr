@@ -200,9 +200,9 @@ Example manifest (`social-charter.json`; repeat with the other target names and 
   "targetContractId": "<predicted-social-contract-id>",
   "expected": {
     "ownerId": "<registration-maker-id>",
-    "joinWindow": <join s>, "voteWindow": <vote s>, "challengeCoolDown": 1209600, "electionDelay": <delay s>,
+    "joinWindow": <join s>, "voteWindow": <vote s>, "challengeCoolDown": <cool-down s>, "electionDelay": <delay s>,
     "interim": "notYetUsable",
-    "documentTypes": ["post", "reply", "report", "restriction", "yapprProfile"]
+    "documentTypes": ["post", "reply", "report", "yapprProfile"]
   },
   "leader": {
     "identityId": "<leader-id>",
