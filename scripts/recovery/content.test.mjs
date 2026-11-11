@@ -10,7 +10,7 @@ const trustedDigest = '321835727f0bfb7cb2bb4031e9a1ac68cbcac7ef91af48810109fcd5c
 let contract;
 let transport;
 beforeAll(async () => {
-  transport = installTransport({ network: 'testnet', replay: fixture.transport });
+  transport = installTransport({ network: 'testnet', replay: fixture.transport, clockMs: fixture.current.metadata.timeMs });
   const sdk = EvoSDK.testnetTrusted();
   await sdk.connect();
   contract = await sdk.contracts.fetch(fixture.contractId);

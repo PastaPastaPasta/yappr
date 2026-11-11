@@ -48,7 +48,8 @@ async function verifyBundle(path, trust) {
   const bundle = JSON.parse(await readFile(path, 'utf8'));
   if (bundle.format !== BUNDLE_FORMAT || !['testnet', 'mainnet'].includes(bundle.network)) throw new Error('Unsupported recovery bundle');
   if (!trust || quorumDigest(bundle.transport, bundle.network) !== trust) throw new Error('Provide the independently trusted --trust-quorums digest printed during recovery');
-  const transport = installTransport({ network: bundle.network, replay: bundle.transport });
+  if (!Number.isSafeInteger(bundle.current?.metadata?.timeMs)) throw new Error('Bundle has no capture time');
+  const transport = installTransport({ network: bundle.network, replay: bundle.transport, clockMs: bundle.current.metadata.timeMs });
   try {
     const sdk = buildSdk({ net: bundle.network });
     await sdk.connect();

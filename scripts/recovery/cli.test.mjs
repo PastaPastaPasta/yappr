@@ -35,6 +35,17 @@ describe('offline CLI verification', () => {
     const result = verify(changedProof);
     expect(result.status, result.stderr).toBe(1);
   });
+  it('rejects a shadow response that keeps the trusted quorum digest', () => {
+    const quorum = original.transport.find((entry) => new URL(entry.url).hostname.startsWith('quorums.'));
+    expect(quorum).toBeDefined();
+    const shadow = { ...quorum, url: 'https://archive.invalid/', body: Buffer.from('[]').toString('base64') };
+    const shadowed = { ...original, transport: [shadow, ...original.transport] };
+    const result = verify(shadowed);
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toMatch(/repeats a recorded request|does not match its request/u);
+    const relabelled = { ...original, transport: original.transport.map((entry) => (entry === quorum ? { ...entry, url: 'https://archive.invalid/' } : entry)) };
+    expect(verify(relabelled).stderr).toContain('does not match its request');
+  });
 });
 
 describe('proved removal pagination', () => {

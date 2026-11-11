@@ -4,23 +4,47 @@ export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex'
 const quorumHost = (network) => `quorums.${network}.networks.dash.org`;
 const isDapi = (url) => new URL(url).pathname.replace(/^\/+/u, '/').startsWith('/org.dash.platform.dapi.v0.Platform/');
 
+function requestTarget(href) {
+  const url = new URL(href);
+  return isDapi(url) ? url.pathname.replace(/^\/+/u, '/') + url.search : url.href;
+}
+
 async function requestKey(input, init) {
   const request = new Request(input instanceof Request ? input.clone() : input, init);
-  const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/+/u, '/') + url.search;
-  return `${request.method} ${isDapi(url) ? path : url.href} ${sha256(new Uint8Array(await request.arrayBuffer()))}`;
+  return `${request.method} ${requestTarget(request.url)} ${sha256(new Uint8Array(await request.arrayBuffer()))}`;
+}
+
+// The digest and the replay lookup must select the same responses, so both go by key.
+function checkReplay(entries) {
+  const seen = new Set();
+  for (const entry of entries) {
+    const target = entry.key.split(' ')[1];
+    if (seen.has(entry.key)) throw new Error(`Bundle repeats a recorded request: ${entry.key}`);
+    if (requestTarget(entry.url) !== target) throw new Error(`Bundle entry URL does not match its request: ${entry.key}`);
+    seen.add(entry.key);
+  }
 }
 
 export function quorumDigest(entries, network) {
-  const keys = entries.filter((entry) => new URL(entry.url).hostname === quorumHost(network))
+  checkReplay(entries);
+  const keys = entries.filter((entry) => URL.canParse(entry.key.split(' ')[1]) && new URL(entry.key.split(' ')[1]).hostname === quorumHost(network))
     .map(({ key, body }) => ({ key, body })).sort((a, b) => a.key.localeCompare(b.key));
   if (keys.length === 0) throw new Error('Bundle has no quorum context');
   return sha256(JSON.stringify(keys));
 }
 
 // Replaying the wire responses runs the SDK's GroveDB and quorum-signature checks again.
-export function installTransport({ network, replay } = {}) {
+// A replayed bundle is checked at its capture time: the SDK rejects responses older than about 31 minutes.
+export function installTransport({ network, replay, clockMs } = {}) {
+  if (replay) checkReplay(replay);
   const original = globalThis.fetch;
+  const RealDate = globalThis.Date;
+  if (clockMs !== undefined) {
+    globalThis.Date = class extends RealDate {
+      constructor(...args) { super(...(args.length === 0 ? [clockMs] : args)); }
+      static now() { return clockMs; }
+    };
+  }
   const entries = [];
   globalThis.fetch = async (input, init) => {
     const url = new Request(input instanceof Request ? input.clone() : input, init).url;
@@ -42,7 +66,7 @@ export function installTransport({ network, replay } = {}) {
     }
     return response;
   };
-  return { entries, restore: () => { globalThis.fetch = original; } };
+  return { entries, restore: () => { globalThis.fetch = original; globalThis.Date = RealDate; } };
 }
 
 export function resetDocumentEvidence(entries) {
