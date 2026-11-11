@@ -57,6 +57,7 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
     };
     await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send);
   } catch (error) {
+    if (error instanceof CriticalKeyCancelledError) throw error;
     if (sent && sentWriteOutcomeUnknown(error)) throw new UnconfirmedTokenWriteError(error);
     throw error;
   }

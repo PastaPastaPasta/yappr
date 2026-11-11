@@ -32,6 +32,7 @@ const sdk = vi.hoisted(() => ({
     moderatorDeleteDocument: vi.fn(),
     moderatorDeleteSettledDocument: vi.fn(),
     moderatorApproveTeamAction: vi.fn(),
+    teamActions: vi.fn(),
     moderatorRestoreDocument: vi.fn(),
     claimFees: vi.fn(),
     feePots: vi.fn(),
@@ -207,6 +208,7 @@ describe('one service per contract, each sending its own contract id', () => {
       const blog = moderationServiceFor('blog')
       sdk.contracts.moderatorDeleteSettledDocument.mockResolvedValue({ actionId: { toBase58: () => 'BA1' }, status: 'active' })
       sdk.contracts.moderatorApproveTeamAction.mockResolvedValue({ status: 'closed' })
+      sdk.contracts.teamActions.mockResolvedValue({ actions: [] })
       expect(await blog.proposeSettledDeletion(MODERATOR, 'blogPost', 'BP1', { text: 'spam', reasonDocumentId: 'BR1' }))
         .toMatchObject({ success: true, actionId: 'BA1', status: 'active' })
       expect(sdk.contracts.moderatorDeleteSettledDocument).toHaveBeenCalledWith(expect.objectContaining({

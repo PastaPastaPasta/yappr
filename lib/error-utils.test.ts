@@ -1072,6 +1072,7 @@ describe('beta.6 QuorumKeyUnavailable (a quorum rotation)', () => {
     expect(sentWriteOutcomeUnknown({ code: -1, name: 'InvalidArgument', message: 'amount must be positive' })).toBe(false)
     expect(sentWriteOutcomeUnknown({ code: -1, name: 'IdentityNonceNotFound', message: 'nonce not found for identity' })).toBe(false)
     expect(sentWriteOutcomeUnknown({ name: 'ChosenWriteNotSentError', message: 'This change hasn’t been sent. Please try again.' })).toBe(false)
+    expect(sentWriteOutcomeUnknown({ name: 'CriticalKeyCancelledError', message: 'Cancelled' })).toBe(false)
   })
 
   it('tells the user a write may have gone through, rather than inviting a retry', () => {
