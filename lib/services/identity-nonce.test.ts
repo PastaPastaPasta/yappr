@@ -149,7 +149,7 @@ describe('withSdkSignedWrite', () => {
   it('keeps an SDK write pending when it is refused as too far in future: a node behind may be the one answering', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const refused = await runSdkWrite(async () => {
-      throw { code: 40204, message: 'Identity x is trying to set an invalid identity nonce. The current identity nonce is 76, we are setting 101, error is nonce too far in future' }
+      throw { code: 40204, name: 'Protocol', message: 'Identity x is trying to set an invalid identity nonce. The current identity nonce is 76, we are setting 101, error is nonce too far in future' }
     })
     expect(refused.ok).toBe(false)
     expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
@@ -164,6 +164,18 @@ describe('withSdkSignedWrite', () => {
     expect(reservation?.pending ?? []).toEqual([])
     expect(reservation?.floor ?? n(100)).toBe(n(100))
   })
+
+  it.each(['InvalidArgument', 'SerializationError', 'IdentityNonceNotFound', 'Protocol'])(
+    'releases an SDK %s failure before broadcast without counting its nonce spent', async (name) => {
+      sdk.identities.contractNonce.mockResolvedValue(n(100))
+      const failure = Object.assign(new Error('SDK could not build the write'), { name, code: -1 })
+      expect(await runSdkWrite(async () => { throw failure })).toEqual({ ok: false, error: failure })
+      expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(100), pending: [] })
+      const nextWrite = vi.fn(async () => 'sent')
+      expect(await runSdkWrite(nextWrite)).toEqual({ ok: true, value: 'sent' })
+      expect(nextWrite).toHaveBeenCalledOnce()
+    }
+  )
 
   it('releases an SDK write refused because its nonce is already present', async () => {
     sdk.identities.contractNonce.mockResolvedValue(n(100))

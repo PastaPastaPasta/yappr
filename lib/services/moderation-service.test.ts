@@ -4,7 +4,7 @@
  * them off contracts that do not declare the capability. Moutai has no
  * contracts to write to, so the SDK is mocked; the live check is PR C's.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   contracts: {
@@ -129,6 +129,24 @@ beforeEach(() => {
   moderationService.invalidateTeam()
 })
 
+const moderationWrites = [
+  sdk.contracts.banUser, sdk.contracts.unbanUser, sdk.contracts.suspendUser, sdk.contracts.unsuspendUser,
+  sdk.contracts.warnUser, sdk.contracts.clearUserWarnings, sdk.contracts.moderatorDeleteDocument,
+  sdk.contracts.moderatorRestoreDocument, sdk.contracts.moderatorChangeDocumentFields,
+  sdk.contracts.moderatorDeleteSettledDocument, sdk.contracts.moderatorApproveTeamAction, sdk.contracts.claimFees,
+]
+
+afterEach(() => {
+  for (const method of moderationWrites) {
+    for (const [options] of method.mock.calls) {
+      expect(options).not.toHaveProperty('assertLive')
+      expect(options).not.toHaveProperty('wif')
+      expect(options).not.toHaveProperty('identityKey')
+      expect(Object.values(options).some(value => typeof value === 'function')).toBe(false)
+    }
+  }
+})
+
 describe('moderation signs only with a raw key', () => {
   it('refuses during a wallet session even with a CRITICAL key left in storage, before signing anything', async () => {
     topology.lists = ['banlist', 'suspensions', 'warnings']
@@ -145,6 +163,16 @@ describe('moderation signs only with a raw key', () => {
     expect(result).toEqual({ success: false, errorCode: 'CANCELLED' })
     expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
   })
+})
+
+it('cancels a removal when the session ends while awaiting the document snapshot', async () => {
+  sdk.contracts.fetch.mockImplementation(async () => {
+    live.signedOut = true
+    return null
+  })
+  expect(await moderationService.removeDocument(MODERATOR, 'post', 'D1', 'spam'))
+    .toMatchObject({ success: false, errorCode: 'CANCELLED' })
+  expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
 })
 
 describe('step-up: a wallet session asks for the CRITICAL key when the action is confirmed', () => {

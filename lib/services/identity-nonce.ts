@@ -36,7 +36,7 @@
  */
 import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
-import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
@@ -444,6 +444,8 @@ export async function withSdkSignedWrite<T>(
       // A step-up key's session ended before it signed (lib/auth/critical-key.ts): nothing was sent, so no nonce was spent.
       if (error instanceof CriticalKeyCancelledError) releaseNonce(ownerId, contractId, entry);
       else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, false, tipOf(current)));
+      // SDK argument/serialization failures happen before broadcast, so they spent no nonce.
+      else if (!sentWriteOutcomeUnknown(error)) releaseNonce(ownerId, contractId, entry);
       else renewPending(ownerId, contractId, entry);
       throw error;
     }
