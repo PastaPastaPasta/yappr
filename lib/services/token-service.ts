@@ -1,3 +1,4 @@
+import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
@@ -45,15 +46,16 @@ class UnconfirmedTokenWriteError extends Error {
  * comes back as {@link UnconfirmedTokenWriteError}; a failure before that sent
  * nothing and is rethrown as is.
  */
-async function sendTokenWrite(ownerId: string, write: () => Promise<unknown>, assertLive?: () => void): Promise<void> {
+async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promise<unknown>, assertLive?: () => void): Promise<void> {
   let sent = false;
   try {
-    await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, () => {
+    const send = (nonce?: bigint) => {
       // Last check before a step-up key signs: the session it was given in must still be the one signed in.
       assertLive?.();
       sent = true;
-      return write();
-    });
+      return write(nonce);
+    };
+    await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send);
   } catch (error) {
     if (sent && sentWriteOutcomeUnknown(error)) throw new UnconfirmedTokenWriteError(error);
     throw error;
@@ -150,9 +152,9 @@ class TokenService {
 
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive } = await this.getAuthSigner(buyerId);
+      const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(buyerId);
 
-      await sendTokenWrite(buyerId, () => sdk.tokens.directPurchase({
+      await sendTokenWrite(buyerId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, buyerId, nonce, wif, identityKey, assertLive)).tokens.directPurchase({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         buyerId: new Identifier(buyerId),
@@ -197,9 +199,9 @@ class TokenService {
     }
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive } = await this.getAuthSigner(senderId);
+      const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(senderId);
 
-      await sendTokenWrite(senderId, () => sdk.tokens.transfer({
+      await sendTokenWrite(senderId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, senderId, nonce, wif, identityKey, assertLive)).tokens.transfer({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         senderId: new Identifier(senderId),
@@ -278,9 +280,9 @@ class TokenService {
     try {
       const sdk = await getEvoSdk();
       const auth = await this.getAuthSigner(identityId, { keyRing: true });
-      const { signer, identityKey, assertLive } = auth;
+      const { signer, identityKey, assertLive, wif } = auth;
       signingKey = auth.signingKey;
-      await sendTokenWrite(identityId, () => sdk.tokens.claim({
+      await sendTokenWrite(identityId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, identityId, nonce, wif, identityKey, assertLive)).tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         identityId: new Identifier(identityId),
@@ -323,7 +325,7 @@ class TokenService {
   ): Promise<TokenResult> {
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive } = await this.getAuthSigner(authorityId);
+      const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(authorityId);
 
       const options = {
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
@@ -335,13 +337,14 @@ class TokenService {
         signer,
       };
 
-      await sendTokenWrite(authorityId, async () => {
+      await sendTokenWrite(authorityId, async (nonce) => {
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, authorityId, nonce, wif, identityKey, assertLive);
         if (action === 'freeze') {
-          await sdk.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
+          await writer.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
         } else if (action === 'unfreeze') {
-          await sdk.tokens.unfreeze(options as Parameters<typeof sdk.tokens.unfreeze>[0]);
+          await writer.tokens.unfreeze(options as Parameters<typeof sdk.tokens.unfreeze>[0]);
         } else {
-          await sdk.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
+          await writer.tokens.destroyFrozen(options as Parameters<typeof sdk.tokens.destroyFrozen>[0]);
         }
       }, assertLive);
       return { success: true };
@@ -380,7 +383,7 @@ class TokenService {
   private async getAuthSigner(
     identityId: string,
     opts?: { keyRing?: boolean }
-  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; assertLive: () => void }> {
+  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey; wif: string; assertLive: () => void }> {
     if (hasAppConnectSession(identityId) && opts?.keyRing) {
       // The wallet session this signs for must still be the one signed in when the claim goes out.
       const assertLive = liveSessionCheck(identityId, criticalKeySession());
@@ -392,7 +395,7 @@ class TokenService {
         assertLive();
         if (!hasAppConnectSession(identityId)) throw new CriticalKeyCancelledError();
       };
-      return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey, assertLive: live };
+      return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey, wif: signingKey.wif, assertLive: live };
     }
     // Taken before the key is read: a sign-out or switch while the identity is fetched stops the action.
     const session = criticalKeySession();
@@ -403,7 +406,7 @@ class TokenService {
     const critical = await criticalKeyFor(identityId, identity.publicKeys, 'token', sessionKey, session);
     // Every transition here is on the YAPP token: a bound or limited key must cover it.
     await assertRawKeyCovers(identityId, critical.key, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
-    return { ...(await signerService.createSignerFromWasmKey(critical.wif, critical.key)), assertLive: critical.assertLive };
+    return { ...(await signerService.createSignerFromWasmKey(critical.wif, critical.key)), wif: critical.wif, assertLive: critical.assertLive };
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {

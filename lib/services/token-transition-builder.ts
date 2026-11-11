@@ -13,7 +13,7 @@ import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identity-nonce';
+import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identity-nonce';
 
 /**
  * An unsigned transition for a wallet, and the way to take it back. The bytes
@@ -31,9 +31,9 @@ export interface WalletTransitionRequest {
 /**
  * Serialize an unsigned single-transition batch for `ownerId`.
  *
- * The transition carries the owner's next identity-contract nonce, so it is
- * only valid until their next write to the social contract (posting, liking, …)
- * consumes that nonce — build it right before showing the QR and rebuild on retry.
+ * The transition carries a reserved identity-contract nonce. Later writes use
+ * different nonces: even after its QR closes, a scanned request may still execute
+ * until Platform proves that its nonce is consumed or outside the nonce window.
  *
  * @param label - Prefix for the debug lines, naming the calling flow
  * @param ownerId - Identity ID (Base58) the wallet signs for
@@ -69,7 +69,7 @@ export async function buildUnsignedTokenBatch(
     const bytes = stateTransition.toBytes();
     logger.debug(`${label}: unsigned transition bytes length: ${bytes.length}`);
 
-    const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce);
+    const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce, WALLET_TOKEN_SCOPE);
     // Never shown to a wallet, so never signed: its nonce was not taken.
     const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
     return { bytes, discard };

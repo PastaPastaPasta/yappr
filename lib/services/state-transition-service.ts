@@ -1,3 +1,4 @@
+import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
@@ -1017,10 +1018,13 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => {
+      const wif = key.wif;
+      const write = (nonce?: bigint) => {
         sent = true;
-        return sdk.documents.replace({ document, identityKey: signingKey, signer });
-      }, reservationScope);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey);
+        return writer.documents.replace({ document, identityKey: signingKey, signer });
+      };
+      await withSdkSignedWrite(ownerId, contractId, write, reservationScope, undefined, write);
       logger.debug('Document update submitted successfully');
       reportSigningSuccess(ownerId);
 
@@ -1084,10 +1088,13 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => {
+      const wif = key.wif;
+      const write = (nonce?: bigint) => {
         sent = true;
-        return sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
-      }, undefined, precondition);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey);
+        return writer.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
+      };
+      await withSdkSignedWrite(ownerId, contractId, write, undefined, precondition, write);
       logger.debug('Document deletion submitted successfully');
       reportSigningSuccess(ownerId);
 
@@ -1171,10 +1178,14 @@ class StateTransitionService {
         // From evo-sdk 4.2.0-beta.7 (platform#5136) this resolves once the
         // proof shows the entry gone: an indexOnly delete waits for the
         // affected state instead of throwing the strict wait's snapshot error.
-        await withSdkSignedWrite(ownerId, contractId, () => {
+        const wif = key.wif;
+        const write = (nonce?: bigint) => {
           sent = true;
-          return sdk.documents.delete({ document, identityKey: signingKey, signer });
-        });
+          return nonce === undefined
+            ? sdk.documents.delete({ document, identityKey: signingKey, signer })
+            : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey).documents.deleteByValues(document);
+        };
+        await withSdkSignedWrite(ownerId, contractId, write, undefined, undefined, write);
         logger.debug(`indexOnly delete ${documentId} confirmed`);
         reportSigningSuccess(ownerId);
       } catch (waitErr) {
