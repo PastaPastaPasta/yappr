@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BatchTransition, EvoSDK, StateTransition } from '@dashevo/evo-sdk';
+import { BatchTransition, DataContract, EvoSDK, PlatformVersion, StateTransition } from '@dashevo/evo-sdk';
 import { BUNDLE_FORMAT, json, rebuild, recoverCandidate, selectTransition, sha256d, verifyContent } from './content.mjs';
 import { installTransport, quorumDigest, resetDocumentEvidence } from './transport.mjs';
 import { findContent } from '../recover-deleted.mjs';
+import { contractSource, registrationJson } from '../register-lib.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/blog-testnet.json', import.meta.url), 'utf8'));
+const postFixture = JSON.parse(readFileSync(new URL('./fixtures/post-testnet.json', import.meta.url), 'utf8'));
 const trustedDigest = '321835727f0bfb7cb2bb4031e9a1ac68cbcac7ef91af48810109fcd5cf132987';
 let contract;
 let transport;
@@ -111,24 +113,26 @@ describe('replacement and untrusted sources', () => {
     context.record.documentHash = sha256d(expected.bytes);
     expect(recoverCandidate(context, candidate, contract).document.$revision).toBe(2);
   });
-  it('takes the times a removal record keeps rather than archive metadata', () => {
-    // Social v17 keeps `$createdAt` and `$updatedAt` of a removed post or reply, so an edited
-    // document is rebuilt from its record and its last signed transition alone.
-    const context = structuredClone(fixture);
-    const updatedAt = fixture.candidate.updatedAt + 60_000;
-    const transition = selectTransition(Buffer.from(fixture.candidate.transitionBase64, 'base64'), context);
-    const expected = rebuild({ ...context, transition, system: { ...fixture.system, $updatedAt: String(updatedAt) } }, contract);
+  it('rebuilds a social v17 post from the block height its removal record keeps', () => {
+    // Social v17's post and reply require `$updatedAtBlockHeight`, so it is part of the bytes the
+    // record's hash commits to. No signed transition carries it: the record keeps it.
+    const source = contractSource(readFileSync(new URL('../../contracts/yappr-social-contract-v17.json', import.meta.url), 'utf8'));
+    const version = new PlatformVersion(postFixture.platformVersion);
+    const v17 = DataContract.fromJSON(registrationJson(source, { id: postFixture.contractId, ownerId: postFixture.record.documentOwnerId }), true, version);
+    const context = structuredClone(postFixture);
+    const height = '668957';
+    const transition = selectTransition(Buffer.from(postFixture.candidate.transitionBase64, 'base64'), context);
+    const expected = rebuild({ ...context, transition, system: { ...postFixture.system, $updatedAtBlockHeight: height } }, v17);
     context.record.documentHash = sha256d(expected.bytes);
-    expect(() => recoverCandidate(context, fixture.candidate, contract)).toThrow(/No serialization matches/);
-    context.record.keptFields = { $createdAt: fixture.candidate.createdAt, $updatedAt: updatedAt };
-    const withoutTimes = { ...fixture.candidate };
-    delete withoutTimes.createdAt;
-    delete withoutTimes.updatedAt;
-    for (const candidate of [withoutTimes, { ...fixture.candidate, createdAt: 1, updatedAt: 2 }]) {
-      const recovered = recoverCandidate(context, candidate, contract);
-      expect(recovered.system.$updatedAt).toBe(String(updatedAt));
-      expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
-    }
+    // The first registration's record keeps `$createdAt` only: nothing supplies the height.
+    expect(() => recoverCandidate(context, postFixture.candidate, v17)).toThrow(/No serialization matches/);
+    context.record.keptFields = { ...postFixture.record.keptFields, $updatedAtBlockHeight: height };
+    const recovered = recoverCandidate(context, postFixture.candidate, v17);
+    expect(recovered.system.$updatedAtBlockHeight).toBe(height);
+    expect(recovered.document.$updatedAtBlockHeight).toBe(Number(height));
+    expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    context.record.keptFields.$updatedAtBlockHeight = '668958';
+    expect(() => recoverCandidate(context, postFixture.candidate, v17)).toThrow(/No serialization matches/);
   });
   it('tries another archive after an HTTP failure and rejects a forged candidate before a good one', async () => {
     const originalFetch = globalThis.fetch;

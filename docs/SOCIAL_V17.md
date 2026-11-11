@@ -21,7 +21,7 @@ The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NO
 | 11 | **One moderator for a day** (D39) | `post` and `reply` `moderatorAbilities.deleteWithin` is 86,400 s (v16: 604,800 s): one moderator removes a post or reply alone for a day after its last change, then it settles and only the seated team removes it (the leader and one more member since D41, row 12). The signed size and registration fee are unchanged (both values encode at the same width). |
 | 12 | **Moderation parameters** (D41) | `post` and `reply` `deleteSettled` is `{leader: true, approvals: 2}` (v16: 3): once settled, the leader and one more member remove it. The elected declaration's `ownerProtected` is false, so the seated team can moderate the contract owner too. `actionFees.create.moderators` (pricing `feeMultiplier`): post 20,000,000, reply 10,000,000, report 20,000,000 credits (v16: 80M, 16M, 50M). `maxAddedModerators` stays 10 and `challengeCoolDown` 30 days. The signed size is unchanged. |
 | 13 | **Live thread index** (owner, 2026-10-21) | `reply.repliesOf` is `[live, rootPostId, replyToReplyId, $createdAt]` with `skipIfAbsent: ["live"]`, still `rangeCountable` and `rankedCountable {at: rootPostId}` (it was `[rootPostId, replyToReplyId, $createdAt]`). See [Live thread index](#live-thread-index). |
-| 14 | **Removal records keep both times** (owner, 2026-11-11) | `post` and `reply` `moderatorAbilities.deleteKeepsFields` add `$updatedAt` (`[tags, $createdAt, $updatedAt]` and `[rootPostId, $createdAt, $updatedAt]`). Both types already require `$createdAt` and `$updatedAt`. See [Kept times](#kept-times). |
+| 14 | **Updated block height** (owner, 2026-11-11) | `post` and `reply` require `$updatedAtBlockHeight` beside `$createdAt` and `$updatedAt`, and `moderatorAbilities.deleteKeepsFields` lists it: `[tags, $createdAt, $updatedAtBlockHeight]` and `[rootPostId, $createdAt, $updatedAtBlockHeight]`. See [Updated block height](#updated-block-height). |
 | 15 | **Unchanged by decision** | Sponsorship (D4: post/reply/like/likeReply at 10/3/1/1 YAPP, `gasFeesPaidBy: 2`), follows (D17), bookmarks (D13), the tag pattern (D7), every other index, rule and fee, and the moderation declaration: the file keeps mainnet-legal election windows (join 604,800 s, vote 259,200 s) and interim `contractOwner`, and the registration renders testnet's (below). |
 
 ## The file
@@ -29,8 +29,8 @@ The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NO
 | | Social v17 |
 | --- | --- |
 | File | `contracts/yappr-social-contract-v17.json` |
-| sha256 | `ad36c81b588be26ee52cac29ed1d0aabf7404a7f546cf4e4ddc65b8532819157` |
-| Signed create | **~18,078 B** by `validate-contract-offline.mjs` on the 5.0.0-rc.4 wasm-sdk, testnet and mainnet renderings alike (v16: ~16,498 B; ~18,054 B before the [kept times](#kept-times)): 1,922 B under the 20,000 B budget, 2,402 B under the 20,480 B cap |
+| sha256 | `2e41bbb32317433bf5aeb1ad8179d6d264277b85dbd9f2f9a5e66ffb1bd378b2` |
+| Signed create | **~18,146 B** by `validate-contract-offline.mjs` on the 5.0.0-rc.4 wasm-sdk, testnet and mainnet renderings alike (v16: ~16,498 B; ~18,054 B before the [updated block height](#updated-block-height)): 1,854 B under the 20,000 B budget, 2,334 B under the 20,480 B cap |
 | Document types | 12: `privateFeed` replaces `privateFeedState` |
 | Registration fee | 91.00e9 credits by the protocol-14 fee table (`registrationFee` in `scripts/registration-policy.mjs`), the same as v16; **91.76e9 measured on sakura** (5,506¢) |
 | Parses | Full validation on the rc.3 wasm-sdk and the node rules on the rc.3 wasm-dpp2, `--network testnet` and `--network mainnet` (`--strict-size`); registered on sakura (beta.6 nodes, whose reference validation is identical) |
@@ -50,13 +50,15 @@ Drive serves a `skipIfAbsent` index only to a read that pins every skip property
 
 A whole-type count (no `where`) is refused on v17: the type keeps no count tree. The reply notification windows are unchanged and still return tombstones.
 
-### Kept times
+### Updated block height
 
-A moderator's removal record stores the hash of the removed document, and the recovery tool ([RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md)) accepts a copy only when it serializes to that hash. The serialization includes `$createdAt` and `$updatedAt`, which are block times: no signed transition carries them. Through the first registration the record kept `$createdAt` only, so the `$updatedAt` of a post or reply that was replaced before its removal had to come from an archive. Since 2026-11-11 the record keeps both, and a removed post or reply is rebuilt from its record and its last signed transition alone.
+Every post and reply carries `$updatedAtBlockHeight`: the Platform height of the block that created it or, after an author's tombstone (the only edit consensus allows), of the block that tombstoned it. Platform sets it, as it sets `$createdAt` and `$updatedAt`; no transition carries it and the client writes nothing new. A moderator's removal record keeps it with `$createdAt`, so the record of a removed post or reply names the block that holds its last signed transition. That block's time is the document's `$updatedAt`.
 
-- Platform accepts a system property under `deleteKeepsFields` only on a type that requires it (10231 otherwise). `post` and `reply` require both times, and `lib/contract-topology.test.ts` holds that.
-- `deleteKeepsFields` is fixed on update (40212). The testnet registration of 2026-10-21 (`4nYYMMs9…`, sha256 `77cf4308…`) predates this change and its records keep `$createdAt` only; testnet matches this file again only after a fresh registration. Mainnet registers this file.
-- The signed create grows 24 B. Nothing else changes: no index, rule, fee or reference reads the kept times, and a record's kept values are not indexed.
+- Platform accepts a system property under `deleteKeepsFields` only on a type that requires it (10231 otherwise), so the field is in `required` and in the kept list together. `lib/contract-topology.test.ts` holds both.
+- The height is part of the bytes a removal record's hash commits to. The recovery tool ([RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md)) reads it from the record's kept fields when it rebuilds a removed post or reply.
+- A required list and `deleteKeepsFields` are both fixed on update (40212 for the latter). The testnet registration of 2026-10-21 (`4nYYMMs9…`, sha256 `77cf4308…`) predates this change: its posts and replies carry no height and its records keep `$createdAt` only. Testnet matches this file again only after a fresh registration. Mainnet registers this file.
+- The signed create grows 92 B, and a stored post or reply by the 8 B of the height; write fees were not measured again. No index, rule, fee or reference reads the height, and a record's kept values are not indexed.
+- Not exercised on a live network yet: no Yappr contract required a block height before. `scripts/verify-v10.mjs` checks it on the next battery run (`m1k2`).
 
 ### Live thread index
 

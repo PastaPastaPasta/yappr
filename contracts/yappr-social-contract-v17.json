@@ -541,7 +541,8 @@
       ],
       "required": [
         "$createdAt",
-        "$updatedAt"
+        "$updatedAt",
+        "$updatedAtBlockHeight"
       ],
       "properties": {
         "content": {
@@ -695,7 +696,7 @@
         "deleteKeepsFields": [
           "tags",
           "$createdAt",
-          "$updatedAt"
+          "$updatedAtBlockHeight"
         ],
         "deleteWithin": 86400,
         "deleteSettled": {
@@ -1361,6 +1362,7 @@
       "required": [
         "$createdAt",
         "$updatedAt",
+        "$updatedAtBlockHeight",
         "rootPostId"
       ],
       "properties": {
@@ -1481,7 +1483,7 @@
         "deleteKeepsFields": [
           "rootPostId",
           "$createdAt",
-          "$updatedAt"
+          "$updatedAtBlockHeight"
         ],
         "deleteWithin": 86400,
         "deleteSettled": {

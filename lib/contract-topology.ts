@@ -2035,7 +2035,7 @@ export function moderatorDeletionKeepsRecord(docType: string): boolean {
 /**
  * The fields a moderator's removal record of `docType` keeps (v11: a post's
  * `hashtag` and `$createdAt`, a reply's `rootPostId` and `$createdAt`; v17
- * adds `$updatedAt` to both), read
+ * adds `$updatedAtBlockHeight` to both), read
  * from `documentRemovals` entries' `keptFields`. Empty when the type keeps
  * none (v9, v10) or keeps no record. The records are not indexed by them.
  */

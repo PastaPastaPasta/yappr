@@ -170,9 +170,9 @@ the password-era vault, key backup, key exchange or DM v4 for the release
 **Keep deployment states separate.** The v17 set was registered on testnet on
 2026-10-21; the checked-in `.env.testnet` names it, and `npm run build` loads
 it for `/staging` (D20) and, once the owner merges staging into master, for
-root. The social v17 file has since added `$updatedAt` to the `post` and
-`reply` removal records (`deleteKeepsFields`, fixed on update); testnet's
-registered copy predates that. Social v18, blog v10 and storefront v11 ("hide, don't delete",
+root. The social v17 file has since made `post` and `reply` require
+`$updatedAtBlockHeight` and keep it in their removal records (both fixed on
+update); testnet's registered copy predates that. Social v18, blog v10 and storefront v11 ("hide, don't delete",
 [docs/SOCIAL_V18.md](docs/SOCIAL_V18.md), D42–D44) were an experiment: a
 rehearsal copy runs at `/beta`, and they are not part of the mainnet set
 (D45). Until the staging merge, master's root still selects
