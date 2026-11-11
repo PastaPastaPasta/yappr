@@ -81,6 +81,9 @@ containing:
 
 A raw `--transition` requires `--id`. Local sources are tried before archives. The original create time is needed
 when the removal record does not keep it, including for a replaced document.
+Social v17's `post` and `reply` records keep both `$createdAt` and `$updatedAt`
+(the 2026-10-21 testnet registration keeps `$createdAt` only), so neither time
+has to be supplied or trusted from an archive there.
 The signed replace transition supplies its revision. Transfer and price-update
 transitions are not supported; no moderated v17 content type is transferable. No edited-then-deleted
 live fixture was available for this read-only validation; replacement handling

@@ -111,6 +111,25 @@ describe('replacement and untrusted sources', () => {
     context.record.documentHash = sha256d(expected.bytes);
     expect(recoverCandidate(context, candidate, contract).document.$revision).toBe(2);
   });
+  it('takes the times a removal record keeps rather than archive metadata', () => {
+    // Social v17 keeps `$createdAt` and `$updatedAt` of a removed post or reply, so an edited
+    // document is rebuilt from its record and its last signed transition alone.
+    const context = structuredClone(fixture);
+    const updatedAt = fixture.candidate.updatedAt + 60_000;
+    const transition = selectTransition(Buffer.from(fixture.candidate.transitionBase64, 'base64'), context);
+    const expected = rebuild({ ...context, transition, system: { ...fixture.system, $updatedAt: String(updatedAt) } }, contract);
+    context.record.documentHash = sha256d(expected.bytes);
+    expect(() => recoverCandidate(context, fixture.candidate, contract)).toThrow(/No serialization matches/);
+    context.record.keptFields = { $createdAt: fixture.candidate.createdAt, $updatedAt: updatedAt };
+    const withoutTimes = { ...fixture.candidate };
+    delete withoutTimes.createdAt;
+    delete withoutTimes.updatedAt;
+    for (const candidate of [withoutTimes, { ...fixture.candidate, createdAt: 1, updatedAt: 2 }]) {
+      const recovered = recoverCandidate(context, candidate, contract);
+      expect(recovered.system.$updatedAt).toBe(String(updatedAt));
+      expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    }
+  });
   it('tries another archive after an HTTP failure and rejects a forged candidate before a good one', async () => {
     const originalFetch = globalThis.fetch;
     const urls = [];

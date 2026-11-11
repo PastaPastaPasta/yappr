@@ -694,7 +694,8 @@
         "delete": true,
         "deleteKeepsFields": [
           "tags",
-          "$createdAt"
+          "$createdAt",
+          "$updatedAt"
         ],
         "deleteWithin": 86400,
         "deleteSettled": {
@@ -1479,7 +1480,8 @@
         "delete": true,
         "deleteKeepsFields": [
           "rootPostId",
-          "$createdAt"
+          "$createdAt",
+          "$updatedAt"
         ],
         "deleteWithin": 86400,
         "deleteSettled": {

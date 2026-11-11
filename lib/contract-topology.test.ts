@@ -1527,6 +1527,17 @@ describe('contract topology', () => {
       expect(await settled('v17')).toEqual([rule(86_400, 2), rule(86_400, 2)])
       expect(await settled('v16')).toEqual([rule(604_800, 3), rule(604_800, 3)])
     })
+
+    it('keeps both times of a removed post or reply in its removal record, where v16 kept only $createdAt', async () => {
+      const kept = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return (['post', 'reply'] as const).map((docType) => m.removalKeptFieldsFor(docType))
+      }
+      expect(await kept('v17')).toEqual([['tags', '$createdAt', '$updatedAt'], ['rootPostId', '$createdAt', '$updatedAt']])
+      expect(await kept('v16')).toEqual([['tags', '$createdAt'], ['rootPostId', '$createdAt']])
+      // A record keeps a system property only of a type that requires it (Platform refuses the contract otherwise).
+      for (const docType of ['post', 'reply']) expect(V17[docType].required, docType).toEqual(expect.arrayContaining(['$createdAt', '$updatedAt']))
+    })
   })
   describe('v18 (hide, don\'t delete)', () => {
     const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)

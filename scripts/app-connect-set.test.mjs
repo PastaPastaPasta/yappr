@@ -6,7 +6,7 @@ import { testnetAppendProblem } from './app-connect-journal.mjs';
 const MAKER = '11111111111111111111111111111112';
 const PINS = [
   ['app', 'yappr-app-contract.json', 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41'],
-  ['social', 'yappr-social-contract-v17.json', '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf'],
+  ['social', 'yappr-social-contract-v17.json', 'ad36c81b588be26ee52cac29ed1d0aabf7404a7f546cf4e4ddc65b8532819157'],
   ['blocks', 'yappr-blocks-contract.json', 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677'],
   ['dmV5', 'yappr-dm-contract-v5.json', '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21'],
   ['blog', 'yappr-blog-contract.json', '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c'],
