@@ -13,6 +13,7 @@ import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
 import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey, criticalKeyFor, criticalKeySession, liveSessionCheck } from '@/lib/auth/critical-key';
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
+import type { WalletTransitionRequest } from './token-transition-builder';
 
 /** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
 const CLAIM_HISTORY_PAGE = 20;
@@ -46,7 +47,7 @@ class UnconfirmedTokenWriteError extends Error {
  * comes back as {@link UnconfirmedTokenWriteError}; a failure before that sent
  * nothing and is rethrown as is.
  */
-async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promise<unknown>, assertLive?: () => void): Promise<void> {
+async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promise<unknown>, assertLive?: () => void, walletRequest?: WalletTransitionRequest): Promise<void> {
   let sent = false;
   try {
     const send = (nonce?: bigint) => {
@@ -55,7 +56,8 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
       sent = true;
       return write(nonce);
     };
-    await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send);
+    if (walletRequest) await walletRequest.sendWithNonce(ownerId, send);
+    else await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send);
   } catch (error) {
     if (error instanceof CriticalKeyCancelledError) throw error;
     if (sent && sentWriteOutcomeUnknown(error)) throw new UnconfirmedTokenWriteError(error);
@@ -143,7 +145,7 @@ class TokenService {
    * Refused without a broadcast where YAPP is locked (v10): the token has no
    * purchase price and no one can ever set one, so Drive would refuse it.
    */
-  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint): Promise<TokenResult> {
+  async buyYapp(buyerId: string, amount: bigint, maxTotalCost: bigint, walletRequest?: WalletTransitionRequest): Promise<TokenResult> {
     if (yappIsLocked()) {
       return { success: false, error: 'YAPP can\'t be bought', errorCode: 'NOT_AUTHORIZED' };
     }
@@ -163,7 +165,7 @@ class TokenService {
         maxTotalCost,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive);
+      } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive, walletRequest);
 
       return { success: true };
     } catch (error) {
@@ -193,7 +195,8 @@ class TokenService {
     senderId: string,
     recipientId: string,
     amount: bigint,
-    publicNote?: string
+    publicNote?: string,
+    walletRequest?: WalletTransitionRequest
   ): Promise<TokenResult> {
     if (yappIsLocked()) {
       return { success: false, error: 'YAPP can\'t be sent to other accounts', errorCode: 'NOT_AUTHORIZED' };
@@ -211,7 +214,7 @@ class TokenService {
         publicNote,
         identityKey,
         signer,
-      } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive);
+      } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive, walletRequest);
 
       return { success: true };
     } catch (error) {
