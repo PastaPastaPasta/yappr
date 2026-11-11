@@ -7,6 +7,8 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
+import { buildWalletPurchase, buildWalletTip, prepareWalletPayment } from './wallet-payment-service'
+import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
 import { WALLET_TOKEN_SCOPE, loadReservation, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
 
 const OWNER = '8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR'
@@ -95,6 +97,8 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   let payments: number
   let spent: Set<bigint>
   let localBytes: Uint8Array
+  let balance: bigint
+  let sentTips: ProvedTip[]
 
   function execute(nonce: bigint | undefined, payment: boolean): boolean {
     if (nonce === undefined) throw new Error('The transition carries no identity contract nonce')
@@ -128,6 +132,10 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     tip = BigInt(100)
     spent = new Set([BigInt(100)])
     payments = 0
+    balance = BigInt(500)
+    sentTips = []
+    vi.spyOn(tokenService, 'getBalance').mockImplementation(async () => balance)
+    vi.spyOn(tipHistoryService, 'getTipsSent').mockImplementation(async () => sentTips)
     sdk.identities.contractNonce.mockImplementation(async () => reportedNonce)
     sdk.contracts.fetch.mockResolvedValue({})
     broadcast.mockImplementation(async (transition: StateTransition) => {
@@ -142,6 +150,122 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   })
 
   afterEach(() => { vi.useRealTimers() })
+
+  const buildCachedPayment = () => action === 'tip'
+    ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'same payment')
+    : buildWalletPurchase(OWNER, BigInt(100), BigInt(1000))
+
+  function recordPayment() {
+    balance += BigInt(100)
+    sentTips.push({ id: 'tip', from: OWNER, to: OTHER, amount: BigInt(100), createdAt: new Date() })
+  }
+
+  it('confirms a payment landing after the polling timeout and before Check again', async () => {
+    vi.useFakeTimers()
+    const cached = await buildCachedPayment()
+    expect(await cached.checkOutcome()).toBe('absent')
+    await vi.advanceTimersByTimeAsync(300_001)
+    expect(execute(BigInt(101), true)).toBe(true)
+    recordPayment()
+    reportedNonce = chainNonce()
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(payments).toBe(1)
+  })
+
+  it.each(['wallet retry then local fallback', 'local fallback'] as const)('replaces an expired absent payment for %s, sharing the new nonce', async path => {
+    const cached = await buildCachedPayment()
+    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
+    reportedNonce = chainNonce()
+    expect(identityContractNonceConsumed(reportedNonce, BigInt(101))).toBe(true)
+    const buildFresh = vi.fn(buildCachedPayment)
+    const prepared = await prepareWalletPayment(cached, buildFresh)
+    expect(prepared.completed).toBe(false)
+    if (prepared.completed) throw new Error('Absent payment was reported completed')
+    const replacement = prepared.payment
+    expect(replacement).not.toBe(cached)
+    expect(buildFresh).toHaveBeenCalledOnce()
+    if (path === 'wallet retry then local fallback') {
+      const local = await prepareWalletPayment(replacement, buildFresh)
+      expect(local).toEqual({ completed: false, payment: replacement })
+      expect(buildFresh).toHaveBeenCalledOnce()
+    }
+    expect(await sendPayment(replacement.request)).toEqual({ success: true })
+    const wallet = StateTransition.fromBytes(replacement.request.bytes)
+    try {
+      expect(wallet.identityContractNonce).toBe(BigInt(127))
+      expect(execute(wallet.identityContractNonce, true)).toBe(false)
+      expect(execute(BigInt(101), true)).toBe(false)
+    } finally { wallet.free() }
+    expect(payments).toBe(1)
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
+  })
+
+  it('reuses an executable cached request for wallet retry and local fallback without a new nonce', async () => {
+    const cached = await buildCachedPayment()
+    expect(execute(BigInt(102), false)).toBe(true)
+    reportedNonce = chainNonce()
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(await sendPayment(cached.request)).toEqual({ success: true })
+    expect(payments).toBe(1)
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
+  })
+
+  it('keeps the original request when the liveness read fails', async () => {
+    const cached = await buildCachedPayment()
+    sdk.identities.contractNonce.mockRejectedValueOnce(new Error('proof unavailable'))
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
+  })
+
+  it('keeps an expired request when the payment outcome read fails', async () => {
+    const cached = await buildCachedPayment()
+    reportedNonce = BigInt(126)
+    if (action === 'purchase') vi.mocked(tokenService.getBalance).mockRejectedValueOnce(new Error('balance unavailable'))
+    else vi.mocked(tipHistoryService.getTipsSent).mockRejectedValueOnce(new Error('history unavailable'))
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  it('reads the outcome after liveness so a payment landing during that read cannot be replaced', async () => {
+    const cached = await buildCachedPayment()
+    sdk.identities.contractNonce.mockImplementationOnce(async () => {
+      expect(execute(BigInt(101), true)).toBe(true)
+      recordPayment()
+      reportedNonce = chainNonce()
+      return reportedNonce
+    })
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  if (action === 'purchase') {
+    it('retains the purchase low-water baseline across retries', async () => {
+      const cached = await buildCachedPayment()
+      balance = BigInt(450)
+      expect(await cached.checkOutcome()).toBe('absent')
+      balance = BigInt(550)
+      expect(await prepareWalletPayment(cached, buildCachedPayment)).toEqual({ completed: true })
+    })
+  } else {
+    it('keeps an expired request when the history page cannot prove absence', async () => {
+      const cached = await buildCachedPayment()
+      reportedNonce = BigInt(126)
+      sentTips = Array.from({ length: TIP_PAGE_LIMIT }, (_, index) => ({
+        id: `other-${index}`, from: OWNER, to: OTHER, amount: BigInt(1), createdAt: new Date(),
+      }))
+      const buildFresh = vi.fn(buildCachedPayment)
+      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+      expect(buildFresh).not.toHaveBeenCalled()
+    })
+  }
 
   it('executes only one payment when local fallback is followed by a late wallet broadcast', async () => {
     const request = await buildPayment()

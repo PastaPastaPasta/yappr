@@ -15,10 +15,9 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
-import { tipHistoryService, matchesSentTip, type SentTipMatch } from '@/lib/services/tip-history-service'
+import { tipHistoryService } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
-import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
-import type { WalletTransitionRequest } from '@/lib/services/token-transition-builder'
+import { buildWalletTip, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -41,9 +40,6 @@ const YAPP_PRESETS = [1, 5, 25, 100]
 // How long the dash-st: QR stays valid before the flow gives up waiting for
 // the wallet. Matches the buy-YAPP flow's window.
 const WALLET_SIGN_TIMEOUT_MS = 300000
-// Slack between this browser's clock and the chain's when deciding whether a
-// transfer document is "ours" (created after the QR went up).
-const CLOCK_SKEW_MARGIN_MS = 60000
 
 type ModalState =
   | 'input'
@@ -164,9 +160,8 @@ export function TipModal() {
   // its own `transfer` document appearing on chain after that moment.
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
-  const walletMatchRef = useRef<SentTipMatch | null>(null)
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, WalletTransitionRequest>())
+  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
 
   // Transfer key persistence (credits tab only)
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -240,7 +235,6 @@ export function TipModal() {
       setWalletExpired(false)
       setYappBalance(null)
       setCanSignLocally(null)
-      walletMatchRef.current = null
       walletSessionRef.current++
       walletRequestsRef.current.clear()
       usedTransferKeyRef.current = null
@@ -345,13 +339,23 @@ export function TipModal() {
     if (!user || !recipientInfo) return
     setState('processing')
     setError(null)
+    let payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (payment) {
+      const prepared = await prepareWalletPayment(payment, () => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage))
+      if (prepared.completed) {
+        finishYappTip()
+        return
+      }
+      payment = prepared.payment
+      walletRequestsRef.current.set(walletPaymentKey, payment)
+    }
     const result = await tipService.sendYappTipLocal(
       user.identityId,
       recipientInfo.id,
       yappAmountBig,
       tipTarget,
       noteMessage,
-      walletRequestsRef.current.get(walletPaymentKey)
+      payment?.request
     )
 
     if (result.errorCode === 'CANCELLED') {
@@ -441,31 +445,20 @@ export function TipModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      // Recipient, amount, post and message all have to agree before a row
-      // counts as this tip, plus a time floor so an identical earlier tip to
-      // the same author isn't mistaken for the wallet's. The margin absorbs
-      // skew between this clock and the chain's.
-      walletMatchRef.current = tipService.tipMatch(
-        recipientInfo.id,
-        yappAmountBig,
-        tipTarget,
-        noteMessage,
-        Date.now() - CLOCK_SKEW_MARGIN_MS
-      )
-      const existingRequest = walletRequestsRef.current.get(walletPaymentKey)
-      const request = existingRequest ?? await buildUnsignedYappTipTransition(
-        user.identityId,
-        recipientInfo.id,
-        yappAmountBig,
-        tipService.tipNoteFor(tipTarget, noteMessage)
-      )
-      // Abandoned before its QR went up: no wallet has it, so free its nonce.
-      if (walletSessionRef.current !== session) {
-        if (!existingRequest) await request.discard()
+      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
+      const prepared = await prepareWalletPayment(existingPayment, () => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage))
+      if (prepared.completed) {
+        if (walletSessionRef.current !== session) return
+        finishYappTip()
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, request)
-      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
+      const payment = prepared.payment
+      if (walletSessionRef.current !== session) {
+        if (payment !== existingPayment) await payment.request.discard()
+        return
+      }
+      walletRequestsRef.current.set(walletPaymentKey, payment)
+      setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet tip request:', err)
@@ -483,9 +476,8 @@ export function TipModal() {
   // user spending YAPP elsewhere mid-flow. The wait has a silent budget; when
   // it runs out the QR gives way to a "check again" prompt, never a countdown.
   useEffect(() => {
-    const match = walletMatchRef.current
-    if (state !== 'walletSign' || !walletUri || !user || !match) return
-    const identityId = user.identityId
+    const payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (state !== 'walletSign' || !walletUri || !user || !payment) return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -494,9 +486,8 @@ export function TipModal() {
 
     let finished = false
     const poll = setInterval(() => {
-      tipHistoryService.getTipsSent(identityId, { fresh: true }).then(sent => {
-        if (finished) return
-        if (!sent.some(tip => matchesSentTip(tip, match))) return
+      payment.checkOutcome().then(outcome => {
+        if (finished || outcome !== 'completed') return
         finished = true
         finishYappTip()
       }).catch(() => {
@@ -505,10 +496,11 @@ export function TipModal() {
     }, 5000)
 
     return () => {
+      finished = true
       clearTimeout(budget)
       clearInterval(poll)
     }
-  }, [state, walletUri, user, finishYappTip])
+  }, [state, walletUri, user, walletPaymentKey, finishYappTip])
 
   const handleSendTip = async () => {
     if (!user || !recipientInfo) return

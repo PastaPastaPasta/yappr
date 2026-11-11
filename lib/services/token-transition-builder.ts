@@ -14,6 +14,8 @@ import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withWalletTokenNonce } from './identity-nonce';
+import { getEvoSdk } from './evo-sdk-service';
+import { identityContractNonceConsumed } from '@/lib/document-id';
 
 /**
  * An unsigned transition for a wallet, and the way to take it back. The bytes
@@ -26,6 +28,7 @@ import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, releaseNonce, reserveNon
 export interface WalletTransitionRequest {
   bytes: Uint8Array;
   discard: () => Promise<void>;
+  isExecutable: () => Promise<boolean>;
   /** Local fallback for this payment, sharing the wallet's nonce rather than allocating another. */
   sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>) => Promise<T>;
 }
@@ -78,6 +81,11 @@ export async function buildUnsignedTokenBatch(
       if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
       return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);
     };
-    return { bytes, discard, sendWithNonce };
+    const isExecutable = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+      const sdk = await getEvoSdk();
+      const current = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
+      return !identityContractNonceConsumed(current, nonce);
+    });
+    return { bytes, discard, sendWithNonce, isExecutable };
   });
 }
