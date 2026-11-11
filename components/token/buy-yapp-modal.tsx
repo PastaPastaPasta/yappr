@@ -13,8 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
-import type { WalletTransitionRequest } from '@/lib/services/token-transition-builder'
+import { buildWalletPurchase, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -80,12 +79,10 @@ export function BuyYappModal() {
   // purchased amount.
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
-  const walletBaselineRef = useRef<bigint | null>(null)
   // Generation counter guarding handleWalletSign's async steps: bumped on every
-  // start/back/close so a superseded invocation can't overwrite a fresh QR or
-  // baseline after its awaits resolve.
+  // start/back/close so a superseded invocation cannot overwrite a fresh QR.
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, WalletTransitionRequest>())
+  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
 
   useEffect(() => {
     if (isOpen && user) {
@@ -106,7 +103,6 @@ export function BuyYappModal() {
       setShowCosts(false)
       setWalletUri(null)
       setWalletExpired(false)
-      walletBaselineRef.current = null
       walletSessionRef.current++
       walletRequestsRef.current.clear()
     }
@@ -158,7 +154,18 @@ export function BuyYappModal() {
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, walletRequestsRef.current.get(walletPaymentKey))
+    let payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (payment) {
+      const prepared = await prepareWalletPayment(payment, () => buildWalletPurchase(user.identityId, amountBig, costCredits))
+      if (prepared.completed) {
+        tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
+        finishPurchase()
+        return
+      }
+      payment = prepared.payment
+      walletRequestsRef.current.set(walletPaymentKey, payment)
+    }
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, payment?.request)
     if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase()
@@ -202,20 +209,21 @@ export function BuyYappModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      // Baseline balance fetched fresh so the success check ("balance grew by
-      // the purchased amount") can't trip on a stale value from modal open.
-      const baseline = await tokenService.getBalance(user.identityId)
-      if (walletSessionRef.current !== session) return
-      walletBaselineRef.current = baseline
-      const existingRequest = walletRequestsRef.current.get(walletPaymentKey)
-      const request = existingRequest ?? await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
-      // Abandoned before its QR went up: no wallet has it, so free its nonce.
-      if (walletSessionRef.current !== session) {
-        if (!existingRequest) await request.discard()
+      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
+      const prepared = await prepareWalletPayment(existingPayment, () => buildWalletPurchase(user.identityId, amountBig, costCredits))
+      if (prepared.completed) {
+        if (walletSessionRef.current !== session) return
+        tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
+        finishPurchase()
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, request)
-      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
+      const payment = prepared.payment
+      if (walletSessionRef.current !== session) {
+        if (payment !== existingPayment) await payment.request.discard()
+        return
+      }
+      walletRequestsRef.current.set(walletPaymentKey, payment)
+      setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
@@ -235,7 +243,8 @@ export function BuyYappModal() {
   // meantime.
   useEffect(() => {
     if (state !== 'walletSign' || !walletUri || !user) return
-    const identityId = user.identityId
+    const payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (!payment) return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -244,19 +253,10 @@ export function BuyYappModal() {
 
     let finished = false
     const poll = setInterval(() => {
-      tokenService.getBalance(identityId).then(balance => {
-        const baseline = walletBaselineRef.current
-        if (finished || baseline === null) return
-        if (balance < baseline) {
-          // The user spent YAPP mid-flow (e.g. posted from another tab).
-          // Re-baseline to the running minimum so the wallet's purchase still
-          // registers as "+amount over the low-water mark" when it lands.
-          walletBaselineRef.current = balance
-          return
-        }
-        if (balance < baseline + amountBig) return
+      payment.checkOutcome().then(outcome => {
+        if (finished || outcome !== 'completed') return
         finished = true
-        setYappBalance(balance)
+        tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
         finishPurchase()
       }).catch(() => {
         // Transient balance-fetch failures — keep polling.
@@ -264,10 +264,11 @@ export function BuyYappModal() {
     }, 5000)
 
     return () => {
+      finished = true
       clearTimeout(budget)
       clearInterval(poll)
     }
-  }, [state, walletUri, user, amountBig, finishPurchase])
+  }, [state, walletUri, user, walletPaymentKey, finishPurchase])
 
   const handleClose = () => {
     if (state === 'processing') return
