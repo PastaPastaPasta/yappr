@@ -1,3 +1,4 @@
+import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { reconcileFeePot } from '@/lib/reconcile-fee-pot';
 import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
@@ -13,7 +14,7 @@ import { PENDING_WRITE_ERROR, classifyModerationError, extractErrorMessage, hasC
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
-import { withSdkSignedWrite } from './identity-nonce';
+import { ChosenWriteNotSentError, withSdkSignedWrite } from './identity-nonce';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { moderationMarksOf, type ModerationMarks } from '@/lib/moderation-view';
 import { restrictionServiceFor, type Restriction, type RestrictionContract } from './restriction-service';
@@ -131,7 +132,7 @@ export interface HideOptions {
 
 /** Hides and unhides that all sign with one signer, resolved once ({@link ModerationService.openBatch}). */
 export interface ModerationBatch {
-  /** `precondition` runs under the write lock, after any earlier write settled and just before signing: false sends nothing (PRECONDITION_FAILED). */
+  /** `precondition` runs under the write lock, after waiting for earlier writes and just before signing (an unconfirmed write may still execute later): false sends nothing (PRECONDITION_FAILED). */
   hide(kind: string, documentId: string, options: HideOptions, precondition?: () => Promise<boolean>): Promise<ModerationResult>;
   unhide(kind: string, documentId: string, reason?: string | ModerationReasonInput, precondition?: () => Promise<boolean>): Promise<ModerationResult>;
 }
@@ -521,9 +522,9 @@ export function protectedIdentities(team: ModerationTeam, ownerProtected: boolea
 interface ModeratorAuth {
   identity: Identity;
   signer: IdentitySigner;
-  /** The CRITICAL key and its WIF, for the one moderator write built by hand (a restriction's create). */
-  identityKey?: IdentityPublicKey;
-  wif?: string;
+  /** The CRITICAL key and its WIF, for writes built with a chosen nonce. */
+  identityKey: IdentityPublicKey;
+  wif: string;
   /** Throws CriticalKeyCancelledError once the session the key was read in has ended (lib/auth/critical-key.ts). */
   assertLive: () => void;
 }
@@ -533,9 +534,9 @@ export function restrictionCreateFields(identityId: string, reason: number): { t
   return { target: identifierStringToDocumentBytes(identityId), state: 1, reason };
 }
 
-/** Sends one moderation transition under the write lock (see `withSdkSignedWrite`). */
-/** Sends one transition under the write lock; `precondition` is the last word on whether to (identity-nonce `withSdkSignedWrite`). */
-type ModerationSend = <R>(write: () => Promise<R>, precondition?: () => Promise<boolean>) => Promise<R>;
+type ModerationWriter = EvoSDK | ReturnType<typeof chosenNonceWrites>;
+/** Sends one transition under the write lock (see `withSdkSignedWrite`). */
+type ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint }) => R, precondition?: () => Promise<boolean>) => Promise<Awaited<R>>;
 
 const NO_STANDING: ModerationStanding = { banned: false, banReason: null, suspendedUntil: null, suspensionReason: null, warnings: [] };
 
@@ -1195,15 +1196,15 @@ class ModerationService {
 
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     if (!this.canBan()) return NO_BANLIST;
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.banUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
+    return this.moderate(moderatorId, async ({ auth, send }) => {
+      await send(({ writer }) => writer.contracts.banUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
     if (!this.canBan()) return NO_BANLIST;
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unbanUser({ ...auth, contractId: this.contract.contractId, identityId }));
+    return this.moderate(moderatorId, async ({ auth, send }) => {
+      await send(({ writer }) => writer.contracts.unbanUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1211,9 +1212,9 @@ class ModerationService {
   async suspend(moderatorId: string, identityId: string, until: number, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     if (!this.canSuspend()) return NO_SUSPENSIONS;
     let targetBanned = false;
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const result = await this.moderate(moderatorId, async ({ auth, send }) => {
       try {
-        await send(() => sdk.contracts.suspendUser({ ...auth, contractId: this.contract.contractId, identityId, until: BigInt(until), reason: reasonOf(reason) }));
+        await send(({ writer }) => writer.contracts.suspendUser({ ...auth, contractId: this.contract.contractId, identityId, until: BigInt(until), reason: reasonOf(reason) }));
       } catch (error) {
         // Drive answers a suspension of a BANNED identity with 41107, whose
         // prose ("... is banned ... and can not act on its documents") reads
@@ -1230,8 +1231,8 @@ class ModerationService {
 
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
     if (!this.canSuspend()) return NO_SUSPENSIONS;
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: this.contract.contractId, identityId }));
+    return this.moderate(moderatorId, async ({ auth, send }) => {
+      await send(({ writer }) => writer.contracts.unsuspendUser({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1245,8 +1246,8 @@ class ModerationService {
     if (!this.canWarn()) {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.warnUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
+    return this.moderate(moderatorId, async ({ auth, send }) => {
+      await send(({ writer }) => writer.contracts.warnUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
@@ -1255,8 +1256,8 @@ class ModerationService {
     if (!this.canWarn()) {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: this.contract.contractId, identityId }));
+    return this.moderate(moderatorId, async ({ auth, send }) => {
+      await send(({ writer }) => writer.contracts.clearUserWarnings({ ...auth, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1435,8 +1436,8 @@ class ModerationService {
       refused = !(await precondition());
       return !refused;
     });
-    const answer = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      const document = await send(() => sdk.contracts.moderatorChangeDocumentFields({
+    const answer = await this.moderate(moderatorId, async ({ auth, send }) => {
+      const document = await send(({ writer }) => writer.contracts.moderatorChangeDocumentFields({
         identity: auth.identity,
         signer: auth.signer,
         contractId: this.contract.contractId,
@@ -1468,35 +1469,42 @@ class ModerationService {
    * hand like every other create (lib/manual-batch.ts).
    */
   private createRestriction(moderatorId: string, identityId: string, reason: number): Promise<ModerationResult> {
-    return this.moderate(moderatorId, async (sdk, auth, send) => {
+    return this.moderate(moderatorId, async ({ sdk, auth, send }) => {
       if (!auth.wif || !auth.identityKey) throw new Error(CRITICAL_KEY_REQUIRED);
       const { wif, identityKey } = auth;
-      await send(async () => {
-        const [{ documentBuilderService }, { buildSignedCreateTransition }, { PrivateKey }] = await Promise.all([
-          import('./document-builder-service'),
-          import('@/lib/manual-batch'),
-          import('@dashevo/wasm-sdk'),
-        ]);
-        const nonce = nextIdentityContractNonce(await sdk.identities.contractNonce(moderatorId, this.contract.contractId));
-        const entropy = crypto.getRandomValues(new Uint8Array(32));
-        const document = await documentBuilderService.buildDocumentForCreate(
-          this.contract.contractId,
-          'restriction',
-          moderatorId,
-          restrictionCreateFields(identityId, reason),
-          { entropy, identityContractNonce: nonce }
-        );
-        // The nonce read and the build awaited: the session must still be the one signed in before the key signs.
-        auth.assertLive();
-        const transition = buildSignedCreateTransition({
-          document,
-          ownerId: moderatorId,
-          identityContractNonce: nonce,
-          privateKey: PrivateKey.fromWIF(wif),
-          identityKey,
-        });
-        await sdk.stateTransitions.broadcastStateTransition(transition);
-        await sdk.stateTransitions.waitForResponse(transition);
+      await send(async ({ nonce: chosenNonce }) => {
+        let broadcastStarted = false;
+        try {
+          const [{ documentBuilderService }, { buildSignedCreateTransition }, { PrivateKey }] = await Promise.all([
+            import('./document-builder-service'),
+            import('@/lib/manual-batch'),
+            import('@dashevo/wasm-sdk'),
+          ]);
+          const nonce = chosenNonce ?? nextIdentityContractNonce(await sdk.identities.contractNonce(moderatorId, this.contract.contractId));
+          const entropy = crypto.getRandomValues(new Uint8Array(32));
+          const document = await documentBuilderService.buildDocumentForCreate(
+            this.contract.contractId,
+            'restriction',
+            moderatorId,
+            restrictionCreateFields(identityId, reason),
+            { entropy, identityContractNonce: nonce }
+          );
+          // The nonce read and the build awaited: the session must still be the one signed in before the key signs.
+          auth.assertLive();
+          const transition = buildSignedCreateTransition({
+            document,
+            ownerId: moderatorId,
+            identityContractNonce: nonce,
+            privateKey: PrivateKey.fromWIF(wif),
+            identityKey,
+          });
+          broadcastStarted = true;
+          await sdk.stateTransitions.broadcastStateTransition(transition);
+          await sdk.stateTransitions.waitForResponse(transition);
+        } catch (error) {
+          if (chosenNonce !== undefined && !broadcastStarted) throw new ChosenWriteNotSentError(error);
+          throw error;
+        }
       });
     }, identityId);
   }
@@ -1517,15 +1525,20 @@ class ModerationService {
     }
     let snapshotSaved = false;
     let documentGone = false;
-    const moderated = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const moderated = await this.moderate(moderatorId, async ({ sdk, auth, send }) => {
       try {
         // The copy is taken under the same lock as the deletion, so a restore
         // from another tab cannot land between them.
-        await send(async () => {
-          snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
+        await send(async ({ writer, nonce }) => {
+          try {
+            snapshotSaved = await this.snapshotForRestore(sdk, kind, documentId);
+          } catch (error) {
+            if (nonce !== undefined) throw new ChosenWriteNotSentError(error);
+            throw error;
+          }
           // The snapshot read awaited: the session must still be the one signed in before the key signs.
           auth.assertLive();
-          return sdk.contracts.moderatorDeleteDocument({
+          return writer.contracts.moderatorDeleteDocument({
             ...auth,
             contractId: this.contract.contractId,
             documentTypeName: kind,
@@ -1586,13 +1599,13 @@ class ModerationService {
     if (!bytes) {
       return { success: false, error: 'This device kept no copy of the removed document, so it cannot be restored from here', errorCode: 'NO_SNAPSHOT' };
     }
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const result = await this.moderate(moderatorId, async ({ sdk, auth, send }) => {
       const contract = await sdk.contracts.fetch(this.contract.contractId);
       if (!contract) throw new Error(`${this.contract.label} contract not found`);
       // A fresh Document for the call, never a caller's: nothing holds a wasm
       // borrow on it across the await.
       const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
-      await send(() => sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: this.contract.contractId, documentTypeName: kind, document }));
+      await send(({ writer }) => writer.contracts.moderatorRestoreDocument({ ...auth, contractId: this.contract.contractId, documentTypeName: kind, document }));
     });
     if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
       || result.errorCode === 'RESTORE_HASH_MISMATCH' || result.errorCode === 'SETTLED_DELETION_NOT_RESTORABLE') {
@@ -1624,8 +1637,8 @@ class ModerationService {
       return { success: false, error: 'A team removal must cite a reason the seated team\'s charter lists', errorCode: 'REASON_NOT_LISTED' };
     }
     let signed: { actionId: string; status: ContractTeamActionStatus } | undefined;
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-      const proposal = await send(() => sdk.contracts.moderatorDeleteSettledDocument({
+    const result = await this.moderate(moderatorId, async ({ auth, send }) => {
+      const proposal = await send(({ writer }) => writer.contracts.moderatorDeleteSettledDocument({
         ...auth,
         contractId: this.contract.contractId,
         documentTypeName: kind,
@@ -1653,9 +1666,9 @@ class ModerationService {
     }
     let status: ContractTeamActionStatus | undefined;
     let documentGone = false;
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const result = await this.moderate(moderatorId, async ({ auth, send }) => {
       try {
-        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: this.contract.contractId, actionId })));
+        ({ status } = await send(({ writer }) => writer.contracts.moderatorApproveTeamAction({ ...auth, contractId: this.contract.contractId, actionId })));
       } catch (error) {
         // 40101: the document is gone (another proposal for it ran, or its
         // author deleted it), so this action can never run.
@@ -1741,10 +1754,10 @@ class ModerationService {
     if (!this.canDismissReports()) {
       return { success: false, error: 'Moderators cannot dismiss reports on this contract', errorCode: 'NOT_MODERATED', dismissed };
     }
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const result = await this.moderate(moderatorId, async ({ auth, send }) => {
       for (const documentId of reportIds) {
         try {
-          await send(() => sdk.contracts.moderatorDeleteDocument({
+          await send(({ writer }) => writer.contracts.moderatorDeleteDocument({
             ...auth,
             contractId: this.contract.contractId,
             documentTypeName: 'report',
@@ -1797,12 +1810,12 @@ class ModerationService {
       return { success: false, error: 'Moderators cannot resolve reports on this contract', errorCode: 'NOT_MODERATED', resolved, alreadyResolved, gone };
     }
     const note = resolution.note?.trim() || null;
-    const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
+    const result = await this.moderate(moderatorId, async ({ auth, send }) => {
       /** Writes one report's resolution; false when the report is gone. */
       const write = async (report: (typeof reports)[number]): Promise<boolean> => {
         if (report.status === resolution.status && report.resolution === note) return true;
         try {
-          await send(() => sdk.contracts.moderatorChangeDocumentFields({
+          await send(({ writer }) => writer.contracts.moderatorChangeDocumentFields({
             ...auth,
             contractId: this.contract.contractId,
             documentTypeName: 'report',
@@ -1841,8 +1854,8 @@ class ModerationService {
     this.moderatorClaimInFlight = true;
     try {
       let remainingCredits: bigint | undefined;
-      const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-        const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
+      const result = await this.moderate(moderatorId, async ({ auth, send }) => {
+        const claimed = await send(({ writer }) => writer.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
         remainingCredits = claimed.remainingCredits;
         this.confirmedModeratorEpoch = claimed.lastClaimEpoch;
         this.moderatorPot = {
@@ -1868,7 +1881,7 @@ class ModerationService {
    */
   private async moderate(
     moderatorId: string,
-    action: (sdk: EvoSDK, auth: ModeratorAuth, send: ModerationSend) => Promise<void>,
+    action: (context: { sdk: EvoSDK; auth: ModeratorAuth; send: ModerationSend }) => Promise<void>,
     moderatedIdentityId?: string,
     reason?: string | ModerationReasonInput,
     heldAuth?: ModeratorAuth
@@ -1887,18 +1900,20 @@ class ModerationService {
     // answer could not be verified may hide a landed transition.
     let started = false;
     // Each transition its own reservation (a batch signs one nonce per report).
-    let auth: ModeratorAuth | undefined;
-    const send: ModerationSend = (write, precondition) => withSdkSignedWrite(moderatorId, this.contract.contractId, () => {
-      // Last check before the CRITICAL key signs: the session it was read in must still be the one signed in.
-      auth?.assertLive();
-      started = true;
-      return write();
-    }, undefined, precondition);
     try {
       const sdk = await getEvoSdk();
       // A batch's held signer still answers to its session: `assertLive` refuses it once that ended.
-      auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
-      await action(sdk, auth, send);
+      const auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
+      const send: ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint }) => R, precondition?: () => Promise<boolean>) => {
+        const run = async (nonce?: bigint): Promise<Awaited<R>> => {
+          auth.assertLive();
+          started = true;
+          const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, moderatorId, nonce, auth.wif, auth.identityKey, auth.assertLive);
+          return Promise.resolve(write({ writer, nonce }));
+        };
+        return withSdkSignedWrite(moderatorId, this.contract.contractId, run, undefined, precondition, run);
+      };
+      await action({ sdk, auth, send });
       if (moderatedIdentityId) this.standingCache.delete(moderatedIdentityId);
       return { success: true };
     } catch (error) {

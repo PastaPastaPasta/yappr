@@ -29,7 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { ChosenWriteNotSentError, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -84,6 +84,93 @@ describe('reservation scope', () => {
 })
 
 describe('withSdkSignedWrite', () => {
+  it('lets an abandoned wallet QR stay reserved while a later write uses a separate nonce, even after an hour', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    vi.setSystemTime(Date.now() + 60 * MINUTE)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const sdkWrite = vi.fn(async () => 'sdk')
+    const chosenWrite = vi.fn(async (nonce: bigint) => {
+      sdk.identities.contractNonce.mockResolvedValue(nonce | (BigInt(1) << BigInt(40)))
+      return `sent ${nonce}`
+    })
+
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, sdkWrite, undefined, undefined, chosenWrite))).toEqual({ ok: true, value: 'sent 102' })
+    expect(sdkWrite).not.toHaveBeenCalled()
+    expect(chosenWrite).toHaveBeenCalledWith(n(102))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toEqual([n(101)])
+  })
+
+  it('keeps a chosen nonce pending after a snapshot answer until chain consumption is proved', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const chosen = vi.fn(async () => 'snapshot')
+    await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, chosen))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toEqual([n(101), n(102)])
+    expect(stillPending(n(102) | (BigInt(1) << BigInt(40)), loadReservation(OWNER, CONTRACT)).map(p => p.nonce)).toEqual([n(101)])
+  })
+
+  it('retains a chosen nonce when the read after its answer fails', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, async () => { sdk.identities.contractNonce.mockRejectedValue(new Error('proof unavailable')); return 'sent' }))).toEqual({ ok: true, value: 'sent' })
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toEqual([n(101), n(102)])
+  })
+
+  it('releases unsent allocations without exhausting the window on repeated preparation failures', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const failure = new Error('could not prepare')
+    const unsent = new ChosenWriteNotSentError(failure)
+    const chosen = vi.fn(async () => { throw unsent })
+    for (let attempt = 0; attempt < 30; attempt++) {
+      expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, chosen))).toEqual({ ok: false, error: unsent })
+      expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), pending: [{ nonce: n(101) }] })
+    }
+    expect(chosen.mock.calls).toHaveLength(30)
+    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
+  })
+
+  it('keeps an uncertain chosen write reserved but releases one Platform refused', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, async () => { throw new Error('lost answer') }))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toEqual([n(101), n(102)])
+    await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, async () => { throw new Error('state transition broadcast error: code=40101 DocumentNotFoundError') }))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toEqual([n(101), n(102)])
+  })
+
+  it('chooses past a high-water mark even with no pending entries', async () => {
+    const entry = reserveNonce(OWNER, CONTRACT, n(102), n(100))
+    releaseNonce(OWNER, CONTRACT, entry)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const chosen = vi.fn(async () => 'sent')
+    const sdkWrite = vi.fn(async () => 'sdk')
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, sdkWrite, undefined, undefined, chosen))).toEqual({ ok: true, value: 'sent' })
+    expect(chosen).toHaveBeenCalledWith(n(103))
+    expect(sdkWrite).not.toHaveBeenCalled()
+  })
+
+  it('waits for earlier writes to settle before falling back to a chosen nonce', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValue(n(101))
+    const chosen = vi.fn(async () => 'chosen')
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, chosen))).toEqual({ ok: true, value: 'sdk' })
+    expect(chosen).not.toHaveBeenCalled()
+  })
+
+  it('does not bypass an unknown SDK nonce or reuse a full window of outstanding known nonces', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const sdkWrite = vi.fn(async () => 'sdk')
+    const chosen = vi.fn(async () => 'chosen')
+    reserveNonce(OWNER, CONTRACT, null, n(100))
+    expect((await settle(withSdkSignedWrite(OWNER, CONTRACT, sdkWrite, undefined, undefined, chosen))).ok).toBe(false)
+    storage.clear()
+    for (let nonce = 101; nonce <= 124; nonce++) reserveNonce(OWNER, CONTRACT, n(nonce), n(100))
+    expect((await settle(withSdkSignedWrite(OWNER, CONTRACT, sdkWrite, undefined, undefined, chosen))).ok).toBe(false)
+    expect(sdkWrite).not.toHaveBeenCalled()
+    expect(chosen).not.toHaveBeenCalled()
+  })
+
   it('does not run the write while a nonce this browser signed is still ahead of Platform, however long it waits', async () => {
     // A create signed 101 and came back unconfirmed; Platform stays at 100.
     reserveNonce(OWNER, CONTRACT, n(101), n(100))
