@@ -11,10 +11,10 @@ type PaymentOutcome = 'completed' | 'absent' | 'unknown';
 
 export interface WalletPayment {
   request: WalletTransitionRequest;
-  checkOutcome: () => Promise<PaymentOutcome>;
+  checkOutcome: (consumedAt?: bigint) => Promise<PaymentOutcome>;
 }
 
-type PreparedPayment = { completed: true } | { completed: false; payment: WalletPayment };
+type PreparedPayment = { completed: true } | { completed: false; payment: WalletPayment; unresolved?: true };
 
 export async function prepareWalletPayment(
   cached: WalletPayment | undefined,
@@ -22,15 +22,15 @@ export async function prepareWalletPayment(
 ): Promise<PreparedPayment> {
   if (!cached) return { completed: false, payment: await build() };
   try {
-    // Read liveness first: absence read before expiry could miss a late wallet broadcast.
-    const executable = await cached.request.isExecutable();
-    const outcome = await cached.checkOutcome();
+    const { executable, consumedAt } = await cached.request.checkLiveness();
+    const outcome = await cached.checkOutcome(consumedAt);
     if (outcome === 'completed') return { completed: true };
-    if (!executable && outcome === 'absent') return { completed: false, payment: await build() };
+    if (!executable && consumedAt !== undefined && outcome === 'absent') return { completed: false, payment: await build() };
+    if (executable) return { completed: false, payment: cached };
   } catch (error) {
     logger.debug('Could not reconcile the wallet payment; keeping its request:', error);
   }
-  return { completed: false, payment: cached };
+  return { completed: false, payment: cached, unresolved: true };
 }
 
 export async function buildWalletPurchase(ownerId: string, amount: bigint, cost: bigint): Promise<WalletPayment> {
@@ -44,7 +44,7 @@ export async function buildWalletPurchase(ownerId: string, amount: bigint, cost:
       const balance = await tokenService.getBalance(ownerId);
       if (balance >= baseline + amount) completed = true;
       if (balance < baseline) baseline = balance;
-      return completed ? 'completed' : 'absent';
+      return completed ? 'completed' : 'unknown';
     },
   };
 }
@@ -61,16 +61,23 @@ export async function buildWalletTip(
   let completed = false;
   return {
     request,
-    checkOutcome: async () => {
+    checkOutcome: async (consumedAt) => {
       if (completed) return 'completed';
-      const sent = await tipHistoryService.getTipsSent(ownerId, { fresh: true });
-      if (sent.some(tip => matchesSentTip(tip, match))) {
-        completed = true;
-        return 'completed';
+      try {
+        const { tips: sent, height } = await tipHistoryService.getTipsSentWithProof(ownerId);
+        if (height === undefined) return 'unknown';
+        if (sent.some(tip => matchesSentTip(tip, match))) {
+          completed = true;
+          return 'completed';
+        }
+        if (consumedAt === undefined || height < consumedAt) return 'unknown';
+        // A full page that does not reach this request's start cannot prove absence.
+        if (sent.length >= TIP_PAGE_LIMIT && !sent.some(tip => tip.createdAt.getTime() < (match.since ?? 0))) return 'unknown';
+        return 'absent';
+      } catch (error) {
+        logger.debug('Could not prove the wallet tip outcome:', error);
+        return 'unknown';
       }
-      // A full page that does not reach this request's start cannot prove absence.
-      if (sent.length >= TIP_PAGE_LIMIT && !sent.some(tip => tip.createdAt.getTime() < (match.since ?? 0))) return 'unknown';
-      return 'absent';
     },
   };
 }

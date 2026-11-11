@@ -236,7 +236,6 @@ export function TipModal() {
       setYappBalance(null)
       setCanSignLocally(null)
       walletSessionRef.current++
-      walletRequestsRef.current.clear()
       usedTransferKeyRef.current = null
     }
   }, [isOpen])
@@ -326,6 +325,7 @@ export function TipModal() {
   // Shared tail of both YAPP paths: refresh balances, drop the cached tip
   // pages so the new proof can show up, and land on the success screen.
   const finishYappTip = useCallback(() => {
+    walletRequestsRef.current.delete(walletPaymentKey)
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
     // auth context caches is stale too.
@@ -333,7 +333,7 @@ export function TipModal() {
     tipHistoryService.clearCache()
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
-  }, [user, refreshBalance])
+  }, [user, refreshBalance, walletPaymentKey])
 
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
@@ -348,6 +348,11 @@ export function TipModal() {
       }
       payment = prepared.payment
       walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (prepared.unresolved) {
+        setError('This payment may have gone through. Check your balance before trying again.')
+        setState('unconfirmed')
+        return
+      }
     }
     const result = await tipService.sendYappTipLocal(
       user.identityId,
@@ -458,6 +463,11 @@ export function TipModal() {
         return
       }
       walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (prepared.unresolved) {
+        setError('This payment may have gone through. Check your balance before trying again.')
+        setState('unconfirmed')
+        return
+      }
       setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
@@ -1008,8 +1018,7 @@ export function TipModal() {
                       <div className="py-6 text-center space-y-4">
                         <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the tip land yet</p>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          If your wallet already broadcast it, your balance will update shortly. Otherwise check again
-                          for a fresh request.
+                          This payment may have gone through. Check again before trying to pay.
                         </p>
                         <Button onClick={() => checkTipLanded(startWalletSign)} className="w-full">
                           Check again
@@ -1053,8 +1062,7 @@ export function TipModal() {
                       <p className="text-lg font-medium">Couldn&apos;t confirm your tip</p>
                       <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
                       <p className="text-xs text-gray-500">
-                        Your wallet or this browser already broadcast {amountLabel}. Sending again would transfer it a
-                        second time, so check first.
+                        Check your balance before sending again.
                       </p>
                     </div>
                     <div className="flex gap-3">
@@ -1068,6 +1076,18 @@ export function TipModal() {
                         </Button>
                       )}
                     </div>
+                    {walletRequestsRef.current.has(walletPaymentKey) && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-gray-500">Sending another tip could pay twice.</p>
+                        <Button onClick={() => {
+                          walletRequestsRef.current.delete(walletPaymentKey)
+                          setError(null)
+                          setState('input')
+                        }} variant="outline" className="w-full">
+                          Send another tip
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 
