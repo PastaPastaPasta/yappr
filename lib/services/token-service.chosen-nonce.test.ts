@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BatchTransition, Document, IdentityPublicKey, PlatformVersion, PrivateKey, StateTransition, VerifiedTokenActionWithDocument, ensureInitialized } from '@dashevo/evo-sdk'
+import { BatchTransition, Document, type DocumentObject, IdentityPublicKey, PlatformVersion, PrivateKey, StateTransition, VerifiedTokenActionWithDocument, ensureInitialized } from '@dashevo/evo-sdk'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { identityContractNonceConsumed } from '@/lib/document-id'
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder'
@@ -96,7 +96,8 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   let spent: Set<bigint>
   let localBytes: Uint8Array
 
-  function execute(nonce: bigint, payment: boolean): boolean {
+  function execute(nonce: bigint | undefined, payment: boolean): boolean {
+    if (nonce === undefined) throw new Error('The transition carries no identity contract nonce')
     if (nonce > tip + BigInt(24) || identityContractNonceConsumed(chainNonce(), nonce)) return false
     spent.add(nonce)
     if (nonce > tip) tip = nonce
@@ -135,7 +136,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       const document = Document.fromObject({
         $formatVersion: '0', $id: new Uint8Array(32).fill(3), $ownerId: new Uint8Array(32).fill(2),
         $dataContractId: new Uint8Array(32).fill(1), $type: 'transfer', $revision: BigInt(1),
-      }, PlatformVersion.current())
+      } as unknown as DocumentObject, PlatformVersion.current())
       return VerifiedTokenActionWithDocument.fromObject({ document: document.toObject() })
     })
   })
