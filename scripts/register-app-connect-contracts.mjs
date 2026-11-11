@@ -58,17 +58,11 @@
  *                                    chain; --dry-run proves that too when given the file;
  *   --production                     is required by --live (and refused on a devnet);
  *   --journal                        must sit in a directory only its owner may enter (0700).
- * Testnet registered its anchor, group and first eight members on 2026-10-21 (D41 policy:
- * notYetUsable, 86400/86400 s windows, 86400 s delay, 1209600 s cool-down). Since then a testnet
- * run may only append (--append-after TESTNET_REGISTERED_THROUGH), so it can never register a
- * second anchor or group. The "hide, don't delete" members (docs/SOCIAL_V18.md; the windows and
- * delay are the owner's call):
- *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run --append-after passkeyVault --maker <id> --start-nonce 57 \
- *     --interim notYetUsable --election-windows <join>,<vote> --election-delay <seconds> --challenge-cool-down 1209600
- *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --append-after passkeyVault \
- *     --journal <the 2026-10-21 journal> --maker <id> --maker-key-file <0600 file> --maker-key-id <n> \
- *     --interim notYetUsable --election-windows <join>,<vote> --election-delay <seconds> --challenge-cool-down 1209600
- * The same members appended to the D36 rehearsal set, resuming its 2026-10-18 journal:
+ * The default set has eight creates on every network. Testnet's release group
+ * is already complete (2026-10-21); networked testnet runs still require
+ * --append-after passkeyVault, which has nothing to append in the release set.
+ * The experimental "hide, don't delete" members (docs/SOCIAL_V18.md) are only
+ * appended to the D36 /beta rehearsal group, resuming its 2026-10-18 journal:
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --testnet-set rehearsal \
  *     --append-after passkeyVault --journal <the rehearsal journal> --maker At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF \
  *     --maker-key-file <0600 file> --maker-key-id <n> --interim notYetUsable --election-windows 3600,3600 \
@@ -104,7 +98,7 @@ import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
-import { checkJournal, isResumedAppend, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
+import { checkJournal, isResumedAppend, journalIsComplete, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, planRehearsalSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
@@ -510,7 +504,7 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
   const page = await read(() => handle.sdk.contractGroups.members({ contractGroupId: plan.groupId, kind: 'contracts', limit: 100 }));
   for (const c of verified) if (!page.contracts?.includes(c.id)) throw new Error(`${c.name} ${c.id} is not enumerated by the group`);
   state.groupMembers = page.contracts;
-  if (verified.length === plan.contracts.length) state.completedAt = new Date().toISOString();
+  if (journalIsComplete(plan, state)) state.completedAt = new Date().toISOString();
   save();
   console.log(`\ngroup ${plan.groupId}: ${page.contracts?.length ?? 0} member(s); ${verified.length}/${plan.contracts.length} of the set verified`);
   return verified;
@@ -597,9 +591,9 @@ async function verifySigningKey(sdk, owner) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const policy = registrationPolicy({ ...args, network: network() });
-  // Testnet already holds the set's anchor and group (2026-10-21): a run there may only append to
-  // them, so a second anchor or group can never be registered by mistake.
-  const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker });
+  // Testnet already holds the anchor and group: connected modes may only append.
+  // An offline release plan can still audit all eight creates without registering anything.
+  const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker, mode: args.mode });
   if (appendProblem) throw new Error(appendProblem);
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const platformVersion = PlatformVersion.latest();

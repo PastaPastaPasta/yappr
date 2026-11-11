@@ -32,39 +32,34 @@ export const APP_CONNECT_GROUP = {
 };
 
 /**
- * In nonce order: the anchor first (it registers the group and joins it), then
- * every member. `envKey` is the variable the deployment's id goes to, or null
- * for a member a later cut replaced: memberships can never be removed, so on a
- * live chain it stays in the set (and in the pinned member list) without a
- * variable of its own, and entries are only ever appended so a journal of the
- * registered set resumes with the new ones.
+ * The eight-member release set, in nonce order: anchor, social v17, blocks,
+ * DM v5, blog v9, pollr v8, storefront v10 and passkey vault. This is the set
+ * registered on testnet on 2026-10-21 and selected by default on every network
+ * for the mainnet release (D45). Every member has its deployment env key.
  *
- * A fresh Platform genesis starts a new set: nothing of the old group survives,
- * so a replaced member is dropped and its replacement takes its place (edit
- * the list then; until then a fresh rehearsal registers the replaced members
- * too, as testnet holds them).
- *
- * This is the testnet set (docs/TESTNET_RELEASE.md). The first eight entries,
- * through `passkeyVault`, were registered on 2026-10-21 from the production
- * maker at nonces 57-64: the anchor, social v17, blocks, DM v5, blog v9,
- * pollr v8, storefront v10 and the passkey vault, with no password-era
- * `authVault` (R-M6). The owner then abandoned social v17, blog v9 and
- * storefront v10 for "hide, don't delete" (docs/SOCIAL_V18.md): they stay in
- * the group for good, unused (`replacedBy`, no env key), and social v18, blog
- * v10 and storefront v11 join after them, registered with
- * `--append-after passkeyVault` ({@link TESTNET_REGISTERED_THROUGH}).
+ * The v18/v10/v11 re-cuts belong only to the testnet /beta rehearsal group.
+ * Its eleven-entry plan keeps the eight historical members (with the old
+ * elected cuts marked replaced) before appending the three experimental cuts.
+ * Memberships can never be removed: never append those cuts to the release
+ * group. Only `--testnet-set rehearsal` selects that separate plan.
  */
 export const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
-  { name: 'social', file: 'yappr-social-contract-v17.json', envKey: null, replacedBy: 'socialV18', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
+  { name: 'social', file: 'yappr-social-contract-v17.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
   { name: 'blocks', file: 'yappr-blocks-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', sha256: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677' },
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
-  { name: 'blog', file: 'yappr-blog-contract.json', envKey: null, replacedBy: 'blogV10', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
+  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
   { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: 'a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347' },
-  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: null, replacedBy: 'storefrontV11', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
+  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
   // The passkey vault (docs/PASSKEY_VAULT.md). A member so a wallet sign-in's group key can write its own vault entries.
   { name: 'passkeyVault', file: 'yappr-passkey-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID', sha256: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5' },
-  // "Hide, don't delete" (docs/SOCIAL_V18.md): new members of the same group, under the same app id.
+];
+
+const REHEARSAL_REPLACEMENTS = { social: 'socialV18', blog: 'blogV10', storefront: 'storefrontV11' };
+const REHEARSAL_ENTRIES = [
+  ...APP_CONNECT_ENTRIES.map((entry) => REHEARSAL_REPLACEMENTS[entry.name]
+    ? { ...entry, envKey: null, replacedBy: REHEARSAL_REPLACEMENTS[entry.name] }
+    : entry),
   { name: 'socialV18', file: 'yappr-social-contract-v18.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '71e4d4b3353965cf343448e254150d0a4ff183a17384d53c437b4c6eefb6604d' },
   { name: 'blogV10', file: 'yappr-blog-contract-v10.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159' },
   { name: 'storefrontV11', file: 'yappr-storefront-contract-v11.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '645a51a475a33794d713e23d9b27fd9a54531920e61c37e8e34c74b46f70b167' },
@@ -73,7 +68,8 @@ export const APP_CONNECT_ENTRIES = [
 /**
  * The last entry testnet's group already holds (registered 2026-10-21 at
  * maker nonces 57-64, docs/TESTNET_RELEASE.md). A testnet run passes it as
- * `--append-after`, so it creates only the entries after it.
+ * `--append-after` with `--testnet-set rehearsal` to create the experimental
+ * entries after it; the release set itself has nothing to append.
  */
 export const TESTNET_REGISTERED_THROUGH = 'passkeyVault';
 
@@ -103,8 +99,7 @@ export const TESTNET_REHEARSAL_SET = {
 };
 
 /**
- * The rehearsal set's plan (`planAppConnectSet` for its maker and anchor
- * nonce). A registered entry whose file has changed since (social v17, blog
+ * The rehearsal set's eleven-entry plan for its maker and anchor nonce. A registered entry whose file has changed since (social v17, blog
  * v9, storefront v10) carries the sha256 it was created from and
  * `earlierCut: true`, so an append proves it on chain by id, owner and
  * membership rather than against today's file; the others are proved against
@@ -114,7 +109,7 @@ export const TESTNET_REHEARSAL_SET = {
 export function planRehearsalSet({ startNonce, generateId }) {
   const { makerId, groupId, registered } = TESTNET_REHEARSAL_SET;
   if (BigInt(startNonce) !== TESTNET_REHEARSAL_SET.startNonce) throw new Error(`the rehearsal set's anchor is at maker nonce ${TESTNET_REHEARSAL_SET.startNonce}, not ${startNonce}`);
-  const plan = planAppConnectSet({ makerId, startNonce, generateId });
+  const plan = planSet(REHEARSAL_ENTRIES, { makerId, startNonce, generateId });
   if (plan.groupId !== groupId) throw new Error(`the rehearsal anchor derives group ${plan.groupId}, not ${groupId}`);
   const contracts = plan.contracts.map((c) => (registered[c.name] && registered[c.name] !== c.sha256 ? { ...c, sha256: registered[c.name], earlierCut: true } : c));
   return { ...plan, anchor: contracts[0], contracts };
@@ -226,10 +221,14 @@ export function contractGroupId(ownerId, identityNonce) {
  * nonce `startNonce` produces when nothing else takes a maker nonce in between.
  * `generateId` is `DataContract.generateId` (passed in so this module needs no wasm).
  */
-export function planAppConnectSet({ makerId, startNonce, generateId }) {
+export function planAppConnectSet(options) {
+  return planSet(APP_CONNECT_ENTRIES, options);
+}
+
+function planSet(entries, { makerId, startNonce, generateId }) {
   const start = BigInt(startNonce);
   if (start < 1n) throw new Error('the anchor nonce must be at least 1 (an identity\'s first create uses nonce 1)');
-  const contracts = APP_CONNECT_ENTRIES.map((entry, index) => {
+  const contracts = entries.map((entry, index) => {
     const nonce = start + BigInt(index);
     return { ...entry, nonce, id: generateId(makerId, nonce) };
   });

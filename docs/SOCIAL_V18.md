@@ -343,7 +343,14 @@ Moderator writes on v18 (paid by the moderator; v17's removal cost 16.5–18.7M 
 
 **Posts and replies cost what they did on v17** (within ±2%: the `mod` level, `restrictedQuiet` and the `countOf` read are inside the noise). **Likes cost 1.3–2.1M more (0.08–0.13¢)**, though the like is v17's. The likeliest cause, not isolated, is the reference: a like reads its post, and v18's post is the larger document type (`mod`, `modLabel`, the 1/2 `live`, the extra rules); in the stripped lab above, where every like shape referenced the same post type, v17's like was the cheapest. A hide re-keys every listing the document is in, count and rank trees included, so it costs 5–12¢, well above the 10–25M the plans estimated.
 
-## Registering it on testnet
+## Historical production-group append proposal (superseded)
+
+This proposal predates D45 and is no longer executable: the publisher's default
+release set ends at the vault, so the command below refuses with "nothing to
+append". The v18 experiment belongs only to testnet's `/beta` rehearsal group,
+selected with `--testnet-set rehearsal`, its maker and its own journal; see
+[Registering the set](APP_CONNECT_CONTRACTS.md#registering-the-set) for the current
+invocation. Never append these cuts to the mainnet release group.
 
 The production maker `hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A` is at nonce 64 (proved, height 638453, PV14, the answering node on Drive 5.0.0-rc.5), with 1,025.53e9 credits. The read-only plan and dry-run, with no key read and nothing signed:
 
@@ -362,7 +369,7 @@ prove the anchor `D8benQGn…`, the group `4MjVAxDY…` (owner the maker, no adm
 | 67 | storefront v11 | `HAiJRqxw5NsEM4M4CPwWp1DnwA5fca8r2LNv5WgjM49r` | 65.62e9 (≈3,937¢) |
 | | **Total** | | **213.89e9 (≈12,834¢)**; the balance gate passes |
 
-The ids hold only if the maker spends no other nonce first. The estimate does not depend on the windows (86400 or 3600 render to within 6 B). On sakura the same three cost 210.9e9. The live run is the same command with `--live --production --journal <the 2026-10-21 journal> --maker-key-file … --maker-key-id 2`; the activation PR then points `.env.testnet` at the new ids and the new YAPP token (`tokens.calculateId(socialV18, 0)`), and the charters are filed on the new targets only.
+The ids hold only if the maker spends no other nonce first. The estimate does not depend on the windows (86400 or 3600 render to within 6 B). On sakura the same three cost 210.9e9. The superseded proposal would have used the same command with `--live --production --journal <the 2026-10-21 journal> --maker-key-file … --maker-key-id 2`; its proposed activation PR would have pointed `.env.testnet` at the new ids and the new YAPP token (`tokens.calculateId(socialV18, 0)`), with charters on the new targets only. D45 retains the v17 release ids instead.
 
 ## Accepted gaps
 
