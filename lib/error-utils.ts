@@ -95,12 +95,12 @@ export function isUnverifiedOutcomeError(error: unknown): boolean {
 const UNVERIFIED_KINDS: ReadonlySet<string> = new Set(['Proof', 'InvalidProvedResponse', 'DriveProofError', 'ExecutionNotProved'])
 
 /**
- * wasm-sdk kinds the SDK raises while it builds or signs a write, before it
- * broadcasts anything: a verdict that nothing was sent.
+ * Errors raised while building or signing a write, before broadcasting
+ * anything: a verdict that nothing was sent.
  */
 const NOT_SENT_KINDS: ReadonlySet<string> = new Set([
   'Protocol', 'InvalidArgument', 'SerializationError', 'Config', 'InvalidCreditTransfer', 'NonceOverflow',
-  'IdentityNonceNotFound', 'MissingDependency', 'NotImplemented', 'ChosenWriteNotSentError',
+  'IdentityNonceNotFound', 'MissingDependency', 'NotImplemented', 'ChosenWriteNotSentError', 'CriticalKeyCancelledError',
 ])
 
 /**
