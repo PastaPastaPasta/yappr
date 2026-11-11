@@ -1196,14 +1196,14 @@ class ModerationService {
   async ban(moderatorId: string, identityId: string, reason: string | ModerationReasonInput): Promise<ModerationResult> {
     if (!this.canBan()) return NO_BANLIST;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.banUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
+      await send(() => sdk.contracts.banUser({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
   async unban(moderatorId: string, identityId: string): Promise<ModerationResult> {
     if (!this.canBan()) return NO_BANLIST;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unbanUser({ ...auth, contractId: this.contract.contractId, identityId }));
+      await send(() => sdk.contracts.unbanUser({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1213,7 +1213,7 @@ class ModerationService {
     let targetBanned = false;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        await send(() => sdk.contracts.suspendUser({ ...auth, contractId: this.contract.contractId, identityId, until: BigInt(until), reason: reasonOf(reason) }));
+        await send(() => sdk.contracts.suspendUser({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId, until: BigInt(until), reason: reasonOf(reason) }));
       } catch (error) {
         // Drive answers a suspension of a BANNED identity with 41107, whose
         // prose ("... is banned ... and can not act on its documents") reads
@@ -1231,7 +1231,7 @@ class ModerationService {
   async unsuspend(moderatorId: string, identityId: string): Promise<ModerationResult> {
     if (!this.canSuspend()) return NO_SUSPENSIONS;
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.unsuspendUser({ ...auth, contractId: this.contract.contractId, identityId }));
+      await send(() => sdk.contracts.unsuspendUser({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1246,7 +1246,7 @@ class ModerationService {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.warnUser({ ...auth, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
+      await send(() => sdk.contracts.warnUser({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId, reason: reasonOf(reason) }));
     }, identityId, reason);
   }
 
@@ -1256,7 +1256,7 @@ class ModerationService {
       return { success: false, error: 'This contract keeps no warning list', errorCode: 'NOT_MODERATED' };
     }
     return this.moderate(moderatorId, async (sdk, auth, send) => {
-      await send(() => sdk.contracts.clearUserWarnings({ ...auth, contractId: this.contract.contractId, identityId }));
+      await send(() => sdk.contracts.clearUserWarnings({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, identityId }));
     }, identityId);
   }
 
@@ -1526,7 +1526,7 @@ class ModerationService {
           // The snapshot read awaited: the session must still be the one signed in before the key signs.
           auth.assertLive();
           return sdk.contracts.moderatorDeleteDocument({
-            ...auth,
+            identity: auth.identity, signer: auth.signer,
             contractId: this.contract.contractId,
             documentTypeName: kind,
             documentId,
@@ -1592,7 +1592,7 @@ class ModerationService {
       // A fresh Document for the call, never a caller's: nothing holds a wasm
       // borrow on it across the await.
       const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
-      await send(() => sdk.contracts.moderatorRestoreDocument({ ...auth, contractId: this.contract.contractId, documentTypeName: kind, document }));
+      await send(() => sdk.contracts.moderatorRestoreDocument({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, documentTypeName: kind, document }));
     });
     if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
       || result.errorCode === 'RESTORE_HASH_MISMATCH' || result.errorCode === 'SETTLED_DELETION_NOT_RESTORABLE') {
@@ -1626,7 +1626,7 @@ class ModerationService {
     let signed: { actionId: string; status: ContractTeamActionStatus } | undefined;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       const proposal = await send(() => sdk.contracts.moderatorDeleteSettledDocument({
-        ...auth,
+        identity: auth.identity, signer: auth.signer,
         contractId: this.contract.contractId,
         documentTypeName: kind,
         documentId,
@@ -1655,7 +1655,7 @@ class ModerationService {
     let documentGone = false;
     const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
       try {
-        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ ...auth, contractId: this.contract.contractId, actionId })));
+        ({ status } = await send(() => sdk.contracts.moderatorApproveTeamAction({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, actionId })));
       } catch (error) {
         // 40101: the document is gone (another proposal for it ran, or its
         // author deleted it), so this action can never run.
@@ -1745,7 +1745,7 @@ class ModerationService {
       for (const documentId of reportIds) {
         try {
           await send(() => sdk.contracts.moderatorDeleteDocument({
-            ...auth,
+            identity: auth.identity, signer: auth.signer,
             contractId: this.contract.contractId,
             documentTypeName: 'report',
             documentId,
@@ -1803,7 +1803,7 @@ class ModerationService {
         if (report.status === resolution.status && report.resolution === note) return true;
         try {
           await send(() => sdk.contracts.moderatorChangeDocumentFields({
-            ...auth,
+            identity: auth.identity, signer: auth.signer,
             contractId: this.contract.contractId,
             documentTypeName: 'report',
             documentId: report.id,
@@ -1842,7 +1842,7 @@ class ModerationService {
     try {
       let remainingCredits: bigint | undefined;
       const result = await this.moderate(moderatorId, async (sdk, auth, send) => {
-        const claimed = await send(() => sdk.contracts.claimFees({ ...auth, contractId: this.contract.contractId, pot: 'moderators' }));
+        const claimed = await send(() => sdk.contracts.claimFees({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, pot: 'moderators' }));
         remainingCredits = claimed.remainingCredits;
         this.confirmedModeratorEpoch = claimed.lastClaimEpoch;
         this.moderatorPot = {
