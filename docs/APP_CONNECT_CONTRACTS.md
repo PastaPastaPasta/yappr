@@ -78,7 +78,7 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | N+6 | `storefront` (v10) | `yappr-storefront-contract.json` | `69daf979…` | ~18,704 B | `NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID` |
 | N+7 | `passkeyVault` ([PASSKEY_VAULT.md](PASSKEY_VAULT.md)) | `yappr-passkey-vault-contract.json` | `14094cad…` | 1,008 B | `NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID` |
 
-- This is the **testnet release set** as first registered on 2026-10-21 (social v17, blog v9, pollr v8, storefront v10; [SOCIAL_V17.md](SOCIAL_V17.md)). The owner then abandoned social v17, blog v9 and storefront v10 (D42, [TESTNET_RELEASE.md](TESTNET_RELEASE.md)): they stay in the group for good, unused. Social v18, blog v10 and storefront v11 ([SOCIAL_V18.md](SOCIAL_V18.md)) are the appended entries of `APP_CONNECT_ENTRIES`; they join the same group when registered with `--append-after passkeyVault`. The password-era `authVault` is out (R-M6, D10): the passkey vault (`yappr-passkey-vault-contract.json`, [PASSKEY_VAULT.md](PASSKEY_VAULT.md)) joins at N+7 instead. Sakura's beta.6 genesis registered the previous set (social v16 at N+1, blog v8, pollr v7, storefront v8 and `authVault` at N+7; the ids below).
+- These eight entries are the **default release set on every network**, including mainnet (D45), as registered on testnet on 2026-10-21 (social v17, blog v9, pollr v8, storefront v10; [SOCIAL_V17.md](SOCIAL_V17.md)). The publisher stops at `passkeyVault` and reports the journal complete there, without needing `--upto`. Social v18, blog v10 and storefront v11 ([SOCIAL_V18.md](SOCIAL_V18.md)) belong only to the testnet `/beta` rehearsal group: `--testnet-set rehearsal --append-after passkeyVault` selects its eleven-entry plan and appends only the three experimental cuts. That selector is refused on mainnet. The password-era `authVault` is out (R-M6, D10); the passkey vault joins at N+7 instead. Sakura's beta.6 genesis registered the previous set (social v16 at N+1, blog v8, pollr v7, storefront v8 and `authVault` at N+7; the ids below).
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create. The release cut's `~` sizes are `validate-contract-offline.mjs`'s estimates on the 5.0.0-rc.3 wasm-sdk.
 - Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
 - The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature. Social v16's is the same arithmetic on `validate-contract-offline.mjs`'s estimate from the 5.0.0-beta.6 wasm-sdk, plus the membership; it passes the two 5.0.0-beta.6 wasm full parses and the node-rule audit, devnet and mainnet renderings alike.
@@ -129,15 +129,19 @@ NETWORK=devnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
 # 4. Register. The journal (mode 0600, outside the repo) keeps every signed transition; re-running with the
 #    same journal resumes and only ever re-broadcasts the same bytes for a nonce. `--upto app` stops after the anchor.
 NETWORK=devnet node scripts/register-app-connect-contracts.mjs --live --journal <ops-dir>/appconnect-<network>.json
-#    On testnet, every setting explicit:
-NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --journal <0700 ops-dir>/appconnect-testnet.json \
-  --maker <makerId> --maker-key-file <0600 key file> --maker-key-id <n> --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600
+#    The testnet release group is already complete. Only /beta takes the experimental append:
+NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --testnet-set rehearsal \
+  --append-after passkeyVault --journal <0700 ops-dir>/appconnect-rehearsal.json \
+  --maker At8Xd9BpbVbzxvrna2smE3GbACeTaxf7YGUEwn7FHUZF --maker-key-file <0600 key file> --maker-key-id <n> \
+  --interim notYetUsable --election-windows 3600,3600 --election-delay 3600 --challenge-cool-down 1209600
 
 # 5. Prove it
 NETWORK=devnet node scripts/verify-appconnect.mjs --contract <APP_ID> --group <GROUP_ID> --owner <maker> --members <ids>
 ```
 
-Every mode first builds the whole set unsigned at the planned nonces, so a changed file or a rule the node would refuse stops the run before anything is signed. Each create is decoded by the wasm-sdk and checked:
+Offline `--plan` can audit the eight-entry release set on testnet without `--append-after`. Connected testnet modes retain the existing append guard: the release set has nothing after `passkeyVault`, so that append is refused before any create; only the named rehearsal set has the experimental entries.
+
+Every mode first builds the selected set unsigned at the planned nonces, so a changed file or a rule the node would refuse stops the run before anything is signed. Each create is decoded by the wasm-sdk and checked:
 - it re-encodes byte-identically;
 - its nonce;
 - the group registration is on the anchor only, with no admins;
@@ -189,7 +193,7 @@ These are the ids nonce 24 produces, and the ids the sakura `--live` run of 2026
 
 ### Adding a member to the registered set
 
-On a live chain `APP_CONNECT_ENTRIES` only ever grows at the end. A member a later cut replaces keeps its entry, because its membership can never be removed and the app must pin every member of the group; its `envKey` becomes null, so the env lines name only the replacement's id while `NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS` keeps both. A fresh genesis starts a new set instead: sakura's beta.6 genesis registers social v16 in v15's slot and no v15 at all.
+On a live chain a selected set can only grow at the end. `APP_CONNECT_ENTRIES` pins the eight-member release set; the eleven-member rehearsal set is separate and selectable only on testnet with `--testnet-set rehearsal`. In that rehearsal plan, the replaced members keep their entries because memberships can never be removed and the app must pin every member of the group; their `envKey` becomes null, so the env lines name only the replacements while `NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS` keeps both. A fresh genesis starts a new set instead: sakura's beta.6 genesis registers social v16 in v15's slot and no v15 at all.
 
 `--dry-run` and `--signed-dry-run` plan a fresh set from the anchor nonce, so they refuse once the maker is past it. An appended entry is added by resuming the live run with the same journal: the verified entries are skipped, and the new one is signed at the maker's next identity nonce, journaled, broadcast and read back with proofs.
 

@@ -54,7 +54,7 @@ describe('charter release safety policy', () => {
     const docs = readFileSync(new URL('../docs/TESTNET_RELEASE.md', import.meta.url), 'utf8');
     const lists = docs.match(/social uses ([^;]+); blog uses ([^;]+); storefront uses ([^.]+)\./);
     expect(lists).not.toBeNull();
-    // The member each target's charter is filed on: the one its contract variable names (never a replaced v17-era member).
+    // Each charter targets the release member its contract variable names.
     const envKeys = ['NEXT_PUBLIC_YAPPR_CONTRACT_ID', 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID'];
     for (const [i, envKey] of envKeys.entries()) {
       const entry = APP_CONNECT_ENTRIES.find((e) => e.envKey === envKey);

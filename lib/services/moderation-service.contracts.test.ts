@@ -5,7 +5,7 @@
  * interim), and gate its own types: a social team seated says nothing about a
  * storefront still closed. The SDK is mocked; the live check is on sakura.
  */
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ids = vi.hoisted(() => {
   const ids = { social: 'Soc1111111111111111111111111111111111111111', storefront: 'Sto1111111111111111111111111111111111111111', blog: 'Blg1111111111111111111111111111111111111111' }
@@ -85,6 +85,18 @@ beforeEach(() => {
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
   sdk.moderationCharters.team.mockResolvedValue(null)
   for (const key of ['social', 'storefront', 'blog'] as const) moderationServiceFor(key).invalidateTeam()
+})
+
+afterEach(() => {
+  for (const method of [sdk.contracts.banUser, sdk.contracts.moderatorDeleteDocument, sdk.contracts.claimFees,
+    sdk.contracts.moderatorDeleteSettledDocument, sdk.contracts.moderatorApproveTeamAction]) {
+    for (const [options] of method.mock.calls) {
+      expect(Object.values(options).some(value => typeof value === 'function')).toBe(false)
+      expect(options).not.toHaveProperty('assertLive')
+      expect(options).not.toHaveProperty('wif')
+      expect(options).not.toHaveProperty('identityKey')
+    }
+  }
 })
 
 describe('each contract describes its own moderation', () => {
