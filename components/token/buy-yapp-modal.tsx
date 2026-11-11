@@ -104,7 +104,6 @@ export function BuyYappModal() {
       setWalletUri(null)
       setWalletExpired(false)
       walletSessionRef.current++
-      walletRequestsRef.current.clear()
     }
   }, [isOpen])
 
@@ -143,10 +142,11 @@ export function BuyYappModal() {
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
   const finishPurchase = useCallback(() => {
+    walletRequestsRef.current.delete(walletPaymentKey)
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
-  }, [refreshBalance])
+  }, [refreshBalance, walletPaymentKey])
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
@@ -164,6 +164,11 @@ export function BuyYappModal() {
       }
       payment = prepared.payment
       walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (prepared.unresolved) {
+        setError('This payment may have gone through. Check your balance before trying again.')
+        setState('unconfirmed')
+        return
+      }
     }
     const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, payment?.request)
     if (result.success) {
@@ -223,6 +228,11 @@ export function BuyYappModal() {
         return
       }
       walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (prepared.unresolved) {
+        setError('This payment may have gone through. Check your balance before trying again.')
+        setState('unconfirmed')
+        return
+      }
       setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
@@ -476,7 +486,7 @@ export function BuyYappModal() {
                           <div className="py-6 text-center space-y-4">
                             <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the purchase land yet</p>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              If your wallet already broadcast it, your balance will update shortly. Otherwise check again for a fresh request.
+                              This payment may have gone through. Check again before trying to pay.
                             </p>
                             <Button
                               onClick={startWalletSign}
@@ -531,6 +541,18 @@ export function BuyYappModal() {
                           <p className="text-xs text-gray-500">Check your YAPP balance before buying again.</p>
                         </div>
                         <Button onClick={close} className="w-full">Close</Button>
+                        {walletRequestsRef.current.has(walletPaymentKey) && (
+                          <div className="space-y-2">
+                            <p className="text-xs text-gray-500">Starting another purchase could charge you again.</p>
+                            <Button onClick={() => {
+                              walletRequestsRef.current.delete(walletPaymentKey)
+                              setError(null)
+                              setState('input')
+                            }} variant="outline" className="w-full">
+                              Start another purchase
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     )}
 

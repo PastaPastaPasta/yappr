@@ -28,7 +28,7 @@ import { identityContractNonceConsumed } from '@/lib/document-id';
 export interface WalletTransitionRequest {
   bytes: Uint8Array;
   discard: () => Promise<void>;
-  isExecutable: () => Promise<boolean>;
+  checkLiveness: () => Promise<{ executable: boolean; consumedAt?: bigint }>;
   /** Local fallback for this payment, sharing the wallet's nonce rather than allocating another. */
   sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>) => Promise<T>;
 }
@@ -81,11 +81,18 @@ export async function buildUnsignedTokenBatch(
       if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
       return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);
     };
-    const isExecutable = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+    const checkLiveness = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
       const sdk = await getEvoSdk();
-      const current = await sdk.identities.contractNonce(ownerId, YAPPR_CONTRACT_ID);
-      return !identityContractNonceConsumed(current, nonce);
+      const current = await sdk.identities.contractNonceWithProof(ownerId, YAPPR_CONTRACT_ID);
+      if (!current.proof) throw new Error('Wallet payment nonce proof unavailable');
+      const executable = !identityContractNonceConsumed(current.data, nonce);
+      const height = current.metadata?.height;
+      if (typeof height !== 'bigint' || height <= BigInt(0)) throw new Error('Wallet payment nonce proof height unavailable');
+      return {
+        executable,
+        ...(!executable ? { consumedAt: height } : {}),
+      };
     });
-    return { bytes, discard, sendWithNonce, isExecutable };
+    return { bytes, discard, sendWithNonce, checkLiveness };
   });
 }
