@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildSdk } from './sdk-env.mjs';
 import { BUNDLE_FORMAT, json, plain, recoverCandidate, verifyContent } from './recovery/content.mjs';
@@ -65,6 +66,14 @@ async function verifyBundle(path, trust) {
     console.log(`VERIFIED ${bundle.record.documentId}: document hash and SDK removal proof match; ${bundle.current.absent ? 'absent' : 'present'} at height ${bundle.current.metadata.height}.`);
     console.log('Offline evidence describes the exported heights. Quorum keys are trusted by the supplied digest; transition signature and block inclusion are not separately verified.');
   } finally { transport.restore(); }
+}
+
+// A bundle counts as recovered only once a fresh process verifies it offline, as a reader would.
+async function checkOffline(path, digest) {
+  const check = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'verify', path, '--trust-quorums', digest], { encoding: 'utf8', timeout: 120000 });
+  if (check.status === 0) return;
+  await unlink(path);
+  throw new Error(`the bundle failed offline verification and was not kept: ${(check.stderr || check.error?.message || '').trim()}`);
 }
 
 // Offline replay checks every response against one capture time, so the SDK's 31-minute tolerance bounds the capture.
@@ -176,6 +185,7 @@ export async function main(args = process.argv.slice(2)) {
         const digest = quorumDigest(bundle.transport, network);
         const path = resolve(join(values.out, `${record.documentId}.json`));
         await writeFile(path, json(bundle), { flag: 'wx' });
+        await checkOffline(path, digest);
         recovered++;
         console.log(`RECOVERED ${record.documentId}: hash MATCH; ${current.absent ? 'proved absent' : 'proved present'} at height ${current.metadata.height}.`);
         console.log(json(result.document));

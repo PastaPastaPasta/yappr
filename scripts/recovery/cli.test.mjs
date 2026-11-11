@@ -120,3 +120,26 @@ describe('per-bundle proof capture', () => {
       .rejects.toThrow('took too long');
   });
 });
+
+describe('quorum context recording', () => {
+  it('keeps the last successful quorum response when a later refresh of it fails', async () => {
+    const originalFetch = globalThis.fetch;
+    const replies = [new Response('good', { status: 200 }), new Response('unavailable', { status: 503 }), new Response('newer', { status: 200 })];
+    globalThis.fetch = async () => replies.shift();
+    const { installTransport } = await import('./transport.mjs');
+    const transport = installTransport({ network: 'testnet' });
+    try {
+      const url = 'https://quorums.testnet.networks.dash.org/previous';
+      const body = () => Buffer.from(transport.entries[0].body, 'base64').toString();
+      await fetch(url);
+      await fetch(url);
+      expect(transport.entries).toHaveLength(1);
+      expect(body()).toBe('good');
+      await fetch(url);
+      expect(body()).toBe('newer');
+    } finally {
+      transport.restore();
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

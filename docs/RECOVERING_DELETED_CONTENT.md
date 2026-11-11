@@ -22,7 +22,8 @@ Both commands accept `--owner ID` or `--id ID`. Without either, they page all
 records for the supplied contract and type. `list --out FILE` exports the
 proved pages and wire responses. `recover --out DIRECTORY` writes one JSON
 bundle per matching document, refuses to overwrite existing files, and exits
-nonzero if any record cannot be recovered. A failed read never becomes an
+nonzero if any record cannot be recovered. A bundle is kept and reported as
+recovered only after a fresh process verifies it offline. A failed read never becomes an
 empty result. A type that cannot keep moderator-removal records (such as DPNS
 `domain` or Yappr `report`) is reported separately using its proved contract
 configuration. An unknown contract or type is an error.

@@ -59,10 +59,11 @@ export function installTransport({ network, replay, clockMs } = {}) {
     const response = await original(input, init);
     if (isDapi(url) || new URL(url).hostname === quorumHost(network)) {
       const entry = { key, url, status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.clone().arrayBuffer()).toString('base64') };
-      // Retries can return different heights; retain the response actually consumed last.
+      // Retries can return different heights; retain the response actually consumed last,
+      // unless a failed quorum refresh would replace the context a fresh SDK needs to start.
       const index = entries.findIndex((candidate) => candidate.key === key);
       if (index === -1) entries.push(entry);
-      else entries[index] = entry;
+      else if (response.ok || isDapi(url) || !(entries[index].status >= 200 && entries[index].status < 300)) entries[index] = entry;
     }
     return response;
   };
