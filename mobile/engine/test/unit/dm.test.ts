@@ -10,6 +10,7 @@ import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/
 import type { DmEngine } from '@/lib/services/dm-v5/engine'
 import type { MemoryChain } from '@/lib/services/dm-v5/test-chain'
 import type { Conversation, DirectMessage } from '@/lib/types'
+import { PENDING_WRITE_ERROR } from '@/lib/error-utils'
 import type { AuthorDTO } from '../../src/api/dto'
 import type { LegacyDmService, LegacyReads } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
@@ -1036,7 +1037,7 @@ describe('dm on DM v5: 1:1', () => {
       const { a, b, key, chain } = await sending()
       let writes = 0
       chain.hook = method => (method === 'createMessage' && ++writes === 2
-        ? { ok: false, failure: 'other', error: 'Your last change is still going through, so this one was not sent. Try again in a moment.' }
+        ? { ok: false, failure: 'other', error: PENDING_WRITE_ERROR }
         : null)
       const ticket = await a.settled(await a.dm.send(key, text))
       expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'PENDING_WRITE' }) })
