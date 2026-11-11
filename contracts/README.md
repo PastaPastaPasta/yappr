@@ -3,14 +3,14 @@
 The JSONs here are authored schemas, not a claim that each file is deployed.
 The clean-start testnet release (social v17, blog v9, storefront v10, pollr v8
 and DM v5, behind an App Connect anchor and group) was registered on
-2026-10-21. The owner then abandoned its social, blog and storefront for
-"hide, don't delete" (D42–D44, [SOCIAL_V18.md](../docs/SOCIAL_V18.md)):
-**social v18, blog v10 and storefront v11** join the same group as new
-members, and the three abandoned ones stay in it, unused. `.env.testnet` pins
-the registered set until the activation PR moves it to v18; `/staging` builds
-from it now and root after the staging→master merge. Until then master's root
-still uses social v2. `.env.devnet` selects Sakura social v16, blog v8,
-storefront v9, pollr v7 and DM v5.
+2026-10-21, and it is the mainnet release set (D45, 2026-11-10). The "hide,
+don't delete" re-cuts (social v18, blog v10 and storefront v11, D42–D44,
+[SOCIAL_V18.md](../docs/SOCIAL_V18.md)) were an experiment: a rehearsal copy
+runs at `/beta`, and they are not registered on mainnet. `.env.testnet` pins
+the registered v17 set; `/staging` builds from it now and root after the
+staging→master merge. Until then master's root still uses social v2.
+`.env.devnet` selects Sakura social v16, blog v8, storefront v9, pollr v7 and
+DM v5.
 
 Registration ids and pinned member versions come from `.env.testnet` and the
 [release record](../docs/TESTNET_RELEASE.md#production-registration-record-2026-10-21).
@@ -48,7 +48,7 @@ The password-era vault is not a release member.
 - [Social v18, blog v10 and storefront v11](../docs/SOCIAL_V18.md): no moderator
   delete, the `mod` lane in every listing, the moderation logs, restriction
   instead of bans, and the archive and log queries.
-- [Social v17](../docs/SOCIAL_V17.md): the registered, abandoned cut, and the
+- [Social v17](../docs/SOCIAL_V17.md): the registered cut and mainnet release set (D45), and the
   rules v18 keeps.
 - [Blog v9](../docs/BLOG_V9.md), [storefront v10](../docs/STOREFRONT_V10.md),
   [DM v5](../docs/DM_V5.md), and [non-social reference](../docs/NON_SOCIAL_CONTRACTS.md).
