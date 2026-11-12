@@ -11,7 +11,8 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { selfTest } from './battery-lib.mjs';
+import { isDeepStrictEqual } from 'node:util';
+import { normalizeId, selfTest } from './battery-lib.mjs';
 import { moderatorsMayDelete, referenceKindMismatch } from './contract-probes.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
 import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
@@ -151,6 +152,24 @@ export async function caseBan(ctx, { prefix, target, writeWhileBanned, writeAfte
   if (writeAfterUnban) battery.expectAccepted(`${prefix}f ${target.label}'s create lands again`, await writeAfterUnban());
 }
 
+export function removalFieldsMatch(schema, document, keptFields) {
+  if (!document || !keptFields) return false;
+  const source = document.toObject?.() ?? document;
+  const declared = schema.moderatorAbilities.deleteKeepsFields ?? [];
+  if (declared.some((field) => schema.required.includes(field) && !Object.hasOwn(source, field))) return false;
+  const fields = declared.filter((field) => Object.hasOwn(source, field));
+  if (!isDeepStrictEqual(Object.keys(keptFields).sort(), fields.slice().sort())) return false;
+  return fields.every((field) => {
+    const before = source[field];
+    const after = keptFields[field];
+    if (field.startsWith('$')) return String(before) === String(after);
+    if (schema.properties[field]?.byteArray || schema.properties[field]?.type === 'identifier') {
+      return normalizeId(before) === normalizeId(after);
+    }
+    return isDeepStrictEqual(before, after);
+  });
+}
+
 /**
  * Deletes `documentId` of `docType` as the moderator; proves it no longer
  * fetches and that the removal record carries the reason and the owner.
@@ -162,9 +181,13 @@ export async function caseModeratorDelete(ctx, { prefix, docType, documentId, ow
   const { sdk } = battery;
   console.log(`\n--- ${prefix}. moderator deletes a ${docType}: absent document, removal record ---`);
   if (!documentId) { battery.check(`${prefix} fixture`, false, `no ${docType} fixture`); return; }
+  const schema = ctx.moderationSchemas?.[docType];
+  const recoverable = schema?.required?.some((field) => field === '$createdAtBlockHeight' || field === '$updatedAtBlockHeight');
+  const before = recoverable ? await battery.fetchDocument(docType, documentId) : null;
   try {
     const result = await sdk.contracts.moderatorDeleteDocument({ identity: moderator.identity, contractId, documentTypeName: docType, documentId, reason: moderationReason(ctx, `${prefix} battery takedown`), signer: moderator.signer });
     battery.check(`${prefix}a moderator deletes the ${docType}; the proof names its owner`, String(result.documentOwnerId) === ownerId || result.documentOwnerId?.toBase58?.() === ownerId, `owner=${result.documentOwnerId} removedAt=${result.removedAt}`);
+    if (recoverable) battery.check(`${prefix}kf-result removal keeps exactly the document's declared fields`, removalFieldsMatch(schema, before, result.keptFields), describeValue(result.keptFields));
   } catch (e) {
     battery.check(`${prefix}a moderator deletes the ${docType}`, false, describeErr(e).slice(0, 220));
     return;
@@ -174,6 +197,7 @@ export async function caseModeratorDelete(ctx, { prefix, docType, documentId, ow
   const page = await battery.readback(() => sdk.contracts.documentRemovals({ contractId, documentTypeName: docType, documentIds: [documentId] }));
   const record = page.removals.find((entry) => entry.documentId === documentId);
   battery.check(`${prefix}c documentRemovals carries the record with the reason`, record?.reason?.text === `${prefix} battery takedown` && record?.documentOwnerId === ownerId, describeValue(record ?? page));
+  if (recoverable) battery.check(`${prefix}kf-record removal keeps exactly the document's declared fields`, removalFieldsMatch(schema, before, record?.keptFields), describeValue(record?.keptFields));
   if (afterwards) await afterwards(ctx);
 }
 

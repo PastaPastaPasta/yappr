@@ -51,6 +51,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandSchemas } from './schema-shorthands.mjs';
 
+export const fixtureHeights = (schema) => Object.fromEntries(['$createdAtBlockHeight', '$updatedAtBlockHeight']
+  .filter((field) => schema?.required?.includes(field)).map((field) => [field, 1n]));
+
 /** `mediaKinds` bytes (v13); a reader ignores any other value, which consensus cannot refuse. */
 export const MEDIA_KIND = { image: 0, video: 1, gif: 2 };
 const SHA256_BYTES = 32;
@@ -827,11 +830,9 @@ async function selfTest() {
       let violation = null;
       let serializes = true;
       try {
-        // Platform stamps a stored document's height; this local one carries a fixture height where its type requires one (v19 post, reply and profile).
-        const height = source.documentSchemas[docType]?.required?.includes('$updatedAtBlockHeight') ? { $updatedAtBlockHeight: 1n } : {};
         const document = Document.fromObject({
           $formatVersion: '0', $id: new Uint8Array(32).fill(9), $ownerId: new Uint8Array(32).fill(8), $dataContractId: contract.id.toBytes(), $type: docType,
-          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...height, ...data,
+          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...fixtureHeights(source.documentSchemas[docType]), ...data,
         }, platformVersion);
         violation = contract.checkDocumentPropertyConstraints(document)?.rule ?? null;
         if (expected === null) document.toBytes(contract, platformVersion);

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { BatchTransition, Document, Identifier, PlatformVersion, StateTransition } from '@dashevo/evo-sdk';
 
+const BIGINT_FIELDS = ['$revision', '$createdAt', '$updatedAt', '$updatedAtBlockHeight', '$createdAtBlockHeight'];
+
 export const BUNDLE_FORMAT = 'yappr-deleted-content/1';
 export const sha256d = (bytes) => createHash('sha256').update(createHash('sha256').update(bytes).digest()).digest('hex');
 export const json = (value) => JSON.stringify(value, (key, item) => typeof item === 'bigint' ? item.toString() : item, 2);
@@ -21,10 +23,10 @@ export function selectTransition(bytes, { contractId, type, record }) {
 
 export function rebuild({ transition, contractId, type, record, system, platformVersion }, contract) {
   const data = Object.fromEntries(Object.entries(transition).filter(([key]) => !key.startsWith('$')));
-  const fields = ['$contractVersion', '$revision', '$createdAt', '$updatedAt', '$updatedAtBlockHeight', '$createdAtBlockHeight'];
+  const fields = ['$contractVersion', ...BIGINT_FIELDS];
   if (Object.keys(system).some((key) => !fields.includes(key))) throw new Error('Unsupported reconstruction system field');
   const object = { ...data, ...system, $formatVersion: '0', $id: record.documentId, $ownerId: record.documentOwnerId, $dataContractId: contractId, $type: type };
-  for (const key of ['$revision', '$createdAt', '$updatedAt', '$updatedAtBlockHeight', '$createdAtBlockHeight']) if (object[key] !== undefined) object[key] = BigInt(object[key]);
+  for (const key of BIGINT_FIELDS) if (object[key] !== undefined) object[key] = BigInt(object[key]);
   const version = new PlatformVersion(platformVersion);
   const document = Document.fromObject(object, version);
   const bytes = document.toBytes(contract, version);

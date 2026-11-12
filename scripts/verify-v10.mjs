@@ -385,7 +385,7 @@ import {
 } from './social-battery-lib.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
-import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
+import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, fixtureHeights, socialShapes } from './social-shapes.mjs';
 import { cleanTestContent } from './test-content-cleanup.mjs';
 import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
@@ -3236,11 +3236,9 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   // v13: the block types serialize under the blocks contract (bare schemas, the default config).
   const blocks = SOCIAL.cut.blocksInSocial ? contract : DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: BLOCKS_SCHEMAS }, true, platformVersion);
   const owner = new Uint8Array(32).fill(2);
-  // Platform stamps a stored document's height; this local one carries a fixture height where its type requires one (v19 post, reply and profile).
-  const heightFor = (docType) => (V10.documentSchemas[docType]?.required?.includes('$updatedAtBlockHeight') ? { $updatedAtBlockHeight: 1n } : {});
   const documentOf = (docType, data) => Document.fromObject({
     $formatVersion: '0', $id: someId(), $ownerId: owner, $dataContractId: bs58.decode(placeholder), $type: docType,
-    $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...heightFor(docType), ...data,
+    $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...fixtureHeights(V10.documentSchemas[docType]), ...data,
   }, platformVersion);
   for (const [label, docType, data] of SHAPES) {
     const inBlocks = BLOCK_TYPES.includes(docType);
