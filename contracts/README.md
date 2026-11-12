@@ -3,7 +3,8 @@
 The JSONs here are authored schemas, not a claim that each file is deployed.
 The clean-start testnet release (social v17, blog v9, storefront v10, pollr v8
 and DM v5, behind an App Connect anchor and group) was registered on
-2026-10-21, and it is the mainnet release set (D45, 2026-11-10). The "hide,
+2026-10-21. Fresh release registrations now use social v19, blog v11 and storefront v12
+(D46); mainnet follows that new set after `/staging` is re-registered. The "hide,
 don't delete" re-cuts (social v18, blog v10 and storefront v11, D42–D44,
 [SOCIAL_V18.md](../docs/SOCIAL_V18.md)) were an experiment: a rehearsal copy
 runs at `/beta`, and they are not registered on mainnet. `.env.testnet` pins
@@ -26,16 +27,19 @@ network-specific moderation configuration.
 | Role | Source file | SHA-256 |
 | --- | --- | --- |
 | app | [yappr-app-contract.json](yappr-app-contract.json) | `d3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41` |
-| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf` |
+| social | [yappr-social-contract-v19.json](yappr-social-contract-v19.json) | `bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971` |
 | blocks | [yappr-blocks-contract.json](yappr-blocks-contract.json) | `ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677` |
 | dmV5 | [yappr-dm-contract-v5.json](yappr-dm-contract-v5.json) | `4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21` |
-| blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c` |
+| blog | [yappr-blog-contract-v11.json](yappr-blog-contract-v11.json) | `d1a53c31803a2f6f057700b358755b4d927318bfdcd5d2cb5b6718e8942dca6c` |
 | pollr | [pollr-contract.json](pollr-contract.json) | `a77afe5f27ad97d80e530551bbd5561ab02b1c622698b1a583a4893b03bd2347` |
-| storefront | [yappr-storefront-contract.json](yappr-storefront-contract.json) | `69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc` |
+| storefront | [yappr-storefront-contract-v12.json](yappr-storefront-contract-v12.json) | `873dc5c665c78cbd8390de181d4bb373068d042a405c002620e123b24df0f214` |
 | passkeyVault | [yappr-passkey-vault-contract.json](yappr-passkey-vault-contract.json) | `14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5` |
 
 These eight entries are the default set on every network and the mainnet
-release set (D45), matching the 2026-10-21 testnet registration. The publisher
+release set (D45/D46). Social v19, blog v11 and storefront v12 add required
+and kept system values for recoverable removals to the registered deletion
+cuts (D46). They are not yet registered: the 2026-10-21 testnet set and its v17 file remain unchanged.
+The publisher
 restores every member's env key and completes the journal at `passkeyVault`.
 
 The following experimental cuts are excluded from the release. Only testnet's
@@ -54,8 +58,9 @@ The password-era vault is not a release member.
 - [Social v18, blog v10 and storefront v11](../docs/SOCIAL_V18.md): no moderator
   delete, the `mod` lane in every listing, the moderation logs, restriction
   instead of bans, and the archive and log queries.
-- [Social v17](../docs/SOCIAL_V17.md): the registered cut and mainnet release set (D45), and the
-  rules v18 keeps.
+- [Social v19](../docs/SOCIAL_V19.md): the new release social, derived only from v17.
+- [Blog v11](../docs/BLOG_V11.md) and [storefront v12](../docs/STOREFRONT_V12.md): recoverable removal on the deletion cuts.
+- [Social v17](../docs/SOCIAL_V17.md): the unchanged registered testnet cut.
 - [Blog v9](../docs/BLOG_V9.md), [storefront v10](../docs/STOREFRONT_V10.md),
   [DM v5](../docs/DM_V5.md), and [non-social reference](../docs/NON_SOCIAL_CONTRACTS.md).
 - [App Connect](../docs/APP_CONNECT_CONTRACTS.md): anchor, group, registration

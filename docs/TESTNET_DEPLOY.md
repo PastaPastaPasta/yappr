@@ -21,10 +21,16 @@ and `/devnet` keep their own configurations.
 `.env.testnet` is checked in. All values are public. Never copy credentials,
 private journals, seed phrases or signing keys into it. Its public IDs come from
 the registration journal and were confirmed with proved readback, including
-actual contract versions. The release set uses social v17, storefront v10, blog v9, pollr v8,
+actual contract versions. This registered set uses social v17, storefront v10, blog v9, pollr v8,
 DM v5 and profile v2. The passkey-vault contract must be registered and its client
 landed before cut-over. The unified profile and system contracts are not group
 members; grant them separately.
+
+D46 prepares a fresh registration with social v19, blog v11 and storefront v12,
+using a new maker, app and group. The blank templates and publisher select
+those cuts; the build still accepts the exact historical v17 deployment above
+until its public pins and snapshot are replaced after registration. The new
+cuts are not yet registered. See [TESTNET_RELEASE.md](TESTNET_RELEASE.md).
 
 `npm run build` (`npm run build:release`) loads `.env.testnet` explicitly, replaces ambient
 `NEXT_PUBLIC_*` values and `STORAGE_EPOCH` with this file's values (including

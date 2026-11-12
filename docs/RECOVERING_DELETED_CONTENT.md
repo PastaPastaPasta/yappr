@@ -1,7 +1,7 @@
 # Recovering moderator-deleted content
 
 The read-only CLI recovers a verified copy of content removed by a moderator
-from the social v17, blog v9 and storefront v10 contracts. It never signs,
+from social v17/v19, blog v9/v11 and storefront v10/v12 contracts. It never signs,
 broadcasts, spends DASH, or restores a document on-chain. No secrets are needed.
 The official app's recovery UI is outside this tool. The CLI source is
 MIT-licensed; see [the scoped license](../scripts/recovery/LICENSE).
@@ -81,8 +81,24 @@ containing:
 
 A raw `--transition` requires `--id`. Local sources are tried before archives. The original create time is needed
 when the removal record does not keep it, including for a replaced document.
+Social v19, blog v11 and storefront v12 apply one rule to every moderator-
+deletable type that keeps a record: mutable types require and keep
+`$createdAt`, `$updatedAt` and `$updatedAtBlockHeight`; immutable types require
+and keep `$createdAt` and `$createdAtBlockHeight`. Reports discard records.
+The tool reads these values from the record itself, so archive-supplied times
+or heights are unnecessary for these cuts. It serializes either block height
+only when the document type requires it. A `--source-file` candidate may give
+`createdAtBlockHeight` or `updatedAtBlockHeight` for historical types whose
+records do not keep the required height. The height names the document's last
+signed transition (creation for immutable types).
+
+The unchanged registered social v17, blog v9 and storefront v10 files keep
+their historical behavior. The new cuts are not yet registered. Offline
+regressions rebuild captured post, blog, blogComment and storeItem transitions
+under the new schemas using synthetic kept system values, and reject wrong
+heights or times. These tests do not claim new live registration evidence.
 The signed replace transition supplies its revision. Transfer and price-update
-transitions are not supported; no moderated v17 content type is transferable. No edited-then-deleted
+transitions are not supported; no moderated v17 or v19 content type is transferable. No edited-then-deleted
 live fixture was available for this read-only validation; replacement handling
 has an offline synthetic regression test.
 

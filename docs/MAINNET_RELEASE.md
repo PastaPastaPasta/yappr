@@ -7,8 +7,8 @@ or deploy the site. `npm run build` still loads `.env.testnet`.
 
 Copy `.env.mainnet.template` to `.env.mainnet`. Fill the Yappr contract, App
 Connect app/group/owner, maker and YAPP token ids from the completed mainnet
-registration journal and its verified readback. Use social **v17**, blog **v9**,
-storefront **v10**, Pollr **v8**, DM **v5** and DashPay profile **v2**. Store and
+registration journal and its verified readback. Use social **v19**, blog **v11**,
+storefront **v12**, Pollr **v8**, DM **v5** and DashPay profile **v2**. Store and
 Blog stay `beta`; credit tips stay `off`.
 
 Pin exactly the registrar's eight release members, in registration order, as

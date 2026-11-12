@@ -1,5 +1,9 @@
 # Social v17, the testnet production cut
 
+Fresh release registrations use [social v19](SOCIAL_V19.md) (D46), which adds
+required update height and kept update time/height to this cut. This v17 file
+and the registered testnet deployment remain unchanged.
+
 Social v17 is social v16 ([SOCIAL_V16.md](SOCIAL_V16.md)) cut for Yappr's first real release on Dash testnet (Platform 5.0.0-rc.3, protocol 14; [TESTNET_RELEASE.md](TESTNET_RELEASE.md)). It is the contract users will write to, so everything in it is frozen once it is registered: indexes, required properties, mutability, deletability, `distinctFrom`, patterns and maxima, references, token rules and the moderation declaration. Every change below comes from the owner's release decisions (D-numbers) or the pre-release audit (R-numbers), as recorded in the release audit's `DECISIONS.md`.
 
 The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md#blog)), and storefront v10 ([STOREFRONT_V10.md](STOREFRONT_V10.md)). The App Connect set (`scripts/app-connect-set.mjs`) now registers social v17 and no longer carries the password-era `authVault` (R-M6).
