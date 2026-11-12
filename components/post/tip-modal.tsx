@@ -157,7 +157,7 @@ export function TipModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  const walletRequestsRef = useRef(new Map<string, { payment: WalletPayment; foreign: boolean }>())
   const allowedPaymentsRef = useRef(new Set<string>())
 
   // Transfer key persistence (credits tab only)
@@ -339,7 +339,7 @@ export function TipModal() {
     if (!user || !recipientInfo) return
     setState('processing')
     setError(null)
-    let payment = walletRequestsRef.current.get(walletPaymentKey)
+    let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
     try {
       const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
@@ -347,7 +347,8 @@ export function TipModal() {
         return
       }
       payment = prepared.payment
-      if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
+      else walletRequestsRef.current.delete(walletPaymentKey)
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -424,12 +425,12 @@ export function TipModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
+      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)?.payment
       const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), {
         ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
         isCurrent: () => walletSessionRef.current === session,
         expose: payment => {
-          walletRequestsRef.current.set(walletPaymentKey, payment)
+          walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
           setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
         },
       })
@@ -442,7 +443,7 @@ export function TipModal() {
       if (walletSessionRef.current !== session) {
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, payment)
+      walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -467,8 +468,9 @@ export function TipModal() {
   // user spending YAPP elsewhere mid-flow. The wait has a silent budget; when
   // it runs out the QR gives way to a "check again" prompt, never a countdown.
   useEffect(() => {
-    const payment = walletRequestsRef.current.get(walletPaymentKey)
-    if (state !== 'walletSign' || !walletUri || !user || !payment) return
+    const cached = walletRequestsRef.current.get(walletPaymentKey)
+    const payment = cached?.payment
+    if (state !== 'walletSign' || !walletUri || !user || !payment || cached?.foreign || payment.key !== walletPaymentKey || payment.kind !== 'tip') return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -1051,7 +1053,7 @@ export function TipModal() {
                       <div className="space-y-2">
                         <p className="text-xs text-gray-500">Sending another tip could pay twice.</p>
                         <Button onClick={() => {
-                          const earlier = walletRequestsRef.current.get(walletPaymentKey)
+                          const earlier = walletRequestsRef.current.get(walletPaymentKey)?.payment
                           if (earlier) allowedPaymentsRef.current.add(earlier.request.reservationId)
                           walletRequestsRef.current.delete(walletPaymentKey)
                           setError(null)
