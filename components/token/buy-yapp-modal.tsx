@@ -82,7 +82,7 @@ export function BuyYappModal() {
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation cannot overwrite a fresh QR.
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  const walletRequestsRef = useRef(new Map<string, { payment: WalletPayment; foreign: boolean }>())
   const allowedPaymentsRef = useRef(new Set<string>())
 
   useEffect(() => {
@@ -158,7 +158,7 @@ export function BuyYappModal() {
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    let payment = walletRequestsRef.current.get(walletPaymentKey)
+    let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
     try {
       const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
@@ -167,7 +167,8 @@ export function BuyYappModal() {
         return
       }
       payment = prepared.payment
-      if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
+      else walletRequestsRef.current.delete(walletPaymentKey)
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -225,12 +226,12 @@ export function BuyYappModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
+      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)?.payment
       const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), {
         ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
         isCurrent: () => walletSessionRef.current === session,
         expose: payment => {
-          walletRequestsRef.current.set(walletPaymentKey, payment)
+          walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
           setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
         },
       })
@@ -244,7 +245,7 @@ export function BuyYappModal() {
       if (walletSessionRef.current !== session) {
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, payment)
+      walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -265,8 +266,9 @@ export function BuyYappModal() {
 
   useEffect(() => {
     if (state !== 'walletSign' || !walletUri || !user) return
-    const payment = walletRequestsRef.current.get(walletPaymentKey)
-    if (!payment) return
+    const cached = walletRequestsRef.current.get(walletPaymentKey)
+    const payment = cached?.payment
+    if (!payment || cached?.foreign || payment.key !== walletPaymentKey || payment.kind !== 'purchase') return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -557,7 +559,7 @@ export function BuyYappModal() {
                           <div className="space-y-2">
                             <p className="text-xs text-gray-500">Starting another purchase could charge you again.</p>
                             <Button onClick={() => {
-                              const earlier = walletRequestsRef.current.get(walletPaymentKey)
+                              const earlier = walletRequestsRef.current.get(walletPaymentKey)?.payment
                               if (earlier) allowedPaymentsRef.current.add(earlier.request.reservationId)
                               walletRequestsRef.current.delete(walletPaymentKey)
                               setError(null)
