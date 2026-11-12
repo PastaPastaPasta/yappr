@@ -2,11 +2,11 @@ import { logger } from '@/lib/logger';
 import { bytesToBase64, base64ToBytes } from '@/lib/bytes';
 import { scopedKey } from '@/lib/storage-scope';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { YAPPR_CONTRACT_ID } from '@/lib/constants';
+import { BatchTransition, StateTransition, TokenTransition } from '@dashevo/wasm-sdk';
+import { getEvoSdk } from './evo-sdk-service';
+import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants';
 import { loadReservation, storeWalletPayments } from './identity-nonce';
-import { tokenService } from './token-service';
 import { tipService } from './tip-service';
-import { tipHistoryService, matchesSentTip, TIP_PAGE_LIMIT, type SentTipMatch } from './tip-history-service';
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder';
 import { buildUnsignedYappTipTransition } from './token-transfer-builder';
 import { restoreWalletTransitionRequest, type WalletTransitionRequest } from './token-transition-builder';
@@ -14,13 +14,13 @@ import type { TipTargetKind } from '@/lib/tip-note';
 
 type PaymentOutcome = 'completed' | 'absent' | 'unknown';
 type PaymentData =
-  | { kind: 'tip'; recipientId: string; amount: string; note?: string; baselineIds: string[] | null }
-  | { kind: 'purchase'; amount: string; cost: string; baseline: string };
+  | { kind: 'tip'; recipientId: string; amount: string; note?: string }
+  | { kind: 'purchase'; amount: string; cost: string };
 
 export interface WalletPayment {
   request: WalletTransitionRequest;
   data: PaymentData;
-  checkOutcome: (consumedAt?: bigint) => Promise<PaymentOutcome>;
+  checkOutcome: () => Promise<PaymentOutcome>;
 }
 
 type PersistedWalletPayment = {
@@ -30,7 +30,8 @@ type PersistedWalletPayment = {
   reservationId: string;
   data: PaymentData;
 };
-type PaymentContext = { ownerId: string; key: string; allowAnother?: ReadonlySet<string> };
+type PaymentContext = { ownerId: string; key: string; allowAnother?: ReadonlySet<string>; expose?: (payment: WalletPayment) => void; isCurrent?: () => boolean };
+type LocalPreparedPayment = { completed: true } | { completed: false; payment?: WalletPayment; unresolved?: true; different?: true };
 type PreparedPayment = { completed: true } | { completed: false; payment: WalletPayment; unresolved?: true; different?: true };
 const STORAGE_KEY = scopedKey('wallet-payments:v1');
 
@@ -61,34 +62,43 @@ function persistPayment(payment: WalletPayment, context: PaymentContext): void {
   writePersisted(context.ownerId, records);
 }
 
+function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: string; type: string } {
+  const transition = StateTransition.fromBytes(request.bytes);
+  const batch = BatchTransition.fromStateTransition(transition);
+  const batched = batch.transitions;
+  try {
+    if (batched.length !== 1) throw new Error('Expected one wallet token transition');
+    const token = batched[0].toTransition();
+    try {
+      if (!(token instanceof TokenTransition)) throw new Error('Expected a wallet token transition');
+      const id = token.getHistoricalDocumentId(ownerId);
+      try { return { id: id.toBase58(), type: token.historicalDocumentTypeName }; }
+      finally { id.free(); }
+    } finally { token.free(); }
+  } finally {
+    batched.forEach(item => item.free());
+    batch.free();
+    transition.free();
+  }
+}
+
 function paymentFor(ownerId: string, request: WalletTransitionRequest, data: PaymentData): WalletPayment {
-  let completed = false;
+  const receipt = receiptFor(ownerId, request);
   return {
     request,
     data,
-    checkOutcome: async (consumedAt) => {
-      if (completed) return 'completed';
-      if (data.kind === 'purchase') {
-        const balance = await tokenService.getBalance(ownerId);
-        const baseline = BigInt(data.baseline);
-        if (balance >= baseline + BigInt(data.amount)) completed = true;
-        if (balance < baseline) data.baseline = balance.toString();
-        return completed ? 'completed' : 'unknown';
-      }
-      if (data.baselineIds === null) return 'unknown';
+    checkOutcome: async () => {
       try {
-        const { tips: sent, height } = await tipHistoryService.getTipsSentWithProof(ownerId);
-        if (height === undefined) return 'unknown';
-        const baselineIds = data.baselineIds;
-        const match: SentTipMatch = { to: data.recipientId, amount: BigInt(data.amount), note: data.note };
-        if (sent.some(tip => !baselineIds.includes(tip.id) && matchesSentTip(tip, match))) {
-          completed = true;
-          return 'completed';
-        }
-        if (consumedAt === undefined || height < consumedAt || sent.length >= TIP_PAGE_LIMIT) return 'unknown';
-        return 'absent';
+        const { executable, consumedAt } = await request.checkLiveness();
+        if (executable || consumedAt === undefined) return 'unknown';
+        const sdk = await getEvoSdk();
+        const response = await sdk.documents.getWithProof(TOKEN_HISTORY_CONTRACT_ID, receipt.type, receipt.id);
+        const height = response.metadata?.height;
+        if (!response.proof || typeof height !== 'bigint' || height <= BigInt(0)) return 'unknown';
+        if (response.data) return 'completed';
+        return height >= consumedAt ? 'absent' : 'unknown';
       } catch (error) {
-        logger.debug('Could not prove the wallet tip outcome:', error);
+        logger.debug('Could not prove the wallet payment receipt:', error);
         return 'unknown';
       }
     },
@@ -102,8 +112,8 @@ function restorePayment(ownerId: string, record: PersistedWalletPayment): Wallet
 
 async function reconcilePayment(payment: WalletPayment): Promise<{ outcome: PaymentOutcome; executable: boolean }> {
   const { executable, consumedAt } = await payment.request.checkLiveness();
-  const outcome = await payment.checkOutcome(consumedAt);
-  if (outcome === 'completed' || (!executable && consumedAt !== undefined && outcome === 'absent')) return { outcome, executable };
+  const outcome = await payment.checkOutcome();
+  if (!executable && consumedAt !== undefined && outcome !== 'unknown') return { outcome, executable };
   return { outcome: 'unknown', executable };
 }
 
@@ -112,13 +122,38 @@ export async function prepareWalletPayment(
   build: (lockHeld?: boolean) => Promise<WalletPayment>,
   context?: PaymentContext
 ): Promise<PreparedPayment> {
-  const prepare = async (): Promise<PreparedPayment> => {
+  const result = await preparePayment(cached, build, context);
+  if (result.completed) return result;
+  if (!result.payment) throw new Error('No wallet payment was built');
+  return { ...result, payment: result.payment };
+}
+
+export function prepareLocalWalletPayment(cached: WalletPayment | undefined, context: PaymentContext) {
+  return preparePayment(cached, undefined, context);
+}
+
+async function preparePayment(
+  cached: WalletPayment | undefined,
+  build: ((lockHeld?: boolean) => Promise<WalletPayment>) | undefined,
+  context?: PaymentContext
+): Promise<LocalPreparedPayment> {
+  const prepare = async (): Promise<LocalPreparedPayment> => {
     let candidate = cached;
     let reconciliation: Awaited<ReturnType<typeof reconcilePayment>> | undefined;
     if (context) {
-      // Storage, rather than a component's stale cache, is authoritative across tabs.
+      const records = readPersisted(context.ownerId);
+      if (cached && !records.some(record => record.reservationId === cached.request.reservationId)) {
+        try {
+          const result = await reconcilePayment(cached);
+          if (result.outcome === 'completed') return { completed: true };
+          if (result.outcome === 'unknown') return { completed: false, payment: cached, unresolved: true };
+        } catch (error) {
+          logger.debug('Could not reconcile the cached wallet payment:', error);
+          return { completed: false, payment: cached, unresolved: true };
+        }
+      }
       candidate = undefined;
-      for (const record of readPersisted(context.ownerId)) {
+      for (const record of records) {
         const payment = restorePayment(context.ownerId, record);
         let result;
         try { result = await reconcilePayment(payment); }
@@ -128,7 +163,7 @@ export async function prepareWalletPayment(
         }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
-          if (record.key === context.key && result.outcome === 'completed') return { completed: true };
+          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.request.reservationId === record.reservationId)) return { completed: true };
           continue;
         }
         if (context.allowAnother?.has(record.reservationId)) continue;
@@ -137,16 +172,26 @@ export async function prepareWalletPayment(
         reconciliation = result;
       }
     }
-    if (!candidate) {
+    const create = async (): Promise<LocalPreparedPayment> => {
+      if (!build) return { completed: false };
       const payment = await build(Boolean(context));
-      if (context) persistPayment(payment, context);
+      if (context?.isCurrent && !context.isCurrent()) {
+        await payment.request.discard(true);
+        return { completed: false, payment };
+      }
+      if (context?.expose) {
+        try { persistPayment(payment, context); }
+        catch (error) { await payment.request.discard(true); throw error; }
+        context.expose(payment);
+      }
       return { completed: false, payment };
-    }
+    };
+    if (!candidate) return create();
     try {
       const result = reconciliation ?? await reconcilePayment(candidate);
       if (result.outcome === 'completed') return { completed: true };
-      if (result.outcome === 'absent') return { completed: false, payment: await build(Boolean(context)) };
-      if (context) persistPayment(candidate, context);
+      if (result.outcome === 'absent') return create();
+      if (context?.expose && (!context.isCurrent || context.isCurrent()) && result.executable) context.expose(candidate);
       return { completed: false, payment: candidate, ...(!result.executable ? { unresolved: true } : {}) };
     } catch (error) {
       logger.debug('Could not reconcile the wallet payment; keeping its request:', error);
@@ -157,22 +202,14 @@ export async function prepareWalletPayment(
 }
 
 export async function buildWalletPurchase(ownerId: string, amount: bigint, cost: bigint, lockHeld = false): Promise<WalletPayment> {
-  const baseline = await tokenService.getBalance(ownerId);
   const request = await buildUnsignedDirectPurchaseTransition(ownerId, amount, cost, lockHeld);
-  return paymentFor(ownerId, request, { kind: 'purchase', amount: amount.toString(), cost: cost.toString(), baseline: baseline.toString() });
+  return paymentFor(ownerId, request, { kind: 'purchase', amount: amount.toString(), cost: cost.toString() });
 }
 
 export async function buildWalletTip(
   ownerId: string, recipientId: string, amount: bigint, target?: { kind: TipTargetKind; id: string }, message?: string, lockHeld = false
 ): Promise<WalletPayment> {
-  const match = tipService.tipMatch(recipientId, amount, target, message);
-  let baselineIds: string[] | null = null;
-  try {
-    const { tips, height } = await tipHistoryService.getTipsSentWithProof(ownerId);
-    if (height !== undefined && tips.length < TIP_PAGE_LIMIT) baselineIds = tips.filter(tip => matchesSentTip(tip, match)).map(tip => tip.id);
-  } catch (error) {
-    logger.debug('Could not establish the wallet tip baseline:', error);
-  }
-  const request = await buildUnsignedYappTipTransition(ownerId, recipientId, amount, tipService.tipNoteFor(target, message), lockHeld);
-  return paymentFor(ownerId, request, { kind: 'tip', recipientId, amount: amount.toString(), note: match.note, baselineIds });
+  const note = tipService.tipNoteFor(target, message);
+  const request = await buildUnsignedYappTipTransition(ownerId, recipientId, amount, note, lockHeld);
+  return paymentFor(ownerId, request, { kind: 'tip', recipientId, amount: amount.toString(), note });
 }
