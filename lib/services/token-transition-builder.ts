@@ -29,7 +29,7 @@ export interface WalletTransitionRequest {
   bytes: Uint8Array;
   nonce: bigint;
   reservationId: string;
-  discard: () => Promise<void>;
+  discard: (lockHeld?: boolean) => Promise<void>;
   checkLiveness: () => Promise<{ executable: boolean; consumedAt?: bigint }>;
   /** Local fallback for this payment, sharing the wallet's nonce rather than allocating another. */
   sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>) => Promise<T>;
@@ -41,7 +41,10 @@ function requestFor(
   nonce: bigint,
   entry: PendingTransition
 ): WalletTransitionRequest {
-  const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
+  const discard = async (lockHeld = false) => {
+    const release = async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry);
+    return lockHeld ? release() : withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, release);
+  };
   const sendWithNonce = <T>(signingOwnerId: string, write: (nonce: bigint) => Promise<T>) => {
     if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
     return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);

@@ -17,7 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { tipHistoryService } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
-import { buildWalletTip, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -341,13 +341,13 @@ export function TipModal() {
     setError(null)
     let payment = walletRequestsRef.current.get(walletPaymentKey)
     try {
-      const prepared = await prepareWalletPayment(payment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
+      const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         finishYappTip()
         return
       }
       payment = prepared.payment
-      walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -425,7 +425,14 @@ export function TipModal() {
     setWalletExpired(false)
     try {
       const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
-      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
+      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), {
+        ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
+        isCurrent: () => walletSessionRef.current === session,
+        expose: payment => {
+          walletRequestsRef.current.set(walletPaymentKey, payment)
+          setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
+        },
+      })
       if (prepared.completed) {
         if (walletSessionRef.current !== session) return
         finishYappTip()
@@ -443,7 +450,6 @@ export function TipModal() {
         setState('unconfirmed')
         return
       }
-      setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet tip request:', err)
@@ -1035,7 +1041,7 @@ export function TipModal() {
                       <Button onClick={close} variant="outline" className="flex-1">
                         Close
                       </Button>
-                      {isYapp && (
+                      {isYapp && walletRequestsRef.current.has(walletPaymentKey) && (
                         <Button onClick={startWalletSign} className="flex-1">
                           Check again
                         </Button>
