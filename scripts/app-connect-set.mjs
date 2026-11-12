@@ -34,11 +34,19 @@ export const APP_CONNECT_GROUP = {
   description: 'Yappr (yap.pr): the contracts a Yappr App Connect key signs for',
 };
 
+const HISTORICAL_RELEASE_CUTS = {
+  social: { file: 'yappr-social-contract-v17.json', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
+  blog: { file: 'yappr-blog-contract.json', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
+  storefront: { file: 'yappr-storefront-contract.json', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
+};
 const REHEARSAL_REPLACEMENTS = { social: 'socialV18', blog: 'blogV10', storefront: 'storefrontV11' };
 const REHEARSAL_ENTRIES = [
-  ...APP_CONNECT_ENTRIES.map((entry) => REHEARSAL_REPLACEMENTS[entry.name]
-    ? { ...entry, envKey: null, replacedBy: REHEARSAL_REPLACEMENTS[entry.name] }
-    : entry),
+  ...APP_CONNECT_ENTRIES.map((entry) => {
+    const historical = { ...entry, ...HISTORICAL_RELEASE_CUTS[entry.name] };
+    return REHEARSAL_REPLACEMENTS[entry.name]
+      ? { ...historical, envKey: null, replacedBy: REHEARSAL_REPLACEMENTS[entry.name] }
+      : historical;
+  }),
   { name: 'socialV18', file: 'yappr-social-contract-v18.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '71e4d4b3353965cf343448e254150d0a4ff183a17384d53c437b4c6eefb6604d' },
   { name: 'blogV10', file: 'yappr-blog-contract-v10.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '8a169b979ff6e138035ff7aabc0e226b626d59ae64d5edfffddc44cc617d4159' },
   { name: 'storefrontV11', file: 'yappr-storefront-contract-v11.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '645a51a475a33794d713e23d9b27fd9a54531920e61c37e8e34c74b46f70b167' },

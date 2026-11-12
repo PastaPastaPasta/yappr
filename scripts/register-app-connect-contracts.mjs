@@ -58,9 +58,9 @@
  *                                    chain; --dry-run proves that too when given the file;
  *   --production                     is required by --live (and refused on a devnet);
  *   --journal                        must sit in a directory only its owner may enter (0700).
- * The default set has eight creates on every network. Testnet's release group
- * is already complete (2026-10-21); networked testnet runs still require
- * --append-after passkeyVault, which has nothing to append in the release set.
+ * The default set has eight creates on every network, with social v19 (D46).
+ * Testnet registers it from a new maker with a new anchor and group; the
+ * historical v17 maker is refused, and the release set is never appended.
  * The experimental "hide, don't delete" members (docs/SOCIAL_V18.md) are only
  * appended to the D36 /beta rehearsal group, resuming its 2026-10-18 journal:
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --testnet-set rehearsal \

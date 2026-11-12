@@ -23,15 +23,21 @@ const check = (journal, policy, appendAfter = TESTNET_REGISTERED_THROUGH) =>
   () => checkJournal(journal, plan, { path: 'j.json', policy, appendAfter, network: 'testnet', generateId });
 
 describe('the testnet append guard', () => {
-  it('lets testnet only append after the registered entries, and other networks anything', () => {
-    expect(testnetAppendProblem('testnet', null)).toMatch(/--append-after passkeyVault/);
-    expect(testnetAppendProblem('testnet', 'socialV18')).toMatch(/already holds the App Connect anchor/);
-    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH)).toBeNull();
+  it('allows new testnet makers to register v19 and keeps the historical makers guarded', () => {
+    const fresh = { maker: '11111111111111111111111111111112' };
+    expect(testnetAppendProblem('testnet', null, fresh)).toBeNull();
+    expect(testnetAppendProblem('testnet', 'socialV18', fresh)).toMatch(/fresh registration/);
+    expect(testnetAppendProblem('testnet', null)).toMatch(/explicit new maker/);
+    expect(testnetAppendProblem('testnet', null, { maker: 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A' })).toMatch(/requires a new maker/);
     expect(testnetAppendProblem('devnet', null)).toBeNull();
     expect(testnetAppendProblem('mainnet', null)).toBeNull();
   });
 
   it('appends exactly social v18, blog v10 and storefront v11 after the rehearsal vault', () => {
+    expect(plan.contracts.find((c) => c.name === 'social')?.file).toBe('yappr-social-contract-v17.json');
+    expect(plan.contracts.find((c) => c.name === 'blog')?.file).toBe('yappr-blog-contract.json');
+    expect(plan.contracts.find((c) => c.name === 'storefront')?.file).toBe('yappr-storefront-contract.json');
+    for (const file of ['yappr-social-contract-v19.json', 'yappr-blog-contract-v11.json', 'yappr-storefront-contract-v12.json']) expect(plan.contracts.some((c) => c.file === file)).toBe(false);
     expect(created.map((c) => [c.name, c.nonce])).toEqual([['socialV18', 9n], ['blogV10', 10n], ['storefrontV11', 11n]]);
     expect(plan.contracts.filter((e) => e.replacedBy).map((e) => [e.name, e.envKey, e.replacedBy])).toEqual([
       ['social', null, 'socialV18'], ['blog', null, 'blogV10'], ['storefront', null, 'storefrontV11'],
@@ -134,9 +140,9 @@ describe('the D36 rehearsal set', () => {
     expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: REHEARSAL })).toMatch(/--testnet-set rehearsal/);
     expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { testnetSet: 'release', maker: '11111111111111111111111111111112' })).toMatch(/takes rehearsal/);
     expect(testnetAppendProblem('devnet', null, named)).toMatch(/for testnet/);
-    // The release set's guard is unchanged.
-    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: '11111111111111111111111111111112' })).toBeNull();
-    expect(testnetAppendProblem('testnet', null, { maker: '11111111111111111111111111111112' })).toMatch(/--start-nonce 57/);
+    // A fresh release set uses a new maker and cannot append to a historical group.
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: '11111111111111111111111111111112' })).toMatch(/fresh registration/);
+    expect(testnetAppendProblem('testnet', null, { maker: '11111111111111111111111111111112' })).toBeNull();
   });
 
   it('plans its own anchor and group, pinning its registered entries to the cuts they were created from', () => {
