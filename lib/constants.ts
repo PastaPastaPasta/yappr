@@ -5,6 +5,8 @@ import type { LanePin } from '@/lib/contract-topology'
  * Application constants
  */
 
+export const HIDE_MODERATION_CUTS = { social: 'v18', blog: 'v10', storefront: 'v11' } as const
+
 // Contract IDs
 export const YAPPR_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID || '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; documentsCountable + countable byOwner on post)
 
@@ -209,7 +211,7 @@ export const storefrontSupportsItemZones = () => storefrontTopologyAtLeast('v9')
 /** True on v10 and later: a store's items can be listed by status (`storeStatusAndTime`), and the contract takes reports. */
 export const storefrontIsV10 = () => storefrontTopologyAtLeast('v10')
 /** True only on v11: listings and rating trees carry the moderator-only `mod` lane, read `mod == null` by default, and moderators hide instead of deleting. */
-export const storefrontListingsCarryModLane = () => STOREFRONT_TOPOLOGY === 'v11'
+export const storefrontListingsCarryModLane = () => STOREFRONT_TOPOLOGY === HIDE_MODERATION_CUTS.storefront
 /** True on v10 and later: a status update's tracking and note are sealed to the order, never plaintext. */
 export const storefrontStatusIsSealed = () => storefrontIsV10()
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
@@ -330,9 +332,9 @@ export const blogIsV7 = () => blogTopologyAtLeast('v7')
 /** True on v9 and later: posts carry `live`, the post listings are keyed on it, and the contract takes reports. */
 export const blogIsV9 = () => blogTopologyAtLeast('v9')
 /** True only on v10: blog, post and comment listings carry the moderator-only `mod` lane, read `mod == null` by default, and moderators hide instead of deleting. */
-export const blogListingsCarryModLane = () => blogTopology() === 'v10'
+export const blogListingsCarryModLane = () => blogTopology() === HIDE_MODERATION_CUTS.blog
 /** True only on v10: a post's `live` is 1 (listed) or 2 (its author was restricted when it was written), forced on create by the blog's `restriction` documents. */
-export const blogAuthorsCanBeRestricted = () => blogTopology() === 'v10'
+export const blogAuthorsCanBeRestricted = () => blogTopology() === HIDE_MODERATION_CUTS.blog
 /**
  * The `live` pin a blog post listing (`timeline`, `blogAndTime`) starts with:
  * `live == true` on v9/v11, the listed lane `live == 1` on v10, nothing before v9.

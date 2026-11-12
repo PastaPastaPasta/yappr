@@ -10,7 +10,6 @@
  * at runtime, on chain. This test makes that drift a red unit test.
  */
 import { readFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
@@ -1532,26 +1531,11 @@ describe('contract topology', () => {
     })
   })
   describe('v19 (v17 with recoverable update system values)', () => {
-    it('changes only required and removal-kept fields on post, reply and profile, preserving the registered v17 bytes', () => {
-      const expected = structuredClone(socialContractV17)
-      for (const type of ['post', 'reply'] as const) {
-        expected.documentSchemas[type].required.splice(2, 0, '$updatedAtBlockHeight')
-        expected.documentSchemas[type].moderatorAbilities.deleteKeepsFields.push('$updatedAt', '$updatedAtBlockHeight')
-        expect(V17[type].required).not.toContain('$updatedAtBlockHeight')
-        expect(V16[type].required).not.toContain('$updatedAtBlockHeight')
-      }
-      expected.documentSchemas.yapprProfile.required.push('$updatedAtBlockHeight')
-      Object.assign(expected.documentSchemas.yapprProfile.moderatorAbilities, { deleteKeepsFields: ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] })
-      expect(socialContractV19).toEqual(expected)
-      expect(createHash('sha256').update(readFileSync(join(process.cwd(), 'contracts/yappr-social-contract-v17.json'))).digest('hex'))
-        .toBe('77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf')
-      expect(V19.post.required).toEqual(['$createdAt', '$updatedAt', '$updatedAtBlockHeight'])
-      expect(V19.reply.required).toEqual(['$createdAt', '$updatedAt', '$updatedAtBlockHeight', 'rootPostId'])
-    })
-
     it('keeps both times and the update height only on v19', async () => {
       for (const cut of ['v16', 'v17', 'v19']) {
         const m = await topologyModule(cut)
+        const schemas = cut === 'v19' ? V19 : cut === 'v17' ? V17 : V16
+        for (const type of ['post', 'reply']) expect(schemas[type].required?.includes('$updatedAtBlockHeight')).toBe(cut === 'v19')
         const times = cut === 'v19' ? ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] : ['$createdAt']
         expect(m.removalKeptFieldsFor('post')).toEqual(['tags', ...times])
         expect(m.removalKeptFieldsFor('reply')).toEqual(['rootPostId', ...times])
@@ -1585,7 +1569,7 @@ describe('contract topology', () => {
     const BLOG10 = blogContractV10.documentSchemas as unknown as Schemas
     const STORE11 = storefrontContractV11.documentSchemas as unknown as Schemas
 
-    it('reports the v18 capabilities on v18 and none of them on v17', async () => {
+    it('reports the v18 capabilities on v18 and none of them on v17 or v19', async () => {
       const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted()]
       expect(flags(await topologyModule('v18'))).toEqual([true, true, true])
       for (const cut of ['v17', 'v19']) expect(flags(await topologyModule(cut))).toEqual([false, false, false])

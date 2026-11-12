@@ -15,8 +15,8 @@
  * (proved reads, as the SDK always sends them) against:
  *
  *   social      contracts/yappr-social-contract-v19.json  NEXT_PUBLIC_CONTRACT_TOPOLOGY=v19
- *   blog        contracts/yappr-blog-contract.json        NEXT_PUBLIC_BLOG_TOPOLOGY=v9
- *   storefront  contracts/yappr-storefront-contract.json  NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v10
+ *   blog        contracts/yappr-blog-contract-v11.json        NEXT_PUBLIC_BLOG_TOPOLOGY=v11
+ *   storefront  contracts/yappr-storefront-contract-v12.json  NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v12
  *   pollr       contracts/pollr-contract.json             NEXT_PUBLIC_POLLR_TOPOLOGY=v8
  *   blocks      contracts/yappr-blocks-contract.json
  *   DM v5       contracts/yappr-dm-contract-v5.json       NEXT_PUBLIC_DM_TOPOLOGY=v5

@@ -25,7 +25,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { CONTRACT_TOPOLOGIES, DASHPAY_CONTRACT_ID, YAPPR_BLOCKS_CONTRACT_ID, YAPPR_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
+import { CONTRACT_TOPOLOGIES, HIDE_MODERATION_CUTS, DASHPAY_CONTRACT_ID, YAPPR_BLOCKS_CONTRACT_ID, YAPPR_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
@@ -609,6 +609,9 @@ const V18_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/** v19 keeps v17's deletion surfaces and adds recoverable removal system values. */
+const V19_DESCRIPTOR: ContractTopologyDescriptor = { ...V17_DESCRIPTOR, topology: 'v19' }
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -617,8 +620,6 @@ function deepFreeze<T>(value: T): T {
   }
   return value
 }
-
-const V19_DESCRIPTOR: ContractTopologyDescriptor = { ...V17_DESCRIPTOR, topology: 'v19' }
 
 const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>> = {
   v2: V2_DESCRIPTOR,
@@ -644,7 +645,7 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 }
 
 function isHideModerationCut(): boolean {
-  return topologyDescriptor().topology === 'v18'
+  return topologyDescriptor().topology === HIDE_MODERATION_CUTS.social
 }
 
 /**

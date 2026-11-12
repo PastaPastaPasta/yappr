@@ -27,6 +27,8 @@ import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.jso
 import storefrontContractV12 from '@/contracts/yappr-storefront-contract-v12.json'
 import {
   STOREFRONT_TOPOLOGY,
+  type StorefrontTopology,
+  type BlogTopology,
   YAPPR_BLOG_CONTRACT_ID,
   YAPPR_CONTRACT_ID,
   YAPPR_STOREFRONT_CONTRACT_ID,
@@ -337,8 +339,20 @@ function socialHideableTypes(): readonly string[] {
   return found
 }
 
+const STOREFRONT_CUTS = {
+  v1: storefrontContract, v2: storefrontContract, v3: storefrontContract,
+  v4: storefrontContract, v5: storefrontContract, v6: storefrontContract,
+  v7: storefrontContract, v8: storefrontContract, v9: storefrontContract,
+  v10: storefrontContract, v11: storefrontContractV11, v12: storefrontContractV12,
+} satisfies Record<StorefrontTopology, unknown>
+const BLOG_CUTS = {
+  v1: blogContract, v2: blogContract, v3: blogContract, v4: blogContract,
+  v5: blogContract, v6: blogContract, v7: blogContract, v8: blogContract,
+  v9: blogContract, v10: blogContractV10, v11: blogContractV11,
+} satisfies Record<BlogTopology, unknown>
+
 const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, {
-  json: () => (STOREFRONT_TOPOLOGY === 'v12' ? storefrontContractV12 : storefrontListingsCarryModLane() ? storefrontContractV11 : storefrontContract),
+  json: () => STOREFRONT_CUTS[STOREFRONT_TOPOLOGY],
   enabled: storefrontIsV6,
   laterTypes: { report: storefrontIsV10 },
   hides: storefrontListingsCarryModLane,
@@ -346,7 +360,7 @@ const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT
   restricts: () => false,
 })
 const BLOG_DECLARED = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, {
-  json: () => (blogTopology() === 'v11' ? blogContractV11 : blogListingsCarryModLane() ? blogContractV10 : blogContract),
+  json: () => BLOG_CUTS[blogTopology()],
   enabled: blogIsV7,
   laterTypes: { report: blogIsV9 },
   hides: blogListingsCarryModLane,
