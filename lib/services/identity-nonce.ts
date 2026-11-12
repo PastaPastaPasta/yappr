@@ -72,6 +72,8 @@ export interface NonceReservation {
   /** The highest nonce this browser knows spent: one it saw at the tip, or one it saw its own transition take. */
   floor: bigint;
   pending: PendingTransition[];
+  /** Deployment-scoped unsigned wallet payment records, retained until their outcomes are resolved. */
+  walletPayments?: Record<string, string>;
 }
 
 /**
@@ -157,9 +159,11 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
       mark: string;
       floor?: unknown;
       pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
+      walletPayments?: Record<string, string>;
     };
     return {
       mark: BigInt(parsed.mark),
+      ...(parsed.walletPayments ? { walletPayments: parsed.walletPayments } : {}),
       floor: max(sequence(parsed.floor) ?? BigInt(0), raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0)),
       pending: parsed.pending
         .filter((p) => !released.has(p.id))
@@ -196,12 +200,19 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
-      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending })
+      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending, walletPayments: reservation.walletPayments })
     );
   } catch (error) {
     logger.warn('Could not store nonce reservations:', error);
     throw new Error(NONCE_STORE_ERROR);
   }
+}
+
+/** Caller holds the identity write lock, including while creating the unsigned request. */
+export function storeWalletPayments(ownerId: string, contractId: string, scope: string, records: string): void {
+  const reservation = loadReservation(ownerId, contractId);
+  if (!reservation) throw new Error(NONCE_STORE_ERROR);
+  saveReservation(ownerId, contractId, { ...reservation, walletPayments: { ...reservation.walletPayments, [scope]: records } });
 }
 
 /**
@@ -287,6 +298,7 @@ export function reserveNonce(
     : { id, nonce, expiresAt: null };
   if (scope !== undefined) entry.scope = scope;
   saveReservation(ownerId, contractId, {
+    ...(previous?.walletPayments ? { walletPayments: previous.walletPayments } : {}),
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
     pending: [...live, entry],
@@ -323,7 +335,7 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
       const pending = reservation.pending.filter((p) => p.id !== entry.id);
       const floor = spentThrough === undefined ? reservation.floor : max(reservation.floor, spentThrough);
       if (pending.length !== reservation.pending.length || floor !== reservation.floor) {
-        saveReservation(ownerId, contractId, { mark: reservation.mark, floor, pending });
+        saveReservation(ownerId, contractId, { ...reservation, floor, pending });
       }
     }
   } catch {
@@ -560,7 +572,7 @@ export async function settlePendingWrites(ownerId: string, contractId: string): 
     }
     const pending = stillPending(current, reservation);
     const settled = reservation.pending.length - pending.length;
-    if (settled > 0) saveReservation(ownerId, contractId, { mark: reservation.mark, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
+    if (settled > 0) saveReservation(ownerId, contractId, { ...reservation, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
     return settled;
   });
 }

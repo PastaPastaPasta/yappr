@@ -13,7 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { buildWalletPurchase, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -83,20 +83,22 @@ export function BuyYappModal() {
   // start/back/close so a superseded invocation cannot overwrite a fresh QR.
   const walletSessionRef = useRef(0)
   const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  const allowedPaymentsRef = useRef(new Set<string>())
 
   useEffect(() => {
     if (isOpen && user) {
       setLoading(true)
-      void Promise.all([
+      Promise.all([
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => setYappBalance(null)),
         identityService.getBalance(user.identityId).then(b => setCreditBalance(b.confirmed)).catch(() => setCreditBalance(null)),
         tokenService.getPricePerToken().then(setPricePerToken).catch(() => setPricePerToken(null)),
-      ]).finally(() => setLoading(false))
+      ]).finally(() => setLoading(false)).catch(err => logger.error('Failed to load purchase balances:', err))
     }
   }, [isOpen, user])
 
   useEffect(() => {
     if (!isOpen) {
+      allowedPaymentsRef.current.clear()
       setAmount('100')
       setState('input')
       setError(null)
@@ -141,12 +143,14 @@ export function BuyYappModal() {
   // Shared tail of both purchase paths (local signing and remote wallet
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
-  const finishPurchase = useCallback(() => {
+  const finishPurchase = useCallback((payment?: WalletPayment) => {
+    allowedPaymentsRef.current.clear()
     walletRequestsRef.current.delete(walletPaymentKey)
+    if (user && payment) clearPersistedWalletPayment(user.identityId, payment.request.reservationId).catch(err => logger.error('Could not clear the completed wallet payment:', err))
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
-  }, [refreshBalance, walletPaymentKey])
+  }, [user, refreshBalance, walletPaymentKey])
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
@@ -155,8 +159,8 @@ export function BuyYappModal() {
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
     let payment = walletRequestsRef.current.get(walletPaymentKey)
-    if (payment) {
-      const prepared = await prepareWalletPayment(payment, () => buildWalletPurchase(user.identityId, amountBig, costCredits))
+    try {
+      const prepared = await prepareWalletPayment(payment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
         finishPurchase()
@@ -165,15 +169,22 @@ export function BuyYappModal() {
       payment = prepared.payment
       walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
-        setError('This payment may have gone through. Check your balance before trying again.')
+        setError(prepared.different
+          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
+          : "This payment may have gone through. Check your wallet's activity before trying again.")
         setState('unconfirmed')
         return
       }
+    } catch (err) {
+      logger.error('Could not prepare the payment:', err)
+      setError('Could not check earlier payments. Please try again.')
+      setState('error')
+      return
     }
     const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, payment?.request)
     if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
-      finishPurchase()
+      finishPurchase(payment)
     } else if (result.errorCode === 'CANCELLED') {
       // The user closed the key sheet; nothing was sent. The key screen offers the wallet instead.
       setState('needKey')
@@ -215,7 +226,7 @@ export function BuyYappModal() {
     setWalletExpired(false)
     try {
       const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
-      const prepared = await prepareWalletPayment(existingPayment, () => buildWalletPurchase(user.identityId, amountBig, costCredits))
+      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         if (walletSessionRef.current !== session) return
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
@@ -224,12 +235,13 @@ export function BuyYappModal() {
       }
       const payment = prepared.payment
       if (walletSessionRef.current !== session) {
-        if (payment !== existingPayment) await payment.request.discard()
         return
       }
       walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
-        setError('This payment may have gone through. Check your balance before trying again.')
+        setError(prepared.different
+          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
+          : "This payment may have gone through. Check your wallet's activity before trying again.")
         setState('unconfirmed')
         return
       }
@@ -267,7 +279,7 @@ export function BuyYappModal() {
         if (finished || outcome !== 'completed') return
         finished = true
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
-        finishPurchase()
+        finishPurchase(payment)
       }).catch(() => {
         // Transient balance-fetch failures — keep polling.
       })
@@ -486,7 +498,7 @@ export function BuyYappModal() {
                           <div className="py-6 text-center space-y-4">
                             <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the purchase land yet</p>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              This payment may have gone through. Check again before trying to pay.
+                              This payment may have gone through. Check your wallet&apos;s activity before trying again.
                             </p>
                             <Button
                               onClick={startWalletSign}
@@ -538,13 +550,15 @@ export function BuyYappModal() {
                         <div className="space-y-2">
                           <p className="text-lg font-medium">Couldn&apos;t confirm your purchase</p>
                           <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
-                          <p className="text-xs text-gray-500">Check your YAPP balance before buying again.</p>
+                          <p className="text-xs text-gray-500">This payment may have gone through. Check your wallet&apos;s activity before trying again.</p>
                         </div>
                         <Button onClick={close} className="w-full">Close</Button>
                         {walletRequestsRef.current.has(walletPaymentKey) && (
                           <div className="space-y-2">
                             <p className="text-xs text-gray-500">Starting another purchase could charge you again.</p>
                             <Button onClick={() => {
+                              const earlier = walletRequestsRef.current.get(walletPaymentKey)
+                              if (earlier) allowedPaymentsRef.current.add(earlier.request.reservationId)
                               walletRequestsRef.current.delete(walletPaymentKey)
                               setError(null)
                               setState('input')

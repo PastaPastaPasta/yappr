@@ -48,6 +48,8 @@ export interface ProvedTip {
   targetKind?: TipTargetKind;
   /** Free text the sender signed with the transfer. */
   message?: string;
+  /** The exact note signed into the transfer, when present. */
+  publicNote?: string;
 }
 
 /** Sum of a tip page — "N YAPP over these M transfers", never a global total. */
@@ -62,6 +64,8 @@ export interface SentTipMatch {
   /** The tipped post/reply, when the tip named one. */
   postId?: string;
   message?: string;
+  /** Exact note signed into the transfer. */
+  note?: string;
   /** Only count transfers created at or after this epoch-ms. */
   since?: number;
 }
@@ -75,11 +79,13 @@ export interface SentTipMatch {
  * tip as landed that never did.
  */
 export function matchesSentTip(tip: ProvedTip, match: SentTipMatch): boolean {
+  const noteMatches = 'note' in match
+    ? (tip.publicNote ?? '') === (match.note ?? '')
+    : (tip.postId ?? '') === (match.postId ?? '') && (tip.message ?? '') === (match.message ?? '');
   return (
     tip.to === match.to &&
     tip.amount === match.amount &&
-    (tip.postId ?? '') === (match.postId ?? '') &&
-    (tip.message ?? '') === (match.message ?? '') &&
+    noteMatches &&
     (match.since === undefined || tip.createdAt.getTime() >= match.since)
   );
 }
@@ -109,6 +115,7 @@ function toProvedTip(doc: Record<string, unknown>): ProvedTip | null {
     createdAt: Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0),
     ...(note ? { postId: note.targetId, targetKind: note.kind } : {}),
     ...(note?.message ? { message: note.message } : {}),
+    ...(typeof doc.publicNote === 'string' ? { publicNote: doc.publicNote } : {}),
   };
 }
 
