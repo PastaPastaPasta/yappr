@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 
-const query = vi.hoisted(() => vi.fn())
+const { query, queryWithProof } = vi.hoisted(() => ({ query: vi.fn(), queryWithProof: vi.fn() }))
 const TOKEN_ID = 'BQP2VQvGSKGZJbtJnSVfXfHytHJVgRKkm7VbP2Nk2Nkh'
 
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query, queryWithProof } }) }))
 vi.mock('./token-service', () => ({ tokenService: { getTokenId: async () => TOKEN_ID } }))
 
 import { tipHistoryService, totalTipped, matchesSentTip, type ProvedTip } from './tip-history-service'
@@ -32,6 +32,7 @@ function transferDoc(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   query.mockReset()
+  queryWithProof.mockReset()
   tipHistoryService.clearCache()
 })
 
@@ -84,6 +85,23 @@ describe('reading transfers off the token-history contract', () => {
     expect(tip.message).toBeUndefined()
   })
 
+  it('matches the exact signed profile message even when it parses as a post note', async () => {
+    const note = `yappr:tip:v1:post:${POST_ID}`
+    queryWithProof.mockResolvedValueOnce({ data: new Map([['a', transferDoc({ publicNote: note })]]), metadata: { height: BigInt(200) }, proof: {} })
+    const { tips: [tip] } = await tipHistoryService.getTipsSentWithProof(TIPPER)
+    expect(tip.postId).toBe(POST_ID)
+    expect(matchesSentTip(tip, { to: AUTHOR, amount: BigInt(5), note })).toBe(true)
+    expect(matchesSentTip(tip, { to: AUTHOR, amount: BigInt(5), note: note + '\nother' })).toBe(false)
+  })
+
+  it('compares bare profile messages and an absent note exactly', async () => {
+    query.mockResolvedValueOnce(new Map([['a', transferDoc({ publicNote: 'a message' })]]))
+    const [tip] = await tipHistoryService.getTipsSent(TIPPER)
+    expect(matchesSentTip(tip, { to: AUTHOR, amount: BigInt(5), note: 'a message' })).toBe(true)
+    expect(matchesSentTip(tip, { to: AUTHOR, amount: BigInt(5), note: 'another message' })).toBe(false)
+    expect(matchesSentTip(tip, { to: AUTHOR, amount: BigInt(5), note: undefined })).toBe(false)
+  })
+
   it('caches a page for the TTL rather than re-querying', async () => {
     query.mockResolvedValue(new Map([['a', transferDoc()]]))
     await tipHistoryService.getTipsReceived(AUTHOR)
@@ -103,6 +121,37 @@ describe('reading transfers off the token-history contract', () => {
 
     await tipHistoryService.getTipsSent(TIPPER, { fresh: true })
     expect(query).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('reading sender history with proof metadata', () => {
+  it('bypasses cached and unproved reads, preserving the query and proof height', async () => {
+    query.mockResolvedValue(new Map())
+    await tipHistoryService.getTipsSent(TIPPER)
+    queryWithProof.mockResolvedValue({ data: new Map([['a', transferDoc()]]), metadata: { height: BigInt(200) }, proof: {} })
+    const first = await tipHistoryService.getTipsSentWithProof(TIPPER)
+    await tipHistoryService.getTipsSentWithProof(TIPPER)
+    expect(query).toHaveBeenCalledOnce()
+    expect(queryWithProof).toHaveBeenCalledTimes(2)
+    expect(queryWithProof.mock.calls[0][0]).toEqual(query.mock.calls[0][0])
+    expect(first.height).toBe(BigInt(200))
+    expect(first.tips).toHaveLength(1)
+    expect(first.tips[0].amount).toBe(BigInt(5))
+  })
+
+  it('rejects a response without a proof', async () => {
+    queryWithProof.mockResolvedValue({ data: new Map(), metadata: { height: BigInt(200) } })
+    await expect(tipHistoryService.getTipsSentWithProof(TIPPER)).rejects.toThrow('proof unavailable')
+  })
+
+  it.each([undefined, BigInt(0)])('does not supply a usable height for %s', async height => {
+    queryWithProof.mockResolvedValue({ data: new Map(), metadata: { height }, proof: {} })
+    expect(await tipHistoryService.getTipsSentWithProof(TIPPER)).toEqual({ tips: [] })
+  })
+
+  it('rejects a partial page with an unreadable transfer rather than proving absence', async () => {
+    queryWithProof.mockResolvedValue({ data: new Map([['a', transferDoc()], ['b', undefined]]), metadata: { height: BigInt(200) }, proof: {} })
+    await expect(tipHistoryService.getTipsSentWithProof(TIPPER)).rejects.toThrow('unreadable transfers')
   })
 })
 

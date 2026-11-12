@@ -95,12 +95,12 @@ export function isUnverifiedOutcomeError(error: unknown): boolean {
 const UNVERIFIED_KINDS: ReadonlySet<string> = new Set(['Proof', 'InvalidProvedResponse', 'DriveProofError', 'ExecutionNotProved'])
 
 /**
- * wasm-sdk kinds the SDK raises while it builds or signs a write, before it
- * broadcasts anything: a verdict that nothing was sent.
+ * Errors raised while building or signing a write, before broadcasting
+ * anything: a verdict that nothing was sent.
  */
 const NOT_SENT_KINDS: ReadonlySet<string> = new Set([
   'Protocol', 'InvalidArgument', 'SerializationError', 'Config', 'InvalidCreditTransfer', 'NonceOverflow',
-  'IdentityNonceNotFound', 'MissingDependency', 'NotImplemented',
+  'IdentityNonceNotFound', 'MissingDependency', 'NotImplemented', 'ChosenWriteNotSentError', 'CriticalKeyCancelledError',
 ])
 
 /**
@@ -244,7 +244,7 @@ export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used i
  * the way to check: the next attempt reads the chain and goes ahead as soon as
  * that transition shows landed or can no longer land (#644).
  */
-export const PENDING_WRITE_ERROR = 'Your last change is still going through, so this one was not sent. Try again in a moment.'
+export const PENDING_WRITE_ERROR = 'We couldn’t confirm an earlier change. This change hasn’t been sent. Check your recent activity before trying again.'
 
 /**
  * Why a write was not sent at all: this browser's storage would not record

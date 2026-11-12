@@ -56,7 +56,12 @@ export interface PendingTransition {
   /**
    * What the transition writes, as an opaque key its caller chose (a Pollr
    * ballot names its poll), so a caller can tell which pending transitions can
-   * touch what it is about to do. Absent means unknown: it may touch anything.
+   * touch what it is about to do. App writes may bypass each other only when
+   * both scopes are present and differ. Absent means unknown: it may touch
+   * anything. Moderation uses `moderation:<contract>:identity:<identity>` or
+   * `moderation:<contract>:document:<type>:<id>` across all actions on a target.
+   * Fee claims use `moderation:<contract>:pot:<pot>`.
+   * Wallet requests use WALLET_TOKEN_SCOPE and impose no ordering constraint.
    */
   scope?: string;
 }
@@ -67,6 +72,8 @@ export interface NonceReservation {
   /** The highest nonce this browser knows spent: one it saw at the tip, or one it saw its own transition take. */
   floor: bigint;
   pending: PendingTransition[];
+  /** Deployment-scoped unsigned wallet payment records, retained until their outcomes are resolved. */
+  walletPayments?: Record<string, string>;
 }
 
 /**
@@ -101,6 +108,8 @@ const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
  * contracts apart.
  */
 const RESERVATION_PREFIX = 'yappr:nonce-reservation:';
+
+export const WALLET_TOKEN_SCOPE = 'wallet-token';
 
 /**
  * Entries this tab released (each on a verdict) whose release localStorage may
@@ -150,9 +159,11 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
       mark: string;
       floor?: unknown;
       pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
+      walletPayments?: Record<string, string>;
     };
     return {
       mark: BigInt(parsed.mark),
+      ...(parsed.walletPayments ? { walletPayments: parsed.walletPayments } : {}),
       floor: max(sequence(parsed.floor) ?? BigInt(0), raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0)),
       pending: parsed.pending
         .filter((p) => !released.has(p.id))
@@ -189,12 +200,19 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
-      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending })
+      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending, walletPayments: reservation.walletPayments })
     );
   } catch (error) {
     logger.warn('Could not store nonce reservations:', error);
     throw new Error(NONCE_STORE_ERROR);
   }
+}
+
+/** Caller holds the identity write lock, including while creating the unsigned request. */
+export function storeWalletPayments(ownerId: string, contractId: string, scope: string, records: string): void {
+  const reservation = loadReservation(ownerId, contractId);
+  if (!reservation) throw new Error(NONCE_STORE_ERROR);
+  saveReservation(ownerId, contractId, { ...reservation, walletPayments: { ...reservation.walletPayments, [scope]: records } });
 }
 
 /**
@@ -280,6 +298,7 @@ export function reserveNonce(
     : { id, nonce, expiresAt: null };
   if (scope !== undefined) entry.scope = scope;
   saveReservation(ownerId, contractId, {
+    ...(previous?.walletPayments ? { walletPayments: previous.walletPayments } : {}),
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
     pending: [...live, entry],
@@ -316,7 +335,7 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
       const pending = reservation.pending.filter((p) => p.id !== entry.id);
       const floor = spentThrough === undefined ? reservation.floor : max(reservation.floor, spentThrough);
       if (pending.length !== reservation.pending.length || floor !== reservation.floor) {
-        saveReservation(ownerId, contractId, { mark: reservation.mark, floor, pending });
+        saveReservation(ownerId, contractId, { ...reservation, floor, pending });
       }
     }
   } catch {
@@ -389,6 +408,14 @@ async function nonceTakenOnAnswer(
   return entry.signedAtMost;
 }
 
+/** Preparation failed before a chosen-nonce transition could be broadcast. */
+export class ChosenWriteNotSentError extends Error {
+  constructor(readonly reason: unknown) {
+    super('This change hasn’t been sent. Please try again.');
+    this.name = 'ChosenWriteNotSentError';
+  }
+}
+
 /** A write's precondition no longer held under the write lock: nothing was reserved or sent. */
 export const WRITE_PRECONDITION_FAILED = 'This was not sent: what it depended on changed.';
 
@@ -401,7 +428,8 @@ function isVerdict(error: unknown): boolean {
 /**
  * Run a write the SDK signs itself under the identity's write lock.
  *
- * The write starts only once nothing this browser signed may still execute
+ * Without a chosen-nonce builder, the write starts only once nothing this
+ * browser signed may still execute
  * (waiting a few seconds for that, then failing unsent with
  * {@link PENDING_WRITE_ERROR}). It is recorded as pending with no nonce and
  * the range of nonces it may carry (see the module comment): if its outcome
@@ -412,12 +440,22 @@ function isVerdict(error: unknown): boolean {
  * behind one that admitted the same transition. On an answer the floor goes
  * to the nonce it took, read back from Platform ({@link nonceTakenOnAnswer}).
  *
+ * `writeWithNonce`, when supplied, builds the same action with a chosen nonce
+ * past the mark if known-nonce transitions remain outstanding after the normal
+ * wait, but only when both app writes have scopes and those scopes differ.
+ * Same-scope writes, or app writes unscoped on either side, keep waiting and
+ * fail unsent with PENDING_WRITE_ERROR if they do not settle. Wallet requests
+ * never impose ordering and need no ordering wait. Their nonces
+ * stay reserved until consumed, including after a QR closes or a page reloads.
+ * Unknown SDK nonces still hold writes back.
+ *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
  *
  * `precondition`, when given, is the last word on whether to send: it runs
- * under the lock, after every earlier transition has settled and before a
- * nonce is reserved, so nothing this browser signs can land between the check
- * and the write. When it resolves false the write fails with
+ * under the lock after waiting for earlier transitions and before a nonce is
+ * reserved. With a chosen-nonce builder an earlier unconfirmed transition may
+ * still execute later; the check cannot establish ordering against it. When it
+ * resolves false the write fails with
  * {@link WRITE_PRECONDITION_FAILED} and nothing is reserved or sent.
  */
 export async function withSdkSignedWrite<T>(
@@ -425,11 +463,43 @@ export async function withSdkSignedWrite<T>(
   contractId: string,
   write: () => Promise<T>,
   scope?: string,
-  precondition?: () => Promise<boolean>
+  precondition?: () => Promise<boolean>,
+  writeWithNonce?: (nonce: bigint) => Promise<T>,
+  lockHeld = false
 ): Promise<T> {
-  return withIdentityWriteLock(ownerId, contractId, async () => {
-    const { current } = await awaitNonce(ownerId, contractId, (tip, reservation) => (stillPending(tip, reservation).length === 0 ? true : null));
+  const send = async () => {
+    let polls = 0;
+    const { current, value } = await awaitNonce<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
+      const pending = stillPending(tip, reservation);
+      if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
+      if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
+        (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
+      if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
+        const nonce = allocateNonce(tip, reservation);
+        return nonce === null ? null : { nonce };
+      }
+      return pending.length === 0 ? { nonce: null } : null;
+    });
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
+    if (value.nonce !== null && writeWithNonce) {
+      const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
+      const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope);
+      try {
+        const result = await writeWithNonce(value.nonce);
+        // An affected-state answer can be a snapshot rather than execution proof.
+        // Keep the chosen nonce until a nonce read proves it can no longer execute.
+        await settleChosenNonce(ownerId, contractId, entry);
+        return result;
+      } catch (error) {
+        if (error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError) {
+          releaseNonce(ownerId, contractId, entry);
+          // No bytes left this lock, so this allocation never became a signed nonce.
+          const reservation = loadReservation(ownerId, contractId);
+          if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
+        } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
+        throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
+      }
+    }
     const sdk = await getEvoSdk();
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
     const entry = reserveNonce(ownerId, contractId, null, current, scope);
@@ -452,7 +522,34 @@ export async function withSdkSignedWrite<T>(
     clearInterval(alive);
     releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
-  });
+  };
+  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
+}
+
+async function settleChosenNonce(ownerId: string, contractId: string, entry: PendingTransition): Promise<void> {
+  try {
+    const sdk = await getEvoSdk();
+    const current = await sdk.identities.contractNonce(ownerId, contractId);
+    if (entry.nonce !== null && identityContractNonceConsumed(current, entry.nonce)) releaseNonce(ownerId, contractId, entry, entry.nonce);
+  } catch (error) {
+    logger.debug('Could not prove the chosen nonce consumed:', error);
+  }
+}
+
+/** Re-sign the same wallet payment; even a local refusal cannot retire the wallet's copy. */
+export async function withWalletTokenNonce<T>(ownerId: string, contractId: string, entry: PendingTransition, write: (nonce: bigint) => Promise<T>, lockHeld = false): Promise<T> {
+  if (entry.scope !== WALLET_TOKEN_SCOPE || entry.nonce === null) throw new Error('Invalid wallet payment reservation');
+  const nonce = entry.nonce;
+  const send = async () => {
+    try {
+      return await write(nonce);
+    } catch (error) {
+      throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
+    } finally {
+      await settleChosenNonce(ownerId, contractId, entry);
+    }
+  };
+  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
 }
 
 /**
@@ -478,7 +575,7 @@ export async function settlePendingWrites(ownerId: string, contractId: string): 
     }
     const pending = stillPending(current, reservation);
     const settled = reservation.pending.length - pending.length;
-    if (settled > 0) saveReservation(ownerId, contractId, { mark: reservation.mark, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
+    if (settled > 0) saveReservation(ownerId, contractId, { ...reservation, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
     return settled;
   });
 }

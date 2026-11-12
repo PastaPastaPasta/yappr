@@ -17,13 +17,14 @@
  * first, and the UI says so.
  */
 
+import type { DocumentsQuery } from '@dashevo/evo-sdk';
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { parseTipNote, type TipTargetKind } from '@/lib/tip-note';
 import { TOKEN_HISTORY_CONTRACT_ID } from '../constants';
 import { getEvoSdk } from './evo-sdk-service';
 import { tokenService } from './token-service';
-import { identifierToBase58, normalizeSDKResponse, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
+import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 
 const TRANSFER_DOC_TYPE = 'transfer';
 const CACHE_TTL_MS = 60 * 1000;
@@ -47,6 +48,8 @@ export interface ProvedTip {
   targetKind?: TipTargetKind;
   /** Free text the sender signed with the transfer. */
   message?: string;
+  /** The exact note signed into the transfer, when present. */
+  publicNote?: string;
 }
 
 /** Sum of a tip page — "N YAPP over these M transfers", never a global total. */
@@ -61,6 +64,8 @@ export interface SentTipMatch {
   /** The tipped post/reply, when the tip named one. */
   postId?: string;
   message?: string;
+  /** Exact note signed into the transfer. */
+  note?: string;
   /** Only count transfers created at or after this epoch-ms. */
   since?: number;
 }
@@ -74,11 +79,13 @@ export interface SentTipMatch {
  * tip as landed that never did.
  */
 export function matchesSentTip(tip: ProvedTip, match: SentTipMatch): boolean {
+  const noteMatches = 'note' in match
+    ? (tip.publicNote ?? '') === (match.note ?? '')
+    : (tip.postId ?? '') === (match.postId ?? '') && (tip.message ?? '') === (match.message ?? '');
   return (
     tip.to === match.to &&
     tip.amount === match.amount &&
-    (tip.postId ?? '') === (match.postId ?? '') &&
-    (tip.message ?? '') === (match.message ?? '') &&
+    noteMatches &&
     (match.since === undefined || tip.createdAt.getTime() >= match.since)
   );
 }
@@ -108,6 +115,7 @@ function toProvedTip(doc: Record<string, unknown>): ProvedTip | null {
     createdAt: Number.isFinite(createdAt.getTime()) ? createdAt : new Date(0),
     ...(note ? { postId: note.targetId, targetKind: note.kind } : {}),
     ...(note?.message ? { message: note.message } : {}),
+    ...(typeof doc.publicNote === 'string' ? { publicNote: doc.publicNote } : {}),
   };
 }
 
@@ -137,28 +145,49 @@ class TipHistoryService {
     const cached = fresh ? undefined : this.cache.get(cacheKey);
     if (cached) return cached;
 
-    const [sdk, tokenId] = await Promise.all([getEvoSdk(), tokenService.getTokenId()]);
-
-    const response = await sdk.documents.query({
-      dataContractId: TOKEN_HISTORY_CONTRACT_ID,
-      documentTypeName: TRANSFER_DOC_TYPE,
-      where: [
-        ['tokenId', '==', tokenId],
-        [field, '==', identityId],
-      ] as DocumentWhereClause[],
-      orderBy: [
-        ['tokenId', 'asc'],
-        [field, 'asc'],
-        ['$createdAt', 'desc'],
-      ] as DocumentOrderByClause[],
-      limit: TIP_PAGE_LIMIT,
-    });
+    const [sdk, query] = await Promise.all([getEvoSdk(), this.transferQuery(field, identityId)]);
+    const response = await sdk.documents.query(query);
 
     const tips = normalizeSDKResponse(response)
       .map(toProvedTip)
       .filter((tip): tip is ProvedTip => tip !== null);
     this.cache.set(cacheKey, tips);
     return tips;
+  }
+
+  private async transferQuery(field: 'toIdentityId' | '$ownerId', identityId: string): Promise<DocumentsQuery> {
+    const tokenId = await tokenService.getTokenId();
+    return {
+      dataContractId: TOKEN_HISTORY_CONTRACT_ID,
+      documentTypeName: TRANSFER_DOC_TYPE,
+      where: [
+        ['tokenId', '==', tokenId],
+        [field, '==', identityId],
+      ],
+      orderBy: [
+        ['tokenId', 'asc'],
+        [field, 'asc'],
+        ['$createdAt', 'desc'],
+      ],
+      limit: TIP_PAGE_LIMIT,
+    };
+  }
+
+  /** Uncached sender history with the proof height needed to establish absence. */
+  async getTipsSentWithProof(identityId: string): Promise<{ tips: ProvedTip[]; height?: bigint }> {
+    const [sdk, query] = await Promise.all([getEvoSdk(), this.transferQuery('$ownerId', identityId)]);
+    const response = await sdk.documents.queryWithProof(query);
+    if (!response.proof) throw new Error('Tip history proof unavailable');
+    const documents = normalizeSDKResponse(response.data);
+    const tips = documents.map(toProvedTip);
+    if (documents.length !== response.data.size || tips.some(tip => tip === null)) {
+      throw new Error('Tip history page contains unreadable transfers');
+    }
+    const height = response.metadata?.height;
+    return {
+      tips: tips.filter((tip): tip is ProvedTip => tip !== null),
+      ...(typeof height === 'bigint' && height > BigInt(0) ? { height } : {}),
+    };
   }
 
   /**

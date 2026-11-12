@@ -99,6 +99,17 @@ describe('a token write whose answer could not be verified', () => {
     expect(transfer).toHaveBeenCalledTimes(1)
   })
 
+  it('does not describe a chosen-write preparation failure as an uncertain transfer', async () => {
+    signedWrite.mockImplementationOnce(async (...args: [string, string, () => Promise<unknown>]) => {
+      await args[2]()
+      throw Object.assign(new Error('This change hasn’t been sent. Please try again.'), { name: 'ChosenWriteNotSentError' })
+    })
+    transfer.mockResolvedValue(undefined)
+    const result = await tokenService.transfer(CLAIMANT, 'Recipient', BigInt(1))
+    expect(result.errorCode).toBe('NETWORK_ERROR')
+    expect(result.error).toContain('hasn’t been sent')
+  })
+
   it('reports a read that failed before anything was sent as a plain failure', async () => {
     // The nonce read under the write lock hit the gap: the transfer was never handed to the SDK.
     signedWrite.mockRejectedValue(QKU)

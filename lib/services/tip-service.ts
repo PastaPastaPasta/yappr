@@ -10,6 +10,8 @@ import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { yappIsLocked } from '@/lib/contract-topology'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
+import type { LocalWalletPaymentIntent } from './wallet-payment-service'
+import type { WalletTransitionRequest } from './token-transition-builder'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
 export interface TipResult {
@@ -264,12 +266,13 @@ class TipService {
     recipientId: string,
     amount: bigint,
     target?: { kind: TipTargetKind; id: string },
-    message?: string
+    message?: string,
+    walletRequest?: WalletTransitionRequest | LocalWalletPaymentIntent
   ): Promise<TipResult> {
     const invalid = this.validateYappTip(senderId, recipientId, amount);
     if (invalid) return invalid;
 
-    const result = await tokenService.transfer(senderId, recipientId, amount, this.tipNoteFor(target, message));
+    const result = await tokenService.transfer(senderId, recipientId, amount, this.tipNoteFor(target, message), walletRequest);
     if (!result.success) {
       // Sent, and no verdict came back (a timeout, a proof that could not be
       // checked, a transport failure, "already in mempool"): never a failure to
@@ -309,9 +312,8 @@ class TipService {
       to: recipientId,
       amount,
       postId: target?.id,
-      // A profile tip's note is the bare message, which never parses as a tip
-      // note, so the proved row carries no message to compare against.
       message: target ? message?.trim() || undefined : undefined,
+      note: this.tipNoteFor(target, message),
       since,
     };
   }
