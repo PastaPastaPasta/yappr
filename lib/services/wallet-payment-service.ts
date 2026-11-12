@@ -35,6 +35,12 @@ type PersistedWalletPayment = {
 };
 type PaymentContext = { ownerId: string; key: string; allowAnother?: ReadonlySet<string>; expose?: (payment: WalletPayment) => void; isCurrent?: () => boolean };
 type LocalPreparedPayment = { completed: true } | { completed: false; payment?: WalletPayment; unresolved?: true; different?: true };
+export type LocalWalletPaymentIntent = {
+  key: string;
+  cached?: WalletPayment;
+  allowAnother?: ReadonlySet<string>;
+  onPrepared?: (payment: WalletPayment | undefined) => void;
+};
 type PreparedPayment = { completed: true } | { completed: false; payment: WalletPayment; unresolved?: true; different?: true };
 const STORAGE_KEY = scopedKey('wallet-payments:v1');
 
@@ -158,17 +164,19 @@ export async function prepareWalletPayment(
   return { ...result, payment: result.payment };
 }
 
-export function prepareLocalWalletPayment(cached: WalletPayment | undefined, context: PaymentContext) {
-  return preparePayment(cached, undefined, context);
+export function prepareLocalWalletPayment(cached: WalletPayment | undefined, context: PaymentContext, lockHeld = false) {
+  return preparePayment(cached, undefined, context, lockHeld);
 }
 
 async function preparePayment(
   cached: WalletPayment | undefined,
   build: ((lockHeld?: boolean) => Promise<WalletPayment>) | undefined,
-  context?: PaymentContext
+  context?: PaymentContext,
+  lockHeld = false
 ): Promise<LocalPreparedPayment> {
   const prepare = async (): Promise<LocalPreparedPayment> => {
     let candidate = cached;
+    let cachedAbsent = false;
     let reconciliation: Awaited<ReturnType<typeof reconcilePayment>> | undefined;
     if (context) {
       const records = readPersisted(context.ownerId);
@@ -176,6 +184,7 @@ async function preparePayment(
         try {
           const result = await reconcilePayment(cached);
           if (result.outcome === 'completed' && cached.key === context.key) return { completed: true };
+          cachedAbsent = result.outcome === 'absent';
           if (result.outcome === 'unknown' && !context.allowAnother?.has(cached.request.reservationId)) {
             return { completed: false, payment: cached, unresolved: true, ...(cached.key !== context.key ? { different: true } : {}) };
           }
@@ -195,7 +204,8 @@ async function preparePayment(
         }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
-          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId)) return { completed: true };
+          const replacesAbsentCached = cachedAbsent && cached && payment.request.nonce > cached.request.nonce;
+          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId || replacesAbsentCached)) return { completed: true };
           continue;
         }
         if (context.allowAnother?.has(record.reservationId)) continue;
@@ -231,7 +241,7 @@ async function preparePayment(
       return { completed: false, payment: candidate, unresolved: true };
     }
   };
-  return context ? withIdentityWriteLock(context.ownerId, YAPPR_CONTRACT_ID, prepare) : prepare();
+  return context && !lockHeld ? withIdentityWriteLock(context.ownerId, YAPPR_CONTRACT_ID, prepare) : prepare();
 }
 
 export async function buildWalletPurchase(ownerId: string, amount: bigint, cost: bigint, lockHeld = false): Promise<WalletPayment> {

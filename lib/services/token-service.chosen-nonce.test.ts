@@ -11,7 +11,7 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
-import { buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type WalletPayment } from './wallet-payment-service'
+import { buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
 import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
 import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
 
@@ -134,7 +134,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     ? buildUnsignedYappTipTransition(OWNER, OTHER, BigInt(100), 'same payment')
     : buildUnsignedDirectPurchaseTransition(OWNER, BigInt(100), BigInt(1000))
 
-  const sendPayment = (request?: Awaited<ReturnType<typeof buildPayment>>) => action === 'tip'
+  const sendPayment = (request?: Awaited<ReturnType<typeof buildPayment>> | LocalWalletPaymentIntent) => action === 'tip'
     ? tipService.sendYappTipLocal(OWNER, OTHER, BigInt(100), undefined, 'same payment', request)
     : tokenService.buyYapp(OWNER, BigInt(100), BigInt(1000), request)
 
@@ -355,6 +355,95 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(storedPayments()).toEqual([])
+  })
+
+  it('does not complete a newer absent request from an older identical payment receipt', async () => {
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No original payment')
+    const second = await prepareWalletPayment(undefined, buildCachedPayment, {
+      ...context, allowAnother: new Set([first.payment.request.reservationId]),
+    })
+    if (second.completed || second.unresolved) throw new Error('No second payment')
+    recordReceipt(first.payment)
+    reportedNonce = BigInt(127)
+    await clearPersistedWalletPayment(OWNER, second.payment.request.reservationId)
+    expect(await prepareLocalWalletPayment(second.payment, context)).toEqual({ completed: false })
+    expect(storedPayments()).toEqual([])
+  })
+
+  it.each((['executable', 'completed', 'unknown', 'foreign'] as const).flatMap(state =>
+    [false, true].map(cached => ({ state, cached }))
+  ))('reconciles a $state replacement exposed by tab B while tab A acquires its local signer (cached: $cached)', async ({ state, cached }) => {
+    const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (original.completed) throw new Error('No original payment')
+    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
+    reportedNonce = chainNonce()
+    if (!cached) {
+      expect(await prepareLocalWalletPayment(original.payment, context)).toEqual({ completed: false })
+      expect(storedPayments()).toEqual([])
+    }
+
+    let resumeSigner = () => {}
+    let signerStarted = () => {}
+    const paused = new Promise<void>(resolve => { resumeSigner = resolve })
+    const started = new Promise<void>(resolve => { signerStarted = resolve })
+    vi.spyOn(sdk.identities, 'fetch').mockImplementationOnce(async () => {
+      signerStarted()
+      await paused
+      return { publicKeys: [identityKey] }
+    })
+    const onPrepared = vi.fn()
+    const sending = sendPayment({ key: context.key, cached: cached ? original.payment : undefined, onPrepared })
+    await started
+    let replacement: WalletPayment
+    try {
+      const expose = vi.fn()
+      const prepared = await prepareWalletPayment(original.payment, buildCachedPayment, {
+        ...context, key: state === 'foreign' ? 'another payment' : context.key, expose,
+      })
+      if (prepared.completed || prepared.unresolved) throw new Error('No replacement QR')
+      replacement = prepared.payment
+      expect(expose).toHaveBeenCalledOnce()
+      expect(expose).toHaveBeenCalledWith(replacement)
+      expect(replacement.request.nonce).toBe(BigInt(127))
+      expect(storedPayments()).toHaveLength(1)
+      if (state === 'completed') {
+        expect(execute(replacement.request.nonce, true)).toBe(true)
+        recordReceipt(replacement)
+        reportedNonce = chainNonce()
+      } else if (state === 'unknown') {
+        for (let nonce = BigInt(128); nonce <= BigInt(152); nonce++) expect(execute(nonce, false)).toBe(true)
+        reportedNonce = chainNonce()
+        historyHeight = BigInt(199)
+      }
+    } finally { resumeSigner() }
+    const result = await sending
+    expect(sdk.tokens.transfer).not.toHaveBeenCalled()
+    expect(sdk.tokens.directPurchase).not.toHaveBeenCalled()
+    if (state === 'executable') {
+      expect(result).toEqual({ success: true })
+      expect(execute(replacement.request.nonce, true)).toBe(false)
+      expect(payments).toBe(1)
+      const transition = StateTransition.fromBytes(localBytes)
+      try { expect(transition.identityContractNonce).toBe(replacement.request.nonce) }
+      finally { transition.free() }
+      expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: context.key, request: expect.objectContaining({ nonce: BigInt(127) }) }))
+      expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
+    } else if (state === 'completed') {
+      expect(result).toEqual({ success: true })
+      expect(broadcast).not.toHaveBeenCalled()
+      expect(payments).toBe(1)
+      expect(storedPayments()).toEqual([])
+      expect(onPrepared).toHaveBeenCalledWith(undefined)
+    } else {
+      expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+      expect(result.error).toContain(state === 'foreign' ? 'An earlier payment' : 'This payment')
+      expect(broadcast).not.toHaveBeenCalled()
+      expect(payments).toBe(0)
+      expect(storedPayments()).toHaveLength(1)
+      expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: replacement.key }))
+      expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
+    }
   })
 
   it('serializes two tabs preparing the same payment under the reservation lock', async () => {

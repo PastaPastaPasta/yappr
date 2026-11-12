@@ -32,7 +32,7 @@ export interface WalletTransitionRequest {
   discard: (lockHeld?: boolean) => Promise<void>;
   checkLiveness: () => Promise<{ executable: boolean; consumedAt?: bigint }>;
   /** Local fallback for this payment, sharing the wallet's nonce rather than allocating another. */
-  sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>) => Promise<T>;
+  sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>, lockHeld?: boolean) => Promise<T>;
 }
 
 function requestFor(
@@ -45,9 +45,9 @@ function requestFor(
     const release = async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry);
     return lockHeld ? release() : withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, release);
   };
-  const sendWithNonce = <T>(signingOwnerId: string, write: (nonce: bigint) => Promise<T>) => {
+  const sendWithNonce = <T>(signingOwnerId: string, write: (nonce: bigint) => Promise<T>, lockHeld = false) => {
     if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
-    return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);
+    return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write, lockHeld);
   };
   const checkLiveness = async () => {
     const sdk = await getEvoSdk();
