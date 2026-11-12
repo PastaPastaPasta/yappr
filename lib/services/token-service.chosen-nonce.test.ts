@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BatchTransition, Document, type DocumentObject, IdentityPublicKey, PlatformVersion, PrivateKey, StateTransition, VerifiedTokenActionWithDocument, ensureInitialized } from '@dashevo/evo-sdk'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { scopedKey } from '@/lib/storage-scope'
 import { identityContractNonceConsumed } from '@/lib/document-id'
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder'
 import { buildUnsignedYappTipTransition } from './token-transfer-builder'
@@ -159,13 +160,139 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   afterEach(() => { vi.useRealTimers() })
 
-  const buildCachedPayment = () => action === 'tip'
-    ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'same payment')
-    : buildWalletPurchase(OWNER, BigInt(100), BigInt(1000))
+  const buildCachedPayment = (lockHeld = false) => action === 'tip'
+    ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'same payment', lockHeld)
+    : buildWalletPurchase(OWNER, BigInt(100), BigInt(1000), lockHeld)
 
   function recordPayment() {
     balance += BigInt(100)
-    sentTips.push({ id: 'tip', from: OWNER, to: OTHER, amount: BigInt(100), createdAt: new Date() })
+    sentTips.push({ id: 'tip', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: 'same payment', createdAt: new Date() })
+  }
+
+  const context = { ownerId: OWNER, key: action }
+  const storedPayments = () => JSON.parse(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.walletPayments?.[scopedKey('wallet-payments:v1')] ?? '[]') as { reservationId: string; nonce: string }[]
+
+  it('restores nonce 101 after a fresh-module reload without building 102, including local fallback', async () => {
+    const prepared = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (prepared.completed) throw new Error('No payment was built')
+    const originalBytes = prepared.payment.request.bytes
+    vi.resetModules()
+    const fresh = await import('./wallet-payment-service')
+    const freshTokens = await import('./token-service')
+    const freshHistory = await import('./tip-history-service')
+    vi.spyOn(freshTokens.tokenService, 'getBalance').mockImplementation(async () => balance)
+    vi.spyOn(freshHistory.tipHistoryService, 'getTipsSentWithProof').mockImplementation(async () => ({ tips: sentTips, height: historyHeight }))
+    const buildFresh = vi.fn(buildCachedPayment)
+    const restored = await fresh.prepareWalletPayment(undefined, buildFresh, context)
+    if (restored.completed || restored.unresolved) throw new Error('The original request was not restored')
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(restored.payment.request.bytes).toEqual(originalBytes)
+    expect(restored.payment.request.nonce).toBe(BigInt(101))
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
+    expect(await sendPayment(restored.payment.request)).toEqual({ success: true })
+    expect(execute(BigInt(101), true)).toBe(false)
+    expect(payments).toBe(1)
+  })
+
+  it('blocks a different unresolved payment until the explicit another-payment action', async () => {
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No original payment')
+    const buildOther = vi.fn((lockHeld = false) => action === 'tip'
+      ? buildWalletPurchase(OWNER, BigInt(100), BigInt(1000), lockHeld)
+      : buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld))
+    const anotherContext = { ownerId: OWNER, key: 'different payment' }
+    const blocked = await prepareWalletPayment(undefined, buildOther, anotherContext)
+    expect(blocked).toMatchObject({ completed: false, unresolved: true, different: true })
+    expect(buildOther).not.toHaveBeenCalled()
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
+    const allowed = await prepareWalletPayment(undefined, buildOther, { ...anotherContext, allowAnother: new Set([first.payment.request.reservationId]) })
+    if (allowed.completed || allowed.unresolved) throw new Error('Explicit new payment was blocked')
+    expect(allowed.payment.request.nonce).toBe(BigInt(102))
+    expect(storedPayments()).toHaveLength(2)
+    expect(storedPayments()[0].reservationId).toBe(first.payment.request.reservationId)
+  })
+
+  it('clears a completed persisted record even after unrelated writes pruned its pending nonce', async () => {
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No original payment')
+    expect(execute(BigInt(101), true)).toBe(true)
+    recordPayment()
+    reportedNonce = chainNonce()
+    await settlePendingWrites(OWNER, YAPPR_CONTRACT_ID)
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toHaveLength(0)
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(storedPayments()).toEqual([])
+  })
+
+  it('serializes two tabs preparing the same payment under the reservation lock', async () => {
+    const buildFresh = vi.fn(buildCachedPayment)
+    const [first, second] = await Promise.all([
+      prepareWalletPayment(undefined, buildFresh, context),
+      prepareWalletPayment(undefined, buildFresh, context),
+    ])
+    if (first.completed || second.completed) throw new Error('No payment to compare')
+    expect(first.payment.request.bytes).toEqual(second.payment.request.bytes)
+    expect(buildFresh).toHaveBeenCalledOnce()
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
+  })
+
+  if (action === 'tip') {
+    it('does not call a clock-skewed landed tip absent', async () => {
+      const chainTime = Date.now()
+      vi.useFakeTimers()
+      vi.setSystemTime(chainTime + 180_000)
+      const cached = await buildCachedPayment()
+      sentTips = [{ id: 'landed', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: 'same payment', createdAt: new Date(chainTime) }]
+      reportedNonce = BigInt(126)
+      expect(await cached.checkOutcome(nonceHeight)).toBe('completed')
+      const buildFresh = vi.fn(buildCachedPayment)
+      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+      expect(buildFresh).not.toHaveBeenCalled()
+    })
+
+    it('matches a literal-note profile tip even when history parses its note as a post target', async () => {
+      const note = 'yappr:tip:v1:post:' + OTHER
+      const payment = await buildWalletTip(OWNER, OTHER, BigInt(100), undefined, note)
+      sentTips = [{ id: 'literal-note', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: note, postId: OTHER, targetKind: 'post', createdAt: new Date() }]
+      expect(await payment.checkOutcome(nonceHeight)).toBe('completed')
+      expect(await prepareWalletPayment(payment, buildCachedPayment)).toEqual({ completed: true })
+    })
+
+    it('clears a proved-absent persisted record before building its replacement', async () => {
+      const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+      if (first.completed) throw new Error('No original payment')
+      reportedNonce = BigInt(126)
+      const buildFresh = vi.fn(async (lockHeld = false) => {
+        expect(storedPayments()).toEqual([])
+        return buildCachedPayment(lockHeld)
+      })
+      const next = await prepareWalletPayment(undefined, buildFresh, context)
+      if (next.completed || next.unresolved) throw new Error('Proved-absent payment was retained')
+      expect(next.payment.request.nonce).toBe(BigInt(127))
+      expect(storedPayments()).toEqual([{ ...storedPayments()[0], nonce: '127' }])
+      expect(storedPayments()[0].reservationId).not.toBe(first.payment.request.reservationId)
+    })
+
+    it.each(['unreadable', 'incomplete'])('keeps a tip unknown when its baseline is %s', async state => {
+      if (state === 'unreadable') vi.mocked(tipHistoryService.getTipsSentWithProof).mockRejectedValueOnce(new Error('no baseline'))
+      else sentTips = Array.from({ length: TIP_PAGE_LIMIT }, (_, index) => ({ id: String(index), from: OWNER, to: OTHER, amount: BigInt(1), createdAt: new Date() }))
+      const cached = await buildCachedPayment()
+      sentTips = []
+      reportedNonce = BigInt(126)
+      expect(await cached.checkOutcome(nonceHeight)).toBe('unknown')
+      const buildFresh = vi.fn(buildCachedPayment)
+      expect(await prepareWalletPayment(cached, buildFresh)).toMatchObject({ completed: false, unresolved: true })
+      expect(buildFresh).not.toHaveBeenCalled()
+    })
+
+    it('does not mistake an identical transfer from the baseline for a new tip', async () => {
+      recordPayment()
+      const cached = await buildCachedPayment()
+      reportedNonce = BigInt(126)
+      expect(await cached.checkOutcome(nonceHeight)).toBe('absent')
+    })
   }
 
   it('confirms a payment landing after the polling timeout and before Check again', async () => {

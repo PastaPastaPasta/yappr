@@ -17,7 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { tipHistoryService } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
-import { buildWalletTip, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletTip, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -46,7 +46,6 @@ type ModalState =
   | 'needKey'
   | 'walletSign'
   | 'processing'
-  | 'confirming-landed'
   | 'success'
   | 'save-prompt'
   | 'unconfirmed'
@@ -154,13 +153,12 @@ export function TipModal() {
   const [selectedQrPayment, setSelectedQrPayment] = useState<ParsedPaymentUri | null>(null)
   const [showQrDialog, setShowQrDialog] = useState(false)
 
-  // Remote wallet signing (dash-st: QR): the unsigned transfer URI, whether the
-  // silent wait ran out, and the moment the QR went up — the tip is detected by
-  // its own `transfer` document appearing on chain after that moment.
+  // The request and its transfer baseline survive a closed modal or reload.
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletSessionRef = useRef(0)
   const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  const allowedPaymentsRef = useRef(new Set<string>())
 
   // Transfer key persistence (credits tab only)
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -171,12 +169,12 @@ export function TipModal() {
     if (isOpen && user) {
       setLoadingBalance(true)
       const identityId = user.identityId
-      void Promise.all([
+      Promise.all([
         identityService.getBalance(identityId).then(b => setBalance(b.confirmed)).catch(() => setBalance(null)),
         yappIsLocked()
           ? Promise.resolve()
           : tokenService.getBalance(identityId).then(setYappBalance).catch(() => setYappBalance(null)),
-      ]).finally(() => setLoadingBalance(false))
+      ]).finally(() => setLoadingBalance(false)).catch(err => logger.error('Failed to load tip balances:', err))
     }
   }, [isOpen, user])
 
@@ -218,6 +216,7 @@ export function TipModal() {
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
+      allowedPaymentsRef.current.clear()
       setAmount('')
       setYappAmount('1')
       setTipMessage('')
@@ -323,8 +322,10 @@ export function TipModal() {
 
   // Shared tail of both YAPP paths: refresh balances, drop the cached tip
   // pages so the new proof can show up, and land on the success screen.
-  const finishYappTip = useCallback(() => {
+  const finishYappTip = useCallback((payment?: WalletPayment) => {
+    allowedPaymentsRef.current.clear()
     walletRequestsRef.current.delete(walletPaymentKey)
+    if (user && payment) clearPersistedWalletPayment(user.identityId, payment.request.reservationId).catch(err => logger.error('Could not clear the completed wallet payment:', err))
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
     // auth context caches is stale too.
@@ -339,8 +340,8 @@ export function TipModal() {
     setState('processing')
     setError(null)
     let payment = walletRequestsRef.current.get(walletPaymentKey)
-    if (payment) {
-      const prepared = await prepareWalletPayment(payment, () => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage))
+    try {
+      const prepared = await prepareWalletPayment(payment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         finishYappTip()
         return
@@ -348,10 +349,17 @@ export function TipModal() {
       payment = prepared.payment
       walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
-        setError('This payment may have gone through. Check your balance before trying again.')
+        setError(prepared.different
+          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
+          : "This payment may have gone through. Check your wallet's activity before trying again.")
         setState('unconfirmed')
         return
       }
+    } catch (err) {
+      logger.error('Could not prepare the payment:', err)
+      setError('Could not check earlier payments. Please try again.')
+      setState('error')
+      return
     }
     const result = await tipService.sendYappTipLocal(
       user.identityId,
@@ -375,7 +383,7 @@ export function TipModal() {
     }
 
     if (result.success) {
-      finishYappTip()
+      finishYappTip(payment)
     } else if (result.errorCode === 'UNCONFIRMED') {
       // Broadcast went out, the proof has not shown up yet. Never offer a plain
       // retry here — a second press would move the money twice.
@@ -385,39 +393,6 @@ export function TipModal() {
       setState('error')
       setError(result.error || 'Tip failed')
     }
-  }
-
-  /**
-   * Re-ask the chain whether a tip we could not confirm has landed.
-   *
-   * Deliberately no time floor, unlike the wallet path's own match: if the
-   * chain's clock ran behind ours the tip is real but sits before the moment
-   * we sent it, and a floor would hide it.
-   */
-  const recheckTip = useCallback(async () => {
-    if (!user || !recipientInfo) return false
-    const match = tipService.tipMatch(recipientInfo.id, yappAmountBig, tipTarget, noteMessage)
-    const result = await tipService.confirmYappTip(user.identityId, match)
-    if (result.success) {
-      finishYappTip()
-      return true
-    }
-    setError(result.error ?? null)
-    return false
-  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage, finishYappTip])
-
-  /**
-   * Ask the chain first, act second. Both "check again" buttons go through
-   * here, so neither the "couldn't confirm" screen nor the expired QR — which
-   * the user could scan into a SECOND transfer — offers a fresh send before
-   * the first one has been ruled out. `onStillMissing` runs only when no proof
-   * turned up.
-   */
-  const checkTipLanded = (onStillMissing: () => void) => {
-    setState('confirming-landed')
-    recheckTip()
-      .then(landed => { if (!landed) onStillMissing() })
-      .catch(err => { logger.error('Tip re-check failed:', err); onStillMissing() })
   }
 
   // Leave the dash-st: QR screen. Bumping the generation counter discards any
@@ -450,7 +425,7 @@ export function TipModal() {
     setWalletExpired(false)
     try {
       const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
-      const prepared = await prepareWalletPayment(existingPayment, () => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage))
+      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         if (walletSessionRef.current !== session) return
         finishYappTip()
@@ -458,12 +433,13 @@ export function TipModal() {
       }
       const payment = prepared.payment
       if (walletSessionRef.current !== session) {
-        if (payment !== existingPayment) await payment.request.discard()
         return
       }
       walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
-        setError('This payment may have gone through. Check your balance before trying again.')
+        setError(prepared.different
+          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
+          : "This payment may have gone through. Check your wallet's activity before trying again.")
         setState('unconfirmed')
         return
       }
@@ -498,7 +474,7 @@ export function TipModal() {
       payment.checkOutcome().then(outcome => {
         if (finished || outcome !== 'completed') return
         finished = true
-        finishYappTip()
+        finishYappTip(payment)
       }).catch(() => {
         // Transient read failures — keep polling.
       })
@@ -1017,9 +993,9 @@ export function TipModal() {
                       <div className="py-6 text-center space-y-4">
                         <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the tip land yet</p>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          This payment may have gone through. Check again before trying to pay.
+                          This payment may have gone through. Check your wallet&apos;s activity before trying again.
                         </p>
-                        <Button onClick={() => checkTipLanded(startWalletSign)} className="w-full">
+                        <Button onClick={startWalletSign} className="w-full">
                           Check again
                         </Button>
                       </div>
@@ -1044,15 +1020,6 @@ export function TipModal() {
                   </div>
                 )}
 
-                {/* Asking the chain whether an unconfirmed tip landed */}
-                {state === 'confirming-landed' && (
-                  <div className="py-8 text-center space-y-4">
-                    <Spinner size="lg" className="mx-auto border-amber-500" />
-                    <p className="text-gray-600 dark:text-gray-400">Checking whether your tip landed…</p>
-                    <p className="text-xs text-gray-500">Reading the transfer record from Dash Platform.</p>
-                  </div>
-                )}
-
                 {/* Broadcast went out, no proof yet — deliberately NOT a retry screen */}
                 {state === 'unconfirmed' && (
                   <div className="py-4 text-center space-y-4">
@@ -1061,16 +1028,15 @@ export function TipModal() {
                       <p className="text-lg font-medium">Couldn&apos;t confirm your tip</p>
                       <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
                       <p className="text-xs text-gray-500">
-                        Check your balance before sending again.
+                        This payment may have gone through. Check your wallet&apos;s activity before trying again.
                       </p>
                     </div>
                     <div className="flex gap-3">
                       <Button onClick={close} variant="outline" className="flex-1">
                         Close
                       </Button>
-                      {/* A credit tip leaves no record to look up: the balance is the user's check. */}
                       {isYapp && (
-                        <Button onClick={() => checkTipLanded(() => setState('unconfirmed'))} className="flex-1">
+                        <Button onClick={startWalletSign} className="flex-1">
                           Check again
                         </Button>
                       )}
@@ -1079,6 +1045,8 @@ export function TipModal() {
                       <div className="space-y-2">
                         <p className="text-xs text-gray-500">Sending another tip could pay twice.</p>
                         <Button onClick={() => {
+                          const earlier = walletRequestsRef.current.get(walletPaymentKey)
+                          if (earlier) allowedPaymentsRef.current.add(earlier.request.reservationId)
                           walletRequestsRef.current.delete(walletPaymentKey)
                           setError(null)
                           setState('input')

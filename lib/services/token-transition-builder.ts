@@ -11,9 +11,9 @@
 import { logger } from '@/lib/logger';
 import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
-import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
+import { StateTransition, TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withWalletTokenNonce } from './identity-nonce';
+import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withWalletTokenNonce, type PendingTransition } from './identity-nonce';
 import { getEvoSdk } from './evo-sdk-service';
 import { identityContractNonceConsumed } from '@/lib/document-id';
 
@@ -27,10 +27,48 @@ import { identityContractNonceConsumed } from '@/lib/document-id';
  */
 export interface WalletTransitionRequest {
   bytes: Uint8Array;
+  nonce: bigint;
+  reservationId: string;
   discard: () => Promise<void>;
   checkLiveness: () => Promise<{ executable: boolean; consumedAt?: bigint }>;
   /** Local fallback for this payment, sharing the wallet's nonce rather than allocating another. */
   sendWithNonce: <T>(ownerId: string, write: (nonce: bigint) => Promise<T>) => Promise<T>;
+}
+
+function requestFor(
+  ownerId: string,
+  bytes: Uint8Array,
+  nonce: bigint,
+  entry: PendingTransition
+): WalletTransitionRequest {
+  const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
+  const sendWithNonce = <T>(signingOwnerId: string, write: (nonce: bigint) => Promise<T>) => {
+    if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
+    return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);
+  };
+  const checkLiveness = async () => {
+    const sdk = await getEvoSdk();
+    const current = await sdk.identities.contractNonceWithProof(ownerId, YAPPR_CONTRACT_ID);
+    if (!current.proof) throw new Error('Wallet payment nonce proof unavailable');
+    const executable = !identityContractNonceConsumed(current.data, nonce);
+    const height = current.metadata?.height;
+    if (typeof height !== 'bigint' || height <= BigInt(0)) throw new Error('Wallet payment nonce proof height unavailable');
+    return { executable, ...(!executable ? { consumedAt: height } : {}) };
+  };
+  return { bytes, nonce, reservationId: entry.id, discard, sendWithNonce, checkLiveness };
+}
+
+/** Restore an unsigned wallet request whose nonce reservation survived a reload. */
+export function restoreWalletTransitionRequest(ownerId: string, bytes: Uint8Array, nonce: bigint, reservationId: string): WalletTransitionRequest {
+  const transition = StateTransition.fromBytes(bytes);
+  try {
+    if (transition.identityContractNonce !== nonce || transition.ownerId?.toBase58() !== ownerId) {
+      throw new Error('Wallet payment does not match its reservation');
+    }
+  } finally {
+    transition.free();
+  }
+  return requestFor(ownerId, bytes, nonce, { id: reservationId, nonce, scope: WALLET_TOKEN_SCOPE, expiresAt: null });
 }
 
 /**
@@ -49,7 +87,8 @@ export interface WalletTransitionRequest {
 export async function buildUnsignedTokenBatch(
   label: string,
   ownerId: string,
-  build: (base: TokenBaseTransition) => ConstructorParameters<typeof TokenTransition>[0]
+  build: (base: TokenBaseTransition) => ConstructorParameters<typeof TokenTransition>[0],
+  lockHeld = false
 ): Promise<WalletTransitionRequest> {
   const tokenId = await tokenService.getTokenId();
 
@@ -58,7 +97,7 @@ export async function buildUnsignedTokenBatch(
   // until Platform shows it consumed (the wallet may sign it long after the QR
   // is gone), keeps any later write from signing the same one (QA D-01). It is
   // reserved only once the bytes exist, so a failed build holds nothing.
-  return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+  const buildRequest = async () => {
     const { current: rawNonce, value: nonce } = await awaitNonce(ownerId, YAPPR_CONTRACT_ID, allocateNonce);
     logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
 
@@ -75,24 +114,7 @@ export async function buildUnsignedTokenBatch(
     logger.debug(`${label}: unsigned transition bytes length: ${bytes.length}`);
 
     const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce, WALLET_TOKEN_SCOPE);
-    // Never shown to a wallet, so never signed: its nonce was not taken.
-    const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
-    const sendWithNonce = <T>(signingOwnerId: string, write: (nonce: bigint) => Promise<T>) => {
-      if (signingOwnerId !== ownerId) throw new Error('The wallet request belongs to another account');
-      return withWalletTokenNonce(ownerId, YAPPR_CONTRACT_ID, entry, write);
-    };
-    const checkLiveness = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
-      const sdk = await getEvoSdk();
-      const current = await sdk.identities.contractNonceWithProof(ownerId, YAPPR_CONTRACT_ID);
-      if (!current.proof) throw new Error('Wallet payment nonce proof unavailable');
-      const executable = !identityContractNonceConsumed(current.data, nonce);
-      const height = current.metadata?.height;
-      if (typeof height !== 'bigint' || height <= BigInt(0)) throw new Error('Wallet payment nonce proof height unavailable');
-      return {
-        executable,
-        ...(!executable ? { consumedAt: height } : {}),
-      };
-    });
-    return { bytes, discard, sendWithNonce, checkLiveness };
-  });
+    return requestFor(ownerId, bytes, nonce, entry);
+  };
+  return lockHeld ? buildRequest() : withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, buildRequest);
 }

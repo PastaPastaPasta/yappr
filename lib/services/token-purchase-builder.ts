@@ -21,13 +21,15 @@ import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-t
 export function buildUnsignedDirectPurchaseTransition(
   buyerId: string,
   amount: bigint,
-  totalAgreedPrice: bigint
+  totalAgreedPrice: bigint,
+  lockHeld = false
 ): Promise<WalletTransitionRequest> {
   return buildUnsignedTokenBatch('TokenPurchaseBuilder', buyerId, (base) =>
     new TokenDirectPurchaseTransition({
       base,
       tokenCount: amount,
       totalAgreedPrice,
-    })
+    }),
+    lockHeld
   );
 }
