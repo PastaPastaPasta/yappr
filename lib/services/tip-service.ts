@@ -311,9 +311,8 @@ class TipService {
       to: recipientId,
       amount,
       postId: target?.id,
-      // A profile tip's note is the bare message, which never parses as a tip
-      // note, so the proved row carries no message to compare against.
       message: target ? message?.trim() || undefined : undefined,
+      note: this.tipNoteFor(target, message),
       since,
     };
   }
