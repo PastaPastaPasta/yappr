@@ -13,7 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletPurchase, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -160,14 +160,14 @@ export function BuyYappModal() {
     // price rose since, the transition is rejected rather than silently overspending.
     let payment = walletRequestsRef.current.get(walletPaymentKey)
     try {
-      const prepared = await prepareWalletPayment(payment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
+      const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
       if (prepared.completed) {
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
         finishPurchase()
         return
       }
       payment = prepared.payment
-      walletRequestsRef.current.set(walletPaymentKey, payment)
+      if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -226,7 +226,14 @@ export function BuyYappModal() {
     setWalletExpired(false)
     try {
       const existingPayment = walletRequestsRef.current.get(walletPaymentKey)
-      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
+      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), {
+        ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
+        isCurrent: () => walletSessionRef.current === session,
+        expose: payment => {
+          walletRequestsRef.current.set(walletPaymentKey, payment)
+          setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
+        },
+      })
       if (prepared.completed) {
         if (walletSessionRef.current !== session) return
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
@@ -245,7 +252,6 @@ export function BuyYappModal() {
         setState('unconfirmed')
         return
       }
-      setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
@@ -257,12 +263,6 @@ export function BuyYappModal() {
     handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err))
   }
 
-  // While the dash-st: QR is up, poll the YAPP balance until the wallet's
-  // broadcast lands (balance grew by at least the purchased amount). The wait
-  // has a silent budget; when it runs out the QR gives way to a "check again"
-  // prompt rather than a visible countdown. The transition embeds the current
-  // contract nonce, so it expires naturally if the user posts or likes in the
-  // meantime.
   useEffect(() => {
     if (state !== 'walletSign' || !walletUri || !user) return
     const payment = walletRequestsRef.current.get(walletPaymentKey)
@@ -281,7 +281,7 @@ export function BuyYappModal() {
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
         finishPurchase(payment)
       }).catch(() => {
-        // Transient balance-fetch failures — keep polling.
+        // Transient proof failures — keep polling.
       })
     }, 5000)
 
