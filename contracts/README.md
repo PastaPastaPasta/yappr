@@ -26,7 +26,7 @@ network-specific moderation configuration.
 | Role | Source file | SHA-256 |
 | --- | --- | --- |
 | app | [yappr-app-contract.json](yappr-app-contract.json) | `d3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41` |
-| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `2e41bbb32317433bf5aeb1ad8179d6d264277b85dbd9f2f9a5e66ffb1bd378b2` |
+| social | [yappr-social-contract-v17.json](yappr-social-contract-v17.json) | `76570f6c165f652eb458f8bc92e9b1210da8c788bf4c5c703f43959610ee433d` |
 | blocks | [yappr-blocks-contract.json](yappr-blocks-contract.json) | `ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677` |
 | dmV5 | [yappr-dm-contract-v5.json](yappr-dm-contract-v5.json) | `4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21` |
 | blog | [yappr-blog-contract.json](yappr-blog-contract.json) | `448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c` |
@@ -37,9 +37,10 @@ network-specific moderation configuration.
 These eight entries are the default set on every network and the mainnet
 release set (D45). They match the 2026-10-21 testnet registration except social
 v17, whose `post` and `reply` now require `$updatedAtBlockHeight` and keep it
-in their removal records
+and `$updatedAt` in their removal records
 ([updated block height](../docs/SOCIAL_V17.md#updated-block-height)): both are
-fixed on update, so testnet's registered copy has neither. The publisher
+fixed on update, so testnet's registered copy has no height and keeps
+`$createdAt` only. The publisher
 restores every member's env key and completes the journal at `passkeyVault`.
 
 The following experimental cuts are excluded from the release. Only testnet's

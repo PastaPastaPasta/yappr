@@ -82,11 +82,13 @@ containing:
 A raw `--transition` requires `--id`. Local sources are tried before archives. The original create time is needed
 when the removal record does not keep it, including for a replaced document.
 Social v17's `post` and `reply` also carry `$updatedAtBlockHeight`, which is
-part of the hashed bytes. Their removal records keep it, and the tool reads it
-from there (a `--source-file` candidate may give `updatedAtBlockHeight` for a
-type whose record does not). It names the block of the document's last change,
-whose time is the document's `$updatedAt`. The 2026-10-21 testnet registration
-predates the field: its posts and replies do not carry it.
+part of the hashed bytes. Their removal records keep it with `$createdAt` and
+`$updatedAt`, and the tool reads all three from there, so no time or height has
+to be supplied or trusted from an archive (a `--source-file` candidate may give
+`updatedAtBlockHeight` for a type whose record does not keep it). The height
+names the block of the document's last change. The 2026-10-21 testnet
+registration predates this: its posts and replies carry no height and its
+records keep `$createdAt` only.
 The signed replace transition supplies its revision. Transfer and price-update
 transitions are not supported; no moderated v17 content type is transferable. No edited-then-deleted
 live fixture was available for this read-only validation; replacement handling

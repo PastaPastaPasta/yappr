@@ -222,7 +222,7 @@ export interface DocumentRemoval {
  * The fields a removal record kept of the removed document, each only when
  * the record holds it: a post's tags (its one `hashtag` through v15, its
  * `tags` list on v16), a reply's `rootPostId`, and either's `$createdAt` (ms).
- * v17 records also keep `$updatedAtBlockHeight`, which only the recovery tool reads.
+ * v17 records also keep `$updatedAt` and `$updatedAtBlockHeight`, which only the recovery tool reads.
  */
 export interface RemovalKeptFields {
   tags?: string[];

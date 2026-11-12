@@ -113,26 +113,36 @@ describe('replacement and untrusted sources', () => {
     context.record.documentHash = sha256d(expected.bytes);
     expect(recoverCandidate(context, candidate, contract).document.$revision).toBe(2);
   });
-  it('rebuilds a social v17 post from the block height its removal record keeps', () => {
+  it('rebuilds a social v17 post from the update time and block height its removal record keeps', () => {
     // Social v17's post and reply require `$updatedAtBlockHeight`, so it is part of the bytes the
-    // record's hash commits to. No signed transition carries it: the record keeps it.
+    // record's hash commits to beside `$updatedAt`. No signed transition carries either: the record keeps both.
     const source = contractSource(readFileSync(new URL('../../contracts/yappr-social-contract-v17.json', import.meta.url), 'utf8'));
     const version = new PlatformVersion(postFixture.platformVersion);
     const v17 = DataContract.fromJSON(registrationJson(source, { id: postFixture.contractId, ownerId: postFixture.record.documentOwnerId }), true, version);
     const context = structuredClone(postFixture);
     const height = '668957';
+    // An update time the archive does not report, as for a post tombstoned after its create.
+    const updatedAt = String(postFixture.candidate.updatedAt + 60_000);
     const transition = selectTransition(Buffer.from(postFixture.candidate.transitionBase64, 'base64'), context);
-    const expected = rebuild({ ...context, transition, system: { ...postFixture.system, $updatedAtBlockHeight: height } }, v17);
+    const expected = rebuild({ ...context, transition, system: { ...postFixture.system, $updatedAt: updatedAt, $updatedAtBlockHeight: height } }, v17);
     context.record.documentHash = sha256d(expected.bytes);
-    // The first registration's record keeps `$createdAt` only: nothing supplies the height.
+    // The first registration's record keeps `$createdAt` only: nothing supplies the height or the time.
     expect(() => recoverCandidate(context, postFixture.candidate, v17)).toThrow(/No serialization matches/);
-    context.record.keptFields = { ...postFixture.record.keptFields, $updatedAtBlockHeight: height };
-    const recovered = recoverCandidate(context, postFixture.candidate, v17);
-    expect(recovered.system.$updatedAtBlockHeight).toBe(height);
-    expect(recovered.document.$updatedAtBlockHeight).toBe(Number(height));
-    expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
-    context.record.keptFields.$updatedAtBlockHeight = '668958';
-    expect(() => recoverCandidate(context, postFixture.candidate, v17)).toThrow(/No serialization matches/);
+    context.record.keptFields = { ...postFixture.record.keptFields, $updatedAt: updatedAt, $updatedAtBlockHeight: height };
+    const withoutTimes = { ...postFixture.candidate };
+    delete withoutTimes.createdAt;
+    delete withoutTimes.updatedAt;
+    for (const candidate of [postFixture.candidate, withoutTimes, { ...postFixture.candidate, createdAt: 1, updatedAt: 2 }]) {
+      const recovered = recoverCandidate(context, candidate, v17);
+      expect([recovered.system.$updatedAt, recovered.system.$updatedAtBlockHeight]).toEqual([updatedAt, height]);
+      expect(recovered.document.$updatedAtBlockHeight).toBe(Number(height));
+      expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    }
+    for (const wrong of [{ $updatedAtBlockHeight: '668958' }, { $updatedAt: String(Number(updatedAt) + 1) }]) {
+      const changed = structuredClone(context);
+      Object.assign(changed.record.keptFields, wrong);
+      expect(() => recoverCandidate(changed, postFixture.candidate, v17)).toThrow(/No serialization matches/);
+    }
   });
   it('tries another archive after an HTTP failure and rejects a forged candidate before a good one', async () => {
     const originalFetch = globalThis.fetch;

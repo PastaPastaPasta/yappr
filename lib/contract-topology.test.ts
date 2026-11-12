@@ -1528,12 +1528,12 @@ describe('contract topology', () => {
       expect(await settled('v16')).toEqual([rule(604_800, 3), rule(604_800, 3)])
     })
 
-    it('stamps a post or reply with the block height of its last change and keeps it in the removal record, where v16 has neither', async () => {
+    it('stamps a post or reply with the block height of its last change and keeps it and both times in the removal record, where v16 has no height and keeps only $createdAt', async () => {
       const kept = async (topology: string) => {
         const m = await topologyModule(topology)
         return (['post', 'reply'] as const).map((docType) => m.removalKeptFieldsFor(docType))
       }
-      expect(await kept('v17')).toEqual([['tags', '$createdAt', '$updatedAtBlockHeight'], ['rootPostId', '$createdAt', '$updatedAtBlockHeight']])
+      expect(await kept('v17')).toEqual([['tags', '$createdAt', '$updatedAt', '$updatedAtBlockHeight'], ['rootPostId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight']])
       expect(await kept('v16')).toEqual([['tags', '$createdAt'], ['rootPostId', '$createdAt']])
       // A record keeps a system property only of a type that requires it (Platform refuses the contract otherwise).
       expect(V17.post.required).toEqual(['$createdAt', '$updatedAt', '$updatedAtBlockHeight'])

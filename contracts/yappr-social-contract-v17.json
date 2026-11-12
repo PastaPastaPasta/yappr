@@ -696,6 +696,7 @@
         "deleteKeepsFields": [
           "tags",
           "$createdAt",
+          "$updatedAt",
           "$updatedAtBlockHeight"
         ],
         "deleteWithin": 86400,
@@ -1483,6 +1484,7 @@
         "deleteKeepsFields": [
           "rootPostId",
           "$createdAt",
+          "$updatedAt",
           "$updatedAtBlockHeight"
         ],
         "deleteWithin": 86400,

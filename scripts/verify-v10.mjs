@@ -979,7 +979,8 @@ async function caseM1DeleteRestore(ctx) {
       check(`m1k (v11) the record keeps the untagged post's $createdAt and nothing it does not hold (no ${SOCIAL.tagField})`, Number(kept.$createdAt) === createdAt && !(SOCIAL.tagField in kept), describeValue(kept));
       if (KEPT_POST_FIELDS.includes('$updatedAtBlockHeight')) {
         const height = Number(before?.updatedAtBlockHeight ?? before?.toJSON?.().$updatedAtBlockHeight);
-        check('m1k2 (v17) the post carries $updatedAtBlockHeight and the record keeps it', height > 0 && Number(kept.$updatedAtBlockHeight) === height, describeValue(kept));
+        const updatedAt = Number(before?.updatedAt ?? before?.toJSON?.().$updatedAt);
+        check('m1k2 (v17) the post carries $updatedAtBlockHeight and the record keeps it and $updatedAt', height > 0 && Number(kept.$updatedAtBlockHeight) === height && Number(kept.$updatedAt) === updatedAt, describeValue(kept));
       }
     }
   } catch (e) {
@@ -2794,8 +2795,8 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   // v16 keeps the post's whole tag list (`tags`) where v11–v15 kept its `hashtag`.
   // v17 shortens the single-moderator window to a day (D39) and asks two approvals with the leader (D41); v11–v16 keep a week and three.
   const [windowSeconds, windowText, approvals] = PRIVATE_FEEDS ? [86_400, 'a day', 2] : [604_800, 'a week', 3];
-  // v17 stamps a post or reply with the height of its last change and keeps it in the removal record.
-  const keptTimes = PRIVATE_FEEDS ? ['$createdAt', '$updatedAtBlockHeight'] : ['$createdAt'];
+  // v17 stamps a post or reply with the height of its last change and keeps it, with its update time, in the removal record.
+  const keptTimes = PRIVATE_FEEDS ? ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] : ['$createdAt'];
   if (PRIVATE_FEEDS) expect('v17: post and reply require $updatedAtBlockHeight (m1k2)', ['post', 'reply'].every((t) => schemas[t].required.includes('$updatedAtBlockHeight')));
   for (const [type, kept] of [['post', [SOCIAL.tagField, ...keptTimes]], ['reply', ['rootPostId', ...keptTimes]]]) {
     expect(`${type}: one moderator deletes for ${windowText}, then ${approvals} approvals with the leader (deleteWithin ${windowSeconds}, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
