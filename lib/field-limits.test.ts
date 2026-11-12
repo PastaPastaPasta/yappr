@@ -5,12 +5,12 @@ import storefront from '@/contracts/yappr-storefront-contract.json'
 
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules() })
 describe('schema field limits', () => {
-  it('follows the configured social topology rather than pinning v17', async () => {
+  it.each(['v17', 'v19'])('follows the configured social topology %s', async (topology) => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16')
     vi.resetModules()
     const older = await import('./field-limits')
     expect(older.fieldLimits('social', 'report', 'note').maxBytes).toBeUndefined()
-    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
     vi.resetModules()
     const latest = await import('./field-limits')
     expect(latest.fieldLimits('social', 'report', 'note').maxBytes).toBe(1500)

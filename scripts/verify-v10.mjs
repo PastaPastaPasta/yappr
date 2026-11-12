@@ -131,6 +131,10 @@
  * names, no self-likes, `privateFeed` in place of `privateFeedState`, a locked YAPP) and build
  * every write through SOCIAL. Live queries and private-feed cases use the schema-selected topology.
  *
+ * **v19** (`--contract-file contracts/yappr-social-contract-v19.json`) keeps
+ * v17's behavior, requiring the update height and keeping it and the update
+ * time in post/reply removal records. `m1k2` compares these with the stored post.
+ *
  * Its 5.0.0-beta.6 successor **v16** (`--contract-file
  * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
  * v15 case; only the tags change (read off `post.tags`). A post is indexed
@@ -381,7 +385,7 @@ import {
 } from './social-battery-lib.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
-import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
+import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, fixtureHeights, socialShapes } from './social-shapes.mjs';
 import { cleanTestContent } from './test-content-cleanup.mjs';
 import { envValue } from './sdk-env.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
@@ -977,6 +981,11 @@ async function caseM1DeleteRestore(ctx) {
       const kept = removal.keptFields ?? {};
       const createdAt = Number(before?.createdAt ?? before?.toJSON?.().$createdAt);
       check(`m1k (v11) the record keeps the untagged post's $createdAt and nothing it does not hold (no ${SOCIAL.tagField})`, Number(kept.$createdAt) === createdAt && !(SOCIAL.tagField in kept), describeValue(kept));
+      if (KEPT_POST_FIELDS.includes('$updatedAtBlockHeight')) {
+        const height = Number(before?.updatedAtBlockHeight ?? before?.toJSON?.().$updatedAtBlockHeight);
+        const updatedAt = Number(before?.updatedAt ?? before?.toJSON?.().$updatedAt);
+        check('m1k2 (v19) the post carries $updatedAtBlockHeight and the record keeps it and $updatedAt', height > 0 && Number(kept.$updatedAtBlockHeight) === height && Number(kept.$updatedAt) === updatedAt, describeValue(kept));
+      }
     }
   } catch (e) {
     check('m1a the interim owner deletes B\'s post', false, describeErr(e).slice(0, 220));
@@ -2790,7 +2799,11 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   // v16 keeps the post's whole tag list (`tags`) where v11–v15 kept its `hashtag`.
   // v17 shortens the single-moderator window to a day (D39) and asks two approvals with the leader (D41); v11–v16 keep a week and three.
   const [windowSeconds, windowText, approvals] = PRIVATE_FEEDS ? [86_400, 'a day', 2] : [604_800, 'a week', 3];
-  for (const [type, kept] of [['post', [SOCIAL.tagField, '$createdAt']], ['reply', ['rootPostId', '$createdAt']]]) {
+  // v19 stamps a post or reply with the height of its last change and keeps it, with its update time, in the removal record.
+  const keepsHeight = schemas.post.required.includes('$updatedAtBlockHeight');
+  const keptTimes = keepsHeight ? ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] : ['$createdAt'];
+  if (keepsHeight) expect('v19: post and reply require $updatedAtBlockHeight (m1k2)', ['post', 'reply'].every((t) => schemas[t].required.includes('$updatedAtBlockHeight')));
+  for (const [type, kept] of [['post', [SOCIAL.tagField, ...keptTimes]], ['reply', ['rootPostId', ...keptTimes]]]) {
     expect(`${type}: one moderator deletes for ${windowText}, then ${approvals} approvals with the leader (deleteWithin ${windowSeconds}, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
       JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: windowSeconds, deleteSettled: { leader: true, approvals } }));
   }
@@ -3225,7 +3238,7 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   const owner = new Uint8Array(32).fill(2);
   const documentOf = (docType, data) => Document.fromObject({
     $formatVersion: '0', $id: someId(), $ownerId: owner, $dataContractId: bs58.decode(placeholder), $type: docType,
-    $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+    $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...fixtureHeights(V10.documentSchemas[docType]), ...data,
   }, platformVersion);
   for (const [label, docType, data] of SHAPES) {
     const inBlocks = BLOCK_TYPES.includes(docType);

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { BatchTransition, Document, Identifier, PlatformVersion, StateTransition } from '@dashevo/evo-sdk';
 
+const BIGINT_FIELDS = ['$revision', '$createdAt', '$updatedAt', '$updatedAtBlockHeight', '$createdAtBlockHeight'];
+
 export const BUNDLE_FORMAT = 'yappr-deleted-content/1';
 export const sha256d = (bytes) => createHash('sha256').update(createHash('sha256').update(bytes).digest()).digest('hex');
 export const json = (value) => JSON.stringify(value, (key, item) => typeof item === 'bigint' ? item.toString() : item, 2);
@@ -21,10 +23,10 @@ export function selectTransition(bytes, { contractId, type, record }) {
 
 export function rebuild({ transition, contractId, type, record, system, platformVersion }, contract) {
   const data = Object.fromEntries(Object.entries(transition).filter(([key]) => !key.startsWith('$')));
-  const fields = ['$contractVersion', '$revision', '$createdAt', '$updatedAt'];
+  const fields = ['$contractVersion', ...BIGINT_FIELDS];
   if (Object.keys(system).some((key) => !fields.includes(key))) throw new Error('Unsupported reconstruction system field');
   const object = { ...data, ...system, $formatVersion: '0', $id: record.documentId, $ownerId: record.documentOwnerId, $dataContractId: contractId, $type: type };
-  for (const key of ['$revision', '$createdAt', '$updatedAt']) if (object[key] !== undefined) object[key] = BigInt(object[key]);
+  for (const key of BIGINT_FIELDS) if (object[key] !== undefined) object[key] = BigInt(object[key]);
   const version = new PlatformVersion(platformVersion);
   const document = Document.fromObject(object, version);
   const bytes = document.toBytes(contract, version);
@@ -39,6 +41,9 @@ export function recoverCandidate(context, candidate, contract, { platformVersion
   const createdAt = context.record.keptFields?.$createdAt ?? candidate.createdAt;
   const updatedAt = context.record.keptFields?.$updatedAt ?? candidate.updatedAt;
   const revision = context.record.keptFields?.$revision ?? transition.$revision ?? candidate.revision ?? 1;
+  const heights = Object.fromEntries(['$createdAtBlockHeight', '$updatedAtBlockHeight']
+    .filter((field) => required.includes(field))
+    .map((field) => [field, context.record.keptFields?.[field] ?? candidate[field.slice(1)]]));
   const versions = contractVersion ? [contractVersion] : Array.from({ length: Math.min(Number(contract.version), 100) }, (_, index) => index + 1);
   // Older registrations differ in which optional system fields they keep. Only a hash match wins.
   for (const version of versions) for (const withRevision of [true, false]) for (const withUpdatedAt of [true, false]) {
@@ -46,6 +51,7 @@ export function recoverCandidate(context, candidate, contract, { platformVersion
     if (withRevision || required.includes('$revision')) system.$revision = String(revision);
     if (createdAt !== undefined) system.$createdAt = String(createdAt);
     if ((withUpdatedAt || required.includes('$updatedAt')) && updatedAt !== undefined) system.$updatedAt = String(updatedAt);
+    for (const [field, height] of Object.entries(heights)) if (height !== undefined) system[field] = String(height);
     try {
       const rebuilt = rebuild({ ...context, transition, system, platformVersion }, contract);
       if (sha256d(rebuilt.bytes) === context.record.documentHash) return { ...rebuilt, system, platformVersion };

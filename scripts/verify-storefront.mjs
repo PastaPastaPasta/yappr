@@ -6,7 +6,7 @@
  * (credits) instead of YAPP, so the actors need credits only.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
- *     [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7] [--reason-doc <seated-charter-reason-id>] [--keep-content]
+ *     [--contract-file contracts/yappr-storefront-contract-v12.json] [--seller 200] [--buyer 201] [--stranger 202] [--moderator maker|personal|<persona>] [--only s5,s7] [--reason-doc <seated-charter-reason-id>] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * `maker` (the default; it publishes and is appointed), `personal` (ledger
@@ -58,7 +58,7 @@
  * `scripts/clean-test-content.mjs --surface storefront` does it later.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { relative, resolve } from 'node:path';
 import bs58 from 'bs58';
 import { DocumentActionFeeAgreement, PlatformVersion } from '@dashevo/evo-sdk';
 import {
@@ -67,13 +67,14 @@ import {
 } from './battery-lib.mjs';
 import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, buildDocument, describeErr, feeAgreementFor, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
-import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET } from './social-battery-lib.mjs';
+import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, takeFlag } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
 import { cleanStorefront, printReport, withStatus } from './surface-cleanup.mjs';
 
-const CONTRACT_FILE = 'yappr-storefront-contract.json';
-const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
+const CONTRACT_PATH = resolve(REPO_ROOT, takeFlag('--contract-file', 'contracts/yappr-storefront-contract.json'));
+const CONTRACT_FILE = relative(resolve(REPO_ROOT, 'contracts'), CONTRACT_PATH);
+const CONTRACT = JSON.parse(readFileSync(CONTRACT_PATH, 'utf8'));
 /** The schemas in long form (the file writes identifiers and fixed-size byte arrays as shorthands). */
 let SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
 const RATINGS = [1, 2, 3, 4, 5];
@@ -618,11 +619,13 @@ async function caseS23Categories(ctx) {
 }
 
 async function caseS24ModeratorDeletesItem(ctx) {
-  const { battery, seller, run } = ctx;
+  const { battery, seller, buyer, run } = ctx;
   if (!(await ensureSellerStore(ctx))) { battery.check('s24 fixture', false, 'no seller store'); return; }
   // v6: stores and items are moderator-deletable (their owners still cannot delete them).
   const item = await battery.probeCreate('s24 fixture: a throwaway item', null, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Takedown ${run}` }));
   await caseModeratorDelete(ctx, { prefix: 's24', docType: 'storeItem', documentId: item.ok ? item.id : null, ownerId: seller.ownerId });
+  const store = await battery.probeCreate('s24 fixture: a throwaway store', null, buyer, 'store', storeData({ name: `Takedown ${run}` }));
+  await caseModeratorDelete(ctx, { prefix: 's24-store', docType: 'store', documentId: store.ok ? store.id : null, ownerId: buyer.ownerId });
 }
 
 // ---- s25: the v7 variants table -------------------------------------------------
@@ -782,7 +785,7 @@ function selfTestV6() {
   const variants = SCHEMAS.storeItem.properties.variants;
   const list = (name) => variants.properties?.[name];
   const zoneIds = CONTRACT.documentSchemas.storeItem.properties.shippingZoneIds;
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v10)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE}`, [
     ['moderation is elected, seats contestable, the owner unprotected (D41), interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === false && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 500M / 20M / 10M / 5M moderators fees (D41; s5e, s12)', fee('store') === 500_000_000n && fee('storeItem') === 20_000_000n && fee('storeReview') === 10_000_000n && fee('itemReview') === 5_000_000n],
@@ -879,7 +882,7 @@ await runBattery({
     SCHEMAS = expandSchemas((await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas);
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
-    return { reviews: [], itemRatings: {}, zoneId: null, moderator, reopenedStores: new Map() };
+    return { reviews: [], itemRatings: {}, zoneId: null, moderationSchemas: SCHEMAS, moderator, reopenedStores: new Map() };
   },
   summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`
     + Object.entries(ctx.variantFees ?? {}).map(([key, value]) => ` ${key}=${credits(value)}`).join(''),

@@ -14,9 +14,9 @@
  * of Drive's index selection in `contract-query-conformance/query-index-model.ts`
  * (proved reads, as the SDK always sends them) against:
  *
- *   social      contracts/yappr-social-contract-v17.json  NEXT_PUBLIC_CONTRACT_TOPOLOGY=v17
- *   blog        contracts/yappr-blog-contract.json        NEXT_PUBLIC_BLOG_TOPOLOGY=v9
- *   storefront  contracts/yappr-storefront-contract.json  NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v10
+ *   social      contracts/yappr-social-contract-v19.json  NEXT_PUBLIC_CONTRACT_TOPOLOGY=v19
+ *   blog        contracts/yappr-blog-contract-v11.json        NEXT_PUBLIC_BLOG_TOPOLOGY=v11
+ *   storefront  contracts/yappr-storefront-contract-v12.json  NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v12
  *   pollr       contracts/pollr-contract.json             NEXT_PUBLIC_POLLR_TOPOLOGY=v8
  *   blocks      contracts/yappr-blocks-contract.json
  *   DM v5       contracts/yappr-dm-contract-v5.json       NEXT_PUBLIC_DM_TOPOLOGY=v5
@@ -164,6 +164,9 @@ import type { Poll } from '@/lib/services/pollr-poll-service'
 import socialV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialV17 from '@/contracts/yappr-social-contract-v17.json'
 import socialV18 from '@/contracts/yappr-social-contract-v18.json'
+import socialV19 from '@/contracts/yappr-social-contract-v19.json'
+import blogV11 from '@/contracts/yappr-blog-contract-v11.json'
+import storefrontV12 from '@/contracts/yappr-storefront-contract-v12.json'
 import blogV10 from '@/contracts/yappr-blog-contract-v10.json'
 import storefrontV11 from '@/contracts/yappr-storefront-contract-v11.json'
 import { HIDE_MODERATION_QUERIES, expandQueries } from '../scripts/hide-moderation-queries.mjs'
@@ -205,6 +208,11 @@ const RELEASE_SETS: readonly { name: string; env: Record<string, string>; models
     name: 'the v17 release cut',
     env: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' },
     models: { social: parseContract(socialV17), blog: parseContract(blogContract), storefront: parseContract(storefrontContract), ...SHARED_MODELS },
+  },
+  {
+    name: 'the v19 release cut',
+    env: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v11', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v12' },
+    models: { social: parseContract(socialV19), blog: parseContract(blogV11), storefront: parseContract(storefrontV12), ...SHARED_MODELS },
   },
   {
     // "Hide, don't delete" (docs/SOCIAL_V18.md): every listing pins the listed lane.

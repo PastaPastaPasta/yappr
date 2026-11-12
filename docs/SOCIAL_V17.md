@@ -1,5 +1,9 @@
 # Social v17, the testnet production cut
 
+Fresh release registrations use [social v19](SOCIAL_V19.md) (D46), which adds
+required update height and kept update time/height to this cut. This v17 file
+and the registered testnet deployment remain unchanged.
+
 Social v17 is social v16 ([SOCIAL_V16.md](SOCIAL_V16.md)) cut for Yappr's first real release on Dash testnet (Platform 5.0.0-rc.3, protocol 14; [TESTNET_RELEASE.md](TESTNET_RELEASE.md)). It is the contract users will write to, so everything in it is frozen once it is registered: indexes, required properties, mutability, deletability, `distinctFrom`, patterns and maxima, references, token rules and the moderation declaration. Every change below comes from the owner's release decisions (D-numbers) or the pre-release audit (R-numbers), as recorded in the release audit's `DECISIONS.md`.
 
 The same cut re-cuts three feature contracts in place: blog v9 and pollr v8 ([NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md#blog)), and storefront v10 ([STOREFRONT_V10.md](STOREFRONT_V10.md)). The App Connect set (`scripts/app-connect-set.mjs`) now registers social v17 and no longer carries the password-era `authVault` (R-M6).
@@ -172,11 +176,15 @@ Social v17, as expected in every case:
 
 Blog v9, storefront v10 and pollr v8 are recorded in [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md) and [STOREFRONT_V10.md](STOREFRONT_V10.md).
 
-## Registering it
+## Historical registration (2026-10-21)
 
-Testnet registers the whole set fresh from the production maker (D2) with the WP1 publisher: `--plan`, `--dry-run`, `--signed-dry-run`, then `--live --production --journal`, always with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` (D1). The interim, windows, delay and challenge cool-down are frozen into social, blog and storefront by that run, not by these files. The charters are filed after the registration block plus the D41 delay ([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
+The commands below record the v17 registration. Current tooling refuses this
+maker; fresh registrations use a new maker, app and group under D46
+([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
 
-The offline plan for the production maker at its next nonce (`NETWORK=testnet … --plan --maker hbGEcFcX… --start-nonce 57 --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600`) renders all three elected members with `notYetUsable` and 86,400/86,400 s, plans APP_ID `D8benQGn…` and GROUP_ID `4MjVAxDY…` (as before the cut: both depend on the maker and nonce only), social v17 at nonce 58 (`4nYYMMs9…`), and estimates the seven creates at 264.19e9 credits (≈15,851¢; social 92.90e9, storefront 61.97e9, blog 36.99e9, pollr 17.46e9) before the passkey vault joins.
+Testnet registered the whole set fresh from the production maker (D2) with the WP1 publisher: `--plan`, `--dry-run`, `--signed-dry-run`, then `--live --production --journal`, always with `--interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600` (D1). The interim, windows, delay and challenge cool-down are frozen into social, blog and storefront by that run, not by these files. The charters are filed after the registration block plus the D41 delay ([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
+
+The historical offline plan for the production maker at its then-next nonce (`NETWORK=testnet … --plan --maker hbGEcFcX… --start-nonce 57 --interim notYetUsable --election-windows 86400,86400 --election-delay 86400 --challenge-cool-down 1209600`) renders all three elected members with `notYetUsable` and 86,400/86,400 s, plans APP_ID `D8benQGn…` and GROUP_ID `4MjVAxDY…` (as before the cut: both depend on the maker and nonce only), social v17 at nonce 58 (`4nYYMMs9…`), and estimates the seven creates at 264.19e9 credits (≈15,851¢; social 92.90e9, storefront 61.97e9, blog 36.99e9, pollr 17.46e9) before the passkey vault joins.
 
 ## Private-feed client
 

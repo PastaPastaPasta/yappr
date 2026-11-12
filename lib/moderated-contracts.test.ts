@@ -25,6 +25,7 @@ describe('storefront moderation by topology', () => {
     ['v7', true],
     ['v9', true],
     ['v10', true],
+    ['v12', true],
   ] as const)('storefront %s: moderated = %s', async (topology, moderated) => {
     const { moderatedContract } = await contractsUnder({ NEXT_PUBLIC_STOREFRONT_TOPOLOGY: topology, NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID: ID })
     const storefront = moderatedContract('storefront')
@@ -66,6 +67,7 @@ describe('blog moderation by topology', () => {
     ['v7', true],
     ['v8', true],
     ['v9', true],
+    ['v11', true],
   ] as const)('blog %s: moderated = %s', async (topology, moderated) => {
     const { moderatedContract } = await contractsUnder({ NEXT_PUBLIC_BLOG_TOPOLOGY: topology, NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID: ID })
     expect(moderatedContract('blog').moderated()).toBe(moderated)
@@ -120,8 +122,8 @@ describe('hide, don\'t delete (social v18, blog v10, storefront v11)', () => {
     expect(social.hideableTypes()).toBe(social.hideableTypes())
   })
 
-  it('keeps the delete cuts (social v17, blog v9, storefront v10) exactly as they were', async () => {
-    const { moderatedContract } = await set('v17', 'v9', 'v10')
+  it.each([['v17', 'v9', 'v10'], ['v19', 'v11', 'v12']])('keeps deletion moderation on social %s, blog %s, storefront %s', async (social, blog, storefront) => {
+    const { moderatedContract } = await set(social, blog, storefront)
     for (const key of ['social', 'blog', 'storefront'] as const) {
       const contract = moderatedContract(key)
       expect([contract.hidesInsteadOfDeleting(), contract.restrictsAuthors(), contract.hideableTypes()]).toEqual([false, false, []])
@@ -146,7 +148,7 @@ describe('documentNoun', () => {
 describe('the moderation model the legal copy describes', () => {
   // Every cut the repo carries lets moderators delete content (or, on v2, has
   // no moderation at all), so the copy keeps describing removals on each.
-  it.each(['v2', 'v9', 'v16', 'v17'])('keeps the removal wording on social %s', async (topology) => {
+  it.each(['v2', 'v9', 'v16', 'v17', 'v19'])('keeps the removal wording on social %s', async (topology) => {
     const { moderationHidesOnly } = await contractsUnder({ NEXT_PUBLIC_CONTRACT_TOPOLOGY: topology })
     expect(moderationHidesOnly()).toBe(false)
   })

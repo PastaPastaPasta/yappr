@@ -374,7 +374,7 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     // to end (write, unique-index read-back, and count).
     test.setTimeout(300_000)
 
-    if (SPEC_TOPOLOGY === 'v17') {
+    if (['v17', 'v19'].includes(SPEC_TOPOLOGY)) {
       await authorPage.goto(appUrl(`/post?id=${rootPostId}`))
       await expect(authorPage.getByTestId(`like-btn-${firstReplyId}`)).toBeDisabled({ timeout: 60_000 })
     }

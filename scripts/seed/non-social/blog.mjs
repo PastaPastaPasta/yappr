@@ -23,7 +23,7 @@ import {
  * list of at most 64 (blog) / 16 (post) labels of 1-40 characters; v1-v3 the
  * comma-separated string. Chosen by NEXT_PUBLIC_BLOG_TOPOLOGY, like the app.
  */
-const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9'];
+const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v11'];
 /** The target cut is \`topology\` or later (lib/constants.ts blogTopologyAtLeast; unset is v1). */
 const blogAtLeast = (topology) => topologyAtLeast(BLOG_TOPOLOGIES, 'NEXT_PUBLIC_BLOG_TOPOLOGY', topology);
 const labelsTyped = () => blogAtLeast('v4');

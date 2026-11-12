@@ -25,7 +25,7 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { CONTRACT_TOPOLOGIES, DASHPAY_CONTRACT_ID, YAPPR_BLOCKS_CONTRACT_ID, YAPPR_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
+import { CONTRACT_TOPOLOGIES, HIDE_MODERATION_CUTS, DASHPAY_CONTRACT_ID, YAPPR_BLOCKS_CONTRACT_ID, YAPPR_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
@@ -36,6 +36,7 @@ import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import socialContractV18 from '@/contracts/yappr-social-contract-v18.json'
+import socialContractV19 from '@/contracts/yappr-social-contract-v19.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { storedTags } from './post-helpers'
 import { indexLeadsOf, registeredActionFee, registeredIndexLead, registeredOr, settledRuleOf } from './registered-contracts'
@@ -608,6 +609,9 @@ const V18_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/** v19 keeps v17's deletion surfaces and adds recoverable removal system values. */
+const V19_DESCRIPTOR: ContractTopologyDescriptor = { ...V17_DESCRIPTOR, topology: 'v19' }
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -629,6 +633,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v16: V16_DESCRIPTOR,
   v17: V17_DESCRIPTOR,
   v18: V18_DESCRIPTOR,
+  v19: V19_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -639,9 +644,13 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
   return resolved
 }
 
+function isHideModerationCut(): boolean {
+  return topologyDescriptor().topology === HIDE_MODERATION_CUTS.social
+}
+
 /**
  * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
- * order (v2 < v9 < … < v16 < v17). Each later cut keeps what the
+ * order (v2 < v9 < … < v17 < v18 < v19). Each later cut keeps what the
  * earlier ones introduced unless a predicate says otherwise.
  */
 function isAtLeast(cut: ContractTopology): boolean {
@@ -753,7 +762,7 @@ export function postListingsCarryLiveMarker(): boolean {
 
 /**
  * The `where` clauses every read of `post.timeline` and `post.tagAndTime`
- * starts with: `live == true` on v17, nothing elsewhere. Only in `where`: on
+ * starts with: `live == true` on v17 and v19, the listed lane on v18, nothing elsewhere. Only in `where`: on
  * `tagAndTime` the tag sits between `live` and `$createdAt`, so the order
  * names `$createdAt` alone (an orderBy over an index must be a contiguous run
  * of its properties).
@@ -808,7 +817,7 @@ export function replyThreadIndexPrefix(): LanePin[] {
   return listedLane(replyThreadsCarryLiveMarker())
 }
 
-/** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17, the listed lane on v18. Paired with {@link replyOwnerIndexOrderPrefix}. */
+/** The `where` clauses every read of `reply.ownerAndTime` starts with: `live == true` on v17 and v19, the listed lane on v18. Paired with {@link replyOwnerIndexOrderPrefix}. */
 export function replyOwnerIndexPrefix(): LanePin[] {
   return listedLane(repliesCarryLiveMarker())
 }
@@ -831,7 +840,7 @@ export function replyOwnerIndexOrderPrefix(): Array<[string, 'asc']> {
  * keeps the moderation log `moderated [mod, $moderatedAt]`.
  */
 export function listingsCarryModLane(): boolean {
-  return isAtLeast('v18')
+  return isHideModerationCut()
 }
 
 /**
@@ -841,7 +850,7 @@ export function listingsCarryModLane(): boolean {
  * reference at a post or reply is a `permanentDocument` reference.
  */
 export function moderatorsCannotDelete(): boolean {
-  return isAtLeast('v18')
+  return isHideModerationCut()
 }
 
 /**
@@ -854,11 +863,11 @@ export function moderatorsCannotDelete(): boolean {
  * suspension list.
  */
 export function authorsCanBeRestricted(): boolean {
-  return isAtLeast('v18')
+  return isHideModerationCut()
 }
 
 /**
- * One equality pin on a listing's lane property: `live == true` (v13–v17),
+ * One equality pin on a listing's lane property: `live == true` (v13–v17 and v19),
  * or v18's `live == 1` / `mod == null`. Reads put these
  * first (`mentionedUserAndTime` after its `contains`), in this order.
  */
@@ -870,7 +879,7 @@ const V18_LISTED_LANE: readonly LanePin[] = [['live', '==', 1], ['mod', '==', nu
 /**
  * The lane pins a live-keyed listing starts with: v18's listed lane
  * (`live == 1`, `mod == null`, docs/SOCIAL_V18.md "Reading the lanes"),
- * `live == true` on a live-keyed index before v18, nothing otherwise. An
+ * `live == true` on every other live-keyed index, nothing otherwise. An
  * archive build fans the default lane out to every lane at the SDK
  * (lib/services/sdk-lane-fanout.ts); the services only ever build this one.
  */
@@ -886,7 +895,7 @@ function lanePinOrder(pins: readonly LanePin[]): Array<[string, 'asc']> {
 
 /**
  * The pin a v18 listing without `live` carries after its leading property:
- * `mod == null` (both `mentionedUserAndTime`), nothing before v18.
+ * `mod == null` (both `mentionedUserAndTime`), nothing on other cuts.
  */
 export function modLanePin(): LanePin[] {
   return listingsCarryModLane() ? [['mod', '==', null]] : []
@@ -895,7 +904,7 @@ export function modLanePin(): LanePin[] {
 /**
  * The `live` a new post or reply is written with: v18's lane (2 while the
  * author has a restriction in force, 1 otherwise; the contract refuses the
- * other), `true` on v13–v17's marker, and `undefined` where there is none.
+ * other), `true` on v13–v17 and v19's marker, and `undefined` where there is none.
  */
 export function liveValueFor(kind: TargetKind, restricted: boolean): true | 1 | 2 | undefined {
   const carries = kind === 'post' ? postsCarryLiveMarker() : repliesCarryLiveMarker()
@@ -904,7 +913,7 @@ export function liveValueFor(kind: TargetKind, restricted: boolean): true | 1 | 
   return true
 }
 
-/** Whether a stored document is live (not an author's tombstone): `live` is `true` (v13–v17) or a v18 lane (1 or 2). */
+/** Whether a stored document is live (not an author's tombstone): `live` is `true` (v13–v17 and v19) or a v18 lane (1 or 2). */
 export function isLiveMarker(value: unknown): boolean {
   return value === true || value === 1 || value === 2
 }
@@ -1892,11 +1901,12 @@ interface SocialDocumentSchema {
   deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16 | typeof socialContractV17 | typeof socialContractV18
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15 | typeof socialContractV16 | typeof socialContractV17 | typeof socialContractV18 | typeof socialContractV19
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v19': return socialContractV19
     case 'v18': return socialContractV18
     case 'v17': return socialContractV17
     case 'v16': return socialContractV16
@@ -2034,7 +2044,8 @@ export function moderatorDeletionKeepsRecord(docType: string): boolean {
 
 /**
  * The fields a moderator's removal record of `docType` keeps (v11: a post's
- * `hashtag` and `$createdAt`, a reply's `rootPostId` and `$createdAt`), read
+ * `hashtag` and `$createdAt`, a reply's `rootPostId` and `$createdAt`; v19
+ * adds `$updatedAt` and `$updatedAtBlockHeight` to both and keeps all three on the profile), read
  * from `documentRemovals` entries' `keptFields`. Empty when the type keeps
  * none (v9, v10) or keeps no record. The records are not indexed by them.
  */
@@ -2056,7 +2067,7 @@ export interface SettledDeletionRule {
 /**
  * The settled-deletion rule of `docType` as the committed file declares it
  * (post and reply: a week, then the leader plus two members on v11–v16; a
- * day (D39), then the leader plus one (D41) on v17). A registered contract
+ * day (D39), then the leader plus one (D41) on v17 and v19). A registered contract
  * may differ, so the moderation service reads the rule it judges by from the
  * chain. Null when moderators may delete it at any
  * age (no `deleteWithin`) or nobody may delete it once settled (no
@@ -2204,7 +2215,7 @@ export function yappIsLocked(): boolean {
 
 /**
  * True when someone may freeze, unfreeze or slash a YAPP balance (the token's
- * `freezeRules`): the contract owner on v2 to v16. False on v17, whose manual
+ * `freezeRules`): the contract owner on v2 to v16. False on v17 and v19, whose manual
  * mint, burn, freeze, unfreeze and destroy-frozen rules all name `noOne`, so
  * the owner's YAPP moderation tools have nothing to sign and stay hidden.
  */
@@ -2328,7 +2339,7 @@ export function privateFeedsAreMultiple(): boolean {
 /**
  * True when this build's private-feed client can read and write the
  * configured cut's feeds: the multi-feed client (crypto v2,
- * lib/private-feed/crypto.ts) speaks v17's shape only, so earlier cuts offer
+ * lib/private-feed/crypto.ts) speaks the v17/v19 shape, so earlier cuts offer
  * no private feed at all.
  */
 export function privateFeedClientSupported(): boolean {

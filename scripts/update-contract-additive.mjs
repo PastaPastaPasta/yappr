@@ -15,7 +15,9 @@
  *   NETWORK=devnet node scripts/update-contract-additive.mjs --entry storefront --live       # broadcast
  *
  * `--entry` names an App Connect member (scripts/app-connect-set.mjs), whose
- * file must carry the pinned sha256. Devnet only, signed by the devnet maker
+ * file must carry the pinned sha256. Social, blog and storefront deployments
+ * must already select the release cut (v19/v11/v12); this tool cannot upgrade
+ * historical cuts to recoverable removal. Devnet only, signed by the devnet maker
  * (DEVNET_MAKER_IDENTITY_ID, seed index 9); testnet and mainnet updates are
  * not this script's to make. A member at a new version blocks new App Connect
  * logins on a build that pins the old one, so ship
@@ -93,6 +95,12 @@ try {
   if (network() !== 'devnet') throw new Error(`devnet only (NETWORK is ${network()})`);
   const entry = APP_CONNECT_ENTRIES.find((candidate) => candidate.name === args.entry);
   if (!entry) throw new Error(`no App Connect entry named ${args.entry} (${APP_CONNECT_ENTRIES.map((e) => e.name).join(', ')})`);
+  const cut = { social: ['CONTRACT', 'v19'], blog: ['BLOG', 'v11'], storefront: ['STOREFRONT', 'v12'] }[entry.name];
+  if (cut) {
+    const topologyKey = `NEXT_PUBLIC_${cut[0]}_TOPOLOGY`;
+    const topology = envValue(topologyKey);
+    if (topology !== cut[1]) throw new Error(`${entry.name}: this tool only updates its own ${cut[1]} cut (${entry.file}); deployment selects ${topologyKey}=${topology ?? 'unset'}. Historical cuts need their matching schema; recoverable removal requires a fresh registration (D46).`);
+  }
   if (fileSha256(entry.file) !== entry.sha256) throw new Error(`${entry.file}: sha256 is not the pinned ${entry.sha256}`);
   const contractId = envValue(entry.envKey);
   if (!contractId) throw new Error(`${entry.envKey} is not set`);

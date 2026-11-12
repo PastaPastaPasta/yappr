@@ -4,6 +4,7 @@
  * (the registered `store` and `storeItem` fees), so a spec signs in the browser only what
  * it asserts. Nothing here logs key material.
  */
+import { STOREFRONT_TOPOLOGIES } from '../../lib/constants'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import bs58 from 'bs58'
@@ -19,9 +20,9 @@ function envValue(name: string): string {
 }
 
 export const STOREFRONT_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID')
-/** Storefront v7 and later (v8 and v9 keep v7's variant table) carry the typed variants table. */
-export const STOREFRONT_VARIANTS_BUILD = ['v7', 'v8', 'v9'].includes(envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY')) && STOREFRONT_CONTRACT_ID !== ''
-export const NOT_VARIANTS_REASON = 'E2E_ENV_FILE does not select a storefront v7, v8 or v9 deployment — the typed variants table only exists there'
+/** Storefront v7 and later carry the typed variants table. */
+export const STOREFRONT_VARIANTS_BUILD = (STOREFRONT_TOPOLOGIES.findIndex((cut) => cut === envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY')) >= STOREFRONT_TOPOLOGIES.indexOf('v7')) && STOREFRONT_CONTRACT_ID !== ''
+export const NOT_VARIANTS_REASON = 'E2E_ENV_FILE does not select a storefront v7-or-later deployment with typed variants'
 
 type SeedLib = {
   buildDocument: (options: Record<string, unknown>) => { document: unknown }

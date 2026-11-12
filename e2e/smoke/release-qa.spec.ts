@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { expectFocusContrast } from '../fixtures/focus-contrast'
 import { appUrl, scopedKey } from '../fixtures/app'
+import { STOREFRONT_TOPOLOGIES } from '../../lib/constants'
 import { expectedStorefrontTopology } from '../fixtures/contracts'
 
 for (const theme of ['light', 'dark'] as const) {
@@ -44,7 +45,8 @@ for (const route of ['/terms/', '/privacy/', '/cookies/', '/about/', '/about/pri
     await page.goto(appUrl(route))
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     if (route === '/privacy/') {
-      const sealed = await expectedStorefrontTopology() === 'v10'
+      const topology = await expectedStorefrontTopology()
+      const sealed = STOREFRONT_TOPOLOGIES.findIndex((cut) => cut === topology) >= STOREFRONT_TOPOLOGIES.indexOf('v10')
       await expect(page.getByText(sealed
         ? /Tracking numbers, carrier details and seller notes are encrypted for you and the seller/
         : /Tracking numbers, carrier details and seller notes are public/)).toBeVisible()

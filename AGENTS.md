@@ -154,12 +154,16 @@ Singleton service classes handle all Dash Platform operations:
 
 ### Data Contract Structure
 
-The mainnet release set is what `/staging` runs: social **v17**, blocks,
-**DM v5**, **blog v9**, **storefront v10**, **pollr v8** and the passkey vault
+The planned release set for a fresh `/staging` registration and then mainnet
+is social **v19**, blocks,
+**DM v5**, **blog v11**, **storefront v12**, **pollr v8** and the passkey vault
 (`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md)),
-all members of one App Connect anchor's permanent contract group (D45,
-2026-11-10). `scripts/app-connect-set.mjs` owns the files, hashes and
-registration order. Social v17, blog v9 and storefront v10 moderate by
+all members of a new App Connect anchor's permanent contract group (D45/D46).
+Social v19, blog v11 and storefront v12 extend the registered deletion cuts
+with required and kept times and the last signed transition height for every
+recoverable removal ([docs/SOCIAL_V19.md](docs/SOCIAL_V19.md)); the three cuts are not yet
+registered. `scripts/app-connect-set.mjs` owns the files, hashes and
+registration order. Social v17/v19, blog v9/v11 and storefront v10/v12 moderate by
 deletion ([docs/SOCIAL_V17.md](docs/SOCIAL_V17.md)): a seated team deletes
 (one moderator within `deleteWithin`, the D41 approvals after it), bans,
 suspends and warns. A tool that recovers moderator-deleted content and proves
@@ -170,7 +174,9 @@ the password-era vault, key backup, key exchange or DM v4 for the release
 **Keep deployment states separate.** The v17 set was registered on testnet on
 2026-10-21; the checked-in `.env.testnet` names it, and `npm run build` loads
 it for `/staging` (D20) and, once the owner merges staging into master, for
-root. Social v18, blog v10 and storefront v11 ("hide, don't delete",
+root until D46 re-registers `/staging` from a new maker, app and group. The
+v17 file remains unchanged; registered ids stay pinned until cut-over. Social v18, blog
+v10 and storefront v11 ("hide, don't delete",
 [docs/SOCIAL_V18.md](docs/SOCIAL_V18.md), D42–D44) were an experiment: a
 rehearsal copy runs at `/beta`, and they are not part of the mainnet set
 (D45). Until the staging merge, master's root still selects
@@ -200,7 +206,7 @@ them. Never add system ownership fields to document content.
 
 Superseded topology designs and deployment experiments live in
 [docs/archive](docs/archive/README.md). Current `/devnet` v16, the registered
-v17 and the release v18 documentation remain outside that archive.
+v17, experimental v18 and planned release v19 documentation remain outside that archive.
 
 ### DPNS Integration
 - Usernames managed through Dash Platform Name Service

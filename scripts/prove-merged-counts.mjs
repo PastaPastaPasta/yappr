@@ -82,8 +82,9 @@
  *          entry), a re-like counts once, and the kept entries expire with
  *          their window (ol-x*)
  *   kf-*   removal records keep the post's hashtag and $createdAt and the
- *          reply's rootPostId and $createdAt (D4), read from the deletion and
- *          from documentRemovals
+ *          reply's rootPostId and $createdAt (D4; v19 also keeps $updatedAt and
+ *          $updatedAtBlockHeight), exactly the type's deleteKeepsFields, read
+ *          from the deletion and from documentRemovals
  *   tm-0*  before a team is seated: past the window even the interim owner's
  *          delete is refused (41116), and a team proposal is 41205
  *
@@ -1381,17 +1382,27 @@ async function main() {
     const settledFrom = Date.now();
     const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', ...shapes.tags(['kept']) });
     const Rk = await mustCreate('Rk (D replies to SR)', D, 'reply', { content: 'kept reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
-    const created = async (docType, docId) => createdAtOf(await requireDocument(contractId, docType, docId));
-    const [pkAt, rkAt] = await Promise.all([created('post', Pk), created('reply', Rk)]);
+    const [pkDoc, rkDoc] = await Promise.all([requireDocument(contractId, 'post', Pk), requireDocument(contractId, 'reply', Rk)]);
+    const [pkAt, rkAt] = [createdAtOf(pkDoc), createdAtOf(rkDoc)];
+    // A record keeps exactly what its type's deleteKeepsFields declares (two fields through v17; v19 adds
+    // $updatedAt and $updatedAtBlockHeight), each kept system value as the fetched document holds it.
+    const declaredKeeps = (docType) => source.documentSchemas[docType].moderatorAbilities.deleteKeepsFields;
+    const keptAsDeclared = (docType, kept, doc) => {
+      const stored = (field) => doc[field.slice(1)] ?? doc[field] ?? doc.toObject?.()[field];
+      return same(Object.keys(kept).sort(), [...declaredKeeps(docType)].sort())
+        && declaredKeeps(docType).filter((field) => field.startsWith('$')).every((field) => kept[field] !== undefined && String(kept[field]) === String(stored(field)));
+    };
+    const keptJson = (kept) => JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v));
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
     await attempt('kf-1', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'post', documentId: Pk, reason: { text: 'kf-1 proof' } }), (record) => {
       const kept = record?.keptFields ?? {};
-      check(`kf-1 the interim owner removes D's post Pk within the window: the record keeps ${tagsNamed(shapes, ['kept'])} and its $createdAt`,
-        same(shapes.storedTags(kept), ['kept']) && Number(kept.$createdAt) === pkAt && Object.keys(kept).length === 2, JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+      check(`kf-1 the interim owner removes D's post Pk within the window: the record keeps ${tagsNamed(shapes, ['kept'])} and nothing but the declared ${declaredKeeps('post').join(', ')}, with Pk's own values`,
+        same(shapes.storedTags(kept), ['kept']) && Number(kept.$createdAt) === pkAt && keptAsDeclared('post', kept, pkDoc), keptJson(kept));
     }, { idempotent: false });
     await attempt('kf-2', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'reply', documentId: Rk, reason: { text: 'kf-2 proof' } }), (record) => {
       const kept = record?.keptFields ?? {};
-      check('kf-2 the same for D\'s reply Rk: the record keeps rootPostId SR and its $createdAt', toBase58(kept.rootPostId) === SR && Number(kept.$createdAt) === rkAt, JSON.stringify({ rootPostId: toBase58(kept.rootPostId), $createdAt: String(kept.$createdAt) }));
+      check(`kf-2 the same for D's reply Rk: the record keeps rootPostId SR and nothing but the declared ${declaredKeeps('reply').join(', ')}, with Rk's own values`,
+        toBase58(kept.rootPostId) === SR && Number(kept.$createdAt) === rkAt && keptAsDeclared('reply', kept, rkDoc), keptJson({ ...kept, rootPostId: toBase58(kept.rootPostId) }));
     }, { idempotent: false });
     await attempt('kf-3', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [Pk] }), (page) => {
       const kept = page.removals[0]?.keptFields ?? {};

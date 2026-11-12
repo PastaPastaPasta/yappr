@@ -4,7 +4,14 @@ Social v18, blog v10 and storefront v11 re-cut the three moderated contracts of 
 
 The decisions are the owner's (`DECISIONS-FINAL.md` in the release audit's `moderation-redesign/`, which overrides the option papers beside it). [TESTNET_RELEASE.md](TESTNET_RELEASE.md) records them as D42–D44.
 
-**Status.** Not registered on testnet. Throwaway copies of the exact files were registered on sakura and run through the battery below ([Sakura proof](#sakura-proof)). The registration tooling appends the three as new members of the existing App Connect group `4MjVAxDY…` under app `D8benQGn…` ([Registering it](#registering-it-on-testnet)). The client reads the set behind the flags below; an archival or "uncensored" frontend is described in [ARCHIVE_FRONTEND.md](ARCHIVE_FRONTEND.md).
+**Status.** The three experimental cuts run on testnet at `/beta` in the
+rehearsal App Connect group `ePtSmVdS…`, appended at maker `At8Xd9…`'s nonces
+9–11 (`.env.beta`). They were never appended to production group `4MjVAxDY…`,
+which retains exactly its eight v17-era members. The proposal below to append
+from `hbGEc…` at start nonce 57 is historical and current tooling refuses it;
+fresh release registrations follow D46 ([TESTNET_RELEASE.md](TESTNET_RELEASE.md)).
+Throwaway copies were also proved on sakura ([Sakura proof](#sakura-proof)).
+The archival frontend is described in [ARCHIVE_FRONTEND.md](ARCHIVE_FRONTEND.md).
 
 | # | Decision | What changes |
 | --- | --- | --- |
@@ -345,14 +352,14 @@ Moderator writes on v18 (paid by the moderator; v17's removal cost 16.5–18.7M 
 
 ## Historical production-group append proposal (superseded)
 
-This proposal predates D45 and is no longer executable: the publisher's default
-release set ends at the vault, so the command below refuses with "nothing to
-append". The v18 experiment belongs only to testnet's `/beta` rehearsal group,
+This historical proposal predates D45/D46 and was never executed. Current
+tooling refuses the historical production maker; D46 requires a new maker,
+app and group for fresh release registrations. The v18 experiment belongs only to testnet's `/beta` rehearsal group,
 selected with `--testnet-set rehearsal`, its maker and its own journal; see
 [Registering the set](APP_CONNECT_CONTRACTS.md#registering-the-set) for the current
 invocation. Never append these cuts to the mainnet release group.
 
-The production maker `hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A` is at nonce 64 (proved, height 638453, PV14, the answering node on Drive 5.0.0-rc.5), with 1,025.53e9 credits. The read-only plan and dry-run, with no key read and nothing signed:
+The production maker `hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A` is at nonce 64 (proved, height 638453, PV14, the answering node on Drive 5.0.0-rc.5), with 1,025.53e9 credits. The historical read-only plan and dry-run, with no key read and nothing signed:
 
 ```sh
 NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run --append-after passkeyVault \
@@ -360,7 +367,7 @@ NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run --appe
   --interim notYetUsable --election-windows <join>,<vote> --election-delay <seconds> --challenge-cool-down 1209600
 ```
 
-prove the anchor `D8benQGn…`, the group `4MjVAxDY…` (owner the maker, no admins) and all eight registered members, and plan:
+proved the anchor `D8benQGn…`, the group `4MjVAxDY…` (owner the maker, no admins) and all eight registered members, and planned these unregistered ids:
 
 | Nonce | Entry | Predicted id | Estimate |
 | ---: | --- | --- | ---: |

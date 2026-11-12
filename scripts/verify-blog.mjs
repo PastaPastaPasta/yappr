@@ -6,7 +6,7 @@
  * post-level aggregates are exact without a baseline.
  *
  *   NETWORK=devnet node scripts/verify-blog.mjs --contract <id> \
- *     [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5] [--reason-doc <seated-charter-reason-id>] [--keep-content]
+ *     [--contract-file contracts/yappr-blog-contract-v11.json] [--author 210] [--reader 211] [--stranger 212] [--moderator 260|maker|personal] [--only b4,b5] [--reason-doc <seated-charter-reason-id>] [--keep-content]
  *
  * `--moderator` is the contract's owner or one it appointed at publish time:
  * a seed-ledger persona index, `maker` or `personal` (ledger persona 900); v3 (beta.3) is a moderated cut, so b13/b14
@@ -58,7 +58,7 @@
  * cleanup; `scripts/clean-test-content.mjs --surface blog` does it later.
  */
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { relative, resolve } from 'node:path';
 import bs58 from 'bs58';
 import { DocumentActionFeeAgreement } from '@dashevo/evo-sdk';
 import {
@@ -67,12 +67,13 @@ import {
 } from './battery-lib.mjs';
 import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, feeAgreementFor, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, BANNED, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, moderationReason, selfTestModerated } from './battery-moderation.mjs';
-import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, liftBar } from './social-battery-lib.mjs';
+import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, takeFlag, liftBar } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, drop, refusedCreates, refusedReplaces } from './property-constraint-cases.mjs';
 import { cleanBlog, printReport } from './surface-cleanup.mjs';
 
-const CONTRACT_FILE = 'yappr-blog-contract.json';
-const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
+const CONTRACT_PATH = resolve(REPO_ROOT, takeFlag('--contract-file', 'contracts/yappr-blog-contract.json'));
+const CONTRACT_FILE = relative(resolve(REPO_ROOT, 'contracts'), CONTRACT_PATH);
+const CONTRACT = JSON.parse(readFileSync(CONTRACT_PATH, 'utf8'));
 let SCHEMAS = CONTRACT.documentSchemas;
 const publishedOnly = () => SCHEMAS.blogPost.required.includes('publishedAt');
 /** A JSON-schema refusal (10101): an unknown property or a missing required field. */
@@ -560,7 +561,7 @@ function selfTestV7() {
   legacySchema.required = legacySchema.required.filter((field) => field !== 'publishedAt');
   const legacyProbes = blogConstraintProbes([...refusedCreates(CONTRACT_FILE, 'blogPost'), ...refusedReplaces(CONTRACT_FILE, 'blogPost')], { schema: legacySchema });
   const missingBlogProbe = (probes) => probes.find((probe) => probe.label === 'blogPost: live post requires a blog');
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v9)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE}`, [
     ['constraint fixture binding keeps the missing-blog refusal intact', missingBlog !== undefined && !Object.hasOwn(withFixtureBlog(missingBlog, bs58.encode(fixtureId)), 'blogId')],
     ['constraint fixture binding replaces an existing blog reference', JSON.stringify(withFixtureBlog({ blogId: new Uint8Array(32) }, bs58.encode(fixtureId)).blogId) === JSON.stringify(fixtureId)],
     ['older cuts skip only undeclared live constraints and omit the live marker', legacyProbes.length > 0 && legacyProbes.every((probe) => probe.rule !== 'live' && !Object.hasOwn(probe.data, 'live'))],
@@ -581,9 +582,14 @@ function selfTestV7() {
         return a.delete === true && a.deleteWithin === 86400 && a.deleteKeepsRecord !== false
           && a.deleteSettled.leader === true && a.deleteSettled.approvals === 2;
       })],
-    ['removal records keep the parent and creation time',
-      JSON.stringify(SCHEMAS.blogPost.moderatorAbilities.deleteKeepsFields) === '["blogId","$createdAt"]'
-      && JSON.stringify(SCHEMAS.blogComment.moderatorAbilities.deleteKeepsFields) === '["blogPostId","$createdAt"]'],
+    ["removal records keep the parent and the cut's declared system fields",
+      ['blogPost', 'blogComment'].every((type) => {
+        const schema = SCHEMAS[type];
+        const fields = [type === 'blogPost' ? 'blogId' : 'blogPostId', '$createdAt'];
+        if (schema.required.includes('$updatedAtBlockHeight')) fields.push('$updatedAt', '$updatedAtBlockHeight');
+        if (schema.required.includes('$createdAtBlockHeight')) fields.push('$createdAtBlockHeight');
+        return JSON.stringify(schema.moderatorAbilities.deleteKeepsFields) === JSON.stringify(fields);
+      })],
     ['follows are unpriced', actionFeeFor('blogFollow', SCHEMAS) === null],
     ['blog.timeline indexes [$createdAt]; blogPost.timeline and blogAndTime are keyed on live first and skip a tombstone (v9)',
       JSON.stringify(index('blog', 'timeline')?.properties) === '[{"$createdAt":"asc"}]'
@@ -645,7 +651,7 @@ await runBattery({
     SCHEMAS = (await battery.readback(() => battery.sdk.contracts.fetch(contractId))).toJSON().documentSchemas;
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
-    return { startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderator };
+    return { startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderationSchemas: SCHEMAS, moderator };
   },
   summary: (ctx) => `blog=${ctx.blogId} posts=${ctx.post1},${ctx.post2}`,
 });

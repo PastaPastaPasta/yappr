@@ -5,7 +5,7 @@ import { restrictionService } from './restriction-service'
 
 /**
  * Creates a post or reply with the `live` value its cut of the contract wants
- * (docs/SOCIAL_V18.md "Restriction"): `true` on v13 to v17, nothing before.
+ * (docs/SOCIAL_V18.md "Restriction"): `true` on v13 to v17 and v19, nothing before.
  * On v18 it is a lane: 1 for an author in good standing, 2 while a
  * `restriction` is in force, and the contract's `restrictedLane` rule refuses
  * the wrong one (10422) on create.

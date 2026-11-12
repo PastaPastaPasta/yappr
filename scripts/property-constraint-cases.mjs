@@ -760,6 +760,7 @@ DELETE_CASES['yappr-blog-contract.json'] = [
   ...featureDeleteCases('blogReport', baseBlogReport),
 ];
 DELETE_CASES['yappr-storefront-contract.json'] = featureDeleteCases('storeReport', baseStoreReport);
+
 // The v18 set keeps every report's withdrawal rule (docs/SOCIAL_V18.md).
 // Social v18 adds `notHidden` on yapprProfile: a hidden profile cannot be deleted and written again.
 DECLARED_DELETE_RULES['yappr-social-contract-v18.json'] = { ...DECLARED_DELETE_RULES['yappr-social-contract-v17.json'], yapprProfile: ['notHidden'] };
@@ -774,6 +775,14 @@ DELETE_CASES['yappr-social-contract-v18.json'] = [
 ];
 DELETE_CASES['yappr-blog-contract-v10.json'] = DELETE_CASES['yappr-blog-contract.json'];
 DELETE_CASES['yappr-storefront-contract-v11.json'] = DELETE_CASES['yappr-storefront-contract.json'];
+
+for (const [newFile, baseFile] of [
+  ['yappr-social-contract-v19.json', 'yappr-social-contract-v17.json'],
+  ['yappr-blog-contract-v11.json', 'yappr-blog-contract.json'],
+  ['yappr-storefront-contract-v12.json', 'yappr-storefront-contract.json'],
+]) {
+  for (const table of [DECLARED_RULES, CONSTRAINT_CASES, DECLARED_DELETE_RULES, DELETE_CASES]) table[newFile] = table[baseFile];
+}
 
 /**
  * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule

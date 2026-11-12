@@ -1,0 +1,874 @@
+{
+  "config": {
+    "$formatVersion": "2",
+    "moderation": {
+      "banlist": true,
+      "suspensions": true,
+      "warnings": true,
+      "moderators": {
+        "$type": "elected",
+        "seatContestable": true,
+        "challengeCoolDown": 2592000,
+        "joinWindow": 604800,
+        "voteWindow": 259200,
+        "maxAddedModerators": 10,
+        "moderatedDocumentTypes": {
+          "blog": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "blogPost": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "blogComment": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "report": [
+            "deleteDocuments",
+            "changeDocumentFields"
+          ]
+        },
+        "interim": {
+          "$type": "contractOwner"
+        },
+        "ownerProtected": false
+      }
+    }
+  },
+  "documentSchemas": {
+    "blog": {
+      "type": "object",
+      "canBeDeleted": true,
+      "indices": [
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "timeline",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt",
+        "$updatedAtBlockHeight",
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "position": 0,
+          "description": "Blog name",
+          "maxBytes": 192
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 1,
+          "description": "Blog description",
+          "maxBytes": 768
+        },
+        "headerImage": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 2,
+          "description": "ipfs:// URI for header/banner image",
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
+        },
+        "avatar": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 3,
+          "description": "ipfs:// URI for blog avatar",
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
+        },
+        "themeConfig": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5000,
+          "position": 4,
+          "description": "Compressed JSON theme configuration"
+        },
+        "commentsEnabledDefault": {
+          "type": "boolean",
+          "position": 5,
+          "description": "Default comments setting for new posts"
+        },
+        "labels": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "position": 6,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "maxBytes": 160
+          },
+          "description": "The blog's label taxonomy: at most 64 distinct labels of up to 40 characters"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A blog (many per user). Its author can delete it; posts remain as records and stop appearing on the blog page and in discovery.",
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsFields": [
+          "$createdAt",
+          "$updatedAt",
+          "$updatedAtBlockHeight"
+        ]
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 500000000
+        }
+      }
+    },
+    "blogPost": {
+      "type": "object",
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "blogAndTime",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "blogId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "blogAndSlug",
+          "unique": true,
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "slug": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "timeline",
+          "properties": [
+            {
+              "live": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "live": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "skipIfAbsent": true
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$updatedAt",
+        "$updatedAtBlockHeight",
+        "slug",
+        "publishedAt"
+      ],
+      "properties": {
+        "blogId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "Reference to parent blog document",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blog",
+            "where": {
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "position": 1,
+          "description": "Post title",
+          "maxBytes": 384
+        },
+        "subtitle": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 2,
+          "description": "Post subtitle",
+          "maxBytes": 768
+        },
+        "data0": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 5120,
+          "position": 3,
+          "description": "Compressed content chunk 0 (max 5120 bytes per platform field limit)"
+        },
+        "data1": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 4,
+          "description": "Compressed content chunk 1 (overflow)"
+        },
+        "data2": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 5,
+          "description": "Compressed content chunk 2 (overflow)"
+        },
+        "data3": {
+          "type": "array",
+          "byteArray": true,
+          "maxItems": 5120,
+          "position": 6,
+          "description": "Compressed content chunk 3 (overflow)"
+        },
+        "coverImage": {
+          "type": "string",
+          "maxLength": 256,
+          "position": 7,
+          "description": "ipfs:// URI for cover image",
+          "pattern": "^(https|ipfs)://.+$",
+          "maxBytes": 256
+        },
+        "labels": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "position": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "maxBytes": 160
+          },
+          "description": "Labels from the blog taxonomy: at most 16 distinct labels of up to 40 characters"
+        },
+        "commentsEnabled": {
+          "type": "boolean",
+          "position": 9,
+          "description": "Whether comments are enabled"
+        },
+        "slug": {
+          "type": "string",
+          "maxLength": 63,
+          "position": 10,
+          "description": "URL-safe slug derived from title",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "publishedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "position": 11,
+          "description": "Publication timestamp (ms since epoch)"
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 12
+        },
+        "live": {
+          "type": "boolean",
+          "const": true,
+          "position": 13
+        }
+      },
+      "additionalProperties": false,
+      "description": "A published post (publishedAt is required: drafts stay on the device). Permanent for its owner: an author's delete is a tombstone, which leaves the live listings (timeline, blogAndTime). The contract's moderators may remove it. The author IS $ownerId, which a comment's postOwnerAndTime index reads through blogPostId, so no attested copy is carried.",
+      "immutable": [
+        "blogId",
+        "publishedAt",
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
+          }
+        },
+        {
+          "property": "live",
+          "when": {
+            "absent": "deleted"
+          }
+        }
+      ],
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsFields": [
+          "blogId",
+          "$createdAt",
+          "$updatedAt",
+          "$updatedAtBlockHeight"
+        ],
+        "deleteWithin": 86400,
+        "deleteSettled": {
+          "leader": true,
+          "approvals": 2
+        }
+      },
+      "propertyConstraints": {
+        "chunksContiguous": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "absent": "data2"
+                },
+                {
+                  "present": "data1"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "absent": "data3"
+                },
+                {
+                  "present": "data2"
+                }
+              ]
+            }
+          ]
+        },
+        "hasBody": {
+          "anyOf": [
+            {
+              "present": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "present": "title"
+                },
+                {
+                  "present": "data0"
+                },
+                {
+                  "present": "blogId"
+                }
+              ]
+            }
+          ]
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "present": "commentsEnabled"
+                },
+                {
+                  "equal": [
+                    "commentsEnabled",
+                    0
+                  ]
+                },
+                {
+                  "absent": "title"
+                },
+                {
+                  "absent": "subtitle"
+                },
+                {
+                  "absent": "data0"
+                },
+                {
+                  "absent": "data1"
+                },
+                {
+                  "absent": "data2"
+                },
+                {
+                  "absent": "data3"
+                },
+                {
+                  "absent": "coverImage"
+                },
+                {
+                  "absent": "labels"
+                }
+              ]
+            }
+          ]
+        },
+        "publishedNotAhead": {
+          "lessThanOrEqual": [
+            "publishedAt",
+            {
+              "add": [
+                "$updatedAt",
+                600000
+              ]
+            }
+          ]
+        },
+        "live": {
+          "equal": [
+            {
+              "countPresent": [
+                "deleted",
+                "live"
+              ]
+            },
+            1
+          ]
+        }
+      },
+      "retractedWhen": {
+        "present": "deleted"
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      }
+    },
+    "blogComment": {
+      "type": "object",
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "postAndTime",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true
+        },
+        {
+          "name": "postOwnerAndTime",
+          "properties": [
+            {
+              "blogPostId.$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "discussedRecent",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "blogPostId": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 259200,
+            "step": 86400,
+            "ttl": 604800
+          }
+        },
+        {
+          "name": "ownerAndTime",
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "$createdAtBlockHeight",
+        "blogPostId",
+        "content"
+      ],
+      "properties": {
+        "blogPostId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "Reference to parent blog post document, which must not have comments turned off",
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "blogPost",
+            "where": {
+              "commentsEnabled": {
+                "notEqual": {
+                  "const": false
+                }
+              }
+            }
+          }
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "position": 1,
+          "description": "Comment content",
+          "maxBytes": 1500
+        }
+      },
+      "additionalProperties": false,
+      "description": "A comment on a post. blogPostId must name a real post, and postOwnerAndTime reads that post's $ownerId through it (blogPostId.$ownerId), so the notification key cannot be forged and comments on ghost posts are impossible.",
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsFields": [
+          "blogPostId",
+          "$createdAt",
+          "$createdAtBlockHeight"
+        ],
+        "deleteWithin": 86400,
+        "deleteSettled": {
+          "leader": true,
+          "approvals": 2
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 10000000
+        }
+      }
+    },
+    "blogFollow": {
+      "type": "object",
+      "documentsMutable": false,
+      "indices": [
+        {
+          "name": "ownerAndBlog",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            },
+            {
+              "blogId": "asc"
+            }
+          ]
+        },
+        {
+          "name": "followers",
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": {
+            "at": "blogId"
+          }
+        },
+        {
+          "name": "followersTrend",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            },
+            {
+              "blogId": "asc"
+            }
+          ],
+          "rangeCountable": true,
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 259200,
+            "step": 86400,
+            "ttl": 604800
+          }
+        }
+      ],
+      "required": [
+        "$createdAt",
+        "blogId"
+      ],
+      "properties": {
+        "blogId": {
+          "type": "identifier",
+          "position": 0,
+          "description": "Reference to the blog being followed",
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blog"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "description": "A follow of a blog, one per (follower, blog). Counted and ranked so discovery reads \"most followed\" and \"trending today\" instead of crawling every blog's followers."
+    },
+    "report": {
+      "type": "object",
+      "documentsMutable": false,
+      "moderatorAbilities": {
+        "delete": true,
+        "deleteKeepsRecord": false,
+        "changeFields": [
+          "status",
+          "resolution"
+        ]
+      },
+      "required": [
+        "$createdAt",
+        "targetOwnerId",
+        "reason"
+      ],
+      "propertyConstraints": {
+        "oneTarget": {
+          "equal": [
+            {
+              "countPresent": [
+                "blogId",
+                "blogPostId",
+                "blogCommentId"
+              ]
+            },
+            1
+          ]
+        },
+        "otherNote": {
+          "anyOf": [
+            {
+              "notEqual": [
+                "reason",
+                8
+              ]
+            },
+            {
+              "present": "note"
+            }
+          ]
+        },
+        "resolvedStatus": {
+          "anyOf": [
+            {
+              "absent": "resolution"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        },
+        "staysResolved": {
+          "ifThen": [
+            {
+              "present": "$old.status"
+            },
+            {
+              "present": "status"
+            }
+          ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 20000000
+        }
+      },
+      "additionalProperties": false,
+      "ttl": 7776000,
+      "deleteConstraints": {
+        "pending": {
+          "absent": "status"
+        }
+      },
+      "properties": {
+        "blogId": {
+          "type": "identifier",
+          "position": 0,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blog",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "blogPostId": {
+          "type": "identifier",
+          "position": 1,
+          "refersTo": {
+            "type": "moderatedDocument",
+            "documentType": "blogPost",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "blogCommentId": {
+          "type": "identifier",
+          "position": 2,
+          "refersTo": {
+            "type": "deletableDocument",
+            "documentType": "blogComment",
+            "where": {
+              "$ownerId": "targetOwnerId"
+            }
+          }
+        },
+        "targetOwnerId": {
+          "type": "identifier",
+          "position": 3,
+          "distinctFrom": "$ownerId"
+        },
+        "reason": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31,
+          "position": 4
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "maxBytes": 1500,
+          "position": 5
+        },
+        "status": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "position": 6
+        },
+        "resolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "maxBytes": 600,
+          "position": 7
+        }
+      },
+      "indices": [
+        {
+          "name": "byBlog",
+          "properties": [
+            {
+              "blogId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byPost",
+          "properties": [
+            {
+              "blogPostId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byComment",
+          "properties": [
+            {
+              "blogCommentId": "asc"
+            },
+            {
+              "$ownerId": "asc"
+            }
+          ],
+          "unique": true,
+          "skipIfAbsent": true
+        },
+        {
+          "name": "byStatus",
+          "properties": [
+            {
+              "status": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "byModerator",
+          "properties": [
+            {
+              "$moderatedBy": "asc"
+            },
+            {
+              "$moderatedAt": "asc"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

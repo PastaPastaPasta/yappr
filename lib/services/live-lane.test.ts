@@ -32,9 +32,9 @@ describe('createInLiveLane', () => {
     expect(create).toHaveBeenCalledExactlyOnceWith({ content: 'hello', live: 2 })
   })
 
-  it('still writes true on v17 and reads no standing', async () => {
+  it.each(['v17', 'v19'])('still writes true on %s and reads no standing', async (topology) => {
     const create = vi.fn().mockResolvedValue('ok')
-    await createOn('v17', 'post', create)
+    await createOn(topology, 'post', create)
     expect(create).toHaveBeenCalledExactlyOnceWith({ content: 'hello', live: true })
     expect(isRestricted).not.toHaveBeenCalled()
   })

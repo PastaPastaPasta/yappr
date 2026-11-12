@@ -4,7 +4,11 @@
  * docs/SOCIAL_V18.md), apart from the script so they can be tested. No
  * network, no keys, no wasm: `generateId` is passed in.
  */
+import appConnectEntries from './app-connect-entries.cjs';
+
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect-set.mjs';
+
+const { REGISTERED_TESTNET_MAKER } = appConnectEntries;
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
 export const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay, challengeCoolDown: policy.challengeCoolDown });
@@ -13,25 +17,22 @@ export const journalPolicy = (policy) => ({ interim: policy.interim, electionWin
 export const policyKey = (recorded) => JSON.stringify({ interim: recorded.interim ?? null, electionWindows: recorded.electionWindows ?? null, electionDelay: recorded.electionDelay ?? null, challengeCoolDown: recorded.challengeCoolDown ?? null });
 
 /**
- * Why a run may not go ahead on `network`, or null. Testnet already holds the
- * set's anchor and group (2026-10-21): a run there may only append after
- * {@link TESTNET_REGISTERED_THROUGH}, so a second anchor or group can never
- * be registered by mistake. It also holds the D36 rehearsal's anchor and
- * group ({@link TESTNET_REHEARSAL_SET}): a run appends to those only when it
- * names them (`testnetSet` 'rehearsal') AND signs as the rehearsal maker, and
- * the rehearsal maker never runs without naming them. An offline release
- * plan needs no append target because it cannot register another anchor.
+ * Fresh v19 release registrations use a new maker and group (D46). The two
+ * historical testnet makers must never register a replacement anchor by
+ * mistake; the D36 maker may still append the v18 experiment to its own set.
  */
-export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null, mode = null } = {}) {
+export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null } = {}) {
   if (network !== 'testnet') return testnetSet === null ? null : '--testnet-set is for testnet';
   if (testnetSet !== null && testnetSet !== 'rehearsal') return `--testnet-set takes rehearsal (got "${testnetSet}"); leave it out for the release set`;
-  if (appendAfter !== TESTNET_REGISTERED_THROUGH && !(mode === 'plan' && testnetSet === null && appendAfter === null)) {
-    const startNonce = testnetSet === 'rehearsal' ? TESTNET_REHEARSAL_SET.startNonce : 57;
-    return `testnet already holds the App Connect anchor and group: pass --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce ${startNonce})`;
-  }
   const rehearsalMaker = maker === TESTNET_REHEARSAL_SET.makerId;
-  if (testnetSet === 'rehearsal' && !rehearsalMaker) return `--testnet-set rehearsal appends only from the rehearsal maker: pass --maker ${TESTNET_REHEARSAL_SET.makerId}`;
-  if (testnetSet === null && rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
+  if (testnetSet === 'rehearsal') {
+    if (!rehearsalMaker) return `--testnet-set rehearsal appends only from the rehearsal maker: pass --maker ${TESTNET_REHEARSAL_SET.makerId}`;
+    if (appendAfter !== TESTNET_REGISTERED_THROUGH) return `testnet already holds the App Connect anchor and group: pass --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce 1)`;
+    return null;
+  }
+  if (rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
+  if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; social v19 requires a new maker, anchor and group (D46)';
+  if (!maker) return 'a fresh v19 set requires an explicit new maker (D46)';
   return null;
 }
 

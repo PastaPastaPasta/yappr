@@ -451,6 +451,23 @@ describe('release build configuration', () => {
     expect(scripts[`build:${name}`]).toBe(`BASE_PATH=${build.basePath} node scripts/build-release.mjs ${build.envFile}`)
   })
 
+  it('requires social v19 for fresh release sets while retaining the registered v17 deployment', () => {
+    const fresh = completeEnv()
+    expect(fresh.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v19')
+    expect(fresh.NEXT_PUBLIC_BLOG_TOPOLOGY).toBe('v11')
+    expect(fresh.NEXT_PUBLIC_STOREFRONT_TOPOLOGY).toBe('v12')
+    expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10' })).toThrow('must be v11')
+    expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' })).toThrow('must be v12')
+    for (const cut of ['v17', 'v18']) expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_CONTRACT_TOPOLOGY: cut })).toThrow('must be v19')
+    const registered = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    expect(registered.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v17')
+    expect(() => assertReleaseConfig(registered)).not.toThrow()
+    expect(() => assertReleaseConfig({ ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19' })).toThrow('must be v17')
+    for (const key of ['NEXT_PUBLIC_APP_CONNECT_GROUP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER', 'NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_YAPPR_CONTRACT_ID']) {
+      expect(() => assertReleaseConfig({ ...registered, [key]: fresh[key] })).toThrow('must be v19')
+    }
+  })
+
   it('the checked-in .env.testnet is the complete registered release, and `build` uses it', () => {
     const release = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
     expect(Object.keys(release).sort()).toEqual(Object.keys(template).sort())
