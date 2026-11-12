@@ -827,9 +827,11 @@ async function selfTest() {
       let violation = null;
       let serializes = true;
       try {
+        // Platform stamps a stored document's height; this local one carries a fixture height where its type requires one (v17 post and reply).
+        const height = source.documentSchemas[docType]?.required?.includes('$updatedAtBlockHeight') ? { $updatedAtBlockHeight: 1n } : {};
         const document = Document.fromObject({
           $formatVersion: '0', $id: new Uint8Array(32).fill(9), $ownerId: new Uint8Array(32).fill(8), $dataContractId: contract.id.toBytes(), $type: docType,
-          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...height, ...data,
         }, platformVersion);
         violation = contract.checkDocumentPropertyConstraints(document)?.rule ?? null;
         if (expected === null) document.toBytes(contract, platformVersion);
