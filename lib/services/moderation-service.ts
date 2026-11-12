@@ -80,7 +80,7 @@ import { signerService } from './signer-service';
  *   what it was;
  * - **settled documents** (`deleteWithin` + `deleteSettled`): one moderator
  *   deletes a post or reply alone for its window after it was written (a
- *   day on v17 since D39, a week on v11–v16; 41116 past that); after that
+ *   day on v17 and v19 since D39, a week on v11–v16; 41116 past that); after that
  *   only the seated team does, together: a member
  *   proposes (`moderatorDeleteSettledDocument`, its own approval) and the
  *   others approve (`moderatorApproveTeamAction`) until the leader and enough
@@ -222,6 +222,7 @@ export interface DocumentRemoval {
  * The fields a removal record kept of the removed document, each only when
  * the record holds it: a post's tags (its one `hashtag` through v15, its
  * `tags` list on v16), a reply's `rootPostId`, and either's `$createdAt` (ms).
+ * v19 post/reply/profile records keep both times and `$updatedAtBlockHeight` for recovery.
  */
 export interface RemovalKeptFields {
   tags?: string[];

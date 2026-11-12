@@ -27,7 +27,7 @@ function windowLabel(seconds: number | null): string {
  * reason stays under its contract for anyone to read.
  *
  * From v11 a post or reply settles once its window has passed (a day on
- * v17, a week on v11–v16): past that no moderator removes it alone (41116).
+ * v17 and v19, a week on v11–v16): past that no moderator removes it alone (41116).
  * A member of the seated team proposes a team removal instead, which runs
  * once the leader and enough members
  * approve, and which can never be undone (41209). Before a team is seated

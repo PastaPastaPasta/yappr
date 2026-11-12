@@ -72,7 +72,7 @@ export const YAPP_TOKEN_POSITION = 0;
  * owner-mint top-ups of provision-seed-identities.mjs and feature-seed-lib.mjs are refused there.
  * All take their profiles from DashPay plus `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v19'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));

@@ -572,7 +572,9 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18'] as const
+// `v19` is v17 with the last update height required and kept with both times
+// in post/reply/profile removal records (docs/SOCIAL_V19.md); it keeps deletion moderation.
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

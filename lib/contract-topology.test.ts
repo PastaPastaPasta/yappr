@@ -10,6 +10,7 @@
  * at runtime, on chain. This test makes that drift a red unit test.
  */
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import socialContractV2 from '@/contracts/yappr-social-contract-v2.json'
@@ -23,6 +24,7 @@ import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import socialContractV18 from '@/contracts/yappr-social-contract-v18.json'
+import socialContractV19 from '@/contracts/yappr-social-contract-v19.json'
 import blogContractV10 from '@/contracts/yappr-blog-contract-v10.json'
 import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
@@ -62,6 +64,7 @@ const V14 = socialContractV14.documentSchemas as unknown as Schemas
 const V15 = socialContractV15.documentSchemas as unknown as Schemas
 const V16 = socialContractV16.documentSchemas as unknown as Schemas
 const V17 = socialContractV17.documentSchemas as unknown as Schemas
+const V19 = socialContractV19.documentSchemas as unknown as Schemas
 const V18 = socialContractV18.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
@@ -78,7 +81,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -140,7 +143,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -238,7 +241,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -263,7 +266,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -1528,6 +1531,54 @@ describe('contract topology', () => {
       expect(await settled('v16')).toEqual([rule(604_800, 3), rule(604_800, 3)])
     })
   })
+  describe('v19 (v17 with recoverable update system values)', () => {
+    it('changes only required and removal-kept fields on post, reply and profile, preserving the registered v17 bytes', () => {
+      const expected = structuredClone(socialContractV17)
+      for (const type of ['post', 'reply'] as const) {
+        expected.documentSchemas[type].required.splice(2, 0, '$updatedAtBlockHeight')
+        expected.documentSchemas[type].moderatorAbilities.deleteKeepsFields.push('$updatedAt', '$updatedAtBlockHeight')
+        expect(V17[type].required).not.toContain('$updatedAtBlockHeight')
+        expect(V16[type].required).not.toContain('$updatedAtBlockHeight')
+      }
+      expected.documentSchemas.yapprProfile.required.push('$updatedAtBlockHeight')
+      Object.assign(expected.documentSchemas.yapprProfile.moderatorAbilities, { deleteKeepsFields: ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] })
+      expect(socialContractV19).toEqual(expected)
+      expect(createHash('sha256').update(readFileSync(join(process.cwd(), 'contracts/yappr-social-contract-v17.json'))).digest('hex'))
+        .toBe('77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf')
+      expect(V19.post.required).toEqual(['$createdAt', '$updatedAt', '$updatedAtBlockHeight'])
+      expect(V19.reply.required).toEqual(['$createdAt', '$updatedAt', '$updatedAtBlockHeight', 'rootPostId'])
+    })
+
+    it('keeps both times and the update height only on v19', async () => {
+      for (const cut of ['v16', 'v17', 'v19']) {
+        const m = await topologyModule(cut)
+        const times = cut === 'v19' ? ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] : ['$createdAt']
+        expect(m.removalKeptFieldsFor('post')).toEqual(['tags', ...times])
+        expect(m.removalKeptFieldsFor('reply')).toEqual(['rootPostId', ...times])
+      }
+    })
+
+    it('uses v17 surfaces, boolean live lanes, deletion moderation and report handling', async () => {
+      const baseline = await topologyModule('v17')
+      const v19 = await topologyModule('v19')
+      expect(v19.topologyDescriptor()).toEqual({ ...baseline.topologyDescriptor(), topology: 'v19' })
+      for (const name of [
+        'postListingsCarryLiveMarker', 'repliesCarryLiveMarker', 'replyThreadsCarryLiveMarker',
+        'postOwnerIndexPrefix', 'postListingWherePrefix', 'replyOwnerIndexPrefix', 'replyThreadIndexPrefix',
+        'postOwnerIndexOrderPrefix', 'replyOwnerIndexOrderPrefix', 'modLanePin',
+        'moderatorDeletableTypes', 'moderationListsKept', 'reportResolutionFields', 'reportsAreResolved',
+        'contractTakesReports', 'yappCanBeFrozen', 'privateFeedsAreMultiple', 'privateFeedClientSupported',
+        'contentLimits',
+      ] as const) expect(v19[name](), name).toEqual(baseline[name]())
+      for (const type of ['post', 'reply'] as const) {
+        expect(v19.socialTextFieldLimits(type, 'content')).toEqual(baseline.socialTextFieldLimits(type, 'content'))
+        expect(v19.tombstonePreservationFor(type)).toEqual(baseline.tombstonePreservationFor(type))
+        expect(v19.settledDeletionFor(type)).toEqual(baseline.settledDeletionFor(type))
+      }
+      expect(v19.liveValueFor('post', false)).toBe(true)
+      expect(v19.liveValueFor('reply', true)).toBe(true)
+    })
+  })
   describe('v18 (hide, don\'t delete)', () => {
     const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)
     const keys = (schemas: Schemas, docType: string, name: string) => indexOf(schemas, docType, name)?.properties.map((property) => Object.keys(property)[0])
@@ -1537,7 +1588,7 @@ describe('contract topology', () => {
     it('reports the v18 capabilities on v18 and none of them on v17', async () => {
       const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted()]
       expect(flags(await topologyModule('v18'))).toEqual([true, true, true])
-      expect(flags(await topologyModule('v17'))).toEqual([false, false, false])
+      for (const cut of ['v17', 'v19']) expect(flags(await topologyModule(cut))).toEqual([false, false, false])
     })
 
     it('lets no moderator delete in social, blog or storefront, and keeps warnings only', async () => {
@@ -1661,6 +1712,7 @@ describe('contract topology', () => {
       }
       expect(await constants('v10', 'v11')).toEqual([true, true, true])
       expect(await constants('v9', 'v10')).toEqual([false, false, false])
+      expect(await constants('v11', 'v12')).toEqual([false, false, false])
     })
   })
 })
