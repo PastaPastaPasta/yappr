@@ -21,9 +21,12 @@
  */
 import blogContract from '@/contracts/yappr-blog-contract.json'
 import blogContractV10 from '@/contracts/yappr-blog-contract-v10.json'
+import blogContractV11 from '@/contracts/yappr-blog-contract-v11.json'
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
 import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.json'
+import storefrontContractV12 from '@/contracts/yappr-storefront-contract-v12.json'
 import {
+  STOREFRONT_TOPOLOGY,
   YAPPR_BLOG_CONTRACT_ID,
   YAPPR_CONTRACT_ID,
   YAPPR_STOREFRONT_CONTRACT_ID,
@@ -31,6 +34,7 @@ import {
   blogIsV7,
   blogIsV9,
   blogListingsCarryModLane,
+  blogTopology,
   storefrontIsV10,
   storefrontIsV6,
   storefrontListingsCarryModLane,
@@ -334,7 +338,7 @@ function socialHideableTypes(): readonly string[] {
 }
 
 const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT_CONTRACT_ID, {
-  json: () => (storefrontListingsCarryModLane() ? storefrontContractV11 : storefrontContract),
+  json: () => (STOREFRONT_TOPOLOGY === 'v12' ? storefrontContractV12 : storefrontListingsCarryModLane() ? storefrontContractV11 : storefrontContract),
   enabled: storefrontIsV6,
   laterTypes: { report: storefrontIsV10 },
   hides: storefrontListingsCarryModLane,
@@ -342,7 +346,7 @@ const STOREFRONT = declaredContract('storefront', 'Storefront', YAPPR_STOREFRONT
   restricts: () => false,
 })
 const BLOG_DECLARED = declaredContract('blog', 'Blogs', YAPPR_BLOG_CONTRACT_ID, {
-  json: () => (blogListingsCarryModLane() ? blogContractV10 : blogContract),
+  json: () => (blogTopology() === 'v11' ? blogContractV11 : blogListingsCarryModLane() ? blogContractV10 : blogContract),
   enabled: blogIsV7,
   laterTypes: { report: blogIsV9 },
   hides: blogListingsCarryModLane,

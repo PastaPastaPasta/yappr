@@ -35,7 +35,7 @@ import {
  * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
-const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'];
+const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10', 'v12'];
 const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
 const listsTyped = () => storefrontAtLeast('v4');
 /** v5-v7 (QA D-25): an order copies its store's status into `storeStatus`; v8 checks it through the `storeId` reference instead. */
