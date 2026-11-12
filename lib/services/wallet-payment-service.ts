@@ -2,10 +2,11 @@ import { logger } from '@/lib/logger';
 import { bytesToBase64, base64ToBytes } from '@/lib/bytes';
 import { scopedKey } from '@/lib/storage-scope';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { BatchTransition, StateTransition, TokenTransition } from '@dashevo/wasm-sdk';
+import { BatchTransition, StateTransition, TokenDirectPurchaseTransition, TokenTransferTransition, TokenTransition } from '@dashevo/wasm-sdk';
 import { getEvoSdk } from './evo-sdk-service';
 import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants';
 import { loadReservation, storeWalletPayments } from './identity-nonce';
+import { identifierToBase58 } from './sdk-helpers';
 import { tipService } from './tip-service';
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder';
 import { buildUnsignedYappTipTransition } from './token-transfer-builder';
@@ -18,6 +19,8 @@ type PaymentData =
   | { kind: 'purchase'; amount: string; cost: string };
 
 export interface WalletPayment {
+  readonly key: string;
+  readonly kind: PaymentData['kind'];
   request: WalletTransitionRequest;
   data: PaymentData;
   checkOutcome: () => Promise<PaymentOutcome>;
@@ -57,12 +60,12 @@ export async function clearPersistedWalletPayment(ownerId: string, reservationId
 
 function persistPayment(payment: WalletPayment, context: PaymentContext): void {
   const records = readPersisted(context.ownerId).filter(record => record.reservationId !== payment.request.reservationId);
-  records.push({ key: context.key, bytes: bytesToBase64(payment.request.bytes), nonce: payment.request.nonce.toString(),
+  records.push({ key: payment.key, bytes: bytesToBase64(payment.request.bytes), nonce: payment.request.nonce.toString(),
     reservationId: payment.request.reservationId, data: payment.data });
   writePersisted(context.ownerId, records);
 }
 
-function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: string; type: string } {
+function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: string; type: string; matches: (document: Record<string, unknown>) => boolean } {
   const transition = StateTransition.fromBytes(request.bytes);
   const batch = BatchTransition.fromStateTransition(transition);
   const batched = batch.transitions;
@@ -72,8 +75,29 @@ function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: st
     try {
       if (!(token instanceof TokenTransition)) throw new Error('Expected a wallet token transition');
       const id = token.getHistoricalDocumentId(ownerId);
-      try { return { id: id.toBase58(), type: token.historicalDocumentTypeName }; }
-      finally { id.free(); }
+      const tokenId = token.tokenId;
+      const detail = token.transition;
+      try {
+        const expectedToken = tokenId.toBase58();
+        let matches: (document: Record<string, unknown>) => boolean;
+        if (detail instanceof TokenTransferTransition) {
+          const recipient = detail.recipientId;
+          let to: string;
+          try { to = recipient.toBase58(); } finally { recipient.free(); }
+          const amount = detail.amount;
+          const note = detail.publicNote ?? '';
+          matches = document => identifierToBase58(document.toIdentityId) === to
+            && BigInt(String(document.amount)) === amount && (document.publicNote ?? '') === note;
+        } else if (detail instanceof TokenDirectPurchaseTransition) {
+          const amount = detail.tokenCount;
+          // purchaseCost is the actual charge, while totalAgreedPrice is only a ceiling.
+          matches = document => BigInt(String(document.tokenAmount)) === amount;
+        } else {
+          throw new Error('Unsupported wallet token transition');
+        }
+        return { id: id.toBase58(), type: token.historicalDocumentTypeName,
+          matches: document => identifierToBase58(document.tokenId) === expectedToken && matches(document) };
+      } finally { detail.free(); tokenId.free(); id.free(); }
     } finally { token.free(); }
   } finally {
     batched.forEach(item => item.free());
@@ -82,9 +106,11 @@ function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: st
   }
 }
 
-function paymentFor(ownerId: string, request: WalletTransitionRequest, data: PaymentData): WalletPayment {
+function paymentFor(ownerId: string, request: WalletTransitionRequest, data: PaymentData, key = JSON.stringify([ownerId, data])): WalletPayment {
   const receipt = receiptFor(ownerId, request);
   return {
+    key,
+    kind: receipt.type === 'transfer' ? 'tip' : 'purchase',
     request,
     data,
     checkOutcome: async () => {
@@ -95,7 +121,11 @@ function paymentFor(ownerId: string, request: WalletTransitionRequest, data: Pay
         const response = await sdk.documents.getWithProof(TOKEN_HISTORY_CONTRACT_ID, receipt.type, receipt.id);
         const height = response.metadata?.height;
         if (!response.proof || typeof height !== 'bigint' || height <= BigInt(0)) return 'unknown';
-        if (response.data) return 'completed';
+        if (response.data) {
+          if (receipt.matches(response.data.toObject())) return 'completed';
+          // A different receipt at this consumed nonce proves our request can never execute.
+          return 'absent';
+        }
         return height >= consumedAt ? 'absent' : 'unknown';
       } catch (error) {
         logger.debug('Could not prove the wallet payment receipt:', error);
@@ -107,7 +137,7 @@ function paymentFor(ownerId: string, request: WalletTransitionRequest, data: Pay
 
 function restorePayment(ownerId: string, record: PersistedWalletPayment): WalletPayment {
   const request = restoreWalletTransitionRequest(ownerId, base64ToBytes(record.bytes), BigInt(record.nonce), record.reservationId);
-  return paymentFor(ownerId, request, record.data);
+  return paymentFor(ownerId, request, record.data, record.key);
 }
 
 async function reconcilePayment(payment: WalletPayment): Promise<{ outcome: PaymentOutcome; executable: boolean }> {
@@ -145,11 +175,13 @@ async function preparePayment(
       if (cached && !records.some(record => record.reservationId === cached.request.reservationId)) {
         try {
           const result = await reconcilePayment(cached);
-          if (result.outcome === 'completed') return { completed: true };
-          if (result.outcome === 'unknown') return { completed: false, payment: cached, unresolved: true };
+          if (result.outcome === 'completed' && cached.key === context.key) return { completed: true };
+          if (result.outcome === 'unknown' && !context.allowAnother?.has(cached.request.reservationId)) {
+            return { completed: false, payment: cached, unresolved: true, ...(cached.key !== context.key ? { different: true } : {}) };
+          }
         } catch (error) {
           logger.debug('Could not reconcile the cached wallet payment:', error);
-          return { completed: false, payment: cached, unresolved: true };
+          return { completed: false, payment: cached, unresolved: true, ...(cached.key !== context.key ? { different: true } : {}) };
         }
       }
       candidate = undefined;
@@ -163,7 +195,7 @@ async function preparePayment(
         }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
-          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.request.reservationId === record.reservationId)) return { completed: true };
+          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId)) return { completed: true };
           continue;
         }
         if (context.allowAnother?.has(record.reservationId)) continue;
@@ -174,7 +206,8 @@ async function preparePayment(
     }
     const create = async (): Promise<LocalPreparedPayment> => {
       if (!build) return { completed: false };
-      const payment = await build(Boolean(context));
+      const built = await build(Boolean(context));
+      const payment = context ? { ...built, key: context.key } : built;
       if (context?.isCurrent && !context.isCurrent()) {
         await payment.request.discard(true);
         return { completed: false, payment };
