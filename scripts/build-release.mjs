@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // `npm run build` (root, and /staging with BASE_PATH=/staging, per D20) builds
 // from the checked-in public release pins in .env.testnet, never ambient values.
-// Fresh release pins select social v19 (D46); .env.testnet keeps registered v17 until cut-over.
 // --mainnet [env-file] builds from mainnet public pins (default .env.mainnet).
 // A QA build passes its own env file instead (QA_BUILDS in release-config.cjs:
 // `build:staging-old` and `build:beta`, the D36 rehearsal set's v17 and

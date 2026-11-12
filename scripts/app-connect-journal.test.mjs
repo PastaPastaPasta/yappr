@@ -1,3 +1,4 @@
+import appConnectEntries from './app-connect-entries.cjs';
 import { describe, expect, it } from 'vitest';
 import releaseConfig from './release-config.cjs';
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET, appConnectEnvLines, entriesToCreate, planAppConnectSet, planRehearsalSet } from './app-connect-set.mjs';
@@ -26,9 +27,9 @@ describe('the testnet append guard', () => {
   it('allows new testnet makers to register v19 and keeps the historical makers guarded', () => {
     const fresh = { maker: '11111111111111111111111111111112' };
     expect(testnetAppendProblem('testnet', null, fresh)).toBeNull();
-    expect(testnetAppendProblem('testnet', 'socialV18', fresh)).toMatch(/fresh registration/);
+    expect(testnetAppendProblem('testnet', 'social', fresh)).toBeNull();
     expect(testnetAppendProblem('testnet', null)).toMatch(/explicit new maker/);
-    expect(testnetAppendProblem('testnet', null, { maker: 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A' })).toMatch(/requires a new maker/);
+    expect(testnetAppendProblem('testnet', null, { maker: appConnectEntries.REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
     expect(testnetAppendProblem('devnet', null)).toBeNull();
     expect(testnetAppendProblem('mainnet', null)).toBeNull();
   });
@@ -140,8 +141,7 @@ describe('the D36 rehearsal set', () => {
     expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: REHEARSAL })).toMatch(/--testnet-set rehearsal/);
     expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { testnetSet: 'release', maker: '11111111111111111111111111111112' })).toMatch(/takes rehearsal/);
     expect(testnetAppendProblem('devnet', null, named)).toMatch(/for testnet/);
-    // A fresh release set uses a new maker and cannot append to a historical group.
-    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: '11111111111111111111111111111112' })).toMatch(/fresh registration/);
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: '11111111111111111111111111111112' })).toBeNull();
     expect(testnetAppendProblem('testnet', null, { maker: '11111111111111111111111111111112' })).toBeNull();
   });
 

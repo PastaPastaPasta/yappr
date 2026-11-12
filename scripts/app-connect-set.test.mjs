@@ -1,3 +1,4 @@
+import appConnectEntries from './app-connect-entries.cjs';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { APP_CONNECT_ENTRIES, appConnectEnvLines, entriesToCreate, fileSha256, planAppConnectSet } from './app-connect-set.mjs';
@@ -57,12 +58,12 @@ describe('the default release set', () => {
     expect(result.stdout).toBe('');
   });
 
-  it('allows a fresh v19 testnet set from a new maker in every registration mode', () => {
-    for (const mode of ['plan', 'dry-run', 'signed-dry-run', 'live']) {
-      expect(testnetAppendProblem('testnet', null, { mode, maker: MAKER })).toBeNull();
-      expect(testnetAppendProblem('testnet', 'passkeyVault', { mode, maker: MAKER })).toMatch(/fresh registration/);
-      expect(testnetAppendProblem('mainnet', null, { mode, testnetSet: 'rehearsal', maker: MAKER })).toMatch(/for testnet/);
-      expect(testnetAppendProblem('testnet', null, { mode, maker: 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A' })).toMatch(/requires a new maker/);
+  it('allows a fresh v19 maker to register and later append to its own group', () => {
+    expect(testnetAppendProblem('testnet', null, { maker: MAKER })).toBeNull();
+    expect(testnetAppendProblem('testnet', 'social', { maker: MAKER })).toBeNull();
+    expect(testnetAppendProblem('mainnet', null, { testnetSet: 'rehearsal', maker: MAKER })).toMatch(/for testnet/);
+    for (const appendAfter of [null, 'passkeyVault']) {
+      expect(testnetAppendProblem('testnet', appendAfter, { maker: appConnectEntries.REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
     }
   });
 });

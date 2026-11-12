@@ -34,7 +34,7 @@ export const APP_CONNECT_GROUP = {
   description: 'Yappr (yap.pr): the contracts a Yappr App Connect key signs for',
 };
 
-const HISTORICAL_RELEASE_CUTS = {
+export const HISTORICAL_RELEASE_CUTS = {
   social: { file: 'yappr-social-contract-v17.json', sha256: '77cf4308d40d916ce9f128e84f584344b57e3525c30d4d20509bf3a4485196bf' },
   blog: { file: 'yappr-blog-contract.json', sha256: '448fb9ea4a9b6b4f4c0e0224dfe5ba610514d18793b6927255f3a7c67631504c' },
   storefront: { file: 'yappr-storefront-contract.json', sha256: '69daf9799cb4f34552e4fce3ec7963a66f6f492f37d45baee4f6c83880bf05dc' },
@@ -53,10 +53,10 @@ const REHEARSAL_ENTRIES = [
 ];
 
 /**
- * The last entry testnet's group already holds (registered 2026-10-21 at
- * maker nonces 57-64, docs/TESTNET_RELEASE.md). A testnet run passes it as
- * `--append-after` with `--testnet-set rehearsal` to create the experimental
- * entries after it; the release set itself has nothing to append.
+ * The last entry of the historical eight-member prefix. The production
+ * group 4MjVAxDY… holds only that prefix (maker hbGEc…, nonces 57–64).
+ * The v18 experiments were appended only to the D36 rehearsal group ePtSmVdS…
+ * at nonces 9–11, selected by `--testnet-set rehearsal --append-after passkeyVault`.
  */
 export const TESTNET_REGISTERED_THROUGH = 'passkeyVault';
 

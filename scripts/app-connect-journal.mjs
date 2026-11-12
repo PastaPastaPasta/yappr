@@ -4,7 +4,11 @@
  * docs/SOCIAL_V18.md), apart from the script so they can be tested. No
  * network, no keys, no wasm: `generateId` is passed in.
  */
+import appConnectEntries from './app-connect-entries.cjs';
+
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect-set.mjs';
+
+const { REGISTERED_TESTNET_MAKER } = appConnectEntries;
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
 export const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay, challengeCoolDown: policy.challengeCoolDown });
@@ -27,9 +31,8 @@ export function testnetAppendProblem(network, appendAfter, { testnetSet = null, 
     return null;
   }
   if (rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
-  if (maker === 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A') return 'the registered v17 maker already holds its release set; social v19 requires a new maker, anchor and group (D46)';
+  if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; social v19 requires a new maker, anchor and group (D46)';
   if (!maker) return 'a fresh v19 set requires an explicit new maker (D46)';
-  if (appendAfter !== null) return 'the v19 release set is a fresh registration, not an append; omit --append-after';
   return null;
 }
 
