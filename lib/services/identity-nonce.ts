@@ -464,9 +464,10 @@ export async function withSdkSignedWrite<T>(
   write: () => Promise<T>,
   scope?: string,
   precondition?: () => Promise<boolean>,
-  writeWithNonce?: (nonce: bigint) => Promise<T>
+  writeWithNonce?: (nonce: bigint) => Promise<T>,
+  lockHeld = false
 ): Promise<T> {
-  return withIdentityWriteLock(ownerId, contractId, async () => {
+  const send = async () => {
     let polls = 0;
     const { current, value } = await awaitNonce<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
       const pending = stillPending(tip, reservation);
@@ -521,7 +522,8 @@ export async function withSdkSignedWrite<T>(
     clearInterval(alive);
     releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
-  });
+  };
+  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
 }
 
 async function settleChosenNonce(ownerId: string, contractId: string, entry: PendingTransition): Promise<void> {
@@ -535,10 +537,10 @@ async function settleChosenNonce(ownerId: string, contractId: string, entry: Pen
 }
 
 /** Re-sign the same wallet payment; even a local refusal cannot retire the wallet's copy. */
-export async function withWalletTokenNonce<T>(ownerId: string, contractId: string, entry: PendingTransition, write: (nonce: bigint) => Promise<T>): Promise<T> {
+export async function withWalletTokenNonce<T>(ownerId: string, contractId: string, entry: PendingTransition, write: (nonce: bigint) => Promise<T>, lockHeld = false): Promise<T> {
   if (entry.scope !== WALLET_TOKEN_SCOPE || entry.nonce === null) throw new Error('Invalid wallet payment reservation');
   const nonce = entry.nonce;
-  return withIdentityWriteLock(ownerId, contractId, async () => {
+  const send = async () => {
     try {
       return await write(nonce);
     } catch (error) {
@@ -546,7 +548,8 @@ export async function withWalletTokenNonce<T>(ownerId: string, contractId: strin
     } finally {
       await settleChosenNonce(ownerId, contractId, entry);
     }
-  });
+  };
+  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
 }
 
 /**

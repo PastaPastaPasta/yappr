@@ -13,7 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { buildWalletPurchase, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -159,30 +159,16 @@ export function BuyYappModal() {
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
     let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
-    try {
-      const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
-      if (prepared.completed) {
-        tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
-        finishPurchase()
-        return
-      }
-      payment = prepared.payment
-      if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
-      else walletRequestsRef.current.delete(walletPaymentKey)
-      if (prepared.unresolved) {
-        setError(prepared.different
-          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
-          : "This payment may have gone through. Check your wallet's activity before trying again.")
-        setState('unconfirmed')
-        return
-      }
-    } catch (err) {
-      logger.error('Could not prepare the payment:', err)
-      setError('Could not check earlier payments. Please try again.')
-      setState('error')
-      return
-    }
-    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, payment?.request)
+    const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, {
+      key: walletPaymentKey,
+      cached: payment,
+      allowAnother: allowedPaymentsRef.current,
+      onPrepared: prepared => {
+        payment = prepared
+        if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
+        else walletRequestsRef.current.delete(walletPaymentKey)
+      },
+    })
     if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase(payment)

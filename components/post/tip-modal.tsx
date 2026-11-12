@@ -17,7 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { tipHistoryService } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
-import { buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { buildWalletTip, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -340,35 +340,22 @@ export function TipModal() {
     setState('processing')
     setError(null)
     let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
-    try {
-      const prepared = await prepareLocalWalletPayment(payment, { ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current })
-      if (prepared.completed) {
-        finishYappTip()
-        return
-      }
-      payment = prepared.payment
-      if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
-      else walletRequestsRef.current.delete(walletPaymentKey)
-      if (prepared.unresolved) {
-        setError(prepared.different
-          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
-          : "This payment may have gone through. Check your wallet's activity before trying again.")
-        setState('unconfirmed')
-        return
-      }
-    } catch (err) {
-      logger.error('Could not prepare the payment:', err)
-      setError('Could not check earlier payments. Please try again.')
-      setState('error')
-      return
-    }
     const result = await tipService.sendYappTipLocal(
       user.identityId,
       recipientInfo.id,
       yappAmountBig,
       tipTarget,
       noteMessage,
-      payment?.request
+      {
+        key: walletPaymentKey,
+        cached: payment,
+        allowAnother: allowedPaymentsRef.current,
+        onPrepared: prepared => {
+          payment = prepared
+          if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
+          else walletRequestsRef.current.delete(walletPaymentKey)
+        },
+      }
     )
 
     if (result.errorCode === 'CANCELLED') {
