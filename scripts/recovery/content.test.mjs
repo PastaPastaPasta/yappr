@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BatchTransition, EvoSDK, StateTransition } from '@dashevo/evo-sdk';
+import { BatchTransition, DataContract, EvoSDK, PlatformVersion, StateTransition } from '@dashevo/evo-sdk';
 import { BUNDLE_FORMAT, json, rebuild, recoverCandidate, selectTransition, sha256d, verifyContent } from './content.mjs';
 import { installTransport, quorumDigest, resetDocumentEvidence } from './transport.mjs';
 import { findContent } from '../recover-deleted.mjs';
+import { contractSource, registrationJson } from '../register-lib.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/blog-testnet.json', import.meta.url), 'utf8'));
+const postFixture = JSON.parse(readFileSync(new URL('./fixtures/post-testnet.json', import.meta.url), 'utf8'));
 const trustedDigest = '321835727f0bfb7cb2bb4031e9a1ac68cbcac7ef91af48810109fcd5cf132987';
 let contract;
 let transport;
@@ -110,6 +112,61 @@ describe('replacement and untrusted sources', () => {
     const expected = rebuild({ ...context, transition, system: { ...fixture.system, $revision: '2' } }, contract);
     context.record.documentHash = sha256d(expected.bytes);
     expect(recoverCandidate(context, candidate, contract).document.$revision).toBe(2);
+  });
+  it('rebuilds a social v19 post from the update time and block height its removal record keeps', () => {
+    // Social v19's post and reply require `$updatedAtBlockHeight`, so it is part of the bytes the
+    // record's hash commits to beside `$updatedAt`. No signed transition carries either: the record keeps both.
+    const source = contractSource(readFileSync(new URL('../../contracts/yappr-social-contract-v19.json', import.meta.url), 'utf8'));
+    const version = new PlatformVersion(postFixture.platformVersion);
+    const v19 = DataContract.fromJSON(registrationJson(source, { id: postFixture.contractId, ownerId: postFixture.record.documentOwnerId }), true, version);
+    const context = structuredClone(postFixture);
+    const height = '668957';
+    // An update time the archive does not report, as for a post tombstoned after its create.
+    const updatedAt = String(postFixture.candidate.updatedAt + 60_000);
+    const transition = selectTransition(Buffer.from(postFixture.candidate.transitionBase64, 'base64'), context);
+    const expected = rebuild({ ...context, transition, system: { ...postFixture.system, $updatedAt: updatedAt, $updatedAtBlockHeight: height } }, v19);
+    context.record.documentHash = sha256d(expected.bytes);
+    // The first registration's record keeps `$createdAt` only: nothing supplies the height or the time.
+    expect(() => recoverCandidate(context, postFixture.candidate, v19)).toThrow(/No serialization matches/);
+    context.record.keptFields = { ...postFixture.record.keptFields, $updatedAt: updatedAt, $updatedAtBlockHeight: height };
+    const withoutTimes = { ...postFixture.candidate };
+    delete withoutTimes.createdAt;
+    delete withoutTimes.updatedAt;
+    for (const candidate of [postFixture.candidate, withoutTimes, { ...postFixture.candidate, createdAt: 1, updatedAt: 2 }]) {
+      const recovered = recoverCandidate(context, candidate, v19);
+      expect([recovered.system.$updatedAt, recovered.system.$updatedAtBlockHeight]).toEqual([updatedAt, height]);
+      expect(recovered.document.$updatedAtBlockHeight).toBe(Number(height));
+      expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    }
+    for (const wrong of [{ $updatedAtBlockHeight: '668958' }, { $updatedAt: String(Number(updatedAt) + 1) }]) {
+      const changed = structuredClone(context);
+      Object.assign(changed.record.keptFields, wrong);
+      expect(() => recoverCandidate(changed, postFixture.candidate, v19)).toThrow(/No serialization matches/);
+    }
+  });
+  it.each([
+    ['blog', 'yappr-blog-contract-v11.json', '$updatedAtBlockHeight'],
+    ['blogComment', 'yappr-blog-contract-v11.json', '$createdAtBlockHeight'],
+    ['storeItem', 'yappr-storefront-contract-v12.json', '$updatedAtBlockHeight'],
+  ])('reconstructs %s under the new schema using kept system values', (type, file, heightField) => {
+    const bundle = type === 'blog' ? fixture : JSON.parse(readFileSync(new URL(`./fixtures/${type}-testnet.json`, import.meta.url), 'utf8'));
+    const source = contractSource(readFileSync(new URL(`../../contracts/${file}`, import.meta.url), 'utf8'));
+    const schema = DataContract.fromJSON(registrationJson(source, { id: bundle.contractId, ownerId: bundle.record.documentOwnerId }), true, new PlatformVersion(bundle.platformVersion));
+    const context = structuredClone(bundle);
+    const transition = selectTransition(Buffer.from(bundle.candidate.transitionBase64, 'base64'), context);
+    const system = { $contractVersion: 1, $createdAt: bundle.system.$createdAt, [heightField]: '668957' };
+    if (heightField === '$updatedAtBlockHeight') Object.assign(system, { $revision: '1', $updatedAt: String(Number(system.$createdAt) + 60_000) });
+    const expected = rebuild({ ...context, transition, system }, schema);
+    context.record.documentHash = sha256d(expected.bytes);
+    context.record.keptFields = { ...context.record.keptFields, ...system };
+    const candidate = { ...bundle.candidate, createdAt: 1, updatedAt: 2, createdAtBlockHeight: 3, updatedAtBlockHeight: 4 };
+    const recovered = recoverCandidate(context, candidate, schema);
+    expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    expect(recovered.document[heightField]).toBe(668957);
+    const otherHeight = heightField === '$createdAtBlockHeight' ? '$updatedAtBlockHeight' : '$createdAtBlockHeight';
+    expect(recovered.system).not.toHaveProperty(otherHeight);
+    context.record.keptFields[heightField] = '668958';
+    expect(() => recoverCandidate(context, candidate, schema)).toThrow(/No serialization matches/);
   });
   it('tries another archive after an HTTP failure and rejects a forged candidate before a good one', async () => {
     const originalFetch = globalThis.fetch;
