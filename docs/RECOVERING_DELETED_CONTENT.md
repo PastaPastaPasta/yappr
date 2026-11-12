@@ -87,10 +87,10 @@ deletable type that keeps a record: mutable types require and keep
 and keep `$createdAt` and `$createdAtBlockHeight`. Reports discard records.
 The tool reads these values from the record itself, so archive-supplied times
 or heights are unnecessary for these cuts. It serializes either block height
-only when the document type requires it. A `--source-file` candidate may give
-`createdAtBlockHeight` or `updatedAtBlockHeight` for historical types whose
-records do not keep the required height. The height names the document's last
-signed transition (creation for immutable types).
+only when the document type requires it. The height names the document's last
+signed transition (creation for immutable types). The signed transition supplies
+the content and `$revision` (implicitly 1 on create); `$contractVersion` is found
+by trying versions until the serialized document matches the record's hash.
 
 The unchanged registered social v17, blog v9 and storefront v10 files keep
 their historical behavior. The new cuts are not yet registered. Offline

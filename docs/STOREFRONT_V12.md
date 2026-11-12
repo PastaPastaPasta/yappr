@@ -11,9 +11,10 @@ removal records. Storefront v11's hide moderation is excluded.
 Only required and kept-field arrays change. Version, config, moderation
 declaration, delete windows, settled approvals, indexes and fees are unchanged.
 Platform supplies the system values; clients add no document content fields.
-The recovery tool reads every system value covered by the removal record's
-`documentHash` from its kept fields, including the block height of the last
-signed transition. It accepts reconstructed content only on a hash match.
+The kept fields supply the times and heights. The signed transition supplies
+the content and `$revision` (implicitly 1 on create); the tool tries contract
+versions until the serialized document matches the removal record's
+`documentHash`. The record does not supply `$contractVersion`.
 See [RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md).
 
 | Property | Value |

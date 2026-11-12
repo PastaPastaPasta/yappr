@@ -18,11 +18,11 @@ declaration, fees, indexes and document content stay exactly as v17.
 Platform sets the required height on create and update; clients supply no new
 content fields. A kept system property must also be required by its type.
 
-The recovery tool reads every system value covered by the removal record's
-`documentHash` from the record itself: neither signed creates nor replacements
-carry these timestamps or the last update height. The hash still decides
-whether reconstructed content is authentic. See
-[RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md).
+The kept fields supply the times and heights. The signed create or replace
+transition supplies the content and `$revision` (implicitly 1 on create).
+The tool tries contract versions until the serialized document matches the
+removal record's `documentHash`; the record does not supply `$contractVersion`.
+See [RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md).
 
 | Property | Value |
 | --- | --- |
