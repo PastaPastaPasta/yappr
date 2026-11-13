@@ -1,8 +1,7 @@
-import appConnectEntries from './app-connect-entries.cjs';
 import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { APP_CONNECT_ENTRIES, appConnectEnvLines, entriesToCreate, fileSha256, planAppConnectSet } from './app-connect-set.mjs';
-import { testnetAppendProblem } from './app-connect-journal.mjs';
+import { REGISTERED_TESTNET_MAKER, testnetAppendProblem } from './app-connect-journal.mjs';
 
 const MAKER = '11111111111111111111111111111112';
 const PINS = [
@@ -63,7 +62,7 @@ describe('the default release set', () => {
     expect(testnetAppendProblem('testnet', 'social', { maker: MAKER })).toBeNull();
     expect(testnetAppendProblem('mainnet', null, { testnetSet: 'rehearsal', maker: MAKER })).toMatch(/for testnet/);
     for (const appendAfter of [null, 'passkeyVault']) {
-      expect(testnetAppendProblem('testnet', appendAfter, { maker: appConnectEntries.REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
+      expect(testnetAppendProblem('testnet', appendAfter, { maker: REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
     }
   });
 });

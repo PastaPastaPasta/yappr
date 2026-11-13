@@ -1,11 +1,11 @@
-import appConnectEntries from './app-connect-entries.cjs';
 import { describe, expect, it } from 'vitest';
+import { REGISTERED_TESTNET_MAKER } from './app-connect-journal.mjs';
 import {
   balanceGate, createCostEstimate, directoryProblem, electionWindowProblems, formatCredits, keyFileProblem,
   MAINNET_ELECTION_DELAY, parseChallengeCoolDown, parseElectionDelay, parseElectionWindows, registrationFee, registrationPolicy, requireNetwork, withChallengeCoolDown, withElectionDelay, withElectionWindows,
 } from './registration-policy.mjs';
 
-const MAKER = appConnectEntries.REGISTERED_TESTNET_MAKER;
+const MAKER = REGISTERED_TESTNET_MAKER;
 const TESTNET = { network: 'testnet', maker: MAKER, interim: 'notYetUsable', electionWindows: '86400,86400', electionDelay: '86400', challengeCoolDown: '1209600' };
 const stat = (mode, { file = true, uid = 501 } = {}) => ({ isFile: () => file, isDirectory: () => !file, mode, uid });
 

@@ -38,7 +38,7 @@ describe('release configuration', () => {
     expect(config.pins).toHaveLength(11);
     const snapshot = JSON.parse(readFileSync(new URL('../../lib/contracts/bundled/testnet.json', import.meta.url), 'utf8'));
     expect(config.pins.every(pin => snapshot.contracts[pin.id] && !pin.error && pin.schemaHash)).toBe(true);
-    expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('D8benQGnycUTXbT8GRAaYf3GZMKVcWESiF9NyyW1Bi4e');
+    expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('8mjmcXmfLyFAX6BkawQbiuWUaNXyN3T7cSKTdTXhpDVU');
   });
   it('hashes schema values independently of object key order', () => {
     expect(schemaHash({ b: { z: 1, a: 2 }, a: [1, 2] })).toBe(schemaHash({ a: [1, 2], b: { a: 2, z: 1 } }));

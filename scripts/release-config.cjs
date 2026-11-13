@@ -4,7 +4,7 @@ const bs58 = require('bs58').default
 const { readFileSync } = require('node:fs')
 const { parseEnv } = require('node:util')
 const { join } = require('node:path')
-const { APP_CONNECT_ENTRIES, REGISTERED_TESTNET_MAKER } = require('./app-connect-entries.cjs')
+const { APP_CONNECT_ENTRIES } = require('./app-connect-entries.cjs')
 
 const MAINNET_MEMBER_KEYS = APP_CONNECT_ENTRIES.map(entry => entry.envKey)
 
@@ -28,10 +28,6 @@ const IDENTIFIER_KEYS = [
   'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER',
 ]
 const HISTORICAL_TOPOLOGIES = { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' }
-const REGISTERED_GROUP = {
-  id: '4MjVAxDYjCdQqFBT48gzdvCsbVwFwtZzALEMWjns33pv', owner: REGISTERED_TESTNET_MAKER,
-  appId: 'D8benQGnycUTXbT8GRAaYf3GZMKVcWESiF9NyyW1Bi4e', socialId: '4nYYMMs94m4asfQ2PdJ69uqugpfJ7PaQNjhJyHXSeLfb',
-}
 const RELEASE_VALUES = {
   NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19',
   NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v12',
@@ -191,12 +187,7 @@ function assertReleaseConfig(env) {
   for (const key of identifierKeys) {
     if (!isIdentifier(env[key])) errors.push(`${key} must be a base58 identifier encoding 32 bytes`)
   }
-  const registeredV17 = !mainnet && !qa &&
-    env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID === REGISTERED_GROUP.id &&
-    env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER === REGISTERED_GROUP.owner &&
-    env.NEXT_PUBLIC_APP_CONNECT_APP_ID === REGISTERED_GROUP.appId &&
-    env.NEXT_PUBLIC_YAPPR_CONTRACT_ID === REGISTERED_GROUP.socialId
-  const values = { ...RELEASE_VALUES, ...(registeredV17 ? HISTORICAL_TOPOLOGIES : {}), ...qa?.values }
+  const values = { ...RELEASE_VALUES, ...qa?.values }
   for (const [key, value] of Object.entries(values)) {
     if (env[key] !== value) errors.push(`${key} must be ${value}`)
   }

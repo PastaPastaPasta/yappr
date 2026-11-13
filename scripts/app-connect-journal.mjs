@@ -4,11 +4,10 @@
  * docs/SOCIAL_V18.md), apart from the script so they can be tested. No
  * network, no keys, no wasm: `generateId` is passed in.
  */
-import appConnectEntries from './app-connect-entries.cjs';
-
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect-set.mjs';
 
-const { REGISTERED_TESTNET_MAKER } = appConnectEntries;
+/** The maker of the retired 2026-10-21 testnet set (group 4MjVAxDY…); a fresh set needs a new one (D46). */
+export const REGISTERED_TESTNET_MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
 export const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay, challengeCoolDown: policy.challengeCoolDown });
