@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import releaseConfig from './release-config.cjs';
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET, appConnectEnvLines, entriesToCreate, planAppConnectSet, planRehearsalSet } from './app-connect-set.mjs';
-import { REGISTERED_TESTNET_MAKER, appendNonces, checkJournal, isResumedAppend, journalIsComplete, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
+import { REGISTERED_TESTNET_MAKER, RELEASE_TESTNET_MAKER, appendNonces, checkJournal, isResumedAppend, journalIsComplete, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 
 const MAKER = TESTNET_REHEARSAL_SET.makerId;
 /** A stand-in for DataContract.generateId: deterministic per (owner, nonce). */
@@ -29,6 +29,8 @@ describe('the testnet append guard', () => {
     expect(testnetAppendProblem('testnet', 'social', fresh)).toBeNull();
     expect(testnetAppendProblem('testnet', null)).toMatch(/explicit new maker/);
     expect(testnetAppendProblem('testnet', null, { maker: REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
+    expect(testnetAppendProblem('testnet', null, { maker: RELEASE_TESTNET_MAKER })).toMatch(/already holds the testnet release set/);
+    expect(testnetAppendProblem('testnet', 'passkeyVault', { maker: RELEASE_TESTNET_MAKER })).toBeNull();
     expect(testnetAppendProblem('devnet', null)).toBeNull();
     expect(testnetAppendProblem('mainnet', null)).toBeNull();
   });
