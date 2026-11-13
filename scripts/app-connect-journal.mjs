@@ -4,11 +4,12 @@
  * docs/SOCIAL_V18.md), apart from the script so they can be tested. No
  * network, no keys, no wasm: `generateId` is passed in.
  */
-import appConnectEntries from './app-connect-entries.cjs';
-
 import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect-set.mjs';
 
-const { REGISTERED_TESTNET_MAKER } = appConnectEntries;
+/** The maker of the retired 2026-10-21 testnet set (group 4MjVAxDY…); a fresh set needs a new one (D46). */
+export const REGISTERED_TESTNET_MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
+/** The maker of the 2026-11-12 testnet release set (group DrNB3VwK…, anchor nonce 1): it may append to that group, never start another. */
+export const RELEASE_TESTNET_MAKER = '6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog';
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
 export const journalPolicy = (policy) => ({ interim: policy.interim, electionWindows: policy.electionWindows, electionDelay: policy.electionDelay, challengeCoolDown: policy.challengeCoolDown });
@@ -32,6 +33,7 @@ export function testnetAppendProblem(network, appendAfter, { testnetSet = null, 
   }
   if (rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
   if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; social v19 requires a new maker, anchor and group (D46)';
+  if (maker === RELEASE_TESTNET_MAKER && appendAfter === null) return 'the 2026-11-12 release maker already holds the testnet release set: append to its group with --append-after (and --start-nonce 1), or register a fresh set from a new maker';
   if (!maker) return 'a fresh v19 set requires an explicit new maker (D46)';
   return null;
 }

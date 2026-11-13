@@ -53,8 +53,8 @@ const REHEARSAL_ENTRIES = [
 ];
 
 /**
- * The last entry of the historical eight-member prefix. The production
- * group 4MjVAxDY… holds only that prefix (maker hbGEc…, nonces 57–64).
+ * The last entry of the historical eight-member prefix. The retired
+ * 2026-10-21 group 4MjVAxDY… holds only that prefix (maker hbGEc…, nonces 57–64).
  * The v18 experiments were appended only to the D36 rehearsal group ePtSmVdS…
  * at nonces 9–11, selected by `--testnet-set rehearsal --append-after passkeyVault`.
  */

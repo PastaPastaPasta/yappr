@@ -1,4 +1,4 @@
-> **Activated on staging 2026-10-21 ([#784](https://github.com/PastaPastaPasta/yappr/issues/784)).** The production release set registered that day is in the checked-in `.env.testnet`, and `npm run build` builds from it. `/staging` builds the same file with `BASE_PATH=/staging` (D20), so the D36 rehearsal override is retired: `.env.staging`, its separate snapshot and the epoch `testnet-staging-20261018` are gone, and [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md) keeps the rehearsal's record. Root switches when the owner merges staging into master. See the [activation record](#activation-record-2026-10-21).
+> **Activated on staging 2026-10-21 ([#784](https://github.com/PastaPastaPasta/yappr/issues/784)).** The production release set registered that day is in the checked-in `.env.testnet`, and `npm run build` builds from it. `/staging` builds the same file with `BASE_PATH=/staging` (D20), so the D36 rehearsal override is retired: `.env.staging`, its separate snapshot and the epoch `testnet-staging-20261018` are gone, and [TESTNET_STAGING_REHEARSAL.md](TESTNET_STAGING_REHEARSAL.md) keeps the rehearsal's record. Root switches when the owner merges staging into master. See the [activation record](#activation-record-2026-10-21). **Re-registered 2026-11-12 (D46):** `.env.testnet` now names the fresh social v19 / blog v11 / storefront v12 set; see the [cut-over record](#cut-over-record-2026-11-12).
 
 # Testnet configuration and cut-over
 
@@ -21,16 +21,16 @@ and `/devnet` keep their own configurations.
 `.env.testnet` is checked in. All values are public. Never copy credentials,
 private journals, seed phrases or signing keys into it. Its public IDs come from
 the registration journal and were confirmed with proved readback, including
-actual contract versions. This registered set uses social v17, storefront v10, blog v9, pollr v8,
+actual contract versions. The set registered on 2026-11-12 uses social v19, storefront v12, blog v11, pollr v8,
 DM v5 and profile v2. The passkey-vault contract must be registered and its client
 landed before cut-over. The unified profile and system contracts are not group
 members; grant them separately.
 
-D46 prepares a fresh registration with social v19, blog v11 and storefront v12,
-using a new maker, app and group. The blank templates and publisher select
-those cuts; the build still accepts the exact historical v17 deployment above
-until its public pins and snapshot are replaced after registration. The new
-cuts are not yet registered. See [TESTNET_RELEASE.md](TESTNET_RELEASE.md).
+D46 registered that set on 2026-11-12 from a new maker, app and group, replacing
+the 2026-10-21 v17 set. The build gate accepts only the v19, blog v11 and
+storefront v12 topologies for a release build, so the retired v17 set no
+longer builds (the `/staging-old` QA build keeps its own exception). See
+[TESTNET_RELEASE.md](TESTNET_RELEASE.md#registration-record-2026-11-12).
 
 `npm run build` (`npm run build:release`) loads `.env.testnet` explicitly, replaces ambient
 `NEXT_PUBLIC_*` values and `STORAGE_EPOCH` with this file's values (including
@@ -225,6 +225,31 @@ command to `npm run build` (Node 20.12 or later), remove the dashboard
 `NEXT_PUBLIC_*` overrides, and check a preview's metadata before merging
 staging into master.
 
+## Cut-over record (2026-11-12)
+
+D46 replaced the set `.env.testnet` names with the fresh registration in
+[TESTNET_RELEASE.md](TESTNET_RELEASE.md#registration-record-2026-11-12):
+app `8mjmcXmf…`, group `DrNB3VwK…`, maker `6dV6s3a6…`, social v19 `3M5Dafkr…`,
+blog v11 `E813f6SA…`, storefront v12 `EkFqdQFu…`, and YAPP `34xUEtfx…` as the
+release audit pin.
+
+1. **Pins.** `.env.testnet` carries the eight new `id:1` members, anchor, group
+   and owner, the YAPP id and authority (the new maker), and the topologies
+   `v19`, `v11` and `v12`. System ids, retired blanks and product flags are
+   unchanged. `STORAGE_EPOCH` is `testnet-release-2`.
+2. **Snapshot.** `NETWORK=testnet npm run contracts:snapshot -- --prune`, with
+   `CONTRACT_IDS` naming the `/testing` defaults as in the activation, wrote 18
+   contracts. The eight new members decode identically to the registration
+   readback. The pruned entries are the eight members of the retired v17 set.
+3. **Build gate.** `scripts/release-config.cjs` no longer accepts the retired
+   v17 set's topologies for its group. Every testnet release build must now be
+   v19 / blog v11 / storefront v12.
+4. **Old set.** App `D8benQGn…`, group `4MjVAxDY…` and social v17 `4nYYMMs9…`
+   stay on chain untouched. No charter was filed on them, and nothing points at
+   them. `.env.staging-old` and `.env.beta` are unchanged.
+5. **Deploy.** Merging into staging redeploys `/staging` on the new set with the
+   seated teams. Root follows at the owner's next staging→master merge.
+
 ## Defaults deliberately retained until cut-over
 
 Removing these would change today's `/testing`, `dev` and unit tests, which
@@ -262,15 +287,17 @@ relocating them into another silent default:
 `next.config.js` computes `NEXT_PUBLIC_STORAGE_SCOPE` from `STORAGE_EPOCH` and
 `BASE_PATH`. With no epoch, root remains `''`, staging `staging`, testing
 `testing`, and devnet `devnet`, exactly as today. At cut-over,
-`STORAGE_EPOCH=testnet-release-1` makes root `testnet-release-1` and staging
-`testnet-release-1:staging`. Old browser sessions and caches are ignored; there
+`STORAGE_EPOCH=testnet-release-1` made root `testnet-release-1` and staging
+`testnet-release-1:staging`. The 2026-11-12 re-registration bumped it to
+`testnet-release-2`: sessions hold App Connect keys bound to the retired group,
+so a new contract set starts clean. Old browser sessions and caches are ignored; there
 is no migration or notice. Do not set `NEXT_PUBLIC_STORAGE_SCOPE` in an env
 file: Next's generated `env` block overrides it. Keep the epoch stable through
 routine redeploys; bump it only for a deliberate clean start.
 
 E2E fixtures otherwise infer storage scope from the URL path. For tests against
-release root set `E2E_STORAGE_SCOPE=testnet-release-1`; for `/staging` set
-`E2E_STORAGE_SCOPE=testnet-release-1:staging`. `/testing` keeps its own scope.
+release root set `E2E_STORAGE_SCOPE=testnet-release-2`; for `/staging` set
+`E2E_STORAGE_SCOPE=testnet-release-2:staging`. `/testing` keeps its own scope.
 
 ## Preparation validation (2026-10-17)
 

@@ -10,8 +10,6 @@
  * Memberships can never be removed: never append those cuts to the release
  * group. Only `--testnet-set rehearsal` selects that separate plan.
  */
-const REGISTERED_TESTNET_MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
-
 const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
   { name: 'social', file: 'yappr-social-contract-v19.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: 'bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971' },
@@ -24,4 +22,4 @@ const APP_CONNECT_ENTRIES = [
   { name: 'passkeyVault', file: 'yappr-passkey-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_PASSKEY_VAULT_CONTRACT_ID', sha256: '14094cadcaf6c9b575fcb97ea53b769c5b0d88cfa99b3c5c827da0ab176f73c5' },
 ];
 
-module.exports = { APP_CONNECT_ENTRIES, REGISTERED_TESTNET_MAKER };
+module.exports = { APP_CONNECT_ENTRIES };

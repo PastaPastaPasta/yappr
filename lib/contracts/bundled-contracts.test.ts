@@ -79,7 +79,7 @@ describe('the registered thread index shape the bundles seed', () => {
   });
 
   it('root and /staging: the bundled registered release social contract keys repliesOf on live', async () => {
-    expect(await leadOf((await bundledContractsFor('testnet'))?.contracts['4nYYMMs94m4asfQ2PdJ69uqugpfJ7PaQNjhJyHXSeLfb']?.bytes)).toBe('live');
+    expect(await leadOf((await bundledContractsFor('testnet'))?.contracts['3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG']?.bytes)).toBe('live');
   });
 
   it('/staging-old: the substituted rehearsal snapshot keys repliesOf on rootPostId', async () => {

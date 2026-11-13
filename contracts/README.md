@@ -38,7 +38,7 @@ network-specific moderation configuration.
 These eight entries are the default set on every network and the mainnet
 release set (D45/D46). Social v19, blog v11 and storefront v12 add required
 and kept system values for recoverable removals to the registered deletion
-cuts (D46). They are not yet registered: the 2026-10-21 testnet set and its v17 file remain unchanged.
+cuts (D46). They were registered on testnet on 2026-11-12 as a fresh eight-member set from a new maker, app and group ([docs/TESTNET_RELEASE.md](../docs/TESTNET_RELEASE.md#registration-record-2026-11-12)); the retired 2026-10-21 testnet set and its v17 file remain unchanged.
 The publisher
 restores every member's env key and completes the journal at `passkeyVault`.
 

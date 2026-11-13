@@ -23,10 +23,10 @@ See [RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md).
 | File | `contracts/yappr-blog-contract-v11.json` |
 | SHA-256 | `d1a53c31803a2f6f057700b358755b4d927318bfdcd5d2cb5b6718e8942dca6c` |
 | Signed create estimate | **9,454 B**, testnet and mainnet, rc.4 SDK; 10,546 B under 20,000 B |
-| Status | **Not yet registered** |
+| Status | **Registered on testnet 2026-11-12**: `E813f6SAMzvquTM9G6LFgtDJjm1h3B4V8J6qkQ2KYW7e` (maker `6dV6s3a6…`, nonce 5; [TESTNET_RELEASE.md](TESTNET_RELEASE.md#registration-record-2026-11-12)) |
 
 Both full offline parsers, node rules and strict-size checks pass on both
-networks. No live registration or recovery proof is claimed for this cut.
-It joins social v19 and the other release members in a fresh `/staging`
-maker, app and group; mainnet follows that set (D45/D46). Existing testnet ids,
-snapshots and the `/beta` experiment stay pinned until cut-over.
+networks. It joined social v19 and the other release members in the fresh
+`/staging` maker, app and group on 2026-11-12; mainnet follows that set
+(D45/D46). The live recovery proof of 2026-11-13 removed and rebuilt every
+moderator-deletable type of this cut ([RECOVERING_DELETED_CONTENT.md](RECOVERING_DELETED_CONTENT.md#live-proof-on-the-v19-release-set-2026-11-13)).
