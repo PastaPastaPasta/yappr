@@ -93,7 +93,8 @@ the content and `$revision` (implicitly 1 on create); `$contractVersion` is foun
 by trying versions until the serialized document matches the record's hash.
 
 The unchanged registered social v17, blog v9 and storefront v10 files keep
-their historical behavior. The new cuts are not yet registered. Offline
+their historical behavior. The new cuts were registered on testnet on 2026-11-12
+(see the live proof below). Offline
 regressions rebuild captured post, blog, blogComment and storeItem transitions
 under the new schemas using synthetic kept system values, and reject wrong
 heights or times. These tests do not claim new live registration evidence.
@@ -164,6 +165,34 @@ The checked-in fixtures preserve representative proof, byte-field and restored
 cases. Mainnet `list` of DPNS
 `GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec/domain` cleanly reported zero
 recoverable records: its proved schema does not keep moderator-removal records.
+
+## Live proof on the v19 release set, 2026-11-13
+
+The first removal records written under D46 were made on the `/staging` set
+registered on 2026-11-12 (social v19 `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`,
+blog v11 `E813f6SAMzvquTM9G6LFgtDJjm1h3B4V8J6qkQ2KYW7e`, storefront v12
+`EkFqdQFuiMbxTbrokrarJb2z2U25s11BFyi1wREPCjaJ`). Two test personas wrote one
+of each moderator-deletable type with the text "v19 recovery proof". Each
+seated team's leader removed them alone, citing its charter's reason. Every
+record's `keptFields` held exactly the type's `deleteKeepsFields` with the
+stored document's own values, and `recover` rebuilt each document from the
+default testnet explorer to the record's `documentHash`:
+
+| Contract | Type | Kept fields | Rebuilt to `documentHash` | Offline `verify` |
+| --- | --- | --- | --- | --- |
+| Social v19 | post | `tags`, `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Social v19 | reply | `rootPostId`, `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Blog v11 | blog | `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Blog v11 | blogPost | `blogId`, `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Blog v11 | blogComment | `blogPostId`, `$createdAt`, `$createdAtBlockHeight` | yes | pass |
+| Storefront v12 | store | `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Storefront v12 | storeItem | `$createdAt`, `$updatedAt`, `$updatedAtBlockHeight` | yes | pass |
+| Storefront v12 | storeReview | `$createdAt`, `$createdAtBlockHeight` | yes | pass |
+| Storefront v12 | itemReview | `$createdAt`, `$createdAtBlockHeight` | yes | pass |
+
+All nine matched at contract version 1, and each document was proved absent
+after its removal. `report` (which discards its record) and `yapprProfile`
+(the same mutable rule as `blog` and `store`) were not exercised.
 
 Run `npx vitest run scripts/recovery` for the CLI, pagination, rebuild, source
 fallback and tamper-rejection tests, or `npm run test` for the full unit suite.
