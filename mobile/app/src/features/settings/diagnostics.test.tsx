@@ -14,7 +14,7 @@ import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { useToastStore } from '~/ui/toast';
 
-import { capabilityRows, diagnosticsText, formatAgo, formatBytes } from './diagnostics';
+import { capabilityRows, contractId, diagnosticsText, formatAgo, formatBytes, shortId } from './diagnostics';
 import { DiagnosticsScreen } from './DiagnosticsScreen';
 import { EMAIL_ERRORS, EMAIL_LOG_LINES, EMAIL_MAX_CHARS, emailDiagnosticsText } from './send-diagnostics';
 
@@ -100,6 +100,15 @@ describe('diagnostics helpers', () => {
     expect(formatAgo(0, 125_000)).toBe('2m ago');
   });
 
+  it('shows the DM contract the build messages on: DM v5, else the legacy one', () => {
+    const info = INFO as EngineInfo;
+    expect(contractId(info, 'dm')).toBe(CONTRACTS.dmV5);
+    const legacy = { ...info, capabilities: { ...info.capabilities, dm: 'legacy' } } as EngineInfo;
+    expect(contractId(legacy, 'dm')).toBe(CONTRACTS.dm);
+    expect(contractId(info, 'social')).toBe(CONTRACTS.social);
+    expect(contractId(undefined, 'dm')).toBeUndefined();
+  });
+
   it('flattens the capability flags', () => {
     expect(capabilityRows(INFO.capabilities)).toEqual([
       { label: 'rankings', value: 'Yes' },
@@ -182,6 +191,9 @@ describe('Troubleshooting (SET-08)', () => {
     expect(screen.getByText('Pollr contract')).toBeTruthy();
     fireEvent.press(screen.getByTestId('diagnostics-copy-pollr'));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(CONTRACTS.pollr);
+    expect(screen.getByText(shortId(CONTRACTS.dmV5))).toBeTruthy();
+    fireEvent.press(screen.getByTestId('diagnostics-copy-dm'));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(CONTRACTS.dmV5);
 
     // Collapsed (UX_SPEC §4.32): the count, then the list once opened.
     expect(screen.getByText(/^Recent errors \(\d+\)$/)).toBeTruthy();
