@@ -132,6 +132,25 @@ describe('engine storage', () => {
     expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login' });
   });
 
+  it('reads and deletes a pending sign-in only as the shared copy, and deletes one an older build left with an account', async () => {
+    const login = 'yappr_secure_ac_secret_testnet_pending_request_login';
+    // An older build filed it under the account the boot was bound to.
+    const mmkvKey = keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet');
+    const index = mmkv.createMMKV({ id: 'yappr.engine-index.testnet', encryptionKey: mmkvKey });
+    index.set('index', JSON.stringify({ [ALICE]: { [login]: { n: 1, slot: 'a' } } }));
+    keychain.set(`${SERVICE}:${secureItemName(ALICE, login, 'a', 0)}`, 'legacy');
+
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.snapshot(ALICE);
+    await storage.apply({ area: 'secure', seq: 2, ops: [['set', login, 'fresh']] });
+    expect((await storage.snapshot(ALICE)).secure).toEqual({ [login]: 'fresh' });
+
+    await storage.apply({ area: 'secure', seq: 3, ops: [['del', login]] });
+    expect((await storage.snapshot(null)).secure).toEqual({});
+    expect((await storage.snapshot(ALICE)).secure).toEqual({});
+    expect(secretItems()).toEqual([]);
+  });
+
   it('chunks long values and replaces them without leaving items behind', async () => {
     const long = 'x'.repeat(SECURE_CHUNK_CHARS * 2 + 5);
     await storage.apply({ area: 'secure', seq: 1, ops: [['set', 'yappr:pf:k', long]] });

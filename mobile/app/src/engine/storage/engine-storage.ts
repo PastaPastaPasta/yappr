@@ -237,6 +237,11 @@ export function createEngineStorage(
       if (named !== sessionIdentity() && isAuthKeyOf(key, named)) await purgeBucket(named);
       return;
     }
+    // A signed-out sign-in request lives in the shared bucket; an older build may have left one in an account's too.
+    if (isSharedKey(key)) {
+      for (const bucket of new Set([SHARED_BUCKET, owner, lastActive])) if (bucket !== null) await removeFromBucket(bucket, key);
+      return;
+    }
     const index = readIndex();
     const bucket = [owner, lastActive, SHARED_BUCKET].find((b) => b !== null && index[b]?.[key]);
     if (bucket !== undefined && bucket !== null) await removeFromBucket(bucket, key);
@@ -298,6 +303,7 @@ export function createEngineStorage(
       for (const bucket of new Set([SHARED_BUCKET, identityId])) {
         if (bucket === null) continue;
         for (const [key, stored] of Object.entries(index[bucket] ?? {})) {
+          if (bucket !== SHARED_BUCKET && isSharedKey(key)) continue;
           const value = await readSecret(bucket, key, stored);
           if (value !== null) secure[key] = value;
         }
