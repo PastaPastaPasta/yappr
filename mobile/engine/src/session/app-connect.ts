@@ -2,7 +2,13 @@ import type { AppConnectGrant } from 'platform-auth'
 import { YAPPR_APP_SCHEMES } from '@/lib/app-connect/callback-channel'
 import type { AppConnectCarrierUris } from '@/lib/app-connect/carrier'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
-import { AppConnectLogin, type AppConnectLoginState, type AppConnectUnavailableReason } from '@/lib/app-connect/login-flow'
+import {
+  AppConnectLogin,
+  type AppConnectLoginState,
+  type AppConnectUnavailableReason,
+  type RequestRecordStore,
+  type StoredAppConnectRequest,
+} from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
@@ -21,6 +27,13 @@ import { RpcError } from '../protocol/envelope'
  * The request (its ephemeral key wrapped under the key ring's device key) is
  * kept in the secure area until it is answered or runs out, so an app killed
  * while the wallet is open resumes it (`start` without `fresh`).
+ *
+ * Each kind of request has its own slot. A renewal's names its account, so
+ * the host files it with that account's secrets, which only its own boot
+ * reads. A sign-in, and signing an account in again ("Sign in again"), happen
+ * signed out, so theirs are in slots that name no account, which the host
+ * keeps in the shared bucket every signed-out boot reads; the account a
+ * "Sign in again" is for is the request's own identity hint.
  */
 
 export interface AppConnectCandidateDTO {
@@ -54,6 +67,25 @@ export interface AppConnectReturn {
   webBasePath: string
   /** The app's URL scheme (`yappr-dev`). */
   scheme: string
+}
+
+/** Which stored request: a renewal of `identityHint`, or a sign-in (as `identityHint` only, when it names one). */
+export interface AppConnectRequestKind {
+  identityHint?: string
+  renew?: boolean
+}
+
+const REAUTH_SLOT = 'reauth'
+
+function recordsFor({ identityHint, renew }: AppConnectRequestKind): RequestRecordStore {
+  if (renew) return requestRecordsFor(identityHint)
+  return requestRecordsFor(identityHint === undefined ? undefined : REAUTH_SLOT)
+}
+
+/** The stored request of this kind, if it is still answerable. A "Sign in again" slot holds one account's at a time. */
+async function loadRequest(kind: AppConnectRequestKind): Promise<StoredAppConnectRequest | null> {
+  const record = await recordsFor(kind).load()
+  return record && record.identityHint === kind.identityHint ? record : null
 }
 
 const WEB_ORIGIN = 'https://yap.pr'
@@ -91,6 +123,8 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
   let state: AppConnectFlowDTO = { flow, renew: false, phase: 'idle' }
   /** The login state last seen, so a confirm whose names resolve late is dropped once superseded. */
   let latest: AppConnectLoginState | null = null
+  /** Every stored request the flows stopped so far forgot, settled. */
+  let clearing: Promise<void> = Promise.resolve()
 
   function set(next: AppConnectFlowDTO): void {
     state = next
@@ -128,7 +162,10 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
   /** Stops the running flow; its request stays stored while the wallet may still answer it. */
   function stop(): void {
-    login?.dispose()
+    if (login) {
+      login.dispose()
+      clearing = Promise.all([clearing, login.cleared()]).then(() => undefined)
+    }
     login = null
     latest = null
     renewFor = undefined
@@ -149,6 +186,12 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /** The only identity the running flow accepts, if it names one. */
     hint: (): string | undefined => hint,
+
+    /** Resolves once the stored request of every flow stopped so far is gone from the device's storage. */
+    settled: (): Promise<void> => clearing,
+
+    /** The kind of request the running flow makes or resumes, if one is running. */
+    runningKind: (): AppConnectRequestKind | null => (login ? { identityHint: hint, renew: renewFor !== undefined } : null),
 
     /**
      * Starts a sign-in, resuming the stored request of the same kind unless
@@ -176,7 +219,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         // Proved again before every sign-in, so a group widened since boot blocks it.
         trust: () => appConnectSessions.trust({ fresh: true }),
         connectionId: () => appConnectSessions.connectionId(),
-        records: requestRecordsFor(input.identityHint),
+        records: recordsFor({ identityHint: input.identityHint, renew: input.renew }),
         origin: WEB_ORIGIN,
         basePath: returnTo.webBasePath,
         callbackUrl: (hash) => appConnectReturnUrl(returnTo, hash),
@@ -204,10 +247,11 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       await login?.reject()
     },
 
-    /** Abandons the flow and forgets its request and any verified answer. */
-    cancel(): void {
+    /** Abandons the flow and forgets its request and any verified answer; resolves once the request is gone. */
+    cancel(): Promise<void> {
       login?.finish()
       reset()
+      return clearing
     },
 
     /**
@@ -221,21 +265,53 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     },
 
     /** Forgets the stored request of this kind (see `pending`) without a running flow. */
-    async forget(identityHint?: string): Promise<void> {
+    async forget(kind: AppConnectRequestKind): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
-      const records = requestRecordsFor(identityHint)
-      const record = await records.load()
-      if (record) await records.clear(record)
+      const record = await loadRequest(kind)
+      if (record) await recordsFor(kind).clear(record)
     },
 
     /**
-     * Whether a request is still stored and answerable (the app was killed
-     * while the wallet was open): a sign-in's, or with `identityHint` the
-     * request only that identity may answer (a renewal's).
+     * Whether a request of this kind is still stored and answerable (the app
+     * was killed while the wallet was open).
      */
-    async pending(identityHint?: string): Promise<boolean> {
+    async pending(kind: AppConnectRequestKind): Promise<boolean> {
       if (!isAppConnectBuild() || !appConnectPins()) return false
-      return (await requestRecordsFor(identityHint).load()) !== null
+      return (await loadRequest(kind)) !== null
+    },
+
+    /**
+     * The sign-in a signed-out launch should resume, if one is stored: a
+     * plain one (`reauth: null`), or signing `reauth` in again. The newer one
+     * when both are.
+     */
+    async pendingSignIn(): Promise<{ reauth: string | null } | null> {
+      if (!isAppConnectBuild() || !appConnectPins()) return null
+      const plain = await loadRequest({})
+      const again = await requestRecordsFor(REAUTH_SLOT).load()
+      const reauth = again?.identityHint
+      if (again && reauth !== undefined && (!plain || again.createdAt > plain.createdAt)) return { reauth }
+      return plain ? { reauth: null } : null
+    },
+
+    /**
+     * `identityId`'s session could not be restored (the wallet superseded its
+     * keys while it answered a renewal, and the app was killed before that
+     * renewal landed): its stored renewal becomes a request to sign it in
+     * again, which a signed-out launch resumes. The renewal's slot is in that
+     * account's bucket, which no signed-out boot reads.
+     */
+    async carryRenewalOver(identityId: string): Promise<void> {
+      if (!isAppConnectBuild() || !appConnectPins()) return
+      const record = await loadRequest({ identityHint: identityId, renew: true })
+      if (!record) return
+      // A newer "Sign in again" the user started stays; the renewal is kept only once it is safely in its new slot.
+      const reauthSlot = recordsFor({ identityHint: identityId })
+      const newer = await reauthSlot.load()
+      if (newer && newer.createdAt > record.createdAt) return
+      await reauthSlot.save(record)
+      const carried = await loadRequest({ identityHint: identityId })
+      if (carried?.ephemeralPrivateKey === record.ephemeralPrivateKey) await recordsFor({ identityHint: identityId, renew: true }).clear(record)
     },
   }
 }

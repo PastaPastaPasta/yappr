@@ -338,6 +338,33 @@ describe('AppConnectLogin teardown', () => {
     expect(h.login.requestHashHex()).toBeNull()
   })
 
+  it('cleared() resolves only once the stored request is gone, and survives a failed clear', async () => {
+    const h = harness()
+    await h.login.start()
+    expect(h.records.value).not.toBeNull()
+    let releaseClear: () => void = () => undefined
+    const clearGate = new Promise<void>((resolve) => { releaseClear = resolve })
+    const deps = (h.login as unknown as { deps: { records: { clear: () => Promise<void> } } }).deps
+    deps.records.clear = async () => {
+      await clearGate
+      h.records.value = null
+    }
+
+    h.login.finish()
+    let settled = false
+    const cleared = h.login.cleared().then(() => { settled = true })
+    await h.flush()
+    expect(settled).toBe(false)
+    releaseClear()
+    await cleared
+    expect(h.records.value).toBeNull()
+
+    await h.login.start({ fresh: true })
+    deps.records.clear = async () => { throw new Error('storage gone') }
+    h.login.finish()
+    await expect(h.login.cleared()).resolves.toBeUndefined()
+  })
+
   it('wipes the previous ephemeral key when a new request replaces it', async () => {
     const h = harness()
     await h.login.start()

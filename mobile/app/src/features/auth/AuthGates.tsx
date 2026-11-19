@@ -133,11 +133,12 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       recover(true);
       return;
     }
-    // App Connect builds keep their pending request apart from the legacy key exchange's.
+    // App Connect builds keep their pending request apart from the legacy key exchange's, and
+    // tell a plain sign-in from signing an account in again ("Sign in again").
     const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
-    const pendingRequest = appConnect
-      ? engine.api.session.appConnectPending()
-      : engine.api.session.pendingKeyExchange().then((request) => request !== null);
+    const pendingRequest: Promise<{ reauth: string | null } | null> = appConnect
+      ? engine.api.session.appConnectPendingSignIn()
+      : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
     pendingRequest
       .then((pending) => {
         if (signingIn()) {
@@ -156,8 +157,11 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           return;
         }
         recover(true);
-        if (appConnect) router.push(`/sign-in/connect?mode=${lastAppConnectMode()}&resume=1`);
-        else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
+        if (appConnect) {
+          // The sign-in screen resumes the request of this kind, for this account.
+          useAccounts.setState({ reauth: pending.reauth });
+          router.push(`/sign-in/connect?mode=${lastAppConnectMode()}&resume=1`);
+        } else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);

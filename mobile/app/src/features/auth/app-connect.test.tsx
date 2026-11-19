@@ -13,7 +13,7 @@ import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
 import { afterSignOut, loadSignedInAgain, reauthenticate, useAccounts } from './accounts';
-import { parseAppConnectReturn, takeAppConnectReturnLink, useAppConnect } from './app-connect';
+import { cancelAppConnect, parseAppConnectReturn, startAppConnect, takeAppConnectReturnLink, useAppConnect } from './app-connect';
 import { useRevokedNotice } from './app-connect-status';
 import { AppConnectNotices } from './AppConnectNotices';
 
@@ -310,6 +310,70 @@ describe('the wallet sign-in on App Connect builds', () => {
     fireEvent.press(screen.getByText('Cancel'));
     expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
     expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  describe('cut short by an engine restart', () => {
+    const restarted = () => Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' });
+    const confirm = (extra: Partial<AppConnectFlowDTO> = {}) =>
+      flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }], ...extra } as never);
+
+    it('sends a cancel again to the new engine, naming the request to forget', async () => {
+      useAccounts.setState({ reauth: alice.identityId });
+      try {
+        await open({ mode: 'qr' });
+      } finally {
+        useAccounts.setState({ reauth: null });
+      }
+      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(restarted());
+      await act(async () => cancelAppConnect());
+      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(2);
+      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenLastCalledWith({ renew: false, reauth: alice.identityId });
+    });
+
+    it('does not send it again once a new sign-in has started', async () => {
+      await open({ mode: 'qr' });
+      let reject: (error: unknown) => void = () => undefined;
+      fakeEngine.method('session.appConnectCancel').mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
+      await act(async () => cancelAppConnect());
+      await act(async () => {
+        await startAppConnect('qr');
+      });
+      await act(async () => reject(restarted()));
+      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(1);
+    });
+
+    it('finishes as signed in when the new engine restored the account the answer was for', async () => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.current').mockResolvedValue(alice);
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
+      expect(screen.queryByTestId('kx-error')).toBeNull();
+    });
+
+    it('picks the request up again when the grant never landed, rather than showing an error', async () => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.current').mockResolvedValue(null);
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ renew: false, fresh: false }));
+      expect(screen.queryByTestId('kx-error')).toBeNull();
+    });
+
+    it('resumes a renewal whose request is still stored: the old keys still restored the session', async () => {
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.current').mockResolvedValue(alice);
+      fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
+      fakeEngine.method('session.appConnectStart').mockResolvedValue(flow({ renew: true, phase: 'waiting', uri: URI, requestHash: HASH }));
+      await act(async () => {});
+      expect(fakeEngine.method('session.appConnectPending')).toHaveBeenCalledWith({ renew: true });
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ renew: true }));
+      expect(Linking.openURL).not.toHaveBeenCalled();
+      expect(screen.queryByText('Renewed')).toBeNull();
+    });
   });
 
   it('says why wallet sign-in is not available, and retries only what a retry can fix', async () => {
