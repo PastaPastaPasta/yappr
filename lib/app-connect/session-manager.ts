@@ -122,6 +122,8 @@ class AppConnectSessionManager {
   private lifecycle = 0
   private readonly loggedOutAt = new Map<string, number>()
   private signedOutListener: ((identityId: string) => void) | null = null
+  /** Every revoke sign-out this tab has started (`signOutRevoked`), settled. */
+  private revocations: Promise<void> = Promise.resolve()
 
   network(): YapprKeyExchangeNetworkName {
     return getConfiguredNetwork()
@@ -397,6 +399,22 @@ class AppConnectSessionManager {
    * there is none does this tab sign out, clearing its own grant and nothing else.
    */
   async signOutRevoked(session: AppConnectSession): Promise<void> {
+    const revocation = this.revoke(session)
+    this.revocations = Promise.all([this.revocations, revocation.catch(() => undefined)]).then(() => undefined)
+    await revocation
+  }
+
+  /**
+   * Resolves once every revoke sign-out under way here has run to its end:
+   * the grant's discard, then the sign-out listener. A grant adopted before
+   * then could be the one that sign-out clears, so a sign-in or renewal
+   * waits for it (#736).
+   */
+  revocationSettled(): Promise<void> {
+    return this.revocations
+  }
+
+  private async revoke(session: AppConnectSession): Promise<void> {
     // A grant this tab no longer holds (signed out, or replaced by a raw key or
     // a newer grant since the caller read it) has nothing left here to end.
     if (!this.holds(session)) return

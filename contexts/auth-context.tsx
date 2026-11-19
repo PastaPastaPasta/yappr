@@ -122,7 +122,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const walletSignIn = useMemo(() => createWalletSignIn({
     controller,
     sessions: appConnectSessions,
-    settled: async () => { await revokeLogout.current },
+    settled: async () => {
+      await appConnectSessions.revocationSettled()
+      await revokeLogout.current
+    },
   }), [controller])
   /**
    * A revoke a renewal under way held back, with the session it was found on;
@@ -282,8 +285,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [controller, signInWithKey])
 
   const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
-    // A revocation sign-out may still be running: let it finish first, so it
-    // cannot clear the grant adopted here.
+    // A revocation sign-out may still be running, from the discard of the old
+    // grant to the logout it ends in: let it finish first, so it cannot clear
+    // the grant adopted here, and this sees whether it signed the user out.
+    await appConnectSessions.revocationSettled()
     await revokeLogout.current
     if (controller.getState().user) {
       // Only the signed-in identity's own renewal, and only while that session stands.

@@ -283,6 +283,39 @@ describe('AppConnectSessionManager across tabs', () => {
     save.mockRestore()
   })
 
+  it('revocationSettled() waits for the whole revoke sign-out, its discard and the listener included', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    const store = appConnectSessions.keyStore()
+    const realClear = store.clear.bind(store)
+    let proceed: () => void = () => undefined
+    const clear = vi.spyOn(store, 'clear').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { proceed = resolve })
+      return realClear(...args)
+    })
+
+    const revoking = appConnectSessions.signOutRevoked(old)
+    try {
+      await vi.waitFor(() => expect(clear).toHaveBeenCalled())
+      let settled = false
+      const waiting = appConnectSessions.revocationSettled().then(() => { settled = true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      // The grant is already inactive here, but the sign-out it leads to has not run yet.
+      expect(appConnectSessions.current('alice')).toBeNull()
+      expect(settled).toBe(false)
+      expect(signedOut).not.toHaveBeenCalled()
+
+      proceed()
+      await waiting
+      expect(signedOut).toHaveBeenCalledWith('alice')
+    } finally {
+      proceed()
+      await revoking
+      clear.mockRestore()
+    }
+  })
+
   it('a revoke overtaken by a raw-key sign-in does not sign the new session out', async () => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')
