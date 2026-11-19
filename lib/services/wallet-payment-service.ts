@@ -21,6 +21,8 @@ type PaymentData =
 export interface WalletPayment {
   readonly key: string;
   readonly kind: PaymentData['kind'];
+  /** The token-history document the payment writes when it executes. */
+  readonly receiptId: string;
   request: WalletTransitionRequest;
   data: PaymentData;
   checkOutcome: () => Promise<PaymentOutcome>;
@@ -33,16 +35,95 @@ type PersistedWalletPayment = {
   reservationId: string;
   data: PaymentData;
 };
-type PaymentContext = { ownerId: string; key: string; allowAnother?: ReadonlySet<string>; expose?: (payment: WalletPayment) => void; isCurrent?: () => boolean };
+type PaymentContext = {
+  ownerId: string;
+  key: string;
+  allowAnother?: ReadonlySet<string>;
+  expose?: (payment: WalletPayment) => void;
+  isCurrent?: () => boolean;
+  /** The local confirmation this prepares ({@link beginLocalWalletPayment}). */
+  attemptId?: string;
+};
 type LocalPreparedPayment = { completed: true } | { completed: false; payment?: WalletPayment; unresolved?: true; different?: true };
 export type LocalWalletPaymentIntent = {
   key: string;
   cached?: WalletPayment;
   allowAnother?: ReadonlySet<string>;
   onPrepared?: (payment: WalletPayment | undefined) => void;
+  attemptId?: string;
 };
 type PreparedPayment = { completed: true } | { completed: false; payment: WalletPayment; unresolved?: true; different?: true };
 const STORAGE_KEY = scopedKey('wallet-payments:v1');
+
+/**
+ * A local confirmation of a payment under way, recorded before its CRITICAL
+ * signer is asked for and kept until it ends. While the key sheet waits,
+ * another tab may show the same payment's QR, see the wallet complete it and
+ * clear its record: that tab stamps the completed reservation and receipt
+ * here, so this confirmation settles as completed instead of paying again at
+ * a fresh nonce. A payment completed before the attempt began never stamps
+ * it, so a genuinely new payment of the same amount still goes through, and
+ * one the user explicitly asked to send again (`allowAnother`) ignores it.
+ */
+type PaymentAttempt = { id: string; key: string; startedAt: number; settledBy?: { reservationId: string; receiptId?: string } };
+const ATTEMPT_LIFETIME_MS = 60 * 60_000;
+const attemptsKey = (ownerId: string) => scopedKey(`wallet-payment-attempts:v1:${ownerId}`);
+
+function readAttempts(ownerId: string): PaymentAttempt[] {
+  const raw = localStorage.getItem(attemptsKey(ownerId));
+  if (!raw) return [];
+  const parsed = JSON.parse(raw) as PaymentAttempt[];
+  if (!Array.isArray(parsed)) throw new Error('Could not read the payments under way');
+  const now = Date.now();
+  return parsed.filter(attempt => now - attempt.startedAt < ATTEMPT_LIFETIME_MS);
+}
+
+function writeAttempts(ownerId: string, attempts: PaymentAttempt[]): void {
+  localStorage.setItem(attemptsKey(ownerId), JSON.stringify(attempts));
+}
+
+/**
+ * Under the write lock: starts a local confirmation of the payment `key`.
+ * Rejects when it can't be recorded, so nothing is signed without it.
+ */
+export function beginLocalWalletPayment(ownerId: string, key: string): Promise<string> {
+  return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+    const id = crypto.randomUUID();
+    writeAttempts(ownerId, [...readAttempts(ownerId), { id, key, startedAt: Date.now() }]);
+    return id;
+  });
+}
+
+/** Ends a local confirmation, whatever its outcome. */
+export function endLocalWalletPayment(ownerId: string, attemptId: string): Promise<void> {
+  return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
+    const attempts = readAttempts(ownerId);
+    writeAttempts(ownerId, attempts.filter(attempt => attempt.id !== attemptId));
+  });
+}
+
+/** Under the write lock: a completed payment settles every confirmation of the same payment still under way. */
+function settleAttempts(ownerId: string, record: PersistedWalletPayment): void {
+  const attempts = readAttempts(ownerId);
+  if (!attempts.some(attempt => attempt.key === record.key && !attempt.settledBy)) return;
+  let receiptId: string | undefined;
+  try {
+    receiptId = restorePayment(ownerId, record).receiptId;
+  } catch (error) {
+    logger.debug('Could not read the completed wallet payment receipt:', error);
+  }
+  writeAttempts(ownerId, attempts.map(attempt => (attempt.key === record.key && !attempt.settledBy
+    ? { ...attempt, settledBy: { reservationId: record.reservationId, ...(receiptId ? { receiptId } : {}) } }
+    : attempt)));
+}
+
+/** Whether a local confirmation was settled by a completed payment, or can no longer be told apart (gone). */
+function attemptSettled(context: PaymentContext): 'settled' | 'gone' | null {
+  if (!context.attemptId) return null;
+  const attempt = readAttempts(context.ownerId).find(item => item.id === context.attemptId);
+  if (!attempt) return 'gone';
+  return attempt.settledBy && !context.allowAnother?.has(attempt.settledBy.reservationId) ? 'settled' : null;
+}
 
 function readPersisted(ownerId: string): PersistedWalletPayment[] {
   const raw = loadReservation(ownerId, YAPPR_CONTRACT_ID)?.walletPayments?.[STORAGE_KEY];
@@ -56,11 +137,18 @@ function writePersisted(ownerId: string, records: PersistedWalletPayment[]): voi
   storeWalletPayments(ownerId, YAPPR_CONTRACT_ID, STORAGE_KEY, JSON.stringify(records));
 }
 
-/** Clear only the resolved payment, leaving other scanned requests available for reconciliation. */
+/**
+ * Clear only the completed payment, leaving other scanned requests available
+ * for reconciliation. Confirmations of the same payment under way elsewhere
+ * are settled by it first.
+ */
 export async function clearPersistedWalletPayment(ownerId: string, reservationId: string): Promise<void> {
   return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
     const records = readPersisted(ownerId);
-    if (records.some(record => record.reservationId === reservationId)) writePersisted(ownerId, records.filter(record => record.reservationId !== reservationId));
+    const completed = records.find(record => record.reservationId === reservationId);
+    if (!completed) return;
+    settleAttempts(ownerId, completed);
+    writePersisted(ownerId, records.filter(record => record.reservationId !== reservationId));
   });
 }
 
@@ -120,6 +208,7 @@ function paymentFor(ownerId: string, request: WalletTransitionRequest, data: Pay
   return {
     key,
     kind: receipt.type === 'transfer' ? 'tip' : 'purchase',
+    receiptId: receipt.id,
     request,
     data,
     checkOutcome: async () => {
@@ -182,6 +271,10 @@ async function preparePayment(
     let cachedAbsent = false;
     let reconciliation: Awaited<ReturnType<typeof reconcilePayment>> | undefined;
     if (context) {
+      // Under the lock, before anything else: another tab may have completed this very payment while the signer was asked for.
+      const attempt = attemptSettled(context);
+      if (attempt === 'settled') return { completed: true };
+      if (attempt === 'gone') return { completed: false, unresolved: true };
       const records = readPersisted(context.ownerId);
       if (cached && !records.some(record => record.reservationId === cached.request.reservationId)) {
         try {
@@ -206,6 +299,7 @@ async function preparePayment(
           result = { outcome: 'unknown' as const, executable: false };
         }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
+          if (result.outcome === 'completed') settleAttempts(context.ownerId, record);
           writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
           const replacesAbsentCached = cachedAbsent && cached && payment.request.nonce > cached.request.nonce;
           if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId || replacesAbsentCached)) return { completed: true };
