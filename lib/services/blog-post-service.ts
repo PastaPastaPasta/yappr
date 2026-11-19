@@ -440,9 +440,11 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
    * filled, so a backdated import (published long before it was created) holds
    * its slot over an older-created, newer-published article until newer posts
    * push it out; ranking a blog's whole history would cost reads on every load.
+   * A read that fails is tolerated (the blog contributes what it has) and
+   * reported to `onReadFailure`.
    */
-  private async getPublishedPostsByBlogs(blogIds: string[], perBlog: number): Promise<BlogPost[][]> {
-    const firstPages = await this.getPostsByBlogs(blogIds, perBlog)
+  private async getPublishedPostsByBlogs(blogIds: string[], perBlog: number, onReadFailure?: (error: unknown) => void): Promise<BlogPost[][]> {
+    const firstPages = await this.getPostsByBlogs(blogIds, perBlog, onReadFailure)
     return mapLimit(Array.from(firstPages.entries()), 3, async ([blogId, firstPage]) => {
       const published = firstPage.filter(isPublishedBlogPost)
       let page = firstPage
@@ -454,6 +456,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
         } catch (error) {
           // Tolerated like the first page: this blog contributes what it has.
           logger.warn(`Reading on for published posts failed for blog ${blogId}:`, error)
+          onReadFailure?.(error)
           break
         }
         published.push(...page.filter(isPublishedBlogPost))
@@ -518,17 +521,20 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
    * Phase 1 limitation: this fetches up to 100 posts per blog and filters client-side.
    * Since Dash Platform doesn't support full-text search,
    * this fetches posts per blog and filters client-side.
+   * With `failWhenUnread`, a search that matched nothing while some blog's
+   * read failed rejects instead of reading as "no posts".
    */
-  async searchPosts(blogIds: string[], query: string, limit = 20): Promise<BlogPost[]> {
+  async searchPosts(blogIds: string[], query: string, limit = 20, { failWhenUnread = false }: { failWhenUnread?: boolean } = {}): Promise<BlogPost[]> {
     if (blogIds.length === 0 || !query.trim()) return []
 
     const lowerQuery = query.toLowerCase()
 
     // Fetch a reasonable number of posts per blog for client-side filtering
-    const results = await this.getPublishedPostsByBlogs(blogIds, 20)
+    let readFailure: unknown = null
+    const results = await this.getPublishedPostsByBlogs(blogIds, 20, (error) => { readFailure ??= error })
 
     // Filter by title, subtitle, or labels matching the query
-    return publishedPostsNewestFirst(results.flat())
+    const matches = publishedPostsNewestFirst(results.flat())
       .filter(post => {
         const titleMatch = post.title?.toLowerCase().includes(lowerQuery)
         const subtitleMatch = post.subtitle?.toLowerCase().includes(lowerQuery)
@@ -536,6 +542,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
         return titleMatch || subtitleMatch || labelsMatch
       })
       .slice(0, limit)
+    if (failWhenUnread && matches.length === 0 && readFailure !== null) throw readFailure
+    return matches
   }
 }
 
