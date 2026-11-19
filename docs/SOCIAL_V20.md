@@ -125,8 +125,40 @@ topology `v19`, and `/staging` keeps building from it: the build gate accepts
 Fresh registrations use v20: it is the social member of the default set in
 `scripts/app-connect-entries.cjs`, and `.env.testnet.template` and
 `.env.mainnet.template` select topology `v20`. Mainnet has registered nothing,
-so it would register this file. Registering testnet again needs a new maker,
-anchor and group, as D46 did.
+so it would register this file.
+
+### Testnet: appended to the 2026-11-12 group
+
+`/staging` moves to v20 by appending it to the registered group rather than
+registering a new set. Memberships can only be added, so the group then holds
+nine members: the eight registered on 2026-11-12, with social v19 kept but
+unused, and social v20 after them. That is one create and one seated social
+team. A fresh set would need eight creates, three teams, a new maker (the
+tooling refuses a second fresh set from `6dV6s3a6…`) and a storage reset, and
+would leave staging's blog, store, DM and passkey data behind.
+
+The maker `6dV6s3a6…` plans the nine entries (`TESTNET_RELEASE_SET` and
+`planTestnetReleaseSet` in `scripts/app-connect-set.mjs`) and resumes its
+2026-11-12 journal. It uses that set's policy: `notYetUsable`, one-hour
+windows and delay, and a cool-down of 1,209,600 s.
+
+```sh
+NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run \
+  --append-after passkeyVault --start-nonce 1 --maker 6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog \
+  --interim notYetUsable --election-windows 3600,3600 --election-delay 3600 --challenge-cool-down 1209600
+```
+
+Then the same command runs with `--signed-dry-run`, and then with `--live --production`. Both also take
+`--maker-key-file <0600 file> --maker-key-id 1`, and `--live` takes `--journal <the 2026-11-12 journal>`.
+
+The read-only dry run passed on 2026-11-19 at height 716436 (proved epoch
+20492, PV14, Drive 5.0.0-rc.8). It proved all eight members in the group,
+with the maker at nonce 8 and holding 129.14e9 credits. Social v20 is planned
+at nonce 9 as `63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D`. The estimate is
+92.94e9 credits (≈5,576¢), and the balance gate needs 111.53e9. The id holds
+only while the maker spends no other nonce first. The cut-over after the create
+pins the nine members and lets the build gate accept social v19 as an unused member.
+
 
 ## Client
 
