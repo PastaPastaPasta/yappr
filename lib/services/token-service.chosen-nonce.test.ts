@@ -225,6 +225,8 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       ]
     : [
         ['amount', { tokenAmount: BigInt(99) }],
+        ['charge above the agreed ceiling', { purchaseCost: BigInt(1001) }],
+        ['missing charge', { purchaseCost: undefined }],
         ['token', { tokenId: bs58.decode(OWNER) }],
       ]
 

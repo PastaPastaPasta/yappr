@@ -96,8 +96,11 @@ function receiptFor(ownerId: string, request: WalletTransitionRequest): { id: st
             && BigInt(String(document.amount)) === amount && (document.publicNote ?? '') === note;
         } else if (detail instanceof TokenDirectPurchaseTransition) {
           const amount = detail.tokenCount;
+          const ceiling = detail.totalAgreedPrice;
           // purchaseCost is the actual charge, while totalAgreedPrice is only a ceiling.
-          matches = document => BigInt(String(document.tokenAmount)) === amount;
+          matches = document => BigInt(String(document.tokenAmount)) === amount
+            && document.purchaseCost !== undefined && document.purchaseCost !== null
+            && BigInt(String(document.purchaseCost)) <= ceiling;
         } else {
           throw new Error('Unsupported wallet token transition');
         }
