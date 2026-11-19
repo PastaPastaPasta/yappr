@@ -54,9 +54,12 @@ describe('resolveAppConfig', () => {
       expect(() =>
         resolveAppConfig('org.dashfoundation.yappr.beta', { ...extra, iosBundleId: 'org.example.other' }, '1.0.0'),
       ).toThrow(/Unknown application id/);
+    });
+
+    it('is the testnet variant only, so a bundle built for another variant is refused', () => {
       expect(() =>
-        resolveAppConfig('org.dashfoundation.yappr.beta', { ...extra, variant: 'nonsense' }, '1.0.0'),
-      ).toThrow(/Unknown application id/);
+        resolveAppConfig('org.dashfoundation.yappr.beta', { ...extra, variant: 'devnet' }, '1.0.0'),
+      ).toThrow(/Rebuild with APP_VARIANT=testnet/);
     });
 
     it('still lets a variant id decide its own variant', () => {

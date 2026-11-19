@@ -101,6 +101,10 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
 });
 
 describe('YAPPR_IOS_BUNDLE_ID (TestFlight fallback record)', () => {
+  it.each((Object.keys(VARIANTS) as Variant[]).filter((v) => v !== 'testnet'))('refuses an override for %s', (variant) => {
+    expect(() => configFor(variant, { YAPPR_IOS_BUNDLE_ID: 'org.dashfoundation.yappr.beta' })).toThrow(/testnet variant only/);
+  });
+
   it.each(Object.keys(VARIANTS) as Variant[])('keeps the %s id when unset or empty', (variant) => {
     for (const env of [{}, { YAPPR_IOS_BUNDLE_ID: '' }] as Record<string, string>[]) {
       const config = configFor(variant, env);
@@ -125,8 +129,9 @@ describe('YAPPR_IOS_BUNDLE_ID (TestFlight fallback record)', () => {
     },
   );
 
-  it("refuses another variant's id", () => {
+  it("refuses another variant's id, in any case", () => {
     expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.dev' })).toThrow(/devnet variant's id/);
+    expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'PR.YAP.APP.DEV' })).toThrow(/devnet variant's id/);
     expect(configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.beta' }).ios?.bundleIdentifier).toBe('pr.yap.app.beta');
   });
 });

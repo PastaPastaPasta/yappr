@@ -258,14 +258,15 @@ generated `ExportOptions.plist` (`app-store-connect`, manual signing, the
 profile mapped to the bundle id, `manageAppVersionAndBuildNumber` false), runs
 the signing gate, and then, unless `dry_run`:
 
-1. uploads that exact `.ipa` with `xcrun altool` and the App Store Connect API
+1. after a read-only App Store Connect check (also on dry runs), uploads that exact `.ipa` with `xcrun altool` and the App Store Connect API
    key (never an Apple ID or an Xcode account);
 2. waits up to 45 minutes for processing (`scripts/asc-testflight.mjs`, the
    API key's JWT);
 3. attaches an existing **approved** export compliance declaration with the
    standard-algorithm answers. It never answers "no encryption" and never
    creates one, because the French store answer is the owner's call
-   (COMPLIANCE C8). Without one the build stays in Missing Compliance and the
+   (COMPLIANCE C8). If approved declarations disagree on the French store,
+   none is picked. Without one the build stays in Missing Compliance and the
    summary lists the clicks;
 4. sets What to Test and adds the build to the internal group **Yappr
    Internal**, creating it if missing.
@@ -285,9 +286,12 @@ and fails the job on any mismatch:
   `Apple Distribution: <org> (<team>)`, and it embeds the installed profile;
 - the archived and exported `Info.plist` bundle id, version and build match the plan;
 - no entry of `SIGNING_NAME_DENYLIST` appears in the certificate subject, the
-  profile, the `Authority` lines or the App Store Connect metadata.
+  decoded profile, the `Authority` lines or the App Store Connect app, bundle id
+  and certificate records (read-only, before the upload).
 
-All of it goes to the run summary. Secret values are never printed.
+All of it goes to the run summary. Every value is checked against the
+denylist before it is printed, and a hit prints the field's label only. Secret
+values are never printed.
 
 ### The `testflight` environment
 
@@ -301,7 +305,8 @@ Values are never committed.
 | `APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64` | secret | `base64 -i AuthKey_<id>.p8` |
 | `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` | secret | `base64 -i distribution.p12`: the team's Apple Distribution certificate and key |
 | `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` | secret | the `.p12` password |
-| `IOS_APPSTORE_PROFILE_BASE64` | secret | `base64 -i <profile>.mobileprovision`: the App Store profile for the bundle id |
+| `IOS_APPSTORE_PROFILE_BASE64` | secret | `base64 -i <profile>.mobileprovision`: the App Store profile for the `testnet` bundle id |
+| `IOS_APPSTORE_PROFILE_BASE64_DEVNET`, `IOS_APPSTORE_PROFILE_BASE64_STAGING_TESTNET` | secret | the same for the `devnet` and `staging-testnet` records, needed only to run those variants |
 | `APPLE_TEAM_ID` | variable | `44RJ69WHFF` |
 | `APPLE_EXPECTED_ORG_NAME` | variable | `The Dash Foundation, Inc.` |
 | `SIGNING_NAME_DENYLIST` | secret | optional; comma-separated names that must never appear in signing metadata. A secret, not a variable: run logs print variables unmasked, and the run refuses a variable-only denylist |

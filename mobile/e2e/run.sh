@@ -71,6 +71,10 @@ case "$variant" in
   production) app_id=pr.yap.app; scheme=yappr ;;
   *) die "--variant must be devnet, staging-testnet, testnet or production" ;;
 esac
+# An iOS testnet build signed under YAPPR_IOS_BUNDLE_ID (mobile/RELEASE.md) installs under that id.
+if [ "$platform" = ios ] && [ "$variant" = testnet ] && [ -n "${YAPPR_IOS_BUNDLE_ID:-}" ]; then
+  app_id="$YAPPR_IOS_BUNDLE_ID"
+fi
 # The full suite writes: only ever to sakura, with pool personas.
 [ "$suite" = full ] && [ "$variant" != devnet ] && die "the full suite writes, so it runs on the devnet variant (sakura) only"
 

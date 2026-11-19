@@ -23,29 +23,39 @@ fail() {
   echo "- **FAILED:** $1"
   failed=1
 }
-evidence() { printf -- "- %s: \`%s\`\n" "$1" "$2"; }
+# True when the text contains a SIGNING_NAME_DENYLIST entry (case-insensitive substring).
+denied() { # <text>
+  local entry text entries
+  [[ -n "${SIGNING_NAME_DENYLIST:-}" ]] || return 1
+  text="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  IFS=',' read -r -a entries <<<"$SIGNING_NAME_DENYLIST"
+  for entry in "${entries[@]}"; do
+    entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
+    [[ -n "$entry" && "$text" == *"$entry"* ]] && return 0
+  done
+  return 1
+}
+
+# Every value is checked against the denylist before it is printed; a hit prints the label only.
+deny_check() { # <label> <text>
+  if denied "$2"; then fail "$1 contains a denylisted name (value withheld)"; fi
+}
+evidence() { # <label> <value>
+  if denied "$2"; then
+    fail "$1 contains a denylisted name (value withheld)"
+  else
+    printf -- "- %s: \`%s\`\n" "$1" "$2"
+  fi
+}
 
 expect() { # <label> <actual> <expected>
   if [[ "$2" == "$3" ]]; then
     evidence "$1" "$2"
+  elif denied "$2"; then
+    fail "$1 contains a denylisted name (value withheld) and is not the expected value"
   else
     fail "$1 is '$2', expected '$3'"
   fi
-}
-
-# Case-insensitive substring match against every non-empty denylist entry.
-deny_check() { # <label> <text>
-  local entry text entries
-  [[ -n "${SIGNING_NAME_DENYLIST:-}" ]] || return 0
-  text="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
-  IFS=',' read -r -a entries <<<"${SIGNING_NAME_DENYLIST:-}"
-  for entry in "${entries[@]}"; do
-    entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')"
-    [[ -z "$entry" ]] && continue
-    if [[ "$text" == *"$entry"* ]]; then
-      fail "$1 contains a denylisted name"
-    fi
-  done
 }
 
 # One attribute of an X.509 subject. The multiline form prints each attribute on
@@ -94,8 +104,7 @@ check_profile() {
   evidence 'Expires' "$expires"
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   [[ -n "$expires" && "$expires" > "$now" ]] || fail 'profile has expired'
-  deny_check 'profile TeamName' "$(plist_value "$plist" TeamName)"
-  deny_check 'profile Name' "$(plist_value "$plist" Name)"
+  deny_check 'decoded profile' "$(cat "$plist")"
 }
 
 check_app() { # <Info.plist> <bundle id> <version> <build>
