@@ -10,6 +10,7 @@ import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
+import { withIdentityUpdateLock } from '@/lib/identity-write-lock'
 
 export interface IdentityPublicKey {
   id: number;
@@ -356,6 +357,15 @@ class IdentityService {
     signingPrivateKeyWif: string,
     _contractId?: string, // Reserved for future use: contract-bound keys
     options: { cancelled?: () => boolean } = {}
+  ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
+    return withIdentityUpdateLock(identityId, () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options));
+  }
+
+  private async addEncryptionKeyLocked(
+    identityId: string,
+    encryptionPrivateKey: Uint8Array,
+    signingPrivateKeyWif: string,
+    options: { cancelled?: () => boolean }
   ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
     try {
       const sdk = await getEvoSdk();

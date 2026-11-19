@@ -41,3 +41,14 @@ export async function withIdentityWriteLock<T>(ownerId: string, contractId: stri
   queues.set(name, tail)
   return run
 }
+
+/**
+ * One identity update the app signs at a time per identity, across tabs. An
+ * update picks its key id and revision from the identity it reads under this
+ * lock and holds it until it has its answer, so the next one reads it.
+ * Wallet-signed updates (identity-update-builder) are not covered: the lock
+ * can't be held across a wallet round trip.
+ */
+export function withIdentityUpdateLock<T>(identityId: string, update: () => Promise<T>): Promise<T> {
+  return withIdentityWriteLock(identityId, 'identity-update', update)
+}

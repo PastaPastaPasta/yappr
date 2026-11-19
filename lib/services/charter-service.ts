@@ -45,14 +45,14 @@ import { CHARTERS_CONTRACT_ID, CHARTER_KEYS, isCharterKey, type RewardSplit } fr
 import {
   charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
 } from '@/lib/moderation-charters/transitions.mjs'
-import { withIdentityWriteLock } from '@/lib/identity-write-lock'
+import { withIdentityUpdateLock, withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
   deriveCharterKey, forgetCharterKeys, heldCharterKey, holdCharterKey, keyMatches, readPrivateKeyInput, type CharterRole,
 } from '@/lib/moderation-charters/charter-keys'
 import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, isStatelessRefusal, type CharterAction } from '@/lib/moderation-charters/refusals'
 import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
 import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
@@ -261,6 +261,37 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
     // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
     if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
   })
+}
+
+const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
+  'reason', 'submittedCharter', 'joinRequest', 'electedCharter', 'addedModerator', 'removedModerator', 'resignationRequest',
+])
+
+/**
+ * Under the charters write lock: frees each create reservation whose slot no
+ * longer holds a signed create under it. That is left when a page died
+ * between reserving a nonce and storing the create (never sent), or between
+ * clearing a slot and releasing its nonce. The nonce is counted spent, so a
+ * transition that may still take it late can never settle a later SDK-signed
+ * write.
+ */
+function releaseOrphanedReservations(ownerId: string): void {
+  let pending: PendingTransition[]
+  try {
+    pending = loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []
+  } catch {
+    return
+  }
+  for (const entry of pending) {
+    const [owner, type] = entry.scope?.split(':') ?? []
+    if (entry.nonce === null || !entry.scope || owner !== ownerId || !CREATE_SLOT_TYPES.has(type)) continue
+    try {
+      if (storedReservationId(entry.scope) === entry.id) continue
+    } catch {
+      continue
+    }
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+  }
 }
 
 type MatchResult = ReturnType<typeof matchIdentityKey<IdentityPublicKey>>
@@ -617,7 +648,7 @@ class CharterService {
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
-      if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key, generation)
+      if (!onChain) await this.addCharterKey(identityId, role, readPrivateKeyInput(input), key, generation)
       // Now on the account: kept for the sign-in it was added in while this page lasts, even when the view
       // that asked has moved on.
       if (this.keysGeneration === keysGeneration && this.signInHolds(generation, identityId)) holdCharterKey(identityId, role, key)
@@ -631,7 +662,6 @@ class CharterService {
 
   private async addCharterKey(
     identityId: string,
-    identity: Awaited<ReturnType<typeof fetchIdentity>>,
     role: CharterRole,
     master: Uint8Array,
     charterKey: Uint8Array,
@@ -639,36 +669,43 @@ class CharterService {
   ): Promise<void> {
     // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
-      const sdk = await getEvoSdk()
-      const w = await wasmModule()
-      // The SDK setup awaited: a session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
-      this.assertSameSession(generation, identityId)
-      const { purpose, documentType } = CHARTER_KEYS[role]
-      const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
-      const publicKey = secp256k1.getPublicKey(charterKey, true)
-      const signer = new w.IdentitySigner()
-      const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
-      // The new key signs its own ownership proof.
-      const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
-      try {
-        signer.addKey(masterKey)
-        signer.addKey(newKey)
-        // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
-        await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
-      } catch (error) {
-        if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
-        logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
-      } finally {
-        signer.free()
-        masterKey.free()
-        newKey.free()
-      }
-      for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
-        const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
-        if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
-        await sleep(PROOF_PAUSE_MS)
-      }
-      throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
+      await withIdentityUpdateLock(identityId, async () => {
+        const sdk = await getEvoSdk()
+        const w = await wasmModule()
+        // Read under the lock: another tab's key update has been proved by now, so this one picks the next key id and revision.
+        const identity = await fetchIdentity(identityId)
+        // A session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
+        this.assertSameSession(generation, identityId)
+        const { purpose, documentType } = CHARTER_KEYS[role]
+        const charterKeys = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType))
+        if (charterKeys.some((key) => keyMatches(charterKey, keyData(key)))) return
+        if (charterKeys.length > 0) throw new CharterActionError('A charter key was just added to this account from somewhere else. Try again to unlock it.', 'refused')
+        const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
+        const publicKey = secp256k1.getPublicKey(charterKey, true)
+        const signer = new w.IdentitySigner()
+        const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
+        // The new key signs its own ownership proof.
+        const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
+        try {
+          signer.addKey(masterKey)
+          signer.addKey(newKey)
+          // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
+          await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
+        } catch (error) {
+          if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
+          logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
+        } finally {
+          signer.free()
+          masterKey.free()
+          newKey.free()
+        }
+        for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
+          const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
+          if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
+          await sleep(PROOF_PAUSE_MS)
+        }
+        throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
+      })
     } finally {
       master.fill(0)
     }
@@ -849,6 +886,7 @@ class CharterService {
     // create or another tab's stored one, is the same signed bytes under the same nonce.)
     const first = await lock(async () => {
       this.assertSameSession(generation, ownerId)
+      releaseOrphanedReservations(ownerId)
       const slot = await resolveSlot()
       if (slot.kind === 'landed') return slot.id
       return slot.kind === 'pending' ? send(slot.entry, false) : null
@@ -1101,6 +1139,7 @@ class CharterService {
       const { wif, identityKey } = await this.signingKey(ownerId, generation)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
+      await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => releaseOrphanedReservations(ownerId))
       // The SDK picks this nonce itself: the coordinator holds other writes off it. Queued behind
       // another write, a session forgotten meanwhile fails the precondition: nothing reserved or sent.
       await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {

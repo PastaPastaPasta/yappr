@@ -13,7 +13,7 @@ const sdk = vi.hoisted(() => ({
   stateTransitions: { broadcastAndWait: vi.fn() },
   documents: { delete: vi.fn() },
 }))
-const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn(), consumed: vi.fn() }))
+const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn(), consumed: vi.fn(), keyInCreation: vi.fn(() => ({})) }))
 const storage = vi.hoisted(() => {
   const items = new Map<string, string>()
   const local = {
@@ -26,8 +26,9 @@ const storage = vi.hoisted(() => {
   return local
 })
 const settle = vi.hoisted(() => vi.fn())
-const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
+const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n }))
 const locks = vi.hoisted(() => vi.fn())
+const updateLocks = vi.hoisted(() => vi.fn())
 const sdkLocks = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
@@ -50,14 +51,18 @@ vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
   charterStepExists: builders.exists,
   charterNonceConsumed: builders.consumed,
   charterIdBytes: () => new Uint8Array(32),
-  charterKeyInCreation: () => ({}),
+  charterKeyInCreation: builders.keyInCreation,
 }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleCreate: settle } }))
-vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() } }))
+vi.mock('@/lib/identity-write-lock', () => ({
+  withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() },
+  withIdentityUpdateLock: async (_i: string, update: () => Promise<unknown>) => { await updateLocks(); return update() },
+}))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => { hooks.onAwaitNonce?.(); return { current: 0n, value: nonces.next++ } },
   allocateNonce: () => 1n,
   reserveNonce: nonces.reserve,
+  loadReservation: nonces.load,
   releaseNonce: nonces.release,
   WRITE_PRECONDITION_FAILED: 'This was not sent: what it depended on changed.',
   withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>) => {
@@ -140,6 +145,7 @@ beforeEach(() => {
   storage.clear()
   builders.consumed.mockResolvedValue(false)
   nonces.next = 1n
+  nonces.load.mockReturnValue(null)
   sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
     { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: `h${nonce}` }))
@@ -1047,5 +1053,95 @@ describe("the leader's way out of an application stuck uncertain", () => {
     expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(true)
     await charterService.abandonApplication(OWNER, 'target-stuck')
     expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(false)
+  })
+})
+
+describe('a charter key added from two tabs at once', () => {
+  const masterHex = Buffer.from(new Uint8Array(32).fill(5)).toString('hex')
+  const charterKeyOnChain = (keyId: number, data: Uint8Array, role: 'leader' | 'member') => ({
+    keyId, purpose: role === 'leader' ? 'DECRYPTION' : 'ENCRYPTION', securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', data,
+    contractBounds: { toJSON: () => ({ $type: 'documentType', id: CHARTERS_CONTRACT_ID, documentTypeName: role === 'leader' ? 'submittedCharter' : 'joinRequest' }) },
+  })
+  const leaderKey = async () => {
+    const { deriveCharterKey } = await import('@/lib/moderation-charters/charter-keys')
+    const { getPublicKey } = await import('@noble/secp256k1')
+    const key = deriveCharterKey(new Uint8Array(32).fill(5), OWNER, 'leader')
+    return { key, publicKey: getPublicKey(key, true) }
+  }
+
+  it('picks its key id from the identity read under the update lock, past a key another tab just added', async () => {
+    const { key, publicKey } = await leaderKey()
+    const before = { publicKeys: [{ keyId: 2 }] }
+    const memberAdded = { publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(memberAdded)
+      .mockResolvedValue({ publicKeys: [...memberAdded.publicKeys, charterKeyOnChain(4, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(updateLocks).toHaveBeenCalledTimes(1)
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 4 }))
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: memberAdded }))
+  })
+
+  it('adds nothing when the other tab already added the same charter key', async () => {
+    const { key, publicKey } = await leaderKey()
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+
+  it('adds no second charter key of the role when another one appeared meanwhile', async () => {
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'refused' })
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('a create reservation left without its stored create (the page died between the two)', () => {
+  const entry = (id: string, nonce: bigint | null, scope?: string) => ({ id, nonce, expiresAt: nonce === null ? Date.now() + 60_000 : null, ...(scope ? { scope } : {}) })
+  const released = () => nonces.release.mock.calls.filter((call) => call[1] === CHARTERS_CONTRACT_ID).map((call) => [call[2].id, call[3]])
+
+  it('is released, counted spent, before the next charters write; nothing else is', async () => {
+    const left = entry('r-orphan', 9n, `${OWNER}:reason:spam`)
+    const landed = entry('r-landed', 7n, `${OWNER}:reason:done`)
+    const stillSending = entry('r-kept', 8n, `${OWNER}:reason:other`)
+    const unreadable = entry('r-unreadable', 6n, `${OWNER}:reason:garbled`)
+    const keep = [
+      stillSending,
+      unreadable,
+      entry('r-sdk', null, 'addedModerator:doc-1'),
+      entry('r-unscoped', 5n),
+      entry('r-other-owner', 4n, 'owner2:reason:spam'),
+      entry('r-not-a-slot', 3n, `${OWNER}:poll:x`),
+    ]
+    storage.setItem(slotKey('reason', 'other'), JSON.stringify({
+      signed: { id: 'doc-8', type: 'reason', owner: OWNER, nonce: '8', bytes: 'CA==', hash: 'h8' }, fingerprint: 'f', reservation: { id: 'r-kept', nonce: '8', expiresAt: null },
+    }))
+    storage.setItem(slotKey('reason', 'done'), JSON.stringify({ landed: 'doc-7', fingerprint: 'f', at: Date.now() }))
+    storage.setItem(slotKey('reason', 'garbled'), '{"signed":')
+    nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [left, landed, ...keep] })
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
+    const before = released().filter(([id]) => id !== 'r1')
+    expect(before).toEqual([['r-orphan', 9n], ['r-landed', 7n]])
+  })
+
+  it('is released before a team-change delete waits on it', async () => {
+    const seated = { electedCharterId: 'e4', submittedCharterId: 'p1' }
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seated, 'm1')).resolves.toBe('doc-1')
+    nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:addedModerator:e5:m2`)] })
+    nonces.release.mockClear()
+    await charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e4', memberId: 'm1' })
+    expect(released()).toEqual([['r-orphan', 9n]])
+    expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(sdkLocks.mock.invocationCallOrder[0])
+    expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
   })
 })
