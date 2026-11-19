@@ -501,6 +501,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       const grant = appConnect.accept(identityId, { keepRequest: true })
       if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
       await appConnectSessions.adopt(grant)
+      await options.secureDurable?.()
       if (deferredRevoke === identityId) deferredRevoke = null
       useAppConnectStatus.getState().dismissRenewRequired()
       // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
@@ -558,8 +559,9 @@ export function createSessionModule(options: SessionModuleOptions) {
    * account's when it names none): its renewal while that account is active
    * here; signed out, also what that renewal became when its account could
    * not be restored (`carryRenewalOver`). While another account is active,
-   * the renewal is filed with its own account's secrets, out of this
-   * engine's reach, so the cancel is refused. `forget` deletes a "Sign in
+   * or the account is parked (an "Add account" boot), the renewal is filed
+   * with its own account's secrets, out of this engine's reach, so the
+   * cancel is refused. `forget` deletes a "Sign in
    * again" only when it is for the account named.
    */
   function cancelledKinds(opts: { renew?: boolean; reauth?: string; account?: string }): AppConnectRequestKind[] {
@@ -569,7 +571,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       const account = named(opts.account) ? opts.account : active
       if (!account) return []
       if (account === active) return [{ identityHint: account, renew: true }]
-      if (active) throw new RpcError('That renewal is for an account that is not signed in here', 'NOT_SIGNED_IN')
+      if (active || isParked(account)) throw new RpcError('That renewal is for an account that is not signed in here', 'NOT_SIGNED_IN')
       return [{ identityHint: account, renew: true }, { identityHint: account }]
     }
     if (opts.reauth === undefined) return [{}]
@@ -623,6 +625,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     // Its pending renewal, and a "Sign in again" kept apart from its secrets, go first: one that cannot be deleted
     // fails the sign-out, so a later launch never resumes a request of an account the user signed out.
     for (const kind of [{ identityHint: identityId, renew: true }, { identityHint: identityId }]) await appConnect.forget(kind)
+    await options.secureDurable?.()
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.
       await stopDm()
@@ -812,7 +815,7 @@ export function createSessionModule(options: SessionModuleOptions) {
      * could not be deleted. With no flow running (the engine restarted under
      * the cancel, which runs none), the stored request the host names is
      * forgotten instead: `renew` for `account`'s renewal (refused while
-     * another account is active, `NOT_SIGNED_IN`), `reauth` for
+     * another account is active or it is parked, `NOT_SIGNED_IN`), `reauth` for
      * signing that account in again, else a sign-in. With `requestHash` (hex)
      * the cancel names its request: a flow that never showed it is left
      * alone, and a stored request goes only if it is that one.

@@ -369,7 +369,10 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
   });
 
-  afterEach(() => syncStorage.removeItem(ADDING_KEY));
+  afterEach(() => {
+    syncStorage.removeItem(ADDING_KEY);
+    syncStorage.removeItem('yappr.signin.connect-cancel.devnet-test');
+  });
 
   it('reopens "Sign in again" for its account, still able to go back to the parked one', async () => {
     syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
@@ -399,7 +402,7 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
   });
 
   it('sends a cancel the last launch was killed under before it looks, so the cancelled request stays shut', async () => {
-    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify([{ id: 'c1', renew: false, reauth: 'bob' }]));
+    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify([{ id: `${Date.now()}-1`, renew: false, reauth: 'bob' }]));
     fakeEngine.method('session.appConnectCancel').mockResolvedValue(undefined);
     fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue(null);
     mount('/');
@@ -407,6 +410,17 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith({ renew: false, reauth: 'bob' });
     expect(syncStorage.getItem('yappr.signin.connect-cancel.devnet-test')).toBeNull();
     expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it('reopens nothing while a cancel the last launch was killed under is still unconfirmed', async () => {
+    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify([{ id: `${Date.now()}-1`, renew: false, reauth: 'bob' }]));
+    fakeEngine.method('session.appConnectCancel').mockRejectedValue(new Error('storage failed'));
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectPendingSignIn')).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(syncStorage.getItem('yappr.signin.connect-cancel.devnet-test')).not.toBeNull();
   });
 
   it('looks again after a restart cut the lookup short, rather than going back to the parked account', async () => {

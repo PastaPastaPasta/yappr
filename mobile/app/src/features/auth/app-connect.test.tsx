@@ -413,6 +413,27 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(syncStorage.getItem(CANCEL_KEY)).toBeNull();
     });
 
+    it('drops a cancel once the request it names has run out, and lets a renewal the engine has not loaded wait without holding up a start', async () => {
+      const CANCEL_KEY = 'yappr.signin.connect-cancel.devnet-test';
+      const parked = { renew: true, account: alice.identityId, requestHash: HASH };
+      syncStorage.setItem(
+        CANCEL_KEY,
+        JSON.stringify([
+          { id: `${Date.now() - 12 * 60_000}-1`, renew: false, requestHash: HASH },
+          { id: `${Date.now()}-2`, ...parked },
+        ]),
+      );
+      useSessionStore.setState({ session: null });
+      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(Object.assign(new Error('not here'), { code: 'NOT_SIGNED_IN' }));
+      fakeEngine.method('session.appConnectStart').mockClear();
+      await act(async () => startAppConnect('qr'));
+      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith(parked);
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null')).toContainEqual(expect.objectContaining(parked));
+      syncStorage.removeItem(CANCEL_KEY);
+    });
+
     it('starts a new sign-in only once the engine has the cancel, so the cancel cannot stop it', async () => {
       await open({ mode: 'qr' });
       const order: string[] = [];

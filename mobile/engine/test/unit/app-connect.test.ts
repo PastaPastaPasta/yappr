@@ -26,11 +26,19 @@ installEngineStorage(engineStorage)
 Object.assign(globalThis, { window: globalThis })
 /** Secure deletes as the host is asked for them. */
 const secureDeletes: string[] = []
+/** Secure batches the host has not acknowledged yet, while a test holds its acknowledgements back. */
+let heldAcks: number[] | null = null
 engineStorage.onBatch(batch => {
   if (batch.area !== 'secure') return
   for (const op of batch.ops) if (op[0] === 'del') secureDeletes.push(op[1])
-  queueMicrotask(() => engineStorage.ack(batch.seq))
+  if (heldAcks) heldAcks.push(batch.seq)
+  else queueMicrotask(() => engineStorage.ack(batch.seq))
 })
+function releaseAcks(): void {
+  const held = heldAcks ?? []
+  heldAcks = null
+  for (const seq of held) engineStorage.ack(seq)
+}
 
 const auth = await import('platform-auth')
 const { createSessionModule, createMobileAuthController } = await import('../../src/api/session')
@@ -384,7 +392,17 @@ describe('App Connect sign-in', () => {
     const confirm = await waitForPhase('confirm')
     expect(confirm.candidates.map(c => c.identityId)).toEqual([OWNER])
 
-    const result = await session.appConnectAccept({ identityId: OWNER })
+    // The request goes only once the host has the new ring: a ring write that fails leaves the renewal to resume.
+    const renewalSlot = `yappr_secure_ac_secret_testnet_pending_request_${OWNER}`
+    secureDeletes.length = 0
+    heldAcks = []
+    const accepting = session.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the new ring on its way to the host')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(secureDeletes).not.toContain(renewalSlot)
+    releaseAcks()
+    const result = await accepting
+    expect(secureDeletes).toContain(renewalSlot)
     expect(result).toMatchObject({ status: 'renewed', session: { identityId: OWNER } })
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: result.session, reason: 'renewed' } })
     expect(appConnectSessions.current(OWNER)?.authKeys.map(key => key.keyId).sort()).toEqual([8, 9])
@@ -797,6 +815,19 @@ describe('App Connect requests across kills and engine restarts', () => {
     await next.signOut()
   })
 
+  it('refuses a renewal cancel for an account parked by "Add account", whose renewal this boot never loaded', async () => {
+    await walletSignIn(session, [34, 35])
+    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    await session.prepareAddAccount()
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    await expect(next.appConnectCancel({ renew: true, account: OWNER, requestHash: renewal.requestHash })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    await expect(next.appConnectCancel({ renew: true, account: OWNER })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    await next.signOut({ identityId: OWNER })
+  })
+
   it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
     await walletSignIn(session, [32, 33])
     const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
@@ -809,7 +840,14 @@ describe('App Connect requests across kills and engine restarts', () => {
     }
     expect(await session.current()).toMatchObject({ identityId: OWNER })
     expect(stored()).toContain(RENEWAL_SLOT)
-    await session.signOut()
+    // Signed out only once the host has deleted the request.
+    heldAcks = []
+    const signingOut = session.signOut()
+    await until(() => heldAcks?.length, 'the request deletion on its way to the host')
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    releaseAcks()
+    await signingOut
     expect(await session.current()).toBeNull()
     expect(stored()).not.toContain(RENEWAL_SLOT)
   })

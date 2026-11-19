@@ -138,7 +138,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
     // tell a plain sign-in from signing an account in again ("Sign in again").
     const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
     const pendingRequest: Promise<{ reauth: string | null } | null> = appConnect
-      ? replayInterruptedCancel().then(() => engine.api.session.appConnectPendingSignIn())
+      ? replayInterruptedCancel().then((confirmed) => (confirmed ? engine.api.session.appConnectPendingSignIn() : null))
       : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
     pendingRequest
       .then((pending) => {
@@ -199,7 +199,7 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     checked.current = true;
     if (getCapabilities()?.walletSignIn !== 'app-connect') return;
     replayInterruptedCancel()
-      .then(() => engine.api.session.appConnectPending({ renew: true }))
+      .then((confirmed) => confirmed && engine.api.session.appConnectPending({ renew: true }))
       .then((pending) => {
         // The account signed out or changed while the engine answered: the answer was about the one before.
         const now = useSessionStore.getState();

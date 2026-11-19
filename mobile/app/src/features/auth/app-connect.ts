@@ -353,7 +353,7 @@ interface CancelIntent {
   requestHash?: string;
 }
 
-/** A cancel as kept on the device: `id` tells it from a later cancel of the same request. */
+/** A cancel as kept on the device: `id` (when it was made, and a count) tells it from a later cancel of the same request. */
 interface StoredCancel extends CancelIntent {
   id: string;
 }
@@ -364,10 +364,13 @@ interface StoredCancel extends CancelIntent {
  * launch (or start) sends them again before it looks for a request to resume.
  */
 const CANCEL_KEY = `yappr.signin.connect-cancel.${engineNetworkKey}`;
-const KEPT_CANCELS = 8;
+/** A request runs out 10 minutes after it is made (with a minute for clock skew): a cancel older than that names nothing. */
+const CANCEL_LIFETIME_MS = 11 * 60_000;
 
 function readCancel(stored: Partial<StoredCancel> | null): StoredCancel | null {
   if (typeof stored?.renew !== 'boolean' || typeof stored.id !== 'string') return null;
+  const at = Number.parseInt(stored.id, 10);
+  if (!Number.isFinite(at) || Date.now() - at >= CANCEL_LIFETIME_MS) return null;
   return {
     id: stored.id,
     renew: stored.renew,
@@ -387,7 +390,7 @@ function readCancels(): StoredCancel[] {
 }
 
 function writeCancels(cancels: readonly StoredCancel[]): void {
-  if (cancels.length) syncStorage.setItem(CANCEL_KEY, JSON.stringify(cancels.slice(-KEPT_CANCELS)));
+  if (cancels.length) syncStorage.setItem(CANCEL_KEY, JSON.stringify(cancels));
   else syncStorage.removeItem(CANCEL_KEY);
 }
 
@@ -418,7 +421,9 @@ async function sendCancel({ id, ...intent }: StoredCancel, again = true): Promis
 
 /**
  * Sends again every kept cancel the engine can act on now. False when one is
- * still unconfirmed (it stays kept); only a second engine restart rejects.
+ * still unconfirmed (it stays kept); only a second engine restart rejects. A
+ * renewal of an account this engine has not loaded (`NOT_SIGNED_IN`) stays
+ * kept without holding up anything else.
  */
 async function sendKeptCancels(): Promise<boolean> {
   let confirmed = true;
@@ -427,6 +432,7 @@ async function sendKeptCancels(): Promise<boolean> {
       await sendCancel(cancel);
     } catch (error) {
       if (errorCode(error) === 'ENGINE_RESTARTED') throw error;
+      if (errorCode(error) === 'NOT_SIGNED_IN') continue;
       appendLog('warn', 'host', `Cancelling the interrupted wallet sign-in failed: ${errorMessage(error)}`);
       confirmed = false;
     }
@@ -473,10 +479,11 @@ function cancelInEngine({ renew, reauth, flow }: Pick<AppConnectState, 'renew' |
  * At launch, before looking for a request to resume: the cancels the last
  * launch was killed under (or could not confirm) are sent again. Only an
  * engine restart rejects (the caller looks again later); any other failure
- * is logged, and the cancel is kept for the next launch.
+ * is logged, the cancel is kept for the next launch, and this resolves
+ * false: nothing may be resumed while a cancel is unconfirmed.
  */
-export async function replayInterruptedCancel(): Promise<void> {
-  await sendKeptCancelsInTurn();
+export function replayInterruptedCancel(): Promise<boolean> {
+  return sendKeptCancelsInTurn();
 }
 
 /** The wallet handed the user back saying it did not sign in (`ac=declined`, …). */
