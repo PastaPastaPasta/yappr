@@ -29,6 +29,7 @@ const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n }))
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
+const webLocks = vi.hoisted(() => ({ available: true }))
 const sdkLocks = vi.hoisted(() => vi.fn())
 const sdkNonceWaits = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
@@ -58,6 +59,8 @@ vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleC
 vi.mock('@/lib/identity-write-lock', () => ({
   withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() },
   withIdentityUpdateLock: async (_i: string, update: () => Promise<unknown>) => { await updateLocks(); return update() },
+  crossTabLocks: () => (webLocks.available ? {} : undefined),
+  IDENTITY_UPDATE_UNLOCKED: "This browser can't add a key to your account safely. Update it, or use another browser.",
 }))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => { hooks.onAwaitNonce?.(); return { current: 0n, value: nonces.next++ } },
@@ -100,7 +103,7 @@ const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.m
 const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
 const sharedKeys = await import('@/lib/auth/critical-key')
 const { noteProvedIdentityRevision } = await import('./identity-service')
-const { keyNetwork } = await import('@/lib/constants')
+const { getConfiguredNetwork } = await import('@/lib/constants')
 sharedKeys.bindCriticalKeySession(() => auth.epoch)
 
 /** The app-wide CRITICAL-key sheet, mounted: records each request and answers it as told (null closes it). */
@@ -137,6 +140,7 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  webLocks.available = true
   wallet.appConnect = false
   sharedKeys.forgetCriticalKey(OWNER)
   auth.identity = OWNER
@@ -1080,7 +1084,7 @@ describe("the leader's way out of an application stuck uncertain", () => {
 })
 
 describe('a charter key added from two tabs at once', () => {
-  const revisionKey = `yappr:identity-revision:${keyNetwork()}:${OWNER}`
+  const revisionKey = `yappr:identity-revision:${getConfiguredNetwork()}:${OWNER}`
   const masterHex = Buffer.from(new Uint8Array(32).fill(5)).toString('hex')
   const charterKeyOnChain = (keyId: number, data: Uint8Array, role: 'leader' | 'member') => ({
     keyId, purpose: role === 'leader' ? 'DECRYPTION' : 'ENCRYPTION', securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', data,
@@ -1158,10 +1162,17 @@ describe('a charter key added from two tabs at once', () => {
     expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 6 }))
   })
 
-  it('keeps the floor by network and identity, where every build on this origin reads it', () => {
+  it('keeps the floor by chain and identity, where every build on this origin reads it', () => {
     noteProvedIdentityRevision(OWNER, 9)
     expect(localStorage.getItem(revisionKey)).toBe('9')
-    expect(revisionKey).toBe(`yappr:identity-revision:${keyNetwork()}:${OWNER}`)
+  })
+
+  it('asks for no MASTER key where no lock reaches the other tabs, and says why', async () => {
+    webLocks.available = false
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({
+      outcome: 'refused', message: "This browser can't add a key to your account safely. Update it, or use another browser.",
+    })
+    expect(keys.stepUp).not.toHaveBeenCalled()
   })
 
   it('adds no second charter key of the role when another one appeared meanwhile', async () => {
@@ -1178,7 +1189,7 @@ describe('a create reservation left without its stored create (the page died bet
   const entry = (id: string, nonce: bigint | null, scope?: string) => ({ id, nonce, expiresAt: nonce === null ? Date.now() + 60_000 : null, ...(scope ? { scope } : {}) })
   const released = () => nonces.release.mock.calls.filter((call) => call[1] === CHARTERS_CONTRACT_ID).map((call) => [call[2].id, call[3]])
 
-  it('is released, counted spent, before the next charters write; nothing else is', async () => {
+  it('is released, its nonce not counted spent, before the next charters write; nothing else is', async () => {
     const left = entry('r-orphan', 9n, `${OWNER}:reason:spam`)
     const landed = entry('r-landed', 7n, `${OWNER}:reason:done`)
     const stillSending = entry('r-kept', 8n, `${OWNER}:reason:other`)
@@ -1203,19 +1214,15 @@ describe('a create reservation left without its stored create (the page died bet
     builders.exists.mockResolvedValue(true)
     await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
     const before = released().filter(([id]) => id !== 'r1')
-    expect(before).toEqual([['r-orphan', 9n], ['r-landed', 7n]])
+    expect(before).toEqual([['r-orphan', undefined], ['r-landed', undefined]])
   })
 
   it('is left alone where no lock reaches the other tabs: one may be about to store its create', async () => {
-    vi.stubGlobal('navigator', {})
-    try {
-      nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:reason:spam`)] })
-      builders.exists.mockResolvedValue(true)
-      await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
-      expect(released().filter(([id]) => id === 'r-orphan')).toEqual([])
-    } finally {
-      vi.unstubAllGlobals()
-    }
+    webLocks.available = false
+    nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:reason:spam`)] })
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
+    expect(released().filter(([id]) => id === 'r-orphan')).toEqual([])
   })
 
   it('is released before a team-change delete waits on it', async () => {
@@ -1225,7 +1232,7 @@ describe('a create reservation left without its stored create (the page died bet
     nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:addedModerator:e5:m2`)] })
     nonces.release.mockClear()
     await charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e4', memberId: 'm1' })
-    expect(released()).toEqual([['r-orphan', 9n]])
+    expect(released()).toEqual([['r-orphan', undefined]])
     // Under the delete's own lock, before its wait on earlier transitions: nothing can be orphaned in between.
     expect(sdkLocks.mock.invocationCallOrder[0]).toBeLessThan(nonces.release.mock.invocationCallOrder[0])
     expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(sdkNonceWaits.mock.invocationCallOrder[0])

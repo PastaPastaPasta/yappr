@@ -5,7 +5,7 @@ import { signerService } from './signer-service';
 import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/wasm-sdk';
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config';
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup';
-import { keyNetwork } from '@/lib/constants'
+import { DEVNET_NAME, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
@@ -15,11 +15,13 @@ import { sleep } from '@/lib/retry-utils'
 import { Identifier } from '@dashevo/wasm-sdk'
 
 /**
- * Where the revision floor is kept: by network and identity, never under a
+ * Where the revision floor is kept: by chain and identity, never under a
  * deployment's storage scope. The identity update lock is one per origin, so
- * every build on it (root, /staging, /testing) must read the same floor.
+ * every build on it for one chain (root, /staging, /testing) must read the
+ * same floor.
  */
-const provedRevisionKey = (identityId: string) => `yappr:identity-revision:${keyNetwork()}:${identityId}`
+const chainName = () => (getConfiguredNetwork() === 'devnet' ? `devnet-${DEVNET_NAME}` : getConfiguredNetwork())
+const provedRevisionKey = (identityId: string) => `yappr:identity-revision:${chainName()}:${identityId}`
 const FRESH_READS = 5
 const FRESH_READ_PAUSE_MS = 1500
 export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached the network yet. Try again in a moment."

@@ -26,9 +26,14 @@ function lockName(ownerId: string, contractId: string): string {
   return `yappr:identity-write:${ownerId}:${contractId}`
 }
 
+/** The Web Locks API, which every tab of this origin shares, or undefined where it is missing. */
+export function crossTabLocks(): LockManager | undefined {
+  return typeof navigator === 'undefined' ? undefined : navigator.locks
+}
+
 export async function withIdentityWriteLock<T>(ownerId: string, contractId: string, write: () => Promise<T>): Promise<T> {
   const name = lockName(ownerId, contractId)
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  const locks = crossTabLocks()
   if (locks) return await locks.request(name, write)
 
   const run = (queues.get(name) ?? Promise.resolve()).then(write).finally(() => {
@@ -55,7 +60,7 @@ export const IDENTITY_UPDATE_UNLOCKED = "This browser can't add a key to your ac
  * wallet round trip.
  */
 export async function withIdentityUpdateLock<T>(identityId: string, update: () => Promise<T>): Promise<T> {
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  const locks = crossTabLocks()
   if (!locks) throw new Error(IDENTITY_UPDATE_UNLOCKED)
   return await locks.request(lockName(identityId, 'identity-update'), update)
 }

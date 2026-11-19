@@ -45,7 +45,7 @@ import { CHARTERS_CONTRACT_ID, CHARTER_KEYS, isCharterKey, type RewardSplit } fr
 import {
   charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
 } from '@/lib/moderation-charters/transitions.mjs'
-import { withIdentityUpdateLock, withIdentityWriteLock } from '@/lib/identity-write-lock'
+import { IDENTITY_UPDATE_UNLOCKED, crossTabLocks, withIdentityUpdateLock, withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
   deriveCharterKey, forgetCharterKeys, heldCharterKey, holdCharterKey, keyMatches, readPrivateKeyInput, type CharterRole,
 } from '@/lib/moderation-charters/charter-keys'
@@ -276,13 +276,13 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * under it. That is left only when a page died between reserving a nonce and
  * storing the create, so it was never sent; a slot is cleared only once its
  * reservation is released ({@link abandonSlot}), or once its create is
- * refused or landed. The nonce is counted spent, so a
- * transition that may still take it late can never settle a later SDK-signed
- * write.
+ * refused or landed. None of these can still take the nonce, so it is not
+ * counted spent: the next SDK-signed write may sign that very nonce, and must
+ * then be settled by it.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
-  if (!(typeof navigator === 'undefined' ? undefined : navigator.locks)) return
+  if (!crossTabLocks()) return
   let pending: PendingTransition[]
   try {
     pending = loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []
@@ -300,7 +300,7 @@ function releaseOrphanedReservations(ownerId: string): void {
       continue
     }
     if (stored && !isLanded(stored) && stored.reservation.id === entry.id) continue
-    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry)
   }
 }
 
@@ -604,6 +604,7 @@ class CharterService {
     if (!onChain && !create) {
       throw new CharterActionError(role === 'leader' ? "This account has no charter key, so join messages can't be read here." : 'Set up your charter key first.', 'refused')
     }
+    if (!onChain && !crossTabLocks()) throw new CharterActionError(IDENTITY_UPDATE_UNLOCKED, 'refused')
     const isMaster = (wif: string) => matchIdentityKey(wif, identity.publicKeys, {
       network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.MASTER],
     }).ok
