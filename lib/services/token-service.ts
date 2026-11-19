@@ -14,7 +14,7 @@ import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey,
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { beginLocalWalletPayment, endLocalWalletPayment, prepareLocalWalletPayment, type LocalWalletPaymentIntent } from './wallet-payment-service';
+import { beginLocalWalletPayment, endLocalWalletPayment, markReplacedWalletPayments, prepareLocalWalletPayment, type LocalWalletPaymentIntent, type ReplacementState } from './wallet-payment-service';
 import type { WalletTransitionRequest } from './token-transition-builder';
 
 /** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
@@ -69,15 +69,36 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
     const intent = payment && 'key' in payment ? payment : undefined;
     const sendPayment = async () => {
       let walletRequest = payment && 'sendWithNonce' in payment ? payment : undefined;
+      let replaces: readonly string[] = [];
       if (intent) {
         const prepared = await prepareLocalWalletPayment(intent.cached, { ownerId, key: intent.key, allowAnother: intent.allowAnother, attemptId: intent.attemptId }, true);
         intent.onPrepared?.(prepared.completed ? undefined : prepared.payment);
         if (prepared.completed) return;
         if (prepared.unresolved) throw new UnresolvedWalletPaymentError(prepared.different);
         walletRequest = prepared.payment?.request;
+        // Requests of this payment proved absent, still shown as QR codes elsewhere: marked before this signs (still under
+        // the lock), so a tab that checks one again settles by this payment instead of showing a fresh one.
+        if (!walletRequest && prepared.replaces) {
+          replaces = prepared.replaces;
+          markReplacedWalletPayments(ownerId, replaces, 'sending');
+        }
       }
-      if (walletRequest) await walletRequest.sendWithNonce(ownerId, send, Boolean(intent));
-      else await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send, Boolean(intent));
+      if (walletRequest) {
+        await walletRequest.sendWithNonce(ownerId, send, Boolean(intent));
+        return;
+      }
+      const answered = (state: ReplacementState) => {
+        try { markReplacedWalletPayments(ownerId, replaces, state); }
+        catch (error) { logger.warn('Could not record what replaced the earlier wallet payment request:', error); }
+      };
+      try {
+        await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send, Boolean(intent));
+      } catch (error) {
+        // An answer lost after sending leaves it `sending`: it may have gone through.
+        if (!(sent && sentWriteOutcomeUnknown(error))) answered('failed');
+        throw error;
+      }
+      answered('completed');
     };
     if (intent) await withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, sendPayment);
     else await sendPayment();

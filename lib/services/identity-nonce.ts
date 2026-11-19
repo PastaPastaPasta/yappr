@@ -72,8 +72,6 @@ export interface NonceReservation {
   /** The highest nonce this browser knows spent: one it saw at the tip, or one it saw its own transition take. */
   floor: bigint;
   pending: PendingTransition[];
-  /** Deployment-scoped unsigned wallet payment records, retained until their outcomes are resolved. */
-  walletPayments?: Record<string, string>;
 }
 
 /**
@@ -159,11 +157,9 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
       mark: string;
       floor?: unknown;
       pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
-      walletPayments?: Record<string, string>;
     };
     return {
       mark: BigInt(parsed.mark),
-      ...(parsed.walletPayments ? { walletPayments: parsed.walletPayments } : {}),
       floor: max(sequence(parsed.floor) ?? BigInt(0), raisedFloors.get(reservationKey(ownerId, contractId)) ?? BigInt(0)),
       pending: parsed.pending
         .filter((p) => !released.has(p.id))
@@ -200,7 +196,7 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
-      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending, walletPayments: reservation.walletPayments })
+      JSON.stringify({ mark: reservation.mark.toString(), floor: reservation.floor.toString(), pending })
     );
   } catch (error) {
     logger.warn('Could not store nonce reservations:', error);
@@ -208,11 +204,32 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
   }
 }
 
-/** Caller holds the identity write lock, including while creating the unsigned request. */
+/**
+ * The deployment-scoped (`scope`) wallet payment requests this browser shows
+ * as QR codes, kept until their outcomes are known. A key of their own, beside
+ * the reservation and under the same write lock: a tab still running a build
+ * that writes the reservation without them can never erase them.
+ */
+const walletPaymentsKey = (ownerId: string, contractId: string, scope: string) => `yappr:wallet-payments:${ownerId}:${contractId}:${scope}`;
+
+/** Throws {@link NONCE_STORE_ERROR} when localStorage cannot be read. */
+export function loadWalletPayments(ownerId: string, contractId: string, scope: string): string | null {
+  try {
+    return localStorage.getItem(walletPaymentsKey(ownerId, contractId, scope));
+  } catch (error) {
+    logger.warn('Could not read wallet payment requests:', error);
+    throw new Error(NONCE_STORE_ERROR);
+  }
+}
+
+/** Caller holds the identity write lock, including while creating the unsigned request. Throws {@link NONCE_STORE_ERROR} when refused. */
 export function storeWalletPayments(ownerId: string, contractId: string, scope: string, records: string): void {
-  const reservation = loadReservation(ownerId, contractId);
-  if (!reservation) throw new Error(NONCE_STORE_ERROR);
-  saveReservation(ownerId, contractId, { ...reservation, walletPayments: { ...reservation.walletPayments, [scope]: records } });
+  try {
+    localStorage.setItem(walletPaymentsKey(ownerId, contractId, scope), records);
+  } catch (error) {
+    logger.warn('Could not store wallet payment requests:', error);
+    throw new Error(NONCE_STORE_ERROR);
+  }
 }
 
 /**
@@ -298,7 +315,6 @@ export function reserveNonce(
     : { id, nonce, expiresAt: null };
   if (scope !== undefined) entry.scope = scope;
   saveReservation(ownerId, contractId, {
-    ...(previous?.walletPayments ? { walletPayments: previous.walletPayments } : {}),
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
     pending: [...live, entry],

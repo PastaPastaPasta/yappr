@@ -11,9 +11,9 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
-import { beginLocalWalletPayment, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
+import { beginLocalWalletPayment, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, markReplacedWalletPayments, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
 import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
-import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, loadWalletPayments, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
 
 const OWNER = '8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR'
 const OTHER = 'CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8'
@@ -213,7 +213,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   }
 
   const context = { ownerId: OWNER, key: action, expose: () => {} }
-  const storedPayments = () => JSON.parse(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.walletPayments?.[scopedKey('wallet-payments:v1')] ?? '[]') as { reservationId: string; nonce: string }[]
+  const storedPayments = () => JSON.parse(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1')) ?? '[]') as { reservationId: string; nonce: string; replacedBy?: { state: string } }[]
 
   const differentReceipts: [string, Record<string, unknown>][] = action === 'tip'
     ? [
@@ -381,8 +381,9 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
     reportedNonce = chainNonce()
     if (!cached) {
-      expect(await prepareLocalWalletPayment(original.payment, context)).toEqual({ completed: false })
-      expect(storedPayments()).toEqual([])
+      // A local payment would replace it: it stays, for that payment to mark, until a QR replacement takes its place.
+      expect(await prepareLocalWalletPayment(original.payment, context)).toEqual({ completed: false, replaces: [original.payment.request.reservationId] })
+      expect(storedPayments()).toHaveLength(1)
     }
 
     let resumeSigner = () => {}
@@ -451,6 +452,100 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: replacement.key }))
       expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
     }
+  })
+
+  /** Tabs A and B both show the QR at 101; its nonce is then retired without it (proved absent). */
+  const shownThenRetired = async () => {
+    const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (original.completed) throw new Error('No original payment')
+    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
+    reportedNonce = chainNonce()
+    return original.payment
+  }
+
+  it('settles a QR another tab still shows by the local payment that replaced it', async () => {
+    const original = await shownThenRetired()
+    // Tab A pays locally at a fresh nonce, in place of the request proved absent.
+    const sends = () => broadcast.mock.calls.length + sdk.tokens.transfer.mock.calls.length + sdk.tokens.directPurchase.mock.calls.length
+    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
+    expect(sends()).toBe(1)
+    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'completed' } }])
+    // An unrelated payment leaves the mark for the tab still showing it.
+    const otherContext = { ...context, key: 'different payment' }
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
+    expect(storedPayments()).toHaveLength(1)
+    // Tab B checks its QR again: done, with nothing new to scan.
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(storedPayments()).toEqual([])
+    expect(sends()).toBe(1)
+  })
+
+  it('keeps a QR another tab shows unresolved while the local payment that replaced it may still go through', async () => {
+    const original = await shownThenRetired()
+    const prepared = await prepareLocalWalletPayment(original, context)
+    expect(prepared).toEqual({ completed: false, replaces: [original.request.reservationId] })
+    // Tab A's page died after marking it, before the answer.
+    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'sending')
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    // Only the user's own "send another" goes past it.
+    const next = await prepareWalletPayment(original, buildFresh, { ...context, allowAnother: new Set([original.request.reservationId]) })
+    expect(next).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
+  })
+
+  it('shows a fresh QR in place of one whose local replacement was refused', async () => {
+    const original = await shownThenRetired()
+    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'failed')
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
+    expect(buildFresh).toHaveBeenCalledOnce()
+  })
+
+  it('never takes a payment the user chose to send past as the completion of the new one', async () => {
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No QR payment')
+    const allowAnother = new Set([first.payment.request.reservationId])
+    // The old one completes before the new one is confirmed, its record still stored.
+    expect(execute(first.payment.request.nonce, true)).toBe(true)
+    recordReceipt(first.payment)
+    reportedNonce = chainNonce()
+    expect(await prepareLocalWalletPayment(undefined, { ...context, allowAnother })).toEqual({ completed: false })
+    expect(storedPayments()).toEqual([])
+  })
+
+  it('keeps a shown request through a tab of the earlier build rewriting the nonce reservation', async () => {
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    const key = [...storage.keys()].find(item => item.startsWith('yappr:nonce-reservation:'))
+    if (!key) throw new Error('No reservation')
+    // The earlier build writes the reservation as mark, floor and pending only (a document at 102, say).
+    const base = JSON.parse(storage.get(key) ?? '{}') as { floor: string; pending: unknown[] }
+    storage.set(key, JSON.stringify({ mark: '102', floor: base.floor, pending: base.pending }))
+    const buildFresh = vi.fn(buildCachedPayment)
+    const again = await prepareWalletPayment(undefined, buildFresh, context)
+    if (again.completed) throw new Error('Reported completed')
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(again.payment.request.reservationId).toBe(shown.payment.request.reservationId)
+  })
+
+  it('takes liveness and outcome from one read of the nonce', async () => {
+    const cached = await buildCachedPayment()
+    const before = sdk.identities.contractNonceWithProof.mock.calls.length
+    // Executable at that read; the wallet pays just after it.
+    sdk.identities.contractNonceWithProof.mockImplementationOnce(async () => {
+      const answer = { data: reportedNonce, metadata: { height: nonceHeight }, proof: {} }
+      expect(execute(BigInt(101), true)).toBe(true)
+      recordPayment()
+      reportedNonce = chainNonce()
+      return answer
+    })
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(sdk.identities.contractNonceWithProof.mock.calls.length - before).toBe(1)
+    expect(buildFresh).not.toHaveBeenCalled()
   })
 
   it('settles a local confirmation by a matching payment completed during it, unless the user asked to send another', async () => {
