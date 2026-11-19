@@ -641,6 +641,38 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(stored()).not.toContain(REAUTH_SLOT)
   })
 
+  it('a renewal cancel sent again after a restart lets the revoke it held back sign the account out', async () => {
+    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    // The wallet answers, superseding this device's keys; the app is killed before the cancel lands.
+    await walletGrants(renewal.uri, [28, 29])
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    emitted = []
+    await refresh()
+    expect(await next.current()).toMatchObject({ identityId: OWNER })
+    await next.appConnectCancel({ renew: true, account: OWNER, requestHash: renewal.requestHash })
+    expect(await next.appConnectPending({ renew: true })).toBe(false)
+    await until(() => emitted.find(e => e.event === 'session.changed' && (e.payload as { reason: string }).reason === 'signed-out'), 'the sign-out')
+    expect(await next.current()).toBeNull()
+  })
+
+  it('a cancel naming a request its flow replaced ("That\'s not me") still ends that flow', async () => {
+    const restarted = boot()
+    session = restarted
+    await restarted.restore()
+    const first = await restarted.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (first.phase !== 'waiting') throw new Error('not waiting')
+    await restarted.appConnectReject()
+    const replaced = await untilPhase(restarted, 'waiting')
+    if (replaced.phase !== 'waiting') throw new Error('not waiting')
+    expect(replaced.requestHash).not.toBe(first.requestHash)
+    await restarted.appConnectCancel({ requestHash: first.requestHash })
+    expect(await restarted.appConnectState()).toMatchObject({ phase: 'idle' })
+    expect(await restarted.appConnectPendingSignIn()).toBeNull()
+  })
+
   it('keeps "Sign in again" where a signed-out launch finds it, and a cancel on an engine running no flow forgets it', async () => {
     const restarted = boot()
     session = restarted
@@ -679,6 +711,42 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await again.appConnectPendingSignIn()).toEqual({ reauth: null })
     await again.appConnectCancel({})
     expect(await again.appConnectPendingSignIn()).toBeNull()
+  })
+
+  it('a cancel that names its request leaves a flow showing another one, and forgets only the request it names', async () => {
+    const first = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (first.phase !== 'waiting') throw new Error('not waiting')
+    const next = boot()
+    session = next
+    // Sent again to an engine that never ran its flow: a stored request that is not the one named stays.
+    await next.appConnectCancel({ requestHash: 'cd'.repeat(20) })
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+
+    const second = await next.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (second.phase !== 'waiting') throw new Error('not waiting')
+    await next.appConnectCancel({ requestHash: first.requestHash })
+    expect(await next.appConnectState()).toMatchObject({ phase: 'waiting', requestHash: second.requestHash })
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+
+    await next.appConnectCancel({ requestHash: second.requestHash })
+    expect(await next.appConnectState()).toMatchObject({ phase: 'idle' })
+    expect(await next.appConnectPendingSignIn()).toBeNull()
+  })
+
+  it('a sign-in whose request cannot be deleted fails before it signs in', async () => {
+    const started = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    await walletGrants(started.uri, [26, 27])
+    await session.appConnectPollNow()
+    await untilPhase(session, 'confirm')
+    const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
+    try {
+      await expect(session.appConnectAccept({ identityId: OWNER })).rejects.toThrow('storage failed')
+    } finally {
+      deletes.mockRestore()
+    }
+    expect(await session.current()).toBeNull()
+    expect(appConnectSessions.current(OWNER)).toBeNull()
   })
 
   it('a cancel forgets the request of a resumed start that never took it up (offline)', async () => {
