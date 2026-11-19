@@ -913,6 +913,7 @@ class PollrVoteService {
           documentTypeName: docType,
           where: [['pollId', '==', pollId], choiceClause(choice)],
         });
+        if (counts[choice] > 0) markPollHasBallots(pollId);
       }
       return counts;
     } catch (error) {
