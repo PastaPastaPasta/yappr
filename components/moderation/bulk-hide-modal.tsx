@@ -122,14 +122,9 @@ export function BulkHideModal() {
     }
   }, [isOpen, target])
 
-  /** A read proved at `readAt` predates a run change: the chain will show more, so read again (a few times at most). */
+  /** A read of either tab proved at `readAt` predates a run change: the chain will show more, so read both again (a few times at most per run). */
   const scheduleStaleRead = useCallback((readAt: number) => {
-    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
-    staleReadTimerRef.current = null
-    if (!readPredatesRun(runChangesRef.current, readAt)) {
-      staleReadsRef.current = 0
-      return
-    }
+    if (staleReadTimerRef.current || !readPredatesRun(runChangesRef.current, readAt)) return
     if (staleReadsRef.current >= MAX_STALE_REREADS) return
     staleReadsRef.current++
     const opening = openingRef.current
@@ -141,6 +136,7 @@ export function BulkHideModal() {
 
   useEffect(() => () => {
     if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
+    staleReadTimerRef.current = null
   }, [isOpen])
 
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
@@ -177,7 +173,10 @@ export function BulkHideModal() {
     // changes its read predates; a list too long to read whole has no count.
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => (truncated ? null : withRunChanges(items, other, changes, at).length))
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => {
+        if (!cancelled) scheduleStaleRead(at)
+        return truncated ? null : withRunChanges(items, other, changes, at).length
+      })
     counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
     }).catch(() => {
@@ -187,7 +186,7 @@ export function BulkHideModal() {
     return () => {
       cancelled = true
     }
-  }, [isOpen, authorId, mode, readEpoch])
+  }, [isOpen, authorId, mode, readEpoch, scheduleStaleRead])
 
   const options: readonly LabelOption[] = useMemo(
     () => (seatedReasons.required ? labelOptions(seatedReasons.reasons) : labelOptions(null)),
@@ -305,6 +304,7 @@ export function BulkHideModal() {
     // read can reach a node a block behind, so give the network a moment
     // first; the list reads as loading meanwhile, so nothing stale is offered.
     setSelected(new Set(batchItems.map((item) => item.id)))
+    staleReadsRef.current = 0
     readRef.current++
     setList({ status: 'loading', count: 0 })
     await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
