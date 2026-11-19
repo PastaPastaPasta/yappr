@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
+import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
 import { PostListSkeleton } from '@/components/post/post-card-skeleton'
@@ -378,6 +379,7 @@ export default function ExplorePage() {
           >
             <KeptPanel active={activeTab === 'hashtags'}>
                 <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
+                <LoadingAnnouncement loading={!trendingHashtags} label="Loading trending tags" />
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
                   {!trendingHashtags ? (
                     <TrendingHashtagRowSkeleton count={12} testId="explore-trending-loading" />
@@ -420,6 +422,7 @@ export default function ExplorePage() {
             </KeptPanel>
 
             <KeptPanel active={activeTab === 'blogs'}>
+                <LoadingAnnouncement loading={isLoadingBlogs} label="Loading posts" />
                 {isLoadingBlogs ? (
                   <BlogPostCardSkeleton count={10} />
                 ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (

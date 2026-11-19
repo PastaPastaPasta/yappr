@@ -1,6 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
+import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -65,6 +66,7 @@ function TrendingHashtagsBox() {
         <FireIcon className="h-5 w-5 text-yappr-500" />
         Trending
       </h2>
+      <LoadingAnnouncement loading={trending === null} label="Loading trending tags" />
       <TrendingBody trending={trending} hasMore={hasMore} />
     </div>
   )
@@ -74,7 +76,7 @@ function TrendingBody({ trending, hasMore }: { trending: TrendingHashtag[] | nul
   if (trending === null) {
     // Same row box as a loaded entry (py-2.5, a 20px tag line, a 16px count line).
     return (
-      <div role="status" aria-busy="true" aria-label="Loading">
+      <div aria-hidden="true">
         {[...Array(5)].map((_, i) => (
           <div key={i} className="flex items-center gap-3 px-4 py-2.5">
             <span className="w-4 shrink-0" />

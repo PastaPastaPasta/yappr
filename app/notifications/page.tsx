@@ -19,6 +19,7 @@ import {
 } from '@heroicons/react/24/outline'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
+import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { Button } from '@/components/ui/button'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -141,7 +142,7 @@ const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
 /** Placeholder rows shaped like a loaded notification (icon, avatar row, one line, a preview). */
 function NotificationSkeleton() {
   return (
-    <div className="divide-y divide-gray-200 dark:divide-gray-800" role="status" aria-busy="true" aria-label="Loading notifications">
+    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-hidden="true">
       {[0, 1, 2, 3, 4].map((i) => (
         <div key={i} className="flex gap-3 px-4 py-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center">
@@ -298,6 +299,7 @@ function NotificationsPage() {
         </PageHeader>
 
         <div id="notifications-panel" role="tabpanel" aria-labelledby={scrollTabId('notifications-panel', filter)}>
+        <LoadingAnnouncement loading={isLoading || !hasFetchedOnce} label="Loading notifications" />
         {isLoading || !hasFetchedOnce ? (
           <NotificationSkeleton />
         ) : filteredNotifications.length === 0 ? (

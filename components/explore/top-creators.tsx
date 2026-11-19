@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { UserAvatar } from '@/components/ui/avatar-image'
+import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { formatNumber } from '@/lib/utils'
 import type { RankedGroupCount, RankingWindow } from '@/lib/services/ranked-likes'
 import { followRankingsAvailable } from '@/lib/contract-topology'
@@ -49,7 +50,7 @@ async function hydrateRankedUsers(rankings: RankedGroupCount[][]): Promise<Ranke
 function RankedUserListSkeleton() {
   const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
   return (
-    <div role="status" aria-busy="true" aria-label="Loading creators">
+    <div aria-hidden="true">
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
         <div className="flex h-5 items-center"><div className={`h-3.5 w-36 ${bar}`} /></div>
       </div>
@@ -150,9 +151,15 @@ export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {})
   }, [window])
 
   const current = byWindow[window]
-  if (!current) return <RankedUserListSkeleton />
-  const { creators, mostFollowed } = current
+  return (
+    <>
+      <LoadingAnnouncement loading={!current} label="Loading creators" />
+      {current ? <CreatorLists {...current} /> : <RankedUserListSkeleton />}
+    </>
+  )
+}
 
+function CreatorLists({ creators, mostFollowed }: { creators: RankedUser[]; mostFollowed: RankedUser[] }) {
   if (creators.length === 0 && mostFollowed.length === 0) {
     return (
       <div className="p-8 text-center" data-testid="explore-top-creators-empty">
