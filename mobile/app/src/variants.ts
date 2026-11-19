@@ -52,3 +52,22 @@ export function variantForApplicationId(applicationId: string): Variant | undefi
     (v) => VARIANTS[v].applicationId === applicationId,
   );
 }
+
+/**
+ * The iOS bundle id a build is signed for: the variant's own id, or
+ * YAPPR_IOS_BUNDLE_ID when the App Store record lives under another id
+ * (mobile/RELEASE.md, TestFlight). Android always keeps the variant's id.
+ * An override may not be another variant's id, or the app would resolve to
+ * that variant at run time.
+ */
+export function resolveIosBundleId(variant: Variant, override: string | undefined): string {
+  if (override === undefined || override === '') return VARIANTS[variant].applicationId;
+  if (!/^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-9-]*)+$/.test(override)) {
+    throw new Error(`YAPPR_IOS_BUNDLE_ID must be a reverse-DNS bundle id, got "${override}".`);
+  }
+  const owner = variantForApplicationId(override);
+  if (owner && owner !== variant) {
+    throw new Error(`YAPPR_IOS_BUNDLE_ID "${override}" is the ${owner} variant's id, not ${variant}'s.`);
+  }
+  return override;
+}

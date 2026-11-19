@@ -1,7 +1,7 @@
 import * as Application from 'expo-application';
 import Constants from 'expo-constants';
 
-import { VARIANTS, variantForApplicationId, type Network, type Variant } from './variants';
+import { isVariant, VARIANTS, variantForApplicationId, type Network, type Variant } from './variants';
 
 /** The engine bundle this build ships (plugins/engine-assets `engineExtra`). */
 export interface EngineBuildConfig {
@@ -38,14 +38,19 @@ export interface AppConfig {
  * JS bundle cannot get wrong, and checks the embedded `extra` agrees. They
  * disagree when the native project and the bundle were built with different
  * APP_VARIANTs (for example a testnet prebuild served by a devnet `expo start`),
- * and an app that talks to the wrong network must not start.
+ * and an app that talks to the wrong network must not start. An iOS build
+ * signed under YAPPR_IOS_BUNDLE_ID records that id in `extra.iosBundleId`, and
+ * the variant comes from `extra` only when the native id is exactly that one.
  */
 export function resolveAppConfig(
   applicationId: string | null,
-  extra: { variant?: unknown; engine?: unknown; commit?: unknown } | undefined,
+  extra: { variant?: unknown; iosBundleId?: unknown; engine?: unknown; commit?: unknown } | undefined,
   appVersion: string | null,
 ): AppConfig {
-  const variant = applicationId ? variantForApplicationId(applicationId) : undefined;
+  const declared = typeof extra?.variant === 'string' && isVariant(extra.variant) ? extra.variant : undefined;
+  const variant = applicationId
+    ? (variantForApplicationId(applicationId) ?? (extra?.iosBundleId === applicationId ? declared : undefined))
+    : undefined;
   if (!applicationId || !variant) {
     throw new Error(`Unknown application id "${applicationId}". Expected one of the ADR-001 E6 ids.`);
   }

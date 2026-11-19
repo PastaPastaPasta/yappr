@@ -3,14 +3,19 @@
 #
 #   APP_VARIANT=devnet scripts/release-ios.sh simulator   Release .app for the simulator
 #   APP_VARIANT=devnet scripts/release-ios.sh archive     unsigned device .xcarchive plus an
-#                                                         unsigned .ipa (for size; not installable)
+#                                                         unsigned .ipa (for size; not installable),
+#                                                         or a signed .xcarchive (below)
 #
 # Environment:
 #   APP_VARIANT          devnet (default) | staging-testnet | testnet | production
 #   YAPPR_BUILD_NUMBER   CFBundleVersion (default 1); CI passes its run number
 #   YAPPR_SKIP_PREBUILD  1 to reuse the existing ios/ project (pods installed)
+#   YAPPR_IOS_BUNDLE_ID  bundle id override (app.config.ts); default the variant's id
+#   YAPPR_IOS_TEAM_ID, YAPPR_IOS_PROFILE_SPECIFIER
+#                        sign the archive manually with "Apple Distribution" from the
+#                        keychain and this profile (name or UUID), for the app target only
 #
-# Signing and upload need the owner's Apple credentials; see RELEASE.md.
+# Upload is the ios-testflight workflow's job; see RELEASE.md.
 # Outputs land in build/release/.
 set -euo pipefail
 
@@ -41,7 +46,7 @@ mkdir -p "$out"
 bundle_id_matches() { # <application id> <project.pbxproj>
   grep -qE "PRODUCT_BUNDLE_IDENTIFIER = \"?${1//./\\.}\"?;" "$2"
 }
-application_id="$(node -p "require('./src/variants.ts').VARIANTS['$APP_VARIANT'].applicationId")"
+application_id="$(node -p "require('./src/variants.ts').resolveIosBundleId('$APP_VARIANT', process.env.YAPPR_IOS_BUNDLE_ID)")"
 if ! bundle_id_matches "$application_id" "ios/$scheme.xcodeproj/project.pbxproj" ||
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "ios/$scheme/Info.plist")" != "$build_number" ]]; then
   echo "ios/ was prebuilt for another variant or build number; rerun without YAPPR_SKIP_PREBUILD." >&2
@@ -84,6 +89,28 @@ fi
 
 archive="$out/$name.xcarchive"
 rm -rf "$archive"
+
+if [[ -n "${YAPPR_IOS_PROFILE_SPECIFIER:-}" ]]; then
+  : "${YAPPR_IOS_TEAM_ID:?YAPPR_IOS_TEAM_ID is required to sign}"
+  # The app target only: settings passed to xcodebuild would reach the Pods targets too,
+  # which take no provisioning profile. This is what EAS Build does.
+  YAPPR_TARGET="$scheme" node -e "require('expo/config-plugins').IOSConfig.ProvisioningProfile.setProvisioningProfileForPbxproj(process.cwd(), {
+    targetName: process.env.YAPPR_TARGET, profileName: process.env.YAPPR_IOS_PROFILE_SPECIFIER,
+    appleTeamId: process.env.YAPPR_IOS_TEAM_ID, codeSignIdentity: 'Apple Distribution' })"
+  xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
+    -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$archive" \
+    -derivedDataPath "$derived" archive >"$log" 2>&1 || { tail -n 40 "$log"; exit 1; }
+  # A signed bundle can't be edited, so a clean build must already lack the dev launcher keys.
+  plist="$archive/Products/Applications/$scheme.app/Info.plist"
+  if /usr/libexec/PlistBuddy -c 'Print :NSAppTransportSecurity:NSAllowsLocalNetworking' "$plist" >/dev/null 2>&1 ||
+    /usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' "$plist" 2>/dev/null | grep -q '_expo._tcp'; then
+    echo "The signed archive still has the dev launcher's local-network keys ($plist)." >&2
+    exit 1
+  fi
+  echo "Signed archive: $archive"
+  exit 0
+fi
+
 xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
   -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$archive" \
   -derivedDataPath "$derived" \
