@@ -37,7 +37,7 @@ test('about page renders and the network pill names the network', async ({ page 
 test('explore page loads', async ({ page }) => {
   await page.goto(appUrl('/explore/'))
 
-  await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Search Yappr' })).toBeVisible()
   // The trending panel starts in its loading state and resolves to either real
   // hashtags or the empty state — both mean the page came up.
   await expect(page.getByRole('tab', { name: 'Trending' })).toBeVisible()
@@ -139,7 +139,7 @@ test('primary navigation moves between sections', async ({ page }) => {
 
   await page.getByRole('link', { name: 'Explore', exact: true }).click()
   await expect(page).toHaveURL(appUrlPattern('/explore'))
-  await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Search Yappr' })).toBeVisible()
 
   await page.getByRole('link', { name: /^Blog( Beta)?$/ }).click()
   await expect(page).toHaveURL(appUrlPattern('/blog'))

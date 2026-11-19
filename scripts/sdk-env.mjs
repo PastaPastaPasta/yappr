@@ -71,9 +71,9 @@ export function keyNetwork() {
 /** Base URL of the Insight API for the selected network. */
 export function insightUrl() {
   const net = network();
-  const url = envValue('INSIGHT_URL')
-    ?? envValue('NEXT_PUBLIC_INSIGHT_API_URL')
-    ?? INSIGHT_URLS[net];
+  const url = net === 'devnet'
+    ? envValue('INSIGHT_URL') ?? envValue('NEXT_PUBLIC_INSIGHT_API_URL')
+    : process.env.INSIGHT_URL || INSIGHT_URLS[net];
   if (!url) throw new Error('NETWORK=devnet needs INSIGHT_URL or NEXT_PUBLIC_INSIGHT_API_URL (env or .env.devnet)');
   return url.replace(/\/$/, '');
 }

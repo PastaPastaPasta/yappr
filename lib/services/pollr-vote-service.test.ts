@@ -731,6 +731,35 @@ describe('v7 tallies', () => {
     ]));
   });
 
+  it('keeps a ballot a per-choice count saw when a later choice\'s count fails', async () => {
+    const service = await loadService('v7');
+    const { PollTallyUnavailableError } = await import('./pollr-vote-service');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    mocks.count
+      .mockRejectedValueOnce(new Error('unsupported operator'))
+      .mockResolvedValueOnce(new Map([['', 0n]]))
+      .mockResolvedValueOnce(new Map([['', 1n]]))
+      .mockRejectedValueOnce(new Error('down'));
+
+    await expect(service.getTally(open())).rejects.toBeInstanceOf(PollTallyUnavailableError);
+    expect(mocks.count).toHaveBeenCalledTimes(4);
+    expect(pollHasKnownBallots(id(9))).toBe(true);
+    mocks.count.mockResolvedValue(new Map());
+    expect(await service.deleteEligible(open({ ownerId: VOTER }), VOTER, { status: 'fulfilled', value: { choices: [], pending: false } })).toBe(false);
+  });
+
+  it('records no ballot when the per-choice counts it read were all zero before one failed', async () => {
+    const service = await loadService('v7');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    mocks.count
+      .mockRejectedValueOnce(new Error('unsupported operator'))
+      .mockResolvedValueOnce(new Map([['', 0n]]))
+      .mockRejectedValueOnce(new Error('down'));
+
+    await expect(service.getTally(open())).rejects.toThrow();
+    expect(pollHasKnownBallots(id(9))).toBe(false);
+  });
+
   it('reports the tally unavailable when every count fails, with no ballot scan', async () => {
     const service = await loadService('v7');
     const { PollTallyUnavailableError } = await import('./pollr-vote-service');

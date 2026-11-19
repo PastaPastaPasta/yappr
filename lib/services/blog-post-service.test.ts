@@ -178,6 +178,24 @@ describe('public discovery reads past drafts (QA D-27)', () => {
     expect(refill).not.toHaveBeenCalled();
   });
 
+  it('rejects a strict search that matched nothing while a blog could not be read, and keeps a lenient one empty', async () => {
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockImplementation(async (ids, _limit, onBlogReadFailure) => {
+      onBlogReadFailure?.(new Error('DAPI timeout'));
+      return new Map(ids.map((id) => [id, []]));
+    });
+
+    await expect(blogPostService.searchPosts([blogId], 'x', 10, { failWhenUnread: true })).rejects.toThrow('DAPI timeout');
+    expect(await blogPostService.searchPosts([blogId], 'x')).toEqual([]);
+  });
+
+  it('rejects a strict search when reading on for published posts failed and nothing matched', async () => {
+    const drafts = Array.from({ length: 20 }, (_, index) => post(`d${index}`, blogId, 1_000 - index));
+    vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, drafts]]));
+    vi.spyOn(blogPostService, 'getPostsByBlog').mockRejectedValue(new Error('down'));
+
+    await expect(blogPostService.searchPosts([blogId], 'x', 10, { failWhenUnread: true })).rejects.toThrow('down');
+  });
+
   it('stops reading after a bounded number of all-draft pages', async () => {
     const drafts = (prefix: string) => Array.from({ length: 20 }, (_, index) => post(`${prefix}${index}`, blogId, 1_000 - index));
     vi.spyOn(blogPostService, 'getPostsByBlogs').mockResolvedValue(new Map([[blogId, drafts('first')]]));
