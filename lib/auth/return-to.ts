@@ -1,9 +1,9 @@
 /**
- * Where a user goes back to after the DPNS username gate detoured them through
- * /dpns/register.
+ * Where a user goes back to after a detour: /login, when a signed-out visitor
+ * opens a page that needs an account, and /dpns/register for a username.
  *
  * The route travels as the `next` query parameter. It is attacker-controllable
- * (anyone can link to `/dpns/register?next=...`), so it is only ever followed
+ * (anyone can link to `/login?next=...`), so it is only ever followed
  * after `sanitizeReturnTo` accepts it as an app-relative path.
  *
  * Paths are kept WITHOUT the deployment's `basePath` (/testing, /devnet):
@@ -79,6 +79,15 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
  */
 export function afterRegistrationRoute(hasUsername: boolean, next?: string | null): string {
   return hasUsername ? returnToOrDefault(next) : DEFAULT_RETURN_TO
+}
+
+/**
+ * The sign-in page, carrying `currentPath` (as `window.location` has it, with
+ * its query) as `next` when it is a route worth returning to.
+ */
+export function loginRoute(currentPath: string, basePath?: string): string {
+  const next = sanitizeReturnTo(currentPath, basePath)
+  return next ? `/login?${RETURN_TO_PARAM}=${encodeURIComponent(next)}` : '/login'
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */

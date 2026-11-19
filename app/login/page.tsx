@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Lockup } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -18,10 +19,10 @@ export default function LoginPage() {
     }
   }, [user, open])
 
-  // Redirect if already logged in
+  // Signed in: on to the page that sent the visitor here, or the feed
   useEffect(() => {
     if (user) {
-      router.push('/feed')
+      router.replace(returnToOrDefault(currentReturnToParam()))
     }
   }, [user, router])
 

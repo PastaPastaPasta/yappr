@@ -6,6 +6,7 @@ import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
+import { loginRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -193,7 +194,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)
     if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
-    else router.push(next.href)
+    else if (next.kind === 'route') router.push(next.href)
   }, [router])
 
   /**
@@ -379,7 +380,8 @@ export function withAuth<P extends object>(
     // A username is optional: pages never send a signed-in user to the username step.
     useEffect(() => {
       if (isAuthRestoring || user || options?.optional) return
-      router.push('/login')
+      // Replace, so Back from the sign-in page doesn't land here and bounce again.
+      router.replace(loginRoute(`${window.location.pathname}${window.location.search}`))
     }, [user, isAuthRestoring, router])
 
     if (isAuthRestoring) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
+  loginRoute,
   returnToOrDefault,
   sanitizeReturnTo,
 } from './return-to'
@@ -100,5 +101,17 @@ describe('afterRegistrationRoute', () => {
 
   it('still refuses an unsafe next after a success', () => {
     expect(afterRegistrationRoute(true, '//evil.example')).toBe(DEFAULT_RETURN_TO)
+  })
+})
+
+describe('loginRoute', () => {
+  it('carries the page the visitor opened, without the deployment base path', () => {
+    expect(loginRoute('/staging/messages/?conversation=x', '/staging')).toBe('/login?next=%2Fmessages%2F%3Fconversation%3Dx')
+    expect(returnToOrDefault(decodeURIComponent(loginRoute('/messages/', '').split('next=')[1]), '')).toBe('/messages/')
+  })
+
+  it('carries nothing it would refuse to follow', () => {
+    expect(loginRoute('/login/', '')).toBe('/login')
+    expect(loginRoute('//evil.example', '')).toBe('/login')
   })
 })

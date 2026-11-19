@@ -19,18 +19,18 @@ describe('signInDestination', () => {
     })
   })
 
-  it('skip, sign out, sign in again: goes to the feed without asking', () => {
+  it('skip, sign out, sign in again: stays without asking', () => {
     rememberUsernameSkip('alice')
     // Sign-out keeps the choice (it belongs to the identity, not the session).
     sessionStorage.clear()
-    expect(signInDestination({ kind: 'username-required', identityId: 'alice' })).toEqual({ kind: 'route', href: '/feed' })
+    expect(signInDestination({ kind: 'username-required', identityId: 'alice' })).toEqual({ kind: 'stay' })
     // Another identity on the same browser is still asked.
     expect(signInDestination({ kind: 'username-required', identityId: 'bob' }).kind).toBe('username-prompt')
   })
 
-  it('routes ready and logged-out sessions', () => {
-    expect(signInDestination({ kind: 'ready', identityId: 'alice' })).toEqual({ kind: 'route', href: '/feed' })
-    expect(signInDestination({ kind: 'profile-required', identityId: 'alice' })).toEqual({ kind: 'route', href: '/feed' })
+  it('keeps a ready session on its page and sends a signed-out one to sign in', () => {
+    expect(signInDestination({ kind: 'ready', identityId: 'alice' })).toEqual({ kind: 'stay' })
+    expect(signInDestination({ kind: 'profile-required', identityId: 'alice' })).toEqual({ kind: 'stay' })
     expect(signInDestination({ kind: 'logged-out' })).toEqual({ kind: 'route', href: '/login' })
   })
 })

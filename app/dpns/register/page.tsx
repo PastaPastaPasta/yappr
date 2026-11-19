@@ -21,8 +21,8 @@ export default function DPNSRegisterPage() {
     }
   }, [user])
 
-  // Skip and Continue close the modal and navigate on their own (Skip keeps
-  // `next`; Continue keeps it only once a username exists).
+  // Skip and Continue close the modal and go on through `returnWhenDone` (Skip
+  // keeps `next`; Continue keeps it only once a username exists).
   const handleClose = () => {
     setIsModalOpen(false)
   }
@@ -104,7 +104,7 @@ export default function DPNSRegisterPage() {
       </div>
       
       {/* Username modal */}
-      <UsernameModal isOpen={isModalOpen} onClose={handleClose} onDismiss={handleDismiss} />
+      <UsernameModal isOpen={isModalOpen} onClose={handleClose} onDismiss={handleDismiss} returnWhenDone />
     </>
   )
 }
