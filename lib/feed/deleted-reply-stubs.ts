@@ -74,6 +74,16 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
   let all = [...replies];
   const tried = new Set<string>();
   const proved = new Set<string>();
+  const unplaced = new Map<string, Reply>();
+  // A stub placed under a parent this page lacks (live, on a later page) would drop out of the thread with
+  // its replies: it keeps its place at the top until that parent is loaded.
+  const settled = () => {
+    const present = new Set([...all.map((reply) => reply.id), ...loaded]);
+    return all.map((reply) => {
+      const original = unplaced.get(reply.id);
+      return original && !present.has(reply.replyToReplyId ?? '') ? original : reply;
+    });
+  };
   // One round unless a stub is placed under a parent that is missing too.
   for (;;) {
     if (replyThreadsCarryLiveMarker()) {
@@ -90,16 +100,21 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
         all = [...stubs, ...all];
       }
     }
-    if (!repliesOutliveTheirParent()) return all;
+    if (!repliesOutliveTheirParent()) return settled();
     const candidates = unloadedReplyParents(all, loaded).filter((id) => !proved.has(id));
-    if (candidates.length === 0) return all;
+    if (candidates.length === 0) return settled();
     candidates.forEach((id) => proved.add(id));
     const stubs = deletedReplyStubs(all, await reads.provenAbsent(candidates));
     const parents = stubs.length > 0 && reads.removedReplyParents && removedRepliesKeepTheirParent()
       ? await reads.removedReplyParents(stubs.map((stub) => stub.id))
       : new Map<string, string>();
-    all = [...stubs.map((stub) => placedUnderItsParent(stub, parents.get(stub.id))), ...all];
-    if (parents.size === 0) return all;
+    const placed = stubs.map((stub) => {
+      const moved = placedUnderItsParent(stub, parents.get(stub.id));
+      if (moved !== stub) unplaced.set(stub.id, stub);
+      return moved;
+    });
+    all = [...placed, ...all];
+    if (parents.size === 0) return settled();
   }
 }
 

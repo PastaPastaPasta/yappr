@@ -54,7 +54,8 @@ function countHiddenDescendants(
 /**
  * Build the nested subtree under one reply, recursing down to MAX_NESTED_DEPTH.
  * A node at the cap that still has known children records them as
- * `hiddenReplyCount` instead. On v2 `childrenOf` only holds one level, so the
+ * `hiddenReplyCount` instead, except a removed reply's placeholder, which
+ * renders its children one level further. On v2 `childrenOf` only holds one level, so the
  * recursion naturally stops early and hidden counts stay 0 — the renderer falls
  * back to enrichment counts there.
  */
@@ -64,16 +65,19 @@ function buildNestedThreads(
   exclude: Set<string>,
   depth: number
 ): ReplyThread[] {
-  const atCap = depth >= MAX_NESTED_DEPTH
   return (childrenOf.get(parentId) ?? [])
     .filter(reply => !exclude.has(reply.id))
-    .map(reply => ({
-      content: reply,
-      isAuthorThread: false,
-      isThreadContinuation: false,
-      nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
-      hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0
-    }))
+    .map(reply => {
+      // A removed reply's placeholder cannot be opened, so it never ends a branch: its replies render below it.
+      const atCap = depth >= MAX_NESTED_DEPTH && !reply.deletedStub
+      return {
+        content: reply,
+        isAuthorThread: false,
+        isThreadContinuation: false,
+        nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
+        hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0
+      }
+    })
 }
 
 /**
