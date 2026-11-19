@@ -25,7 +25,9 @@ const bundleId = env('BUNDLE_ID');
 const version = env('APP_VERSION');
 const buildNumber = env('BUILD_NUMBER');
 const groupName = env('BETA_GROUP', 'Yappr Internal');
-const timeoutMs = Number(env('PROCESSING_TIMEOUT_MINUTES', '45')) * 60_000;
+const timeoutMinutes = Number(env('PROCESSING_TIMEOUT_MINUTES', '45'));
+if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new Error('PROCESSING_TIMEOUT_MINUTES must be a positive number');
+const timeoutMs = timeoutMinutes * 60_000;
 
 const b64url = (data) => Buffer.from(data).toString('base64url');
 function token() {
@@ -43,6 +45,7 @@ async function api(method, path, body) {
     method,
     headers: { Authorization: `Bearer ${token()}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(60_000),
   });
   const text = await response.text();
   if (!response.ok) {
@@ -63,6 +66,7 @@ const out = (line = '') => lines.push(line);
 const field = (label, value) => out(`- ${label}: \`${value ?? 'n/a'}\``);
 const fetched = [];
 let failed = false;
+let complianceAttached = false;
 
 async function main() {
   const apps = await api('GET', `/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&fields[apps]=name,bundleId,sku`);
@@ -147,6 +151,7 @@ async function exportCompliance(appId, build) {
     const current = await api('GET', `/v1/builds/${build.id}/appEncryptionDeclaration`);
     if (current.data) {
       field('Declaration', `${current.data.id} (${current.data.attributes?.appEncryptionDeclarationState ?? 'attached'})`);
+      complianceAttached = true;
       return;
     }
     const existing = await api('GET', `/v1/apps/${appId}/appEncryptionDeclarations?limit=50`);
@@ -161,6 +166,7 @@ async function exportCompliance(appId, build) {
         data: { type: 'appEncryptionDeclarations', id: declaration.id },
       });
       field('Declaration', `${declaration.id} (${declaration.attributes.appEncryptionDeclarationState}, attached)`);
+      complianceAttached = true;
       field('Answers', `standard third-party algorithms, no proprietary crypto, French store: ${declaration.attributes.availableOnFrenchStore}`);
       return;
     }
@@ -225,8 +231,9 @@ async function betaGroup(appId, buildId) {
     await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: buildId }] });
     field('Build in group', 'yes');
   } catch (error) {
-    failed = true;
-    out(`- **FAILED:** adding the build to ${groupName}: ${error.message}`);
+    // Until compliance is answered App Store Connect may refuse the build; that's the owner's step, not a failure.
+    if (complianceAttached) failed = true;
+    out(`- ${complianceAttached ? '**FAILED:**' : 'Not yet (pending export compliance):'} adding the build to ${groupName}: ${error.message}`);
   }
 }
 

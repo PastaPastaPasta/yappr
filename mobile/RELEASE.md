@@ -304,12 +304,12 @@ Values are never committed.
 | `IOS_APPSTORE_PROFILE_BASE64` | secret | `base64 -i <profile>.mobileprovision`: the App Store profile for the bundle id |
 | `APPLE_TEAM_ID` | variable | `44RJ69WHFF` |
 | `APPLE_EXPECTED_ORG_NAME` | variable | `The Dash Foundation, Inc.` |
-| `SIGNING_NAME_DENYLIST` | variable | optional; comma-separated names that must never appear in signing metadata (masked in logs) |
-| `YAPPR_IOS_BUNDLE_ID` | variable | optional; see below |
+| `SIGNING_NAME_DENYLIST` | secret | optional; comma-separated names that must never appear in signing metadata. A secret, not a variable: run logs print variables unmasked, and the run refuses a variable-only denylist |
+| `YAPPR_IOS_BUNDLE_ID` | variable | optional, `testnet` runs only; see below |
 
 **Bundle id fallback.** If the App Store record has to live under another id
 (for example `org.dashfoundation.yappr.beta`), set `YAPPR_IOS_BUNDLE_ID` and
-upload a profile for that id. It changes the iOS bundle id only (Android keeps
+upload a profile for that id. The workflow applies it to `testnet` runs only. It changes the iOS bundle id only (Android keeps
 the variant's package), must be reverse-DNS and may not be another variant's
 id. The build records it in `extra.iosBundleId`, and `src/config.ts` accepts
 that native id for the variant it was built for; the scheme, web links,
@@ -319,7 +319,9 @@ wallet return and engine stay the variant's.
 
 1. Dispatch from `staging` with `dry_run` on, approve the deployment, and
    read the gate's evidence in the run summary.
-2. Dispatch again with `dry_run` off and a new `build_number` if needed.
+2. Dispatch again with `dry_run` off. Start a new run rather than re-running
+   a failed one: a re-run keeps the run number, and App Store Connect refuses
+   a build number it has already received.
 3. If the summary says Missing Compliance, answer it in App Store Connect as
    listed there: the app uses encryption, standard algorithms not provided by
    Apple (COMPLIANCE, Encryption export).

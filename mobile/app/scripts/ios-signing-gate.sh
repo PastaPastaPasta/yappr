@@ -35,7 +35,8 @@ expect() { # <label> <actual> <expected>
 
 # Case-insensitive substring match against every non-empty denylist entry.
 deny_check() { # <label> <text>
-  local entry text
+  local entry text entries
+  [[ -n "${SIGNING_NAME_DENYLIST:-}" ]] || return 0
   text="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
   IFS=',' read -r -a entries <<<"${SIGNING_NAME_DENYLIST:-}"
   for entry in "${entries[@]}"; do

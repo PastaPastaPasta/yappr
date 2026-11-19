@@ -50,10 +50,10 @@ jobs:
     env:
       APP_VARIANT: ${{ inputs.variant }}
       YAPPR_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
-      YAPPR_IOS_BUNDLE_ID: ${{ vars.YAPPR_IOS_BUNDLE_ID }}
+      # The override is for the testnet (Yappr Beta) record only; other variants keep their ids.
+      YAPPR_IOS_BUNDLE_ID: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_BUNDLE_ID || '' }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_EXPECTED_ORG_NAME: ${{ vars.APPLE_EXPECTED_ORG_NAME }}
-      SIGNING_NAME_DENYLIST: ${{ vars.SIGNING_NAME_DENYLIST }}
       YAPPR_COMMIT: ${{ github.sha }}
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
@@ -68,14 +68,15 @@ jobs:
           HAS_APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 != '' }}
           HAS_APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD != '' }}
           HAS_IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 != '' }}
+          # The denylist is read from a secret only: step headers print variables unmasked.
+          DENYLIST_ONLY_AS_VARIABLE: ${{ vars.SIGNING_NAME_DENYLIST != '' && secrets.SIGNING_NAME_DENYLIST == '' }}
         run: |
           set -euo pipefail
-          IFS=',' read -r -a names <<<"$SIGNING_NAME_DENYLIST"
-          for name in "${names[@]}"; do
-            name="$(printf '%s' "$name" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-            [[ -n "$name" ]] && echo "::add-mask::$name"
-          done
           missing=0
+          if [[ "$DENYLIST_ONLY_AS_VARIABLE" == 'true' ]]; then
+            echo '::error::SIGNING_NAME_DENYLIST is set as a variable, which run logs show unmasked; store it as a testflight environment secret instead'
+            missing=1
+          fi
           for name in APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID \
             APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 APPLE_DISTRIBUTION_CERTIFICATE_BASE64 \
             APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD IOS_APPSTORE_PROFILE_BASE64; do
@@ -172,6 +173,7 @@ jobs:
             line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
             [[ -n "$line" ]] && existing+=("$line")
           done < "$signing/original-keychains.txt"
+          [[ ${#existing[@]} -gt 0 ]] || existing=("$HOME/Library/Keychains/login.keychain-db")
 
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -209,12 +211,15 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: 'Signing gate: certificate and profile'
+        env:
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
         run: |
           set -euo pipefail
-          {
-            scripts/ios-signing-gate.sh cert "$SIGNING_DIR/distribution.pem"
-            scripts/ios-signing-gate.sh profile "$SIGNING_DIR/profile.plist" "${{ steps.plan.outputs.bundle_id }}"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          rc=0
+          scripts/ios-signing-gate.sh cert "$SIGNING_DIR/distribution.pem" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          scripts/ios-signing-gate.sh profile "$SIGNING_DIR/profile.plist" "$BUNDLE_ID" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          exit "$rc"
 
       - name: Build signed archive
         env:
@@ -268,6 +273,7 @@ jobs:
           BUILD: ${{ steps.plan.outputs.build }}
           PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
           IPA: ${{ steps.export.outputs.ipa }}
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
         run: |
           set -euo pipefail
           scripts/ios-signing-gate.sh ipa "$IPA" "$BUNDLE_ID" "$VERSION" "$BUILD" "$PROFILE_UUID" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -310,6 +316,7 @@ jobs:
           WHAT_TO_TEST: ${{ inputs.what_to_test }}
           CERT_SERIAL: ${{ steps.signing.outputs.cert_serial }}
           BETA_GROUP: Yappr Internal
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
         run: |
           set -euo pipefail
           ASC_KEY_PATH="$ASC_KEYS_DIR/AuthKey_$ASC_KEY_ID.p8" node scripts/asc-testflight.mjs | tee -a "$GITHUB_STEP_SUMMARY"
@@ -324,6 +331,7 @@ jobs:
 
       - name: Remove signing material
         if: always()
+        working-directory: .
         run: |
           set -uo pipefail
           if [[ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]]; then
