@@ -5,7 +5,7 @@ import {
   threadRootIdOf, type TargetKind,
 } from '@/lib/contract-topology'
 import { withMissingReplyParents } from '@/lib/feed/deleted-reply-stubs'
-import { provenAbsent } from '@/lib/feed/prove-absent'
+import { missingReplyParentReads } from '@/lib/feed/missing-reply-parent-reads'
 import { isBareRepost, quotedTargetIdOf, splitRepostsAndQuotes } from '@/lib/feed/quote-reposts'
 import { likeService } from '@/lib/services/like-service'
 import { pollrPollService, type Poll } from '@/lib/services/pollr-poll-service'
@@ -224,13 +224,6 @@ async function replyPage(rootId: string, startAfter: string | undefined, fresh: 
   return page
 }
 
-/** A reply whose parent the page lacks keeps its place under the parent's tombstone or a stub; both reads reject. */
-const missingParentReads = {
-  // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
-  getMany: (ids: string[]) => replyService.getManyOrThrow(ids),
-  provenAbsent: (ids: string[]) => provenAbsent('reply', ids, { throwOnError: true }),
-}
-
 /** A flat thread's replies nested for display: the focus author's own thread first, one indent level. */
 const layoutFlat = (focus: Post, replies: Reply[]) =>
   flattenThreads(assembleFlatThread({ id: focus.id, authorId: focus.author.id, isReply: targetKindOf(focus) === 'reply' }, replies))
@@ -271,7 +264,8 @@ async function loadFlatReplies(focus: Post, pages: number): Promise<{ replies: R
   // tombstone, read by id where `repliesOf` does not list tombstones, or
   // under a stub for a parent proved gone, as on web. Both reads reject, so
   // a failed one fails the page rather than dropping the replies under it.
-  return { replies: await withMissingReplyParents(replies, missingParentReads), next }
+  // On v20 a removed reply's stub goes back under the reply it answered.
+  return { replies: await withMissingReplyParents(replies, missingReplyParentReads), next }
 }
 
 /**
@@ -333,7 +327,7 @@ async function continueThread(kind: string, key: string, session: string, held: 
   const page = await replyPage(threadRootIdOf(held.focus), held.next, false)
   throwIfCancelled(signal)
   const known = new Set(held.replies.map(reply => reply.id))
-  const added = await withMissingReplyParents(page.documents.filter(reply => !known.has(reply.id)), missingParentReads, known)
+  const added = await withMissingReplyParents(page.documents.filter(reply => !known.has(reply.id)), missingReplyParentReads, known)
   throwIfCancelled(signal)
   const replies = [...held.replies, ...added]
   const flat = layoutFlat(held.focus, replies)

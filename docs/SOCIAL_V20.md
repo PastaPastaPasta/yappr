@@ -144,7 +144,12 @@ read off the file's `deleteKeepsFields`.
   tombstone) is resolved the same way until none is left. A placeholder whose
   record names no parent stays at the top of the thread, as on v19, and so does
   every placeholder when the record read fails.
-- The placeholder renders at any depth (`components/post/reply-thread.tsx`).
+- The web thread page and the mobile engine (`mobile/engine/src/api/posts.ts`,
+  first load and continuation) share those reads:
+  `lib/feed/missing-reply-parent-reads.ts`, which asks for the records a hundred
+  ids at a time.
+- The placeholder renders at any depth (`components/post/reply-thread.tsx`; the
+  mobile thread rows already carry each row's depth).
 
 ## Tooling
 
