@@ -263,6 +263,7 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    ```bash
    NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key /path/al-0.key
    # send ~1-3 tDASH to the printed assetLockAddress (faucet, or the dash-faucet skill)
+   # the faucet's vout: Insight /addr/<assetLockAddress>/utxo
    NETWORK=testnet node scripts/build-asset-lock.mjs --key-file /path/al-0.key --outpoint <faucetTxid>:<vout>
    NETWORK=testnet node scripts/provision-test-identity.mjs 0 \
      --asset-lock-key-file /path/al-0.key --funding-outpoint <assetLockTxid>:0 --dpns yappr-e2e-0
@@ -309,8 +310,7 @@ Rare, manual, never from CI. Everything below runs from the repo root.
   ```
 
 - **One request at a time.** Never loop or parallelise.
-- On **429**, stop. The script prints `retryAfter` — honour it; do not retry
-  automatically. The limit is roughly three requests per IP per hour (see
+- On **429**, stop. Honour `retryAfter`; do not retry automatically. The limit is roughly three requests per IP per hour (see
   `rateLimitPerHour` in `/api/status`).
 - On **503** the faucet wallet is low on funds, has no suitable UTXO, or an
   InstantSend lock timed out. If a txid was reported the funding transaction may
@@ -321,11 +321,12 @@ Rare, manual, never from CI. Everything below runs from the repo root.
 ### Top-ups
 
 CI pre-checks balances and fails fast with an actionable message when the pool
-is depleted. To do it by hand:
+is depleted. To top up by hand, fund and build an asset lock as in step 2, then:
 
 ```bash
 NETWORK=testnet node scripts/provision-test-identity.mjs --check-balances
-NETWORK=testnet node scripts/provision-test-identity.mjs --topup <identityId>
+NETWORK=testnet node scripts/provision-test-identity.mjs --topup <identityId> \
+  --asset-lock-key-file /path/al.key --funding-outpoint <assetLockTxid>:0
 ```
 
 ## 5. Resetting test state
@@ -513,20 +514,6 @@ Tests mirror that: assert the optimistic UI right after the action, then use
 `reloadUntilVisible()` from `e2e/fixtures/eventual.ts` for anything that has to
 come back out of a chain query (the app caches query results per page load, so
 reloading beats waiting). `workers: 1` is part of the same story.
-
-### Instant locks go stale
-
-Asset-lock instant lock proofs expire when the signing quorum rotates. If
-provisioning fails with `Instant lock proof signature is invalid`, wait for the
-funding transaction to be confirmed and re-run with the block height it landed
-in:
-
-```bash
-NETWORK=testnet node scripts/provision-test-identity.mjs 2 \
-  --asset-lock-key-file /tmp/al.key \
-  --funding-proof-file /tmp/al.json \
-  --chain-lock <tx block height>
-```
 
 ### Nothing prints key material
 
