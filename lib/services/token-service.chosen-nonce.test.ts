@@ -464,6 +464,30 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId, allowAnother: new Set([shown.payment.request.reservationId]) })).toEqual({ completed: false })
   })
 
+  it('still settles a local confirmation by a later matching completion after one the user chose to send past', async () => {
+    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No QR payment')
+    expect(execute(first.payment.request.nonce, true)).toBe(true)
+    recordReceipt(first.payment)
+    await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
+    const allowAnother = new Set([first.payment.request.reservationId])
+    const second = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, allowAnother })
+    if (second.completed) throw new Error('No second QR payment')
+    expect(second.payment.request.reservationId).not.toBe(first.payment.request.reservationId)
+    reportedNonce = chainNonce()
+    expect(execute(second.payment.request.nonce, true)).toBe(true)
+    recordReceipt(second.payment)
+    await clearPersistedWalletPayment(OWNER, second.payment.request.reservationId)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId, allowAnother })).toEqual({ completed: true })
+  })
+
+  it('reads unreadable attempt storage as none, so a new local payment can still start', async () => {
+    storage.set(scopedKey(`wallet-payment-attempts:v1:${OWNER}`), '{')
+    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: false })
+  })
+
   it('lets a new local payment go ahead after a matching one completed before it began', async () => {
     const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
     if (shown.completed) throw new Error('No QR payment')
