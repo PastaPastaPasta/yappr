@@ -5,7 +5,7 @@ import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { BatchTransition, StateTransition, TokenDirectPurchaseTransition, TokenTransferTransition, TokenTransition } from '@dashevo/wasm-sdk';
 import { getEvoSdk } from './evo-sdk-service';
 import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants';
-import { loadReservation, storeWalletPayments } from './identity-nonce';
+import { loadWalletPayments, storeWalletPayments } from './identity-nonce';
 import { identifierToBase58 } from './sdk-helpers';
 import { tipService } from './tip-service';
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder';
@@ -26,7 +26,19 @@ export interface WalletPayment {
   request: WalletTransitionRequest;
   data: PaymentData;
   checkOutcome: () => Promise<PaymentOutcome>;
+  /** One read of the request's nonce, and the outcome that same read proves: never a later outcome against an earlier liveness. */
+  observe: () => Promise<PaymentObservation>;
 }
+
+type PaymentObservation = { outcome: PaymentOutcome; executable: boolean };
+
+/**
+ * What a local payment that replaced a request proved absent did: kept on the
+ * request, so a tab still showing its QR code settles by it instead of showing
+ * a fresh one. `sending` until the write's answer (or for good, when its page
+ * died meanwhile: it may have gone through).
+ */
+export type ReplacementState = 'sending' | 'completed' | 'failed';
 
 type PersistedWalletPayment = {
   key: string;
@@ -34,6 +46,7 @@ type PersistedWalletPayment = {
   nonce: string;
   reservationId: string;
   data: PaymentData;
+  replacedBy?: { state: ReplacementState; at: number };
 };
 type PaymentContext = {
   ownerId: string;
@@ -44,7 +57,12 @@ type PaymentContext = {
   /** The local confirmation this prepares ({@link beginLocalWalletPayment}). */
   attemptId?: string;
 };
-type LocalPreparedPayment = { completed: true } | { completed: false; payment?: WalletPayment; unresolved?: true; different?: true };
+/**
+ * `replaces`: for a local payment that goes ahead at a fresh nonce, the
+ * requests of the same payment proved absent that it replaces, to be marked
+ * ({@link markReplacedWalletPayments}) before it is signed.
+ */
+type LocalPreparedPayment = { completed: true } | { completed: false; payment?: WalletPayment; unresolved?: true; different?: true; replaces?: string[] };
 export type LocalWalletPaymentIntent = {
   key: string;
   cached?: WalletPayment;
@@ -138,7 +156,7 @@ function attemptSettled(context: PaymentContext): 'settled' | 'gone' | null {
 }
 
 function readPersisted(ownerId: string): PersistedWalletPayment[] {
-  const raw = loadReservation(ownerId, YAPPR_CONTRACT_ID)?.walletPayments?.[STORAGE_KEY];
+  const raw = loadWalletPayments(ownerId, YAPPR_CONTRACT_ID, STORAGE_KEY);
   if (!raw) return [];
   const parsed = JSON.parse(raw) as PersistedWalletPayment[];
   if (!Array.isArray(parsed)) throw new Error('Could not read earlier wallet payments');
@@ -163,6 +181,21 @@ export async function clearPersistedWalletPayment(ownerId: string, reservationId
     writePersisted(ownerId, records.filter(record => record.reservationId !== reservationId));
   });
 }
+
+/**
+ * Under the write lock, before a local payment that replaces the requests
+ * `reservationIds` is signed and once its answer is known: what it did, for
+ * the tabs still showing their QR codes.
+ */
+export function markReplacedWalletPayments(ownerId: string, reservationIds: readonly string[], state: ReplacementState): void {
+  if (reservationIds.length === 0) return;
+  const ids = new Set(reservationIds);
+  const at = Date.now();
+  writePersisted(ownerId, readPersisted(ownerId).map(record => (ids.has(record.reservationId) ? { ...record, replacedBy: { state, at } } : record)));
+}
+
+const replacementOf = (record: PersistedWalletPayment) =>
+  (record.replacedBy && Date.now() - record.replacedBy.at < ATTEMPT_LIFETIME_MS ? record.replacedBy.state : undefined);
 
 function persistPayment(payment: WalletPayment, context: PaymentContext): void {
   const records = readPersisted(context.ownerId).filter(record => record.reservationId !== payment.request.reservationId);
@@ -223,26 +256,30 @@ function paymentFor(ownerId: string, request: WalletTransitionRequest, data: Pay
     receiptId: receipt.id,
     request,
     data,
-    checkOutcome: async () => {
-      try {
-        const { executable, consumedAt } = await request.checkLiveness();
-        if (executable || consumedAt === undefined) return 'unknown';
-        const sdk = await getEvoSdk();
-        const response = await sdk.documents.getWithProof(TOKEN_HISTORY_CONTRACT_ID, receipt.type, receipt.id);
-        const height = response.metadata?.height;
-        if (!response.proof || typeof height !== 'bigint' || height <= BigInt(0)) return 'unknown';
-        if (response.data) {
-          if (receipt.matches(response.data.toObject())) return 'completed';
-          // A different receipt at this consumed nonce proves our request can never execute.
-          return 'absent';
-        }
-        return height >= consumedAt ? 'absent' : 'unknown';
-      } catch (error) {
-        logger.debug('Could not prove the wallet payment receipt:', error);
-        return 'unknown';
-      }
-    },
+    checkOutcome: () => observe().then(observed => observed.outcome, (error: unknown) => {
+      logger.debug('Could not read the wallet payment nonce:', error);
+      return 'unknown' as const;
+    }),
+    observe,
   };
+
+  async function observe(): Promise<PaymentObservation> {
+    // A failed liveness read rejects: nothing is known, and the caller keeps the request.
+    const { executable, consumedAt } = await request.checkLiveness();
+    if (executable || consumedAt === undefined) return { outcome: 'unknown', executable };
+    try {
+      const sdk = await getEvoSdk();
+      const response = await sdk.documents.getWithProof(TOKEN_HISTORY_CONTRACT_ID, receipt.type, receipt.id);
+      const height = response.metadata?.height;
+      if (!response.proof || typeof height !== 'bigint' || height <= BigInt(0)) return { outcome: 'unknown', executable };
+      // A different receipt at this consumed nonce proves our request can never execute.
+      if (response.data) return { outcome: receipt.matches(response.data.toObject()) ? 'completed' : 'absent', executable };
+      return { outcome: height >= consumedAt ? 'absent' : 'unknown', executable };
+    } catch (error) {
+      logger.debug('Could not prove the wallet payment receipt:', error);
+      return { outcome: 'unknown', executable };
+    }
+  }
 }
 
 function restorePayment(ownerId: string, record: PersistedWalletPayment): WalletPayment {
@@ -250,11 +287,8 @@ function restorePayment(ownerId: string, record: PersistedWalletPayment): Wallet
   return paymentFor(ownerId, request, record.data, record.key);
 }
 
-async function reconcilePayment(payment: WalletPayment): Promise<{ outcome: PaymentOutcome; executable: boolean }> {
-  const { executable, consumedAt } = await payment.request.checkLiveness();
-  const outcome = await payment.checkOutcome();
-  if (!executable && consumedAt !== undefined && outcome !== 'unknown') return { outcome, executable };
-  return { outcome: 'unknown', executable };
+function reconcilePayment(payment: WalletPayment): Promise<PaymentObservation> {
+  return payment.observe();
 }
 
 export async function prepareWalletPayment(
@@ -278,6 +312,16 @@ async function preparePayment(
   context?: PaymentContext,
   lockHeld = false
 ): Promise<LocalPreparedPayment> {
+  /** Same-payment requests proved absent that a local payment at a fresh nonce would replace. */
+  const replaceable: string[] = [];
+  /** Hands `replaceable` to a local payment going ahead at a fresh nonce; any other outcome replaces nothing, so they go. */
+  const settle = (result: LocalPreparedPayment): LocalPreparedPayment => {
+    if (replaceable.length === 0 || !context) return result;
+    if (!result.completed && !result.payment && !result.unresolved) return { ...result, replaces: [...replaceable] };
+    const gone = new Set(replaceable);
+    writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => !gone.has(item.reservationId)));
+    return result;
+  };
   const prepare = async (): Promise<LocalPreparedPayment> => {
     let candidate = cached;
     let cachedAbsent = false;
@@ -302,6 +346,12 @@ async function preparePayment(
         }
       }
       candidate = undefined;
+      const drop = (record: PersistedWalletPayment) =>
+        writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
+      /** What this confirmation may take as its own completion: not one the user chose to send past. */
+      const attributable = (record: PersistedWalletPayment, payment: WalletPayment, excluded: boolean) => !excluded && record.key === context.key
+        && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId
+          || (cachedAbsent && payment.request.nonce > cached.request.nonce));
       for (const record of records) {
         const payment = restorePayment(context.ownerId, record);
         let result;
@@ -310,15 +360,32 @@ async function preparePayment(
           logger.debug('Could not reconcile the earlier wallet payment:', error);
           result = { outcome: 'unknown' as const, executable: false };
         }
+        const excluded = context.allowAnother?.has(record.reservationId) === true;
+        const replacement = result.outcome === 'absent' ? replacementOf(record) : undefined;
+        if (replacement === 'completed') {
+          // Paid by the local payment that replaced it; kept for the other tabs showing it until one takes it.
+          if (!attributable(record, payment, excluded)) continue;
+          drop(record);
+          return settle({ completed: true });
+        }
+        if (replacement === 'sending') {
+          // The local payment that replaced it may have gone through.
+          if (excluded) continue;
+          return settle({ completed: false, payment, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
+        }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           if (result.outcome === 'completed') settleAttempts(context.ownerId, record);
-          writePersisted(context.ownerId, readPersisted(context.ownerId).filter(item => item.reservationId !== record.reservationId));
-          const replacesAbsentCached = cachedAbsent && cached && payment.request.nonce > cached.request.nonce;
-          if (record.key === context.key && result.outcome === 'completed' && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId || replacesAbsentCached)) return { completed: true };
+          // A local payment of this one goes ahead at a fresh nonce: the request stays, to be marked replaced by it.
+          if (result.outcome === 'absent' && replacement === undefined && !build && !excluded && record.key === context.key) {
+            replaceable.push(record.reservationId);
+            continue;
+          }
+          drop(record);
+          if (result.outcome === 'completed' && attributable(record, payment, excluded)) return settle({ completed: true });
           continue;
         }
-        if (context.allowAnother?.has(record.reservationId)) continue;
-        if (record.key !== context.key) return { completed: false, payment, unresolved: true, different: true };
+        if (excluded) continue;
+        if (record.key !== context.key) return settle({ completed: false, payment, unresolved: true, different: true });
         candidate = payment;
         reconciliation = result;
       }
@@ -338,16 +405,16 @@ async function preparePayment(
       }
       return { completed: false, payment };
     };
-    if (!candidate) return create();
+    if (!candidate) return settle(await create());
     try {
       const result = reconciliation ?? await reconcilePayment(candidate);
-      if (result.outcome === 'completed') return { completed: true };
-      if (result.outcome === 'absent') return create();
+      if (result.outcome === 'completed') return settle({ completed: true });
+      if (result.outcome === 'absent') return settle(await create());
       if (context?.expose && (!context.isCurrent || context.isCurrent()) && result.executable) context.expose(candidate);
-      return { completed: false, payment: candidate, ...(!result.executable ? { unresolved: true } : {}) };
+      return settle({ completed: false, payment: candidate, ...(!result.executable ? { unresolved: true } : {}) });
     } catch (error) {
       logger.debug('Could not reconcile the wallet payment; keeping its request:', error);
-      return { completed: false, payment: candidate, unresolved: true };
+      return settle({ completed: false, payment: candidate, unresolved: true });
     }
   };
   return context && !lockHeld ? withIdentityWriteLock(context.ownerId, YAPPR_CONTRACT_ID, prepare) : prepare();
