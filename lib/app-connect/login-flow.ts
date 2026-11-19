@@ -151,8 +151,6 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
-  /** Every deletion of a stored request issued so far, settled (a failure is reported through `onError`). */
-  private clearing: Promise<void> = Promise.resolve()
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -303,12 +301,19 @@ export class AppConnectLogin {
   /**
    * The user picked `identityId`: hands back its grant and forgets the
    * request and every other candidate. The caller signs in with the grant
-   * (which wipes its keys).
+   * (which wipes its keys). `keepRequest` leaves the stored request for the
+   * caller to clear once the grant is safely stored, so an app killed in
+   * between can still find the wallet's answer again.
    */
-  accept(identityId: string): AppConnectGrant | null {
+  accept(identityId: string, { keepRequest = false }: { keepRequest?: boolean } = {}): AppConnectGrant | null {
     const chosen = this.verified.find((candidate) => candidate.identityId === identityId) ?? null
     this.verified = this.verified.filter((candidate) => candidate !== chosen)
-    this.finish()
+    if (keepRequest) {
+      this.generation += 1
+      this.teardown()
+    } else {
+      this.finish()
+    }
     return chosen?.grant ?? null
   }
 
@@ -356,18 +361,7 @@ export class AppConnectLogin {
   }
 
   private clearRecord(record: StoredAppConnectRequest): void {
-    const clear = this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
-    this.clearing = Promise.all([this.clearing, clear]).then(() => undefined)
-  }
-
-  /**
-   * Resolves once every stored request this flow has forgotten so far
-   * (`finish`, `accept`, `dispose`) is gone from the record store, so a
-   * caller can report a cancel or a sign-in only after a relaunch can no
-   * longer resume its request.
-   */
-  cleared(): Promise<void> {
-    return this.clearing
+    this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
   }
 
   private stop(): void {

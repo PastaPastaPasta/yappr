@@ -697,7 +697,25 @@ describe('App Connect requests across kills and engine restarts', () => {
     const next = boot()
     session = next
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
-    await next.appConnectCancel({ renew: true })
+    // A renewal of another account names nothing here.
+    await next.appConnectCancel({ renew: true, account: MAKER })
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
+    await next.appConnectCancel({ renew: true, account: OWNER })
     expect(await next.appConnectPendingSignIn()).toBeNull()
+  })
+
+  it('restores a wallet session killed before it recorded its method as a wallet session', async () => {
+    const started = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    await walletGrants(started.uri, [24, 25])
+    await session.appConnectPollNow()
+    await untilPhase(session, 'confirm')
+    expect(await session.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+    // Killed after the session and its ring were stored, before the registry heard how it signed in.
+    localStorage.removeItem('yappr_engine_accounts')
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER, method: 'app-connect' })
+    await next.signOut()
   })
 })

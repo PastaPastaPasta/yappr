@@ -269,8 +269,9 @@ export function createSessionModule(options: SessionModuleOptions) {
       const user = await controller.restoreSession()
       if (!user) {
         if (hadSession) {
-          // A renewal the wallet answered, killed twice before it landed: signed out, the account is signed in again with it.
-          await appConnect.carryRenewalOver(storedIdentity).catch((error: unknown) => {
+          // A renewal the wallet answered, killed twice before it landed: signed out, the account is signed in again with
+          // it. It is on the device in its new slot before the slot below is freed.
+          await appConnect.carryRenewalOver(storedIdentity, async () => { await options.secureDurable?.() }).catch((error: unknown) => {
             logger.warn('App Connect: could not keep the interrupted renewal:', error)
           })
           // This slot belongs to one native engine, unlike shared browser metadata.
@@ -280,7 +281,12 @@ export function createSessionModule(options: SessionModuleOptions) {
         }
         return null
       }
-      if (!registry.get(user.identityId)) registry.upsert(user.identityId, { username: user.username ?? null })
+      // A session restored from its key ring is a wallet session, even when a sign-in was killed before it recorded that.
+      const entry = registry.get(user.identityId)
+      const wallet = appConnectSessions.current(user.identityId) !== null
+      if (!entry || (wallet && entry.method !== 'app-connect')) {
+        registry.upsert(user.identityId, { username: entry?.username ?? user.username ?? null, ...(wallet ? { method: 'app-connect' as const } : {}) })
+      }
       return announce(switched ? 'switched' : 'restored')
     })()
     return restoring
@@ -481,16 +487,22 @@ export function createSessionModule(options: SessionModuleOptions) {
       throw new RpcError(renewing ? 'The renewal came from another account' : 'The answer came from another account', 'BAD_REQUEST')
     }
     const active = registry.activeIdentityId()
+    const request = appConnect.runningKind()
+    const forgetRequest = async () => {
+      if (!request) return
+      await appConnect.forget(request).catch((error: unknown) => logger.warn('App Connect: could not forget the answered request:', error))
+    }
     if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
-      const grant = appConnect.accept(identityId)
+      // The old keys still restore the session: the renewal's request goes only once its grant is stored, so a
+      // kill in between resumes the renewal rather than report it done.
+      const grant = appConnect.accept(identityId, { keepRequest: true })
       if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
       await appConnectSessions.adopt(grant)
       if (deferredRevoke === identityId) deferredRevoke = null
       useAppConnectStatus.getState().dismissRenewRequired()
       // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
       identityService.clearCache(identityId)
-      // Its request is gone from the device before the renewal is reported, so a relaunch cannot resume it.
-      await appConnect.settled()
+      await forgetRequest()
       await options.secureDurable?.()
       const session = announce('renewed')
       if (!session) throw new RpcError('Renewing did not keep the session', 'NOT_SIGNED_IN')
@@ -526,7 +538,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       revokedSignOut = null
       emitAppConnectStatus()
     }
-    await appConnect.settled()
+    await forgetRequest()
     const session = await signedIn(identityId, 'app-connect')
     // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
     if (parked) requireRestart()
@@ -534,21 +546,22 @@ export function createSessionModule(options: SessionModuleOptions) {
   }
 
   /**
-   * The stored request a cancel names, as `appConnectStart` would have made
-   * it; null when there is none to name. A renewal cancelled after this
-   * engine found its account could not be restored names the request that
-   * renewal became (`carryRenewalOver`).
+   * The stored request a cancel names; null when it names none. A renewal is
+   * `account`'s (the active account's when it names none): its renewal while
+   * that account is active here, else what that renewal became when its
+   * account could not be restored (`carryRenewalOver`). `forget` deletes a
+   * "Sign in again" only when it is for the account named.
    */
-  async function cancelledKind(opts: { renew?: boolean; reauth?: string }): Promise<AppConnectRequestKind | null> {
-    const active = registry.activeIdentityId()
-    if (opts.renew && active) return { identityHint: active, renew: true }
+  function cancelledKind(opts: { renew?: boolean; reauth?: string; account?: string }): AppConnectRequestKind | null {
+    const named = (id: unknown): id is string => typeof id === 'string' && isIdentityId(id)
     if (opts.renew) {
-      const carried = await appConnect.pendingSignIn()
-      return carried?.reauth ? { identityHint: carried.reauth } : null
+      const active = registry.activeIdentityId()
+      const account = named(opts.account) ? opts.account : active
+      if (!account) return null
+      return account === active ? { identityHint: account, renew: true } : { identityHint: account }
     }
-    if (active) return null
     if (opts.reauth === undefined) return {}
-    return typeof opts.reauth === 'string' && isIdentityId(opts.reauth) ? { identityHint: opts.reauth } : null
+    return named(opts.reauth) ? { identityHint: opts.reauth } : null
   }
 
   /** The keys the wallets granted the active account, with this device's marked (Settings). */
@@ -612,11 +625,13 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
     options.tickets?.forgetIdentity(identityId)
     options.forgetDm?.(identityId)
-    if (appConnect.renewing() === identityId) await appConnect.cancel()
-    // A "Sign in again" waiting for this account is kept apart from its secrets: it goes too.
-    await appConnect.forget({ identityHint: identityId }).catch((error: unknown) => {
-      logger.warn('App Connect: could not forget the account\'s pending sign-in:', error)
-    })
+    if (appConnect.renewing() === identityId) appConnect.cancel()
+    // Its pending renewal, and a "Sign in again" kept apart from its secrets, go too.
+    for (const kind of [{ identityHint: identityId, renew: true }, { identityHint: identityId }]) {
+      await appConnect.forget(kind).catch((error: unknown) => {
+        logger.warn('App Connect: could not forget the account\'s pending request:', error)
+      })
+    }
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
     if (isActive) announce('signed-out')
@@ -784,21 +799,20 @@ export function createSessionModule(options: SessionModuleOptions) {
 
     /**
      * Abandon the flow: its request and any verified answer are forgotten.
-     * Resolves once the request is gone from the device. With no flow running
-     * (the engine restarted under the cancel, which runs none), the stored
-     * request of the kind the host names is forgotten instead: `renew` for the
-     * active account's renewal, `reauth` for signing that account in again,
-     * else a sign-in.
+     * Resolves once the request is gone from the device, and fails if it
+     * could not be deleted. With no flow running (the engine restarted under
+     * the cancel, which runs none), the stored request the host names is
+     * forgotten instead: `renew` for `account`'s renewal, `reauth` for
+     * signing that account in again, else a sign-in.
      */
-    async appConnectCancel(opts: { renew?: boolean; reauth?: string } = {}): Promise<void> {
+    async appConnectCancel(opts: { renew?: boolean; reauth?: string; account?: string } = {}): Promise<void> {
       const cancelled = cancelledStart = ++appConnectStarts
       // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
       const running = appConnect.runningKind()
-      const cancelling = appConnect.cancel()
+      appConnect.cancel()
       settleDeferredRevoke()
-      await cancelling
       await restored()
-      const kind = running ?? await cancelledKind(opts ?? {})
+      const kind = running ?? cancelledKind(opts ?? {})
       // Unless a start since then has made the request this would find.
       if (kind && appConnectStarts === cancelled) await appConnect.forget(kind)
       await options.secureDurable?.()

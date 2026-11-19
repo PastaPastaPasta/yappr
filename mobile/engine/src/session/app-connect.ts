@@ -123,8 +123,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
   let state: AppConnectFlowDTO = { flow, renew: false, phase: 'idle' }
   /** The login state last seen, so a confirm whose names resolve late is dropped once superseded. */
   let latest: AppConnectLoginState | null = null
-  /** Every stored request the flows stopped so far forgot, settled. */
-  let clearing: Promise<void> = Promise.resolve()
 
   function set(next: AppConnectFlowDTO): void {
     state = next
@@ -162,10 +160,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
   /** Stops the running flow; its request stays stored while the wallet may still answer it. */
   function stop(): void {
-    if (login) {
-      login.dispose()
-      clearing = Promise.all([clearing, login.cleared()]).then(() => undefined)
-    }
+    login?.dispose()
     login = null
     latest = null
     renewFor = undefined
@@ -186,9 +181,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /** The only identity the running flow accepts, if it names one. */
     hint: (): string | undefined => hint,
-
-    /** Resolves once the stored request of every flow stopped so far is gone from the device's storage. */
-    settled: (): Promise<void> => clearing,
 
     /** The kind of request the running flow makes or resumes, if one is running. */
     runningKind: (): AppConnectRequestKind | null => (login ? { identityHint: hint, renew: renewFor !== undefined } : null),
@@ -247,19 +239,20 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       await login?.reject()
     },
 
-    /** Abandons the flow and forgets its request and any verified answer; resolves once the request is gone. */
-    cancel(): Promise<void> {
+    /** Abandons the flow and forgets its request and any verified answer (`forget` then confirms the request is gone). */
+    cancel(): void {
       login?.finish()
       reset()
-      return clearing
     },
 
     /**
      * Takes the verified grant of `identityId`; the flow ends and forgets
-     * everything else. The caller adopts the grant, which wipes its keys.
+     * everything else. With `keepRequest` its stored request stays for the
+     * caller to forget once the grant is stored (`forget`). The caller adopts
+     * the grant, which wipes its keys.
      */
-    accept(identityId: string): AppConnectGrant | null {
-      const grant = login?.accept(identityId) ?? null
+    accept(identityId: string, { keepRequest = false }: { keepRequest?: boolean } = {}): AppConnectGrant | null {
+      const grant = login?.accept(identityId, { keepRequest }) ?? null
       reset()
       return grant
     },
@@ -301,7 +294,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
      * again, which a signed-out launch resumes. The renewal's slot is in that
      * account's bucket, which no signed-out boot reads.
      */
-    async carryRenewalOver(identityId: string): Promise<void> {
+    async carryRenewalOver(identityId: string, durable: () => Promise<void>): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
       const record = await loadRequest({ identityHint: identityId, renew: true })
       if (!record) return
@@ -311,7 +304,10 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       if (newer && newer.createdAt > record.createdAt) return
       await reauthSlot.save(record)
       const carried = await loadRequest({ identityHint: identityId })
-      if (carried?.ephemeralPrivateKey === record.ephemeralPrivateKey) await recordsFor({ identityHint: identityId, renew: true }).clear(record)
+      if (carried?.ephemeralPrivateKey !== record.ephemeralPrivateKey) throw new Error('The interrupted renewal could not be kept')
+      // On the device before its old copy (and the session it belonged to) go.
+      await durable()
+      await recordsFor({ identityHint: identityId, renew: true }).clear(record)
     },
   }
 }

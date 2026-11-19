@@ -5,6 +5,7 @@ import { View } from 'react-native';
 import { useEngineEvent } from '~/data/events';
 import { getCapabilities, lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { setReauthHandler } from '~/data/session-expiry';
+import { errorCode } from '~/data/writes';
 import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { appendLog, errorMessage } from '~/engine/logs';
@@ -16,7 +17,7 @@ import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { reauthenticate, recoverInterruptedAdd, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
-import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, useAppConnect } from './app-connect';
+import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, replayInterruptedCancel, useAppConnect } from './app-connect';
 import { AppConnectNotices } from './AppConnectNotices';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
@@ -137,7 +138,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
     // tell a plain sign-in from signing an account in again ("Sign in again").
     const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
     const pendingRequest: Promise<{ reauth: string | null } | null> = appConnect
-      ? engine.api.session.appConnectPendingSignIn()
+      ? replayInterruptedCancel().then(() => engine.api.session.appConnectPendingSignIn())
       : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
     pendingRequest
       .then((pending) => {
@@ -164,6 +165,12 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
         } else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
+        // A restart cut the lookup short: the answer is unknown, so look again once the engine is back.
+        if (errorCode(error) === 'ENGINE_RESTARTED') {
+          checked.current = false;
+          if (atLaunch) launchChecked.current = false;
+          return;
+        }
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
         recover(false);
       });
@@ -191,8 +198,8 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     if (!ready || !engineUp || !walletAccount || checked.current) return;
     checked.current = true;
     if (getCapabilities()?.walletSignIn !== 'app-connect') return;
-    engine.api.session
-      .appConnectPending({ renew: true })
+    replayInterruptedCancel()
+      .then(() => engine.api.session.appConnectPending({ renew: true }))
       .then((pending) => {
         // The account signed out or changed while the engine answered: the answer was about the one before.
         const now = useSessionStore.getState();

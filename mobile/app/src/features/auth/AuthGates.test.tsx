@@ -398,6 +398,34 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: null });
   });
 
+  it('sends a cancel the last launch was killed under before it looks, so the cancelled request stays shut', async () => {
+    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify({ id: 'c1', renew: false, reauth: 'bob' }));
+    fakeEngine.method('session.appConnectCancel').mockResolvedValue(undefined);
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue(null);
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith({ renew: false, reauth: 'bob' });
+    expect(syncStorage.getItem('yappr.signin.connect-cancel.devnet-test')).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it('looks again after a restart cut the lookup short, rather than going back to the parked account', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine
+      .method('session.appConnectPendingSignIn')
+      .mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+    await act(async () => fakeEngine.setStatus({ state: 'starting', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+    await act(async () => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
+
   it('goes back to the parked account when no sign-in is stored', async () => {
     syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
     fakeEngine
