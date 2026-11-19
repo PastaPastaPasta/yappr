@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { fileSignInReturn, signInReturnFor } from './sign-in-return'
+import { fileSignInReturn, retireSignInReturn, signInReturnFor } from './sign-in-return'
 
 const items = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', {
@@ -46,5 +46,13 @@ describe('the page a wallet sign-in returns to', () => {
     fileSignInReturn('aa', null, '/user/?id=x')
     fileSignInReturn('cc', null, '/search/?q=dash')
     expect(signInReturnFor('cc')).toBe('/search/?q=dash')
+  })
+
+  it('is forgotten once its request is accepted, and only then', () => {
+    fileSignInReturn('aa', null, '/user/?id=x')
+    retireSignInReturn('bb')
+    expect(signInReturnFor('aa')).toBe('/user/?id=x')
+    retireSignInReturn('aa')
+    expect(signInReturnFor('aa')).toBeNull()
   })
 })

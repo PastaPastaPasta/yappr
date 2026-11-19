@@ -47,3 +47,13 @@ export function signInReturnFor(requestHash: string): string | null {
   const filed = stored()
   return filed?.requestHash === requestHash ? sanitizeReturnTo(filed.route) : null
 }
+
+/** Forgets the route of `requestHash` once its sign-in is accepted, so a later visit to its callback carries nothing. */
+export function retireSignInReturn(requestHash: string): void {
+  if (stored()?.requestHash !== requestHash) return
+  try {
+    localStorage.removeItem(KEY)
+  } catch {
+    // Storage blocked: nothing was kept either.
+  }
+}
