@@ -1,10 +1,11 @@
-import type { AppConnectFlowDTO } from '@engine/api';
+import type { AppConnectFlowDTO, SessionDTO } from '@engine/api';
 import { create } from 'zustand';
 
 import { config } from '~/config';
 import { onEngineEvent } from '~/data/events';
+import { useSessionStore } from '~/data/session';
 import { errorCode } from '~/data/writes';
-import { engine, engineSupervisor } from '~/engine';
+import { engine, engineNetworkKey, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
@@ -117,6 +118,8 @@ let listening = false;
 /** Wallet mode opens the wallet once the request of a start is ready, unless that request was opened already. */
 let openOnReady = false;
 let openedHash: string | null = null;
+/** The account a renewal in progress renews (the one signed in when it started). */
+let renewAccount: string | null = null;
 /** The engine epoch the flow runs on: a restarted engine resumes the request. */
 let flowEpoch = -1;
 /**
@@ -154,13 +157,39 @@ function listen(): void {
     if (flowEpoch === -1 || epoch === flowEpoch) return;
     flowEpoch = epoch;
     // The engine restarted under a waiting request, or while it made one: pick the stored request up again.
-    const { step, mode, renew, reauth } = get();
+    const { step } = get();
     if (step.name === 'flow' || step.name === 'starting') {
       // A start cut short has not opened the wallet yet.
-      const resume = step.name === 'flow' || !openOnReady;
-      startAppConnect(mode, { renew, reauth, resume }).catch(() => undefined);
+      resumeOnNewEngine(generation, step.name === 'flow' || !openOnReady).catch(() => undefined);
     }
   });
+}
+
+/**
+ * Picks the request up again on a new engine. A renewal whose account that
+ * engine could not restore (the wallet superseded its keys) became "Sign in
+ * again" for that account there, and resumes as that. `session`: what the
+ * new engine restored, when the caller has read it already.
+ */
+async function resumeOnNewEngine(gen: number, resume: boolean, session?: SessionDTO | null): Promise<void> {
+  const { mode, renew, reauth } = get();
+  const account = renewAccount;
+  if (renew && account) {
+    try {
+      const restored = session === undefined ? await engine.api.session.current() : session;
+      const carried = restored === null ? await engine.api.session.appConnectPendingSignIn() : null;
+      if (stale(gen)) return;
+      if (carried?.reauth === account) {
+        await startAppConnect(mode, { reauth: account, resume });
+        return;
+      }
+    } catch (error) {
+      if (stale(gen)) return;
+      appendLog('warn', 'host', `Reading the session on the new engine failed: ${errorMessage(error)}`);
+    }
+  }
+  if (stale(gen)) return;
+  await startAppConnect(mode, { renew, reauth, resume });
 }
 
 function receive(flow: AppConnectFlowDTO): void {
@@ -194,6 +223,9 @@ export async function startAppConnect(
   followEpoch(engineSupervisor.getStatus().epoch);
   const gen = next();
   syncStorage.setItem(MODE_KEY, mode);
+  // A new sign-in supersedes a cancel still on its way.
+  syncStorage.removeItem(CANCEL_KEY);
+  renewAccount = renew ? (useSessionStore.getState().session?.identityId ?? null) : null;
   openOnReady = !resume;
   floor = lastFlow;
   set({ ...initial, mode, renew, reauth: renew ? null : reauth, rejected: get().rejected && fresh, step: { name: 'starting' } });
@@ -289,9 +321,10 @@ export async function acceptAccount(identityId: string): Promise<void> {
  * (a renewal whose request is still stored finds the same answer again).
  */
 async function settleRestartedAccept(gen: number, identityId: string): Promise<void> {
-  const { mode, renew, reauth } = get();
+  const { renew } = get();
+  let session: SessionDTO | null | undefined;
   try {
-    const session = await engine.api.session.current();
+    session = await engine.api.session.current();
     const landed = session?.identityId === identityId && session.method === 'app-connect';
     const renewalWaits = landed && renew ? await engine.api.session.appConnectPending({ renew: true }) : false;
     if (stale(gen)) return;
@@ -303,19 +336,65 @@ async function settleRestartedAccept(gen: number, identityId: string): Promise<v
     if (stale(gen)) return;
     appendLog('warn', 'host', `Reading the session after the engine restarted failed: ${errorMessage(error)}`);
   }
-  await startAppConnect(mode, { renew, reauth, resume: true });
+  await resumeOnNewEngine(gen, true, session);
+}
+
+/** Which request a cancel names, kept on the device until the engine has forgotten it. */
+interface CancelIntent {
+  renew: boolean;
+  reauth?: string;
+  /** The account a renewal was for. */
+  account?: string;
+}
+
+/** A cancel as kept on the device: `id` tells it from a later cancel of the same request. */
+interface StoredCancel extends CancelIntent {
+  id: string;
+}
+
+/**
+ * A cancel the engine has not confirmed yet, kept on the device: the app can
+ * be killed before the engine replies, and the next launch sends it again
+ * before it looks for a request to resume (`replayInterruptedCancel`).
+ */
+const CANCEL_KEY = `yappr.signin.connect-cancel.${engineNetworkKey}`;
+
+function readCancel(): StoredCancel | null {
+  try {
+    const stored = JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null') as Partial<StoredCancel> | null;
+    if (typeof stored?.renew !== 'boolean' || typeof stored.id !== 'string') return null;
+    return {
+      id: stored.id,
+      renew: stored.renew,
+      ...(typeof stored.reauth === 'string' ? { reauth: stored.reauth } : {}),
+      ...(typeof stored.account === 'string' ? { account: stored.account } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+let cancels = 0;
+
+/** Sends a cancel and forgets it on the device once the engine confirms it, unless a newer one replaced it. */
+async function sendCancel({ id, ...intent }: StoredCancel): Promise<void> {
+  await engine.api.session.appConnectCancel(intent);
+  if (readCancel()?.id === id) syncStorage.removeItem(CANCEL_KEY);
 }
 
 /**
  * Tells the engine to forget the request of this kind and any answer. A
  * cancel an engine restart cut short is sent again: the new engine runs no
  * flow, and forgets the stored request the cancel names, unless a newer
- * sign-in has started here since (`gen`).
+ * sign-in has started here since (`gen`). One the app is killed under is
+ * sent again at the next launch.
  */
 function cancelInEngine(gen: number, { renew, reauth }: Pick<AppConnectState, 'renew' | 'reauth'>): void {
-  const kind = { renew, ...(reauth ? { reauth } : {}) };
+  const account = renew ? (renewAccount ?? useSessionStore.getState().session?.identityId) : undefined;
+  const intent: StoredCancel = { id: `${Date.now()}-${++cancels}`, renew, ...(reauth ? { reauth } : {}), ...(account ? { account } : {}) };
+  syncStorage.setItem(CANCEL_KEY, JSON.stringify(intent));
   const send = (again: boolean) => {
-    engine.api.session.appConnectCancel(kind).catch((error: unknown) => {
+    sendCancel(intent).catch((error: unknown) => {
       if (again && errorCode(error) === 'ENGINE_RESTARTED' && !stale(gen)) {
         send(false);
         return;
@@ -324,6 +403,23 @@ function cancelInEngine(gen: number, { renew, reauth }: Pick<AppConnectState, 'r
     });
   };
   send(true);
+}
+
+/**
+ * At launch, before looking for a request to resume: a cancel the last
+ * launch was killed under (or could not confirm) is sent again. Only an
+ * engine restart rejects (the caller looks again later); any other failure
+ * is logged, and the cancel is kept for the next launch.
+ */
+export async function replayInterruptedCancel(): Promise<void> {
+  const cancel = readCancel();
+  if (!cancel) return;
+  try {
+    await sendCancel(cancel);
+  } catch (error) {
+    if (errorCode(error) === 'ENGINE_RESTARTED') throw error;
+    appendLog('warn', 'host', `Cancelling the interrupted wallet sign-in failed: ${errorMessage(error)}`);
+  }
 }
 
 /** The wallet handed the user back saying it did not sign in (`ac=declined`, …). */
@@ -337,9 +433,11 @@ function walletReported(status: string): void {
 /** "Cancel", or leaving the flow: the engine forgets the request and any answer. */
 export function cancelAppConnect(): void {
   const { step, renew, reauth } = get();
+  // Nothing to cancel (the screen unmounting after its own Cancel): a cancel still on its way stays current.
+  if (step.name === 'idle') return;
   const gen = next();
   set(initial);
-  if (step.name !== 'idle' && step.name !== 'done') cancelInEngine(gen, { renew, reauth });
+  if (step.name !== 'done') cancelInEngine(gen, { renew, reauth });
 }
 
 /** The finished state was handed off: forget it without cancelling anything. */
