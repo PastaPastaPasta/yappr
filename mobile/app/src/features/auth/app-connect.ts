@@ -223,12 +223,15 @@ export async function startAppConnect(
   followEpoch(engineSupervisor.getStatus().epoch);
   const gen = next();
   syncStorage.setItem(MODE_KEY, mode);
-  // A new sign-in supersedes a cancel still on its way.
-  syncStorage.removeItem(CANCEL_KEY);
   renewAccount = renew ? (useSessionStore.getState().session?.identityId ?? null) : null;
   openOnReady = !resume;
   floor = lastFlow;
   set({ ...initial, mode, renew, reauth: renew ? null : reauth, rejected: get().rejected && fresh, step: { name: 'starting' } });
+  // The engine has the cancel before this start, so the cancel can only stop the flow it was for.
+  await cancelling;
+  if (stale(gen)) return;
+  // A cancel that could not be confirmed is superseded by this sign-in: a later launch must not forget what it resumes.
+  syncStorage.removeItem(CANCEL_KEY);
   try {
     flowEpoch = engineSupervisor.getStatus().epoch;
     const flow = await engine.api.session.appConnectStart({
@@ -317,8 +320,9 @@ export async function acceptAccount(identityId: string): Promise<void> {
 /**
  * The engine restarted while it took the confirmed answer. The old engine
  * may have adopted the grant before it went: the new one then restores that
- * session, and the sign-in is done. Otherwise the request is picked up again
- * (a renewal whose request is still stored finds the same answer again).
+ * session, and the sign-in is done. Otherwise the flow is picked up again:
+ * a renewal, whose request stays stored until its grant is, finds the same
+ * answer again; a sign-in makes a new request.
  */
 async function settleRestartedAccept(gen: number, identityId: string): Promise<void> {
   const { renew } = get();
@@ -345,6 +349,8 @@ interface CancelIntent {
   reauth?: string;
   /** The account a renewal was for. */
   account?: string;
+  /** The request the screen showed, if it showed one. */
+  requestHash?: string;
 }
 
 /** A cancel as kept on the device: `id` tells it from a later cancel of the same request. */
@@ -368,6 +374,7 @@ function readCancel(): StoredCancel | null {
       renew: stored.renew,
       ...(typeof stored.reauth === 'string' ? { reauth: stored.reauth } : {}),
       ...(typeof stored.account === 'string' ? { account: stored.account } : {}),
+      ...(typeof stored.requestHash === 'string' ? { requestHash: stored.requestHash } : {}),
     };
   } catch {
     return null;
@@ -375,6 +382,8 @@ function readCancel(): StoredCancel | null {
 }
 
 let cancels = 0;
+/** The cancel on its way to the engine, if any: a start waits for it. Never rejects. */
+let cancelling: Promise<void> = Promise.resolve();
 
 /** Sends a cancel and forgets it on the device once the engine confirms it, unless a newer one replaced it. */
 async function sendCancel({ id, ...intent }: StoredCancel): Promise<void> {
@@ -383,26 +392,28 @@ async function sendCancel({ id, ...intent }: StoredCancel): Promise<void> {
 }
 
 /**
- * Tells the engine to forget the request of this kind and any answer. A
- * cancel an engine restart cut short is sent again: the new engine runs no
- * flow, and forgets the stored request the cancel names, unless a newer
- * sign-in has started here since (`gen`). One the app is killed under is
- * sent again at the next launch.
+ * Tells the engine to forget the request the screen showed and any answer.
+ * A cancel an engine restart cut short is sent again: the new engine runs
+ * no flow, and forgets the stored request the cancel names. One the app is
+ * killed under is sent again at the next launch. A start waits for it.
  */
-function cancelInEngine(gen: number, { renew, reauth }: Pick<AppConnectState, 'renew' | 'reauth'>): void {
+function cancelInEngine({ renew, reauth, flow }: Pick<AppConnectState, 'renew' | 'reauth' | 'flow'>): void {
   const account = renew ? (renewAccount ?? useSessionStore.getState().session?.identityId) : undefined;
-  const intent: StoredCancel = { id: `${Date.now()}-${++cancels}`, renew, ...(reauth ? { reauth } : {}), ...(account ? { account } : {}) };
+  const requestHash = flow && 'requestHash' in flow ? flow.requestHash : undefined;
+  const intent: StoredCancel = {
+    id: `${Date.now()}-${++cancels}`,
+    renew,
+    ...(reauth ? { reauth } : {}),
+    ...(account ? { account } : {}),
+    ...(requestHash ? { requestHash } : {}),
+  };
   syncStorage.setItem(CANCEL_KEY, JSON.stringify(intent));
-  const send = (again: boolean) => {
+  const send = (again: boolean): Promise<void> =>
     sendCancel(intent).catch((error: unknown) => {
-      if (again && errorCode(error) === 'ENGINE_RESTARTED' && !stale(gen)) {
-        send(false);
-        return;
-      }
+      if (again && errorCode(error) === 'ENGINE_RESTARTED') return send(false);
       appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
     });
-  };
-  send(true);
+  cancelling = cancelling.then(() => send(true));
 }
 
 /**
@@ -412,10 +423,14 @@ function cancelInEngine(gen: number, { renew, reauth }: Pick<AppConnectState, 'r
  * is logged, and the cancel is kept for the next launch.
  */
 export async function replayInterruptedCancel(): Promise<void> {
-  const cancel = readCancel();
-  if (!cancel) return;
+  // Read once the cancels before it are through: a start that went first may have superseded it.
+  const replay = cancelling.then(() => {
+    const cancel = readCancel();
+    return cancel ? sendCancel(cancel) : undefined;
+  });
+  cancelling = replay.catch(() => undefined);
   try {
-    await sendCancel(cancel);
+    await replay;
   } catch (error) {
     if (errorCode(error) === 'ENGINE_RESTARTED') throw error;
     appendLog('warn', 'host', `Cancelling the interrupted wallet sign-in failed: ${errorMessage(error)}`);
@@ -425,19 +440,20 @@ export async function replayInterruptedCancel(): Promise<void> {
 /** The wallet handed the user back saying it did not sign in (`ac=declined`, …). */
 function walletReported(status: string): void {
   const text = copy.connect.returned[status as keyof typeof copy.connect.returned] ?? copy.connect.returned.failed;
-  const gen = next();
+  const state = get();
+  next();
   set({ step: { name: 'error', title: text.title, message: text.body } });
-  cancelInEngine(gen, get());
+  cancelInEngine(state);
 }
 
 /** "Cancel", or leaving the flow: the engine forgets the request and any answer. */
 export function cancelAppConnect(): void {
-  const { step, renew, reauth } = get();
+  const state = get();
   // Nothing to cancel (the screen unmounting after its own Cancel): a cancel still on its way stays current.
-  if (step.name === 'idle') return;
-  const gen = next();
+  if (state.step.name === 'idle') return;
+  next();
   set(initial);
-  if (step.name !== 'done') cancelInEngine(gen, { renew, reauth });
+  if (state.step.name !== 'done') cancelInEngine(state);
 }
 
 /** The finished state was handed off: forget it without cancelling anything. */

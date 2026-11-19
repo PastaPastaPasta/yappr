@@ -9,7 +9,7 @@ import {
   type RequestRecordStore,
   type StoredAppConnectRequest,
 } from '@/lib/app-connect/login-flow'
-import { requestRecordsFor } from '@/lib/app-connect/pending-request'
+import { requestHashOf, requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
@@ -123,6 +123,8 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
   let state: AppConnectFlowDTO = { flow, renew: false, phase: 'idle' }
   /** The login state last seen, so a confirm whose names resolve late is dropped once superseded. */
   let latest: AppConnectLoginState | null = null
+  /** Every request the running flow has shown ("Check again" and "That's not me" make new ones). */
+  const shown = new Set<string>()
 
   function set(next: AppConnectFlowDTO): void {
     state = next
@@ -141,6 +143,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     latest = next
     const base = { flow: id, renew: renewFor !== undefined }
     const requestHash = instance.requestHashHex() ?? ''
+    if (requestHash) shown.add(requestHash)
     switch (next.phase) {
       case 'confirm':
         names(next.candidates)
@@ -163,6 +166,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     login?.dispose()
     login = null
     latest = null
+    shown.clear()
     renewFor = undefined
     hint = undefined
   }
@@ -184,6 +188,9 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /** The kind of request the running flow makes or resumes, if one is running. */
     runningKind: (): AppConnectRequestKind | null => (login ? { identityHint: hint, renew: renewFor !== undefined } : null),
+
+    /** Whether the running flow has shown the request `requestHash` (hex). */
+    showed: (requestHash: string): boolean => login !== null && shown.has(requestHash),
 
     /**
      * Starts a sign-in, resuming the stored request of the same kind unless
@@ -257,11 +264,14 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
-    /** Forgets the stored request of this kind (see `pending`) without a running flow. */
-    async forget(kind: AppConnectRequestKind): Promise<void> {
+    /**
+     * Forgets the stored request of this kind (see `pending`) without a
+     * running flow; with `requestHash` (hex), only if it is that request.
+     */
+    async forget(kind: AppConnectRequestKind, requestHash?: string): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
       const record = await loadRequest(kind)
-      if (record) await recordsFor(kind).clear(record)
+      if (record && (requestHash === undefined || requestHashOf(record) === requestHash)) await recordsFor(kind).clear(record)
     },
 
     /**

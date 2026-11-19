@@ -1,4 +1,4 @@
-import { PlatformAuthController, decodeYapprIdentityId, type AuthUser } from 'platform-auth'
+import { PlatformAuthController, clearSensitiveBytes, decodeYapprIdentityId, type AuthUser } from 'platform-auth'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
@@ -133,6 +133,9 @@ export interface SessionModuleOptions {
    */
   unhydrated?: Set<string>
 }
+
+/** An App Connect request's hash, as the wallet's return link names it. */
+const REQUEST_HASH = /^[0-9a-f]{40}$/
 
 /** A Platform identity id: 32 bytes in base58. */
 function isIdentityId(value: string): boolean {
@@ -487,10 +490,10 @@ export function createSessionModule(options: SessionModuleOptions) {
       throw new RpcError(renewing ? 'The renewal came from another account' : 'The answer came from another account', 'BAD_REQUEST')
     }
     const active = registry.activeIdentityId()
+    // An answer is taken once its request is gone from the device: one left behind would be resumed and answered again.
     const request = appConnect.runningKind()
     const forgetRequest = async () => {
-      if (!request) return
-      await appConnect.forget(request).catch((error: unknown) => logger.warn('App Connect: could not forget the answered request:', error))
+      if (request) await appConnect.forget(request)
     }
     if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
       // The old keys still restore the session: the renewal's request goes only once its grant is stored, so a
@@ -513,6 +516,12 @@ export function createSessionModule(options: SessionModuleOptions) {
     const parked = isParked(identityId)
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
+    try {
+      await forgetRequest()
+    } catch (error) {
+      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
+      throw error
+    }
     const hold = parked ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
     let succeeded = false
     try {
@@ -538,7 +547,6 @@ export function createSessionModule(options: SessionModuleOptions) {
       revokedSignOut = null
       emitAppConnectStatus()
     }
-    await forgetRequest()
     const session = await signedIn(identityId, 'app-connect')
     // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
     if (parked) requireRestart()
@@ -803,9 +811,28 @@ export function createSessionModule(options: SessionModuleOptions) {
      * could not be deleted. With no flow running (the engine restarted under
      * the cancel, which runs none), the stored request the host names is
      * forgotten instead: `renew` for `account`'s renewal, `reauth` for
-     * signing that account in again, else a sign-in.
+     * signing that account in again, else a sign-in. With `requestHash` (hex)
+     * the cancel names its request: a flow that never showed it is left
+     * alone, and a stored request goes only if it is that one.
      */
-    async appConnectCancel(opts: { renew?: boolean; reauth?: string; account?: string } = {}): Promise<void> {
+    async appConnectCancel(opts: { renew?: boolean; reauth?: string; account?: string; requestHash?: string } = {}): Promise<void> {
+      const named = opts?.requestHash
+      if (named !== undefined && (typeof named !== 'string' || !REQUEST_HASH.test(named))) {
+        throw new RpcError('requestHash must be a request hash (hex)', 'BAD_REQUEST')
+      }
+      if (named !== undefined && !appConnect.showed(named)) {
+        await restored()
+        const kind = cancelledKind(opts)
+        // Not under a start that may be resuming that very request.
+        const running = appConnect.runningKind()
+        const resuming = kind && running && running.identityHint === kind.identityHint && running.renew === (kind.renew === true)
+        if (kind && !resuming) await appConnect.forget(kind, named)
+        // A revoke the cancelled renewal held back goes ahead once no renewal of that account is stored.
+        const held = deferredRevoke
+        if (held && !(await appConnect.pending({ identityHint: held, renew: true }))) settleDeferredRevoke()
+        await options.secureDurable?.()
+        return
+      }
       const cancelled = cancelledStart = ++appConnectStarts
       // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
       const running = appConnect.runningKind()
