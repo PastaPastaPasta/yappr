@@ -354,18 +354,21 @@ async function preparePayment(
           || (cachedAbsent && payment.request.nonce > cached.request.nonce));
       for (const record of records) {
         const payment = restorePayment(context.ownerId, record);
-        let result;
-        try { result = await reconcilePayment(payment); }
-        catch (error) {
-          logger.debug('Could not reconcile the earlier wallet payment:', error);
-          result = { outcome: 'unknown' as const, executable: false };
+        let result: PaymentObservation;
+        // Only a request proved absent is ever marked replaced, and that proof is final.
+        if (record.replacedBy) result = { outcome: 'absent', executable: false };
+        else {
+          try { result = await reconcilePayment(payment); }
+          catch (error) {
+            logger.debug('Could not reconcile the earlier wallet payment:', error);
+            result = { outcome: 'unknown', executable: false };
+          }
         }
         const excluded = context.allowAnother?.has(record.reservationId) === true;
-        const replacement = result.outcome === 'absent' ? replacementOf(record) : undefined;
+        const replacement = replacementOf(record);
         if (replacement === 'completed') {
-          // Paid by the local payment that replaced it; kept for the other tabs showing it until one takes it.
-          if (!attributable(record, payment, excluded)) continue;
-          drop(record);
+          // Paid by the local payment that replaced it: settles every tab still showing this request, never a new payment.
+          if (excluded || record.key !== context.key || cached?.request.reservationId !== record.reservationId) continue;
           return settle({ completed: true });
         }
         if (replacement === 'sending') {
@@ -376,7 +379,7 @@ async function preparePayment(
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           if (result.outcome === 'completed') settleAttempts(context.ownerId, record);
           // A local payment of this one goes ahead at a fresh nonce: the request stays, to be marked replaced by it.
-          if (result.outcome === 'absent' && replacement === undefined && !build && !excluded && record.key === context.key) {
+          if (result.outcome === 'absent' && !record.replacedBy && !build && !excluded && record.key === context.key) {
             replaceable.push(record.reservationId);
             continue;
           }

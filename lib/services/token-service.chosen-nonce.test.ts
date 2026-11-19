@@ -474,12 +474,20 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     const otherContext = { ...context, key: 'different payment' }
     expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
     expect(storedPayments()).toHaveLength(1)
-    // Tab B checks its QR again: done, with nothing new to scan.
+    // Tabs B and C check their QR again: done, with nothing new to scan.
     const buildFresh = vi.fn(buildCachedPayment)
     expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
-    expect(storedPayments()).toEqual([])
+    expect(storedPayments()).toHaveLength(1)
     expect(sends()).toBe(1)
+    // A new payment of the same amount is its own: neither shown as paid nor blocked by the mark, even when reads fail.
+    sdk.documents.getWithProof.mockRejectedValueOnce(new Error('proof unavailable'))
+    const fresh = await prepareWalletPayment(undefined, buildFresh, context)
+    if (fresh.completed || fresh.unresolved) throw new Error('The new payment was not offered')
+    expect(buildFresh).toHaveBeenCalledOnce()
+    expect(fresh.payment.request.nonce).toBeGreaterThan(original.request.nonce)
+    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, payment: { request: { reservationId: fresh.payment.request.reservationId } } })
   })
 
   it('keeps a QR another tab shows unresolved while the local payment that replaced it may still go through', async () => {
