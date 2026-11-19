@@ -407,11 +407,15 @@ class AppConnectSessionManager {
   /**
    * Resolves once every revoke sign-out under way here has run to its end:
    * the grant's discard, then the sign-out listener. A grant adopted before
-   * then could be the one that sign-out clears, so a sign-in or renewal
-   * waits for it (#736).
+   * then could be the one that sign-out clears, so a sign-in waits for it
+   * (#736). A revoke that starts while this waits is waited for too.
    */
-  revocationSettled(): Promise<void> {
-    return this.revocations
+  async revocationSettled(): Promise<void> {
+    let settled: Promise<void>
+    do {
+      settled = this.revocations
+      await settled
+    } while (settled !== this.revocations)
   }
 
   private async revoke(session: AppConnectSession): Promise<void> {
