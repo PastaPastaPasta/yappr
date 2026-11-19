@@ -324,12 +324,17 @@ wallet return and engine stay the variant's.
 
 1. Dispatch from `staging` with `dry_run` on, approve the deployment, and
    read the gate's evidence in the run summary.
-2. Dispatch again with `dry_run` off. Start a new run rather than re-running
-   a failed one: a re-run keeps the run number, and App Store Connect refuses
-   a build number it has already received.
+2. Dispatch again with `dry_run` off. If the build failed before the upload,
+   start a new run rather than re-running it: a re-run keeps the run number,
+   which is fine only if nothing was uploaded.
 3. If the summary says Missing Compliance, answer it in App Store Connect as
    listed there: the app uses encryption, standard algorithms not provided by
    Apple (COMPLIANCE, Encryption export).
+4. If the upload succeeded but a later step didn't (the summary shows the
+   build id), don't upload again. In App Store Connect → TestFlight, open the
+   build by version and build number, answer compliance if asked, add the What
+   to Test notes, and add it to **Yappr Internal** (Internal Testing → the
+   group → Builds → +).
 
 The workflow file must also exist on the default branch for GitHub to offer
 the dispatch; the run uses the `staging` copy.
