@@ -98,9 +98,13 @@ export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, change
   return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
 }
 
-/** Whether a read proved at block time `readAt` predates a run change: the lists are read again a little later. */
-export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): boolean {
-  return newerThan(changes, readAt).length > 0
+/**
+ * Whether a read proved at block time `readAt` predates a run change (of one
+ * of `ids`, when given): the lists are read again a little later, and a run
+ * does not settle on it.
+ */
+export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined, ids?: readonly string[]): boolean {
+  return newerThan(changes, readAt).some((change) => !ids || ids.includes(change.item.id))
 }
 
 /** How far back "select by time" reaches. */
