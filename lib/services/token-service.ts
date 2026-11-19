@@ -14,7 +14,7 @@ import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey,
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { prepareLocalWalletPayment, type LocalWalletPaymentIntent } from './wallet-payment-service';
+import { beginLocalWalletPayment, endLocalWalletPayment, prepareLocalWalletPayment, type LocalWalletPaymentIntent } from './wallet-payment-service';
 import type { WalletTransitionRequest } from './token-transition-builder';
 
 /** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
@@ -70,7 +70,7 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
     const sendPayment = async () => {
       let walletRequest = payment && 'sendWithNonce' in payment ? payment : undefined;
       if (intent) {
-        const prepared = await prepareLocalWalletPayment(intent.cached, { ownerId, key: intent.key, allowAnother: intent.allowAnother }, true);
+        const prepared = await prepareLocalWalletPayment(intent.cached, { ownerId, key: intent.key, allowAnother: intent.allowAnother, attemptId: intent.attemptId }, true);
         intent.onPrepared?.(prepared.completed ? undefined : prepared.payment);
         if (prepared.completed) return;
         if (prepared.unresolved) throw new UnresolvedWalletPaymentError(prepared.different);
@@ -85,6 +85,25 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
     if (error instanceof CriticalKeyCancelledError) throw error;
     if (sent && sentWriteOutcomeUnknown(error)) throw new UnconfirmedTokenWriteError(error);
     throw error;
+  }
+}
+
+/**
+ * Runs a local confirmation of a wallet payment as one recorded attempt
+ * (`beginLocalWalletPayment`), started before `run` asks for the CRITICAL
+ * signer: a matching payment another tab completes meanwhile settles it.
+ */
+async function asPaymentAttempt<T>(
+  ownerId: string,
+  payment: WalletTransitionRequest | LocalWalletPaymentIntent | undefined,
+  run: (payment: WalletTransitionRequest | LocalWalletPaymentIntent | undefined) => Promise<T>
+): Promise<T> {
+  if (!payment || !('key' in payment)) return run(payment);
+  const attemptId = await beginLocalWalletPayment(ownerId, payment.key);
+  try {
+    return await run({ ...payment, attemptId });
+  } finally {
+    await endLocalWalletPayment(ownerId, attemptId).catch((error: unknown) => logger.warn('Could not end the payment attempt:', error));
   }
 }
 
@@ -177,18 +196,20 @@ class TokenService {
     }
 
     try {
-      const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(buyerId);
+      await asPaymentAttempt(buyerId, walletRequest, async (payment) => {
+        const sdk = await getEvoSdk();
+        const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(buyerId);
 
-      await sendTokenWrite(buyerId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, buyerId, nonce, wif, identityKey, assertLive)).tokens.directPurchase({
-        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
-        tokenPosition: YAPP_TOKEN_POSITION,
-        buyerId: new Identifier(buyerId),
-        amount,
-        maxTotalCost,
-        identityKey,
-        signer,
-      } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive, walletRequest);
+        await sendTokenWrite(buyerId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, buyerId, nonce, wif, identityKey, assertLive)).tokens.directPurchase({
+          dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+          tokenPosition: YAPP_TOKEN_POSITION,
+          buyerId: new Identifier(buyerId),
+          amount,
+          maxTotalCost,
+          identityKey,
+          signer,
+        } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive, payment);
+      });
 
       return { success: true };
     } catch (error) {
@@ -225,19 +246,21 @@ class TokenService {
       return { success: false, error: 'YAPP can\'t be sent to other accounts', errorCode: 'NOT_AUTHORIZED' };
     }
     try {
-      const sdk = await getEvoSdk();
-      const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(senderId);
+      await asPaymentAttempt(senderId, walletRequest, async (payment) => {
+        const sdk = await getEvoSdk();
+        const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(senderId);
 
-      await sendTokenWrite(senderId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, senderId, nonce, wif, identityKey, assertLive)).tokens.transfer({
-        dataContractId: new Identifier(YAPPR_CONTRACT_ID),
-        tokenPosition: YAPP_TOKEN_POSITION,
-        senderId: new Identifier(senderId),
-        recipientId: new Identifier(recipientId),
-        amount,
-        publicNote,
-        identityKey,
-        signer,
-      } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive, walletRequest);
+        await sendTokenWrite(senderId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, senderId, nonce, wif, identityKey, assertLive)).tokens.transfer({
+          dataContractId: new Identifier(YAPPR_CONTRACT_ID),
+          tokenPosition: YAPP_TOKEN_POSITION,
+          senderId: new Identifier(senderId),
+          recipientId: new Identifier(recipientId),
+          amount,
+          publicNote,
+          identityKey,
+          signer,
+        } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive, payment);
+      });
 
       return { success: true };
     } catch (error) {

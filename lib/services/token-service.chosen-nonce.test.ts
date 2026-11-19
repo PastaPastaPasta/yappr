@@ -11,7 +11,7 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
-import { buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
+import { beginLocalWalletPayment, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
 import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
 import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
 
@@ -373,7 +373,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(storedPayments()).toEqual([])
   })
 
-  it.each((['executable', 'completed', 'unknown', 'foreign'] as const).flatMap(state =>
+  it.each((['executable', 'completed', 'completed and cleared', 'unknown', 'foreign'] as const).flatMap(state =>
     [false, true].map(cached => ({ state, cached }))
   ))('reconciles a $state replacement exposed by tab B while tab A acquires its local signer (cached: $cached)', async ({ state, cached }) => {
     const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
@@ -409,10 +409,15 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       expect(expose).toHaveBeenCalledWith(replacement)
       expect(replacement.request.nonce).toBe(BigInt(127))
       expect(storedPayments()).toHaveLength(1)
-      if (state === 'completed') {
+      if (state === 'completed' || state === 'completed and cleared') {
         expect(execute(replacement.request.nonce, true)).toBe(true)
         recordReceipt(replacement)
         reportedNonce = chainNonce()
+        // Tab B saw its QR complete and cleared the record before tab A had its signer.
+        if (state === 'completed and cleared') {
+          await clearPersistedWalletPayment(OWNER, replacement.request.reservationId)
+          expect(storedPayments()).toEqual([])
+        }
       } else if (state === 'unknown') {
         for (let nonce = BigInt(128); nonce <= BigInt(152); nonce++) expect(execute(nonce, false)).toBe(true)
         reportedNonce = chainNonce()
@@ -431,7 +436,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       finally { transition.free() }
       expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: context.key, request: expect.objectContaining({ nonce: BigInt(127) }) }))
       expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
-    } else if (state === 'completed') {
+    } else if (state === 'completed' || state === 'completed and cleared') {
       expect(result).toEqual({ success: true })
       expect(broadcast).not.toHaveBeenCalled()
       expect(payments).toBe(1)
@@ -446,6 +451,31 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: replacement.key }))
       expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
     }
+  })
+
+  it('settles a local confirmation by a matching payment completed during it, unless the user asked to send another', async () => {
+    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    expect(execute(shown.payment.request.nonce, true)).toBe(true)
+    recordReceipt(shown.payment)
+    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: true })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId, allowAnother: new Set([shown.payment.request.reservationId]) })).toEqual({ completed: false })
+  })
+
+  it('lets a new local payment go ahead after a matching one completed before it began', async () => {
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    expect(execute(shown.payment.request.nonce, true)).toBe(true)
+    recordReceipt(shown.payment)
+    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
+    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: false })
+  })
+
+  it('signs nothing for a local confirmation whose record is gone', async () => {
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: 'never-recorded' })).toEqual({ completed: false, unresolved: true })
   })
 
   it('serializes two tabs preparing the same payment under the reservation lock', async () => {
