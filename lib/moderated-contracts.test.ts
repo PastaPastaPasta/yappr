@@ -122,7 +122,7 @@ describe('hide, don\'t delete (social v18, blog v10, storefront v11)', () => {
     expect(social.hideableTypes()).toBe(social.hideableTypes())
   })
 
-  it.each([['v17', 'v9', 'v10'], ['v19', 'v11', 'v12']])('keeps deletion moderation on social %s, blog %s, storefront %s', async (social, blog, storefront) => {
+  it.each([['v17', 'v9', 'v10'], ['v19', 'v11', 'v12'], ['v20', 'v11', 'v12']])('keeps deletion moderation on social %s, blog %s, storefront %s', async (social, blog, storefront) => {
     const { moderatedContract } = await set(social, blog, storefront)
     for (const key of ['social', 'blog', 'storefront'] as const) {
       const contract = moderatedContract(key)
@@ -148,7 +148,7 @@ describe('documentNoun', () => {
 describe('the moderation model the legal copy describes', () => {
   // Every cut the repo carries lets moderators delete content (or, on v2, has
   // no moderation at all), so the copy keeps describing removals on each.
-  it.each(['v2', 'v9', 'v16', 'v17', 'v19'])('keeps the removal wording on social %s', async (topology) => {
+  it.each(['v2', 'v9', 'v16', 'v17', 'v19', 'v20'])('keeps the removal wording on social %s', async (topology) => {
     const { moderationHidesOnly } = await contractsUnder({ NEXT_PUBLIC_CONTRACT_TOPOLOGY: topology })
     expect(moderationHidesOnly()).toBe(false)
   })

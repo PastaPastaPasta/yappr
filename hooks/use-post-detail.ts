@@ -10,6 +10,7 @@ import { hasFlatThreads, referencesMayDangle, targetKindOf, threadRootIdOf } fro
 import { withMissingReplyParents, type MissingParentReads } from '@/lib/feed/deleted-reply-stubs'
 import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { provenAbsent } from '@/lib/feed/prove-absent'
+import { moderationService } from '@/lib/services/moderation-service'
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
@@ -100,16 +101,30 @@ function nestUnderReply(
   return changed ? result : null
 }
 
+/** `documentRemovals` answers for at most this many document ids a read (`readRemovals`). */
+const REMOVAL_READ_LIMIT = 100
+
 /**
  * What keeps the replies under a missing parent in the thread
  * (`withMissingReplyParents`): the tombstoned parents a live-keyed
  * `repliesOf` does not list, read by id, and stubs for the parents proved
- * gone. Both reads reject, so a failed one fails the page.
+ * gone. Both reads reject, so a failed one fails the page. Where a removed
+ * reply's record keeps the reply it answered (v20), its stub goes back under
+ * that parent; a failed record read only leaves the stub at the top.
  */
 const missingParentReads: MissingParentReads = {
   // Fresh, not cached: a parent tombstoned since it was cached must read as the tombstone.
   getMany: (ids) => replyService.getManyOrThrow(ids),
   provenAbsent: (ids) => provenAbsent('reply', ids, { throwOnError: true }),
+  removedReplyParents: async (ids) => {
+    const parents = new Map<string, string>()
+    for (const batch of chunk(ids, REMOVAL_READ_LIMIT)) {
+      for (const [id, removal] of await moderationService.getRemovals('reply', batch)) {
+        if (removal.kept.replyToReplyId) parents.set(id, removal.kept.replyToReplyId)
+      }
+    }
+    return parents
+  },
 }
 
 /**

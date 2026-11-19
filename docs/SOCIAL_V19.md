@@ -1,5 +1,9 @@
 # Social contract v19
 
+Fresh release registrations use [social v20](SOCIAL_V20.md), which also keeps
+`replyToReplyId` in a reply's removal record. This v19 file and the testnet
+deployment registered on 2026-11-12 remain unchanged.
+
 Social v19 is [v17](SOCIAL_V17.md) plus PR #931's update-height and kept-times
 change, extended to every recoverable removal (D46). It retains deletion, ban,
 suspension and warning moderation,

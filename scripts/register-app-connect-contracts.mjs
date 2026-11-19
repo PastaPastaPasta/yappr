@@ -58,7 +58,7 @@
  *                                    chain; --dry-run proves that too when given the file;
  *   --production                     is required by --live (and refused on a devnet);
  *   --journal                        must sit in a directory only its owner may enter (0700).
- * The default set has eight creates on every network, with social v19 (D46).
+ * The default set has eight creates on every network, with social v20 (D46, docs/SOCIAL_V20.md).
  * Testnet registers it from a new maker with a new anchor and group; the
  * historical v17 maker is refused. Later appends from the new group's maker are allowed.
  * The experimental "hide, don't delete" members (docs/SOCIAL_V18.md) are only

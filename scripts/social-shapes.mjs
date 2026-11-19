@@ -537,7 +537,7 @@ export const BLOCK_TYPES = ['block', 'blockFilter', 'blockFollow'];
 // ---- Self-test ------------------------------------------------------------------
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v19'];
+const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v19', 'v20'];
 
 /** The cut flags each social cut declares. */
 function expectedCut(version) {
@@ -687,7 +687,7 @@ function builderExpectations(shapes, version) {
   const id = new Uint8Array(32).fill(6);
   const throws = (fn) => { try { fn(); return false; } catch { return true; } };
   // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape, v16 every v15 one but the tags, v17 every v16 one.
-  const v14 = ['v14', 'v15', 'v16', 'v17', 'v19'].includes(version);
+  const v14 = ['v14', 'v15', 'v16', 'v17', 'v19', 'v20'].includes(version);
   const fromV13 = version === 'v13' || v14;
   const item = { url: 'ipfs://bafy', sha256: new Uint8Array(32), fingerprint: new Uint8Array(8) };
   return [

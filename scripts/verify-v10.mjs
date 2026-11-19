@@ -135,6 +135,10 @@
  * v17's behavior, requiring the update height and keeping it and the update
  * time in post/reply removal records. `m1k2` compares these with the stored post.
  *
+ * **v20** (`--contract-file contracts/yappr-social-contract-v20.json`,
+ * docs/SOCIAL_V20.md) is v19 whose reply removal record also keeps
+ * `replyToReplyId`; `--self-test` pins the list. Every live case is v19's.
+ *
  * Its 5.0.0-beta.6 successor **v16** (`--contract-file
  * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
  * v15 case; only the tags change (read off `post.tags`). A post is indexed
@@ -2803,7 +2807,9 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
   const keepsHeight = schemas.post.required.includes('$updatedAtBlockHeight');
   const keptTimes = keepsHeight ? ['$createdAt', '$updatedAt', '$updatedAtBlockHeight'] : ['$createdAt'];
   if (keepsHeight) expect('v19: post and reply require $updatedAtBlockHeight (m1k2)', ['post', 'reply'].every((t) => schemas[t].required.includes('$updatedAtBlockHeight')));
-  for (const [type, kept] of [['post', [SOCIAL.tagField, ...keptTimes]], ['reply', ['rootPostId', ...keptTimes]]]) {
+  // v20 also keeps the reply a removed nested reply answered, so its hole keeps its place in the thread.
+  const keptReplyLinks = Number(/-v(\d+)\.json$/.exec(CONTRACT_NAME)?.[1]) >= 20 ? ['rootPostId', 'replyToReplyId'] : ['rootPostId'];
+  for (const [type, kept] of [['post', [SOCIAL.tagField, ...keptTimes]], ['reply', [...keptReplyLinks, ...keptTimes]]]) {
     expect(`${type}: one moderator deletes for ${windowText}, then ${approvals} approvals with the leader (deleteWithin ${windowSeconds}, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
       JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: windowSeconds, deleteSettled: { leader: true, approvals } }));
   }

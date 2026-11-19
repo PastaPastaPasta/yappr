@@ -23,7 +23,7 @@ const check = (journal, policy, appendAfter = TESTNET_REGISTERED_THROUGH) =>
   () => checkJournal(journal, plan, { path: 'j.json', policy, appendAfter, network: 'testnet', generateId });
 
 describe('the testnet append guard', () => {
-  it('allows new testnet makers to register v19 and keeps the historical makers guarded', () => {
+  it('allows new testnet makers to register the release set and keeps the earlier makers guarded', () => {
     const fresh = { maker: '11111111111111111111111111111112' };
     expect(testnetAppendProblem('testnet', null, fresh)).toBeNull();
     expect(testnetAppendProblem('testnet', 'social', fresh)).toBeNull();
@@ -39,7 +39,7 @@ describe('the testnet append guard', () => {
     expect(plan.contracts.find((c) => c.name === 'social')?.file).toBe('yappr-social-contract-v17.json');
     expect(plan.contracts.find((c) => c.name === 'blog')?.file).toBe('yappr-blog-contract.json');
     expect(plan.contracts.find((c) => c.name === 'storefront')?.file).toBe('yappr-storefront-contract.json');
-    for (const file of ['yappr-social-contract-v19.json', 'yappr-blog-contract-v11.json', 'yappr-storefront-contract-v12.json']) expect(plan.contracts.some((c) => c.file === file)).toBe(false);
+    for (const file of ['yappr-social-contract-v19.json', 'yappr-social-contract-v20.json', 'yappr-blog-contract-v11.json', 'yappr-storefront-contract-v12.json']) expect(plan.contracts.some((c) => c.file === file)).toBe(false);
     expect(created.map((c) => [c.name, c.nonce])).toEqual([['socialV18', 9n], ['blogV10', 10n], ['storefrontV11', 11n]]);
     expect(plan.contracts.filter((e) => e.replacedBy).map((e) => [e.name, e.envKey, e.replacedBy])).toEqual([
       ['social', null, 'socialV18'], ['blog', null, 'blogV10'], ['storefront', null, 'storefrontV11'],

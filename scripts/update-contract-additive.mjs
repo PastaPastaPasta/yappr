@@ -16,7 +16,7 @@
  *
  * `--entry` names an App Connect member (scripts/app-connect-set.mjs), whose
  * file must carry the pinned sha256. Social, blog and storefront deployments
- * must already select the release cut (v19/v11/v12); this tool cannot upgrade
+ * must already select the release cut (v20/v11/v12); this tool cannot upgrade
  * historical cuts to recoverable removal. Devnet only, signed by the devnet maker
  * (DEVNET_MAKER_IDENTITY_ID, seed index 9); testnet and mainnet updates are
  * not this script's to make. A member at a new version blocks new App Connect
@@ -95,7 +95,7 @@ try {
   if (network() !== 'devnet') throw new Error(`devnet only (NETWORK is ${network()})`);
   const entry = APP_CONNECT_ENTRIES.find((candidate) => candidate.name === args.entry);
   if (!entry) throw new Error(`no App Connect entry named ${args.entry} (${APP_CONNECT_ENTRIES.map((e) => e.name).join(', ')})`);
-  const cut = { social: ['CONTRACT', 'v19'], blog: ['BLOG', 'v11'], storefront: ['STOREFRONT', 'v12'] }[entry.name];
+  const cut = { social: ['CONTRACT', 'v20'], blog: ['BLOG', 'v11'], storefront: ['STOREFRONT', 'v12'] }[entry.name];
   if (cut) {
     const topologyKey = `NEXT_PUBLIC_${cut[0]}_TOPOLOGY`;
     const topology = envValue(topologyKey);

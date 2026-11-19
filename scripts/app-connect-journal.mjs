@@ -8,7 +8,7 @@ import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET } from './app-connect
 
 /** The maker of the retired 2026-10-21 testnet set (group 4MjVAxDY…); a fresh set needs a new one (D46). */
 export const REGISTERED_TESTNET_MAKER = 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A';
-/** The maker of the 2026-11-12 testnet release set (group DrNB3VwK…, anchor nonce 1): it may append to that group, never start another. */
+/** The maker of the 2026-11-12 testnet release set (group DrNB3VwK…, anchor nonce 1, social v19): it may append to that group, never start another. */
 export const RELEASE_TESTNET_MAKER = '6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog';
 
 /** What a journal records of the rendering, compared on resume (an older journal without it rendered the files' own values). */
@@ -18,8 +18,8 @@ export const journalPolicy = (policy) => ({ interim: policy.interim, electionWin
 export const policyKey = (recorded) => JSON.stringify({ interim: recorded.interim ?? null, electionWindows: recorded.electionWindows ?? null, electionDelay: recorded.electionDelay ?? null, challengeCoolDown: recorded.challengeCoolDown ?? null });
 
 /**
- * Fresh v19 release registrations use a new maker and group (D46). The two
- * historical testnet makers must never register a replacement anchor by
+ * Fresh release registrations use a new maker and group (D46). The
+ * earlier testnet makers must never register a replacement anchor by
  * mistake; the D36 maker may still append the v18 experiment to its own set.
  */
 export function testnetAppendProblem(network, appendAfter, { testnetSet = null, maker = null } = {}) {
@@ -32,9 +32,9 @@ export function testnetAppendProblem(network, appendAfter, { testnetSet = null, 
     return null;
   }
   if (rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
-  if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; social v19 requires a new maker, anchor and group (D46)';
+  if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; the release set requires a new maker, anchor and group (D46)';
   if (maker === RELEASE_TESTNET_MAKER && appendAfter === null) return 'the 2026-11-12 release maker already holds the testnet release set: append to its group with --append-after (and --start-nonce 1), or register a fresh set from a new maker';
-  if (!maker) return 'a fresh v19 set requires an explicit new maker (D46)';
+  if (!maker) return 'a fresh release set requires an explicit new maker (D46)';
   return null;
 }
 

@@ -1,5 +1,5 @@
 import type { Reply } from '@/lib/types';
-import { replyThreadsCarryLiveMarker, repliesOutliveTheirParent } from '@/lib/contract-topology';
+import { removedRepliesKeepTheirParent, replyThreadsCarryLiveMarker, repliesOutliveTheirParent } from '@/lib/contract-topology';
 import { isUnlistedItem } from './post-moderation';
 
 /**
@@ -34,6 +34,12 @@ export interface MissingParentReads {
   getMany(ids: string[]): Promise<Reply[]>;
   /** The ids among `ids` proved absent. */
   provenAbsent(ids: string[]): Promise<Set<string>>;
+  /**
+   * For the removed replies among `ids` whose removal record keeps the reply
+   * they answered (`replyToReplyId`, v20), that parent's id. A reply with no
+   * record, a direct reply and a record that keeps no parent are left out.
+   */
+  removedReplyParents?(ids: string[]): Promise<Map<string, string>>;
 }
 
 /**
@@ -50,6 +56,11 @@ export interface MissingParentReads {
  * - Where a reply can outlive its parent (`repliesOutliveTheirParent`), the
  *   parents still missing are proved absent and stubbed
  *   ({@link deletedReplyStubs}).
+ * - Where a removal record keeps the reply a removed reply answered
+ *   (`removedRepliesKeepTheirParent`), each stub goes back under that parent,
+ *   and a parent that is missing in turn is resolved the same way (a
+ *   tombstone read by id, or another stub), until none is left. A stub whose
+ *   record names no parent stays at the top of the thread.
  * - A reply the moderators hid, or one written while its author was
  *   restricted (v18, lane 2), is not listed either, so its children would lose
  *   their parent. A default build reads it by id and stands in a `hiddenStub`
@@ -61,25 +72,40 @@ export interface MissingParentReads {
  */
 export async function withMissingReplyParents(replies: readonly Reply[], reads: MissingParentReads, loaded: ReadonlySet<string> = new Set()): Promise<Reply[]> {
   let all = [...replies];
-  if (replyThreadsCarryLiveMarker()) {
-    const tried = new Set<string>();
-    for (;;) {
-      const missing = unloadedReplyParents(all, loaded).filter((id) => !tried.has(id));
-      if (missing.length === 0) break;
-      missing.forEach((id) => tried.add(id));
-      const have = new Set(all.map((reply) => reply.id));
-      const found = (await reads.getMany(missing)).filter((reply) => !have.has(reply.id));
-      // A parent a default build does not list (v18: hidden by the moderators, or written under a restriction,
-      // lane 2) would take its listed children with it: it holds its place as a stub with no content.
-      const stubs = found.map((reply) => (reply.deleted === true ? reply : isUnlistedItem(reply) ? hiddenReplyStub(reply) : null)).filter((reply) => reply !== null);
-      if (stubs.length === 0) break;
-      all = [...stubs, ...all];
+  const tried = new Set<string>();
+  const proved = new Set<string>();
+  // One round unless a stub is placed under a parent that is missing too.
+  for (;;) {
+    if (replyThreadsCarryLiveMarker()) {
+      for (;;) {
+        const missing = unloadedReplyParents(all, loaded).filter((id) => !tried.has(id));
+        if (missing.length === 0) break;
+        missing.forEach((id) => tried.add(id));
+        const have = new Set(all.map((reply) => reply.id));
+        const found = (await reads.getMany(missing)).filter((reply) => !have.has(reply.id));
+        // A parent a default build does not list (v18: hidden by the moderators, or written under a restriction,
+        // lane 2) would take its listed children with it: it holds its place as a stub with no content.
+        const stubs = found.map((reply) => (reply.deleted === true ? reply : isUnlistedItem(reply) ? hiddenReplyStub(reply) : null)).filter((reply) => reply !== null);
+        if (stubs.length === 0) break;
+        all = [...stubs, ...all];
+      }
     }
+    if (!repliesOutliveTheirParent()) return all;
+    const candidates = unloadedReplyParents(all, loaded).filter((id) => !proved.has(id));
+    if (candidates.length === 0) return all;
+    candidates.forEach((id) => proved.add(id));
+    const stubs = deletedReplyStubs(all, await reads.provenAbsent(candidates));
+    const parents = stubs.length > 0 && reads.removedReplyParents && removedRepliesKeepTheirParent()
+      ? await reads.removedReplyParents(stubs.map((stub) => stub.id))
+      : new Map<string, string>();
+    all = [...stubs.map((stub) => placedUnderItsParent(stub, parents.get(stub.id))), ...all];
+    if (parents.size === 0) return all;
   }
-  if (!repliesOutliveTheirParent()) return all;
-  const candidates = unloadedReplyParents(all, loaded);
-  const deleted = candidates.length > 0 ? await reads.provenAbsent(candidates) : new Set<string>();
-  return [...deletedReplyStubs(all, deleted), ...all];
+}
+
+/** A removed reply's stub nested under the reply its removal record says it answered; unchanged when the record names none (or itself). */
+function placedUnderItsParent(stub: Reply, parentId: string | undefined): Reply {
+  return parentId && parentId !== stub.id ? { ...stub, parentId, replyToReplyId: parentId } : stub;
 }
 
 /**
@@ -105,7 +131,9 @@ export function unloadedReplyParents(replies: readonly Reply[], alsoLoaded: Read
  * stub resolves who made the hole itself (`RemovedPostStub`).
  *
  * The deleted document is gone, and with it whatever it nested under, so a
- * stub sits at the top of the thread. It takes the earliest child's timestamp,
+ * stub sits at the top of the thread unless its removal record kept its
+ * parent ({@link withMissingReplyParents} then places it). It takes the
+ * earliest child's timestamp,
  * which keeps it in the same spot of the chronological thread order. Replies
  * already in `replies` (including earlier stubs) are never duplicated.
  */

@@ -44,7 +44,7 @@ describe('feature batteries', () => {
 
   it('limits additive updates to the deployment cut before connecting', () => {
     for (const [entry, topology, selected, expected] of [
-      ['social', 'CONTRACT', 'v16', 'v19'], ['blog', 'BLOG', 'v8', 'v11'], ['storefront', 'STOREFRONT', 'v9', 'v12'],
+      ['social', 'CONTRACT', 'v16', 'v20'], ['blog', 'BLOG', 'v8', 'v11'], ['storefront', 'STOREFRONT', 'v9', 'v12'],
     ]) {
       const result = spawnSync(process.execPath, ['scripts/update-contract-additive.mjs', '--entry', entry], {
         env: { ...process.env, NETWORK: 'devnet', [`NEXT_PUBLIC_${topology}_TOPOLOGY`]: selected }, encoding: 'utf8', timeout: 10000,

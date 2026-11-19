@@ -31,4 +31,21 @@ describe('recoverable removal contract cuts', () => {
     expect(cut).toEqual(expected);
     expect(cut.documentSchemas.report).toEqual(original.documentSchemas.report);
   });
+
+  it('social v20 is social v19 with replyToReplyId kept in the reply removal record', () => {
+    const v19 = read('yappr-social-contract-v19.json');
+    // The file registered on testnet on 2026-11-12 stays byte-identical.
+    expect(createHash('sha256').update(v19).digest('hex')).toBe('bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971');
+    const expected = JSON.parse(v19);
+    const kept = expected.documentSchemas.reply.moderatorAbilities.deleteKeepsFields;
+    expect(kept).toEqual(['rootPostId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight']);
+    kept.splice(1, 0, 'replyToReplyId');
+    const v20 = JSON.parse(read('yappr-social-contract-v20.json'));
+    expect(v20).toEqual(expected);
+    // An optional, immutable identifier of the reply itself: a direct reply's record leaves it out.
+    const reply = v20.documentSchemas.reply;
+    expect(reply.properties.replyToReplyId.type).toBe('identifier');
+    expect(reply.required).not.toContain('replyToReplyId');
+    expect(reply.immutable).toContain('replyToReplyId');
+  });
 });

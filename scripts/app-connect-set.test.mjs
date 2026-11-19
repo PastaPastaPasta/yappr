@@ -6,7 +6,7 @@ import { REGISTERED_TESTNET_MAKER, testnetAppendProblem } from './app-connect-jo
 const MAKER = '11111111111111111111111111111112';
 const PINS = [
   ['app', 'yappr-app-contract.json', 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41'],
-  ['social', 'yappr-social-contract-v19.json', 'bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971'],
+  ['social', 'yappr-social-contract-v20.json', '3e6c962264392f3fc97cb57a7d983d2ae053f9d455ff64dde64b16805d7ae87e'],
   ['blocks', 'yappr-blocks-contract.json', 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677'],
   ['dmV5', 'yappr-dm-contract-v5.json', '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21'],
   ['blog', 'yappr-blog-contract-v11.json', 'd1a53c31803a2f6f057700b358755b4d927318bfdcd5d2cb5b6718e8942dca6c'],
@@ -20,12 +20,12 @@ const run = (network, extra = []) => spawnSync(process.execPath, ['scripts/regis
 });
 
 describe('the default release set', () => {
-  it('pins exactly the eight v19 release files, matching their bytes', () => {
+  it('pins exactly the eight release files (social v20), matching their bytes', () => {
     expect(APP_CONNECT_ENTRIES.map(({ name, file, sha256 }) => [name, file, sha256])).toEqual(PINS);
     for (const entry of APP_CONNECT_ENTRIES) expect(fileSha256(entry.file)).toBe(entry.sha256);
   });
 
-  it('emits the v19 social, blog and storefront ids and exactly eight pinned members', () => {
+  it('emits the release social, blog and storefront ids and exactly eight pinned members', () => {
     const plan = planAppConnectSet({ makerId: MAKER, startNonce: 1n, generateId: (owner, nonce) => `${owner}-${nonce}` });
     const env = appConnectEnvLines(plan);
     expect(env).toContain(`NEXT_PUBLIC_YAPPR_CONTRACT_ID=${MAKER}-2`);
@@ -57,7 +57,7 @@ describe('the default release set', () => {
     expect(result.stdout).toBe('');
   });
 
-  it('allows a fresh v19 maker to register and later append to its own group', () => {
+  it('allows a fresh maker to register and later append to its own group', () => {
     expect(testnetAppendProblem('testnet', null, { maker: MAKER })).toBeNull();
     expect(testnetAppendProblem('testnet', 'social', { maker: MAKER })).toBeNull();
     expect(testnetAppendProblem('mainnet', null, { testnetSet: 'rehearsal', maker: MAKER })).toMatch(/for testnet/);

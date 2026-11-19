@@ -28,8 +28,20 @@ const IDENTIFIER_KEYS = [
   'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER',
 ]
 const HISTORICAL_TOPOLOGIES = { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10' }
+/**
+ * The testnet release set registered on 2026-11-12 (docs/TESTNET_RELEASE.md):
+ * its social contract is v19 (`deleteKeepsFields` is fixed at registration), so
+ * a build that names exactly this group, owner, anchor and social contract
+ * selects v19. Every other release build, a fresh testnet set and mainnet
+ * included, selects RELEASE_VALUES' v20 (docs/SOCIAL_V20.md).
+ */
+const REGISTERED_V19_SET = {
+  groupId: 'DrNB3VwKSv2zz1E7beNKFVMzyavhD2Nn1L6Lhz3K9ivR', owner: '6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog',
+  appId: '8mjmcXmfLyFAX6BkawQbiuWUaNXyN3T7cSKTdTXhpDVU', socialId: '3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG',
+  values: { NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19' },
+}
 const RELEASE_VALUES = {
-  NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19',
+  NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v20',
   NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v12',
   NEXT_PUBLIC_BLOG_TOPOLOGY: 'v11',
   NEXT_PUBLIC_POLLR_TOPOLOGY: 'v8',
@@ -187,7 +199,12 @@ function assertReleaseConfig(env) {
   for (const key of identifierKeys) {
     if (!isIdentifier(env[key])) errors.push(`${key} must be a base58 identifier encoding 32 bytes`)
   }
-  const values = { ...RELEASE_VALUES, ...qa?.values }
+  const registeredV19 = !mainnet && !qa &&
+    env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID === REGISTERED_V19_SET.groupId &&
+    env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER === REGISTERED_V19_SET.owner &&
+    env.NEXT_PUBLIC_APP_CONNECT_APP_ID === REGISTERED_V19_SET.appId &&
+    env.NEXT_PUBLIC_YAPPR_CONTRACT_ID === REGISTERED_V19_SET.socialId
+  const values = { ...RELEASE_VALUES, ...(registeredV19 ? REGISTERED_V19_SET.values : {}), ...qa?.values }
   for (const [key, value] of Object.entries(values)) {
     if (env[key] !== value) errors.push(`${key} must be ${value}`)
   }
