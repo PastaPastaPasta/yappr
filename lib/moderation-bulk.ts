@@ -37,6 +37,12 @@ export function inLane(doc: Readonly<Record<string, unknown>>, mode: BulkMode): 
   return doc.live === 1 && mod === laneMod(mode)
 }
 
+/** The tab a stored document is listed in: Showing, Hidden, or neither (a legal hold, a tombstone, unlisted). */
+export function laneOf(doc: Readonly<Record<string, unknown>>): BulkMode | null {
+  if (inLane(doc, 'hide')) return 'hide'
+  return inLane(doc, 'unhide') ? 'unhide' : null
+}
+
 /** One of the account's documents, as the dialog lists it. */
 export interface BulkItem {
   id: string
@@ -46,10 +52,10 @@ export interface BulkItem {
   preview: string
 }
 
-/** A document a run changed, the tab it is listed in now, and until when that outranks a read. */
+/** A document a run changed, the tab it is listed in now (null: neither), and until when that outranks a read. */
 export interface RunChange {
   item: BulkItem
-  tab: BulkMode
+  tab: BulkMode | null
   until: number
 }
 
@@ -57,11 +63,12 @@ export interface RunChange {
 export const RUN_CHANGE_TTL_MS = 30_000
 
 /**
- * The tab a run's change puts its document in: this run's own transition per
- * `mode`, or one settled by a chain read per the marks it holds. Null when it
- * is in neither (a legal hold, or gone).
+ * The tab a run's change puts its document in: one settled by a chain read
+ * where the read lists it, this run's own transition per `mode`, else per the
+ * marks it holds. Null when it is in neither (a legal hold, or gone).
  */
 export function tabAfter(mode: BulkMode, change: BulkChange): BulkMode | null {
+  if (change.tab !== undefined) return change.tab
   if (change.marks === undefined) return mode === 'hide' ? 'unhide' : 'hide'
   const mod = change.marks?.mod
   if (mod === undefined) return 'hide'
@@ -77,10 +84,16 @@ export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, change
   const recent = [...changes.values()].filter((change) => change.until > now)
   if (recent.length === 0) return [...items]
   const moved = new Map(recent.map((change) => [change.item.id, change]))
-  const kept = items.filter((item) => (moved.get(item.id)?.tab ?? tab) === tab)
+  const kept = items.filter((item) => !moved.has(item.id) || moved.get(item.id)?.tab === tab)
   const listed = new Set(kept.map((item) => item.id))
   const added = recent.filter((change) => change.tab === tab && !listed.has(change.item.id)).map((change) => change.item)
   return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/** When the first of the still-recent run changes stops outranking a read: the lists are read again then. */
+export function nextRunChangeExpiry(changes: ReadonlyMap<string, RunChange>, now = Date.now()): number | null {
+  const ahead = [...changes.values()].map((change) => change.until).filter((until) => until > now)
+  return ahead.length === 0 ? null : Math.min(...ahead)
 }
 
 /** How far back "select by time" reaches. */
@@ -215,6 +228,8 @@ export interface BulkFailure {
  */
 export interface BulkChange {
   marks?: ModerationMarks | null
+  /** For one settled by a chain read: the tab the read lists it in (null: neither). */
+  tab?: BulkMode | null
   at?: number
 }
 
@@ -252,6 +267,14 @@ export interface BulkChainRead {
   changed: Set<string>
   /** What each document read holds now (null: no marks), for the cards on screen. */
   marks?: Map<string, ModerationMarks | null>
+  /** The tab each document read is listed in now ({@link laneOf}). */
+  lanes?: Map<string, BulkMode | null>
+}
+
+/** Where `item` stands in a chain read ({@link BulkRunDeps.pending}): an id in neither set is done. */
+export function stateIn(read: BulkChainRead, item: BulkItem): BulkChainState {
+  if (read.todo.has(item.id)) return 'todo'
+  return read.changed.has(item.id) ? 'changed' : 'done'
 }
 
 export interface BulkRunDeps {
@@ -266,9 +289,10 @@ export interface BulkRunDeps {
   /**
    * Reads one document again just before its transition is signed, so a
    * change since the first read (another moderator's legal hold, above all)
-   * is never overwritten. Rejects when the read fails.
+   * is never overwritten: the same read as `pending`, for that one. Rejects
+   * when the read fails.
    */
-  recheck?: (item: BulkItem) => Promise<BulkChainState>
+  recheck?: (item: BulkItem) => Promise<BulkChainRead>
   /**
    * Each document confirmed in the state asked for: by this run's own proved
    * transition (`change.marks` undefined, `at` its block time), or by a chain
@@ -387,13 +411,20 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const progress: BulkProgress = { total: items.length, done: 0, current: null, failures: [] }
   const report = () => deps.onProgress?.({ ...progress, failures: [...progress.failures] })
 
-  /** Counts `item` done; announces it only when this run's own transition did it. */
+  /** Counts `item` done, and announces it with what confirmed it. */
   const markDone = (item: BulkItem, change: BulkChange) => {
     progress.done++
     deps.onDone?.(item, change)
   }
   const fail = (item: BulkItem, error: string, retryable = true) => {
     progress.failures.push({ item, error, retryable })
+  }
+  /** What a read that found `item` done holds for it; null when it did not find it (gone). */
+  const readChange = (read: BulkChainRead, item: BulkItem): BulkChange | null => {
+    const marks = read.marks?.get(item.id)
+    if (marks === undefined) return null
+    const tab = read.lanes?.get(item.id)
+    return tab === undefined ? { marks } : { marks, tab }
   }
   /**
    * Counts what a chain read says is done or changed; returns what it says is
@@ -407,9 +438,9 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       if (read.changed.has(item.id)) fail(item, CHANGED_ERROR, false)
       else if (!read.todo.has(item.id)) {
         // Announced with what the read holds; a document the read did not find (gone) is counted, not announced.
-        const marks = read.marks?.get(item.id)
-        if (marks === undefined) progress.done++
-        else markDone(item, { marks })
+        const change = readChange(read, item)
+        if (change) markDone(item, change)
+        else progress.done++
       }
       else if (stillError) fail(item, stillError)
       else still.push(item)
@@ -436,6 +467,8 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   let streakCount = 0
   let waitMs = 0
 
+  /** What the check just before a transition read for each one it found done already. */
+  const foundDone = new Map<string, BulkChange | null>()
   /**
    * Whether `item` may still be sent: the run not stopped, and the chain read
    * just now still showing it to do. Its answer, when it says no, as the loop
@@ -444,15 +477,19 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const mayStillSend = async (item: BulkItem): Promise<BulkApplyResult | null> => {
     if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
     if (!deps.recheck) return null
-    let state: BulkChainState
+    let read: BulkChainRead
     try {
-      state = await deps.recheck(item)
+      read = await deps.recheck(item)
     } catch {
       return { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
     }
     // The read took a moment: a stop pressed meanwhile still stops before signing.
     if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
-    if (state === 'done') return { success: false, errorCode: FOUND_DONE }
+    const state = stateIn(read, item)
+    if (state === 'done') {
+      foundDone.set(item.id, readChange(read, item))
+      return { success: false, errorCode: FOUND_DONE }
+    }
     if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
     return null
   }
@@ -501,8 +538,10 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       continue
     }
     if (result.errorCode === FOUND_DONE) {
-      // Done before its turn, perhaps by another moderator and some other way: nothing is said of its marks.
-      progress.done++
+      // Done before its turn, perhaps by another moderator and some other way: announced with what that read holds.
+      const change = foundDone.get(item.id)
+      if (change) markDone(item, change)
+      else progress.done++
       continue
     }
     if (result.errorCode === FOUND_CHANGED) {
