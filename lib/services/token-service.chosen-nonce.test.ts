@@ -504,6 +504,32 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(buildFresh).toHaveBeenCalledOnce()
   })
 
+  it('keeps a QR another tab shows unresolved when the local payment that replaced it loses its answer', async () => {
+    const original = await shownThenRetired()
+    const lost = new Error('request timed out')
+    broadcast.mockRejectedValueOnce(lost)
+    sdk.tokens.transfer.mockRejectedValueOnce(lost)
+    sdk.tokens.directPurchase.mockRejectedValueOnce(lost)
+    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'sending' } }])
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  it('settles a local confirmation by a matching QR payment another tab checked again and cleared during it', async () => {
+    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    expect(execute(shown.payment.request.nonce, true)).toBe(true)
+    recordReceipt(shown.payment)
+    reportedNonce = chainNonce()
+    expect(await prepareWalletPayment(shown.payment, buildCachedPayment, context)).toEqual({ completed: true })
+    expect(storedPayments()).toEqual([])
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: true })
+    expect(payments).toBe(1)
+  })
+
   it('never takes a payment the user chose to send past as the completion of the new one', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
     if (first.completed) throw new Error('No QR payment')
