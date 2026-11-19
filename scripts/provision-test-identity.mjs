@@ -340,6 +340,15 @@ async function requestAssetLockProof(publicKeyHex, capToken) {
       (payload.requiresHardCaptcha ? '\n  A hard captcha is now required; use the web UI.' : '')
     );
   }
+  if (response.status === 404) {
+    throw new Error(
+      'The faucet no longer serves asset-lock proofs (404). Fund the lock yourself:\n' +
+      '  1. NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>\n' +
+      '  2. Send tDASH to the printed assetLockAddress from the faucet\n' +
+      '  3. NETWORK=testnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>\n' +
+      '  4. Re-run with --asset-lock-key-file <keyfile> --funding-outpoint <assetLockTxid>:0'
+    );
+  }
   if (response.status === 503) {
     throw new Error(
       `Faucet is unavailable (503): ${detail}\n` +

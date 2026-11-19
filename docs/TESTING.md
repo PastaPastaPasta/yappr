@@ -256,12 +256,20 @@ Rare, manual, never from CI. Everything below runs from the repo root.
    Inspect (public data only) with `node scripts/derive-identities.mjs <index>`;
    add `--reveal` to print WIFs.
 
-2. **Provision each identity.** The script requests an asset lock from the
-   faucet, registers the identity, and optionally registers a DPNS name:
+2. **Provision each identity.** The faucet pays plain Core addresses only (its
+   old `/api/asset-lock-proof` endpoint is gone), so fund the asset lock
+   yourself, then register the identity and optionally a DPNS name:
 
    ```bash
-   NETWORK=testnet node scripts/provision-test-identity.mjs 0 --dpns yappr-e2e-0
+   NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key /path/al-0.key
+   # send ~1-3 tDASH to the printed assetLockAddress (faucet, or the dash-faucet skill)
+   NETWORK=testnet node scripts/build-asset-lock.mjs --key-file /path/al-0.key --outpoint <faucetTxid>:<vout>
+   NETWORK=testnet node scripts/provision-test-identity.mjs 0 \
+     --asset-lock-key-file /path/al-0.key --funding-outpoint <assetLockTxid>:0 --dpns yappr-e2e-0
    ```
+
+   The last step waits for the asset-lock transaction to be chain-locked
+   (a few minutes) before it registers the identity.
 
    Identity IDs are **not** derivable (they come from the asset-lock outpoint),
    which is why they are recorded in `.env.testing`. The script prints the ID to
@@ -307,25 +315,8 @@ Rare, manual, never from CI. Everything below runs from the repo root.
 - On **503** the faucet wallet is low on funds, has no suitable UTXO, or an
   InstantSend lock timed out. If a txid was reported the funding transaction may
   already be broadcast — check before requesting again. Otherwise wait.
-- A **captcha** may be required. Solve it in the web UI and pass the token:
-
-  ```bash
-  NETWORK=testnet node scripts/provision-test-identity.mjs 2 --dpns yappr-e2e-2 --cap-token <token>
-  ```
-
-  When the token cannot leave the browser, split the flow: generate the
-  asset-lock key locally, fund it from the faucet page, and feed the response
-  back in.
-
-  ```bash
-  NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key /tmp/al.key
-  # prints assetLockPublicKey; POST it to /api/asset-lock-proof from the faucet
-  # page (its CAP widget runs there), save the JSON response to /tmp/al.json
-  NETWORK=testnet node scripts/provision-test-identity.mjs 2 \
-    --asset-lock-key-file /tmp/al.key \
-    --funding-proof-file /tmp/al.json \
-    --dpns yappr-e2e-2
-  ```
+- On **404** from `provision-test-identity.mjs` the script tried the retired
+  proof-serving endpoint: use the `--gen-asset-lock-key` route in step 2.
 
 ### Top-ups
 
