@@ -2,7 +2,7 @@ import { moderationService } from '@/lib/services/moderation-service';
 import { chunk } from '@/lib/services/pagination-utils';
 import { replyService } from '@/lib/services/reply-service';
 import type { MissingParentReads } from './deleted-reply-stubs';
-import { provenAbsent } from './prove-absent';
+import { provenAbsent } from '@/lib/feed/prove-absent';
 
 /** `documentRemovals` answers for at most this many document ids a read (`readRemovals`). */
 const REMOVAL_READ_LIMIT = 100;
