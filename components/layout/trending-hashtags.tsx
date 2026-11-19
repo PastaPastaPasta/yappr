@@ -74,17 +74,17 @@ function TrendingBody({ trending, hasMore }: { trending: TrendingHashtag[] | nul
   if (trending === null) {
     // Same row box as a loaded entry (py-2.5, a 20px tag line, a 16px count line).
     return (
-      <ul aria-busy="true" aria-label="Loading">
+      <div role="status" aria-busy="true" aria-label="Loading">
         {[...Array(5)].map((_, i) => (
-          <li key={i} className="flex items-center gap-3 px-4 py-2.5">
+          <div key={i} className="flex items-center gap-3 px-4 py-2.5">
             <span className="w-4 shrink-0" />
             <div>
               <div className="flex h-5 items-center"><div className="h-3.5 w-28 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" /></div>
               <div className="flex h-4 items-center"><div className="h-3 w-16 bg-gray-200 dark:bg-gray-800 rounded animate-pulse" /></div>
             </div>
-          </li>
+          </div>
         ))}
-      </ul>
+      </div>
     )
   }
 
