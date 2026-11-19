@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkChainRead, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -93,6 +93,9 @@ export function BulkHideModal() {
   /** Reads both tabs again a little later while a read still predates a run change. */
   const staleReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const staleReadsRef = useRef(0)
+  /** The last list read that came back, and whether the other tab's count is still being read: a re-read waits for both. */
+  const settledReadRef = useRef(0)
+  const countingRef = useRef(false)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
@@ -128,10 +131,15 @@ export function BulkHideModal() {
     if (staleReadsRef.current >= MAX_STALE_REREADS) return
     staleReadsRef.current++
     const opening = openingRef.current
-    staleReadTimerRef.current = setTimeout(() => {
+    const reread = () => {
+      if (openingRef.current === opening && (settledReadRef.current !== readRef.current || countingRef.current)) {
+        staleReadTimerRef.current = setTimeout(reread, SETTLE_MS)
+        return
+      }
       staleReadTimerRef.current = null
       if (openingRef.current === opening) setReadEpoch((epoch) => epoch + 1)
-    }, SETTLE_MS)
+    }
+    staleReadTimerRef.current = setTimeout(reread, SETTLE_MS)
   }, [])
 
   useEffect(() => () => {
@@ -148,6 +156,7 @@ export function BulkHideModal() {
       if (readRef.current === read) setList({ status: 'loading', count })
     }).then(({ items: fresh, truncated, at }) => {
       if (readRef.current !== read) return
+      settledReadRef.current = read
       const items = withRunChanges(fresh, which, runChangesRef.current, at)
       scheduleStaleRead(at)
       setList({ status: 'ready', items, truncated })
@@ -155,7 +164,9 @@ export function BulkHideModal() {
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
       setSelected((current) => new Set(items.filter((item) => current.has(item.id)).map((item) => item.id)))
     }).catch(() => {
-      if (readRef.current === read) setList({ status: 'failed' })
+      if (readRef.current !== read) return
+      settledReadRef.current = read
+      setList({ status: 'failed' })
     })
   }, [authorId, scheduleStaleRead])
 
@@ -171,6 +182,7 @@ export function BulkHideModal() {
     const changes = runChangesRef.current
     // Once a run changed something the count comes from the list, with the
     // changes its read predates; a list too long to read whole has no count.
+    countingRef.current = changes.size > 0
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
       : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => {
@@ -182,9 +194,12 @@ export function BulkHideModal() {
     }).catch(() => {
       // No count is better than one from before the run.
       if (!cancelled) setCounts((current) => ({ ...current, [other]: null }))
+    }).finally(() => {
+      if (!cancelled) countingRef.current = false
     })
     return () => {
       cancelled = true
+      countingRef.current = false
     }
   }, [isOpen, authorId, mode, readEpoch, scheduleStaleRead])
 
@@ -267,13 +282,18 @@ export function BulkHideModal() {
       return
     }
     const { batch } = opened
+    // A read from before what this opening's runs proved of these cannot settle them: it fails, and nothing is sent.
+    const settles = (asked: readonly BulkItem[]) => (read: BulkChainRead) => {
+      if (readPredatesRun(runChangesRef.current, read.at, asked.map((item) => item.id))) throw new Error('read behind a proved change')
+      return read
+    }
     const hideLabel = chosen?.label ?? 0
     const result = await runBulk(batchItems, {
       apply: (item, guard) => mode === 'hide'
         ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) }, guard)
         : batch.unhide(item.kind, item.id, reasonFor(item), guard),
-      pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
-      recheck: (item) => bulkHideService.pending([item], mode),
+      pending: (pendingItems) => bulkHideService.pending(pendingItems, mode).then(settles(pendingItems)),
+      recheck: (item) => bulkHideService.pending([item], mode).then(settles([item])),
       // The cards already on screen show each change as soon as it is confirmed:
       // this run's own as it asked, one settled by a read as the read holds it.
       onDone: (item, change) => {

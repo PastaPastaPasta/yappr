@@ -180,6 +180,14 @@ describe("a run's changes over a lagging read", () => {
     expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NaN)).toBe(true)
   })
 
+  it('judges a read of some documents only by the run changes to those', () => {
+    const run = changes([doc('a', 1), 'unhide', NOW], [doc('b', 2), 'hide', NOW + 20])
+    expect(readPredatesRun(run, NOW, ['a'])).toBe(false)
+    expect(readPredatesRun(run, NOW, ['b'])).toBe(true)
+    expect(readPredatesRun(run, NOW + 20, ['a', 'b'])).toBe(false)
+    expect(readPredatesRun(run, NOW - 20, ['c'])).toBe(false)
+  })
+
   it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
     const hidden = doc('h', 2)
     // This run hid h at NOW; its author deleted it a block later, and the Hidden read was proved after that.
