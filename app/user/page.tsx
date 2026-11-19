@@ -809,7 +809,7 @@ const BAR = 'bg-gray-200 dark:bg-gray-800 rounded animate-pulse'
 /** The header's shape while it loads: banner, avatar, action button, name, handle, meta and counts. */
 function ProfileSkeleton({ userId }: { userId?: string }) {
   return (
-    <div aria-busy="true" aria-label="Loading profile">
+    <div role="status" aria-busy="true" aria-label="Loading profile">
       <div className="h-32 sm:h-48 overflow-hidden">
         {userId ? (
           <div className="h-full w-full blur-sm opacity-60">

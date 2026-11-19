@@ -49,7 +49,7 @@ async function hydrateRankedUsers(rankings: RankedGroupCount[][]): Promise<Ranke
 function RankedUserListSkeleton() {
   const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
   return (
-    <div aria-busy="true" aria-label="Loading creators">
+    <div role="status" aria-busy="true" aria-label="Loading creators">
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
         <div className="flex h-5 items-center"><div className={`h-3.5 w-36 ${bar}`} /></div>
       </div>

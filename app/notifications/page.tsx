@@ -141,7 +141,7 @@ const FILTER_TABS: { key: NotificationFilter; label: string }[] = [
 /** Placeholder rows shaped like a loaded notification (icon, avatar row, one line, a preview). */
 function NotificationSkeleton() {
   return (
-    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-busy="true" aria-label="Loading notifications">
+    <div className="divide-y divide-gray-200 dark:divide-gray-800" role="status" aria-busy="true" aria-label="Loading notifications">
       {[0, 1, 2, 3, 4].map((i) => (
         <div key={i} className="flex gap-3 px-4 py-3">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center">

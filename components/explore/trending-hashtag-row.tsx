@@ -9,7 +9,7 @@ import { formatNumber } from '@/lib/utils'
 /** Loading rows the same height as {@link TrendingHashtagRow}, so the list doesn't jump when it arrives. */
 export function TrendingHashtagRowSkeleton({ count, testId }: { count: number; testId?: string }) {
   return (
-    <div data-testid={testId} aria-busy="true" aria-label="Loading" className="divide-y divide-gray-200 dark:divide-gray-800">
+    <div data-testid={testId} role="status" aria-busy="true" aria-label="Loading" className="divide-y divide-gray-200 dark:divide-gray-800">
       {Array.from({ length: count }, (_, i) => (
         <div key={i} className="p-4">
           <div className="flex items-center gap-3">

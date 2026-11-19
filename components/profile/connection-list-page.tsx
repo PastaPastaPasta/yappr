@@ -555,7 +555,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
 /** Placeholder rows shaped like loaded ones, so the list does not jump when it arrives. */
 function ConnectionSkeleton() {
   return (
-    <div aria-busy="true" aria-label="Loading">
+    <div role="status" aria-busy="true" aria-label="Loading">
       {Array.from({ length: 6 }, (_, i) => (
         <div key={i} className="flex items-start gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-800">
           <div className={`h-12 w-12 shrink-0 rounded-full ${BAR}`} />
