@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, RUN_CHANGE_TTL_MS, bulkCostLine, closedKeySheet, idsWithin, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -85,6 +85,8 @@ export function BulkHideModal() {
   const [authorName, setAuthorName] = useState<string | null>(null)
   const stopRef = useRef(false)
   const readRef = useRef(0)
+  /** What runs in this opening just hid or unhid, listed where each now belongs while a read may still lag. */
+  const runChangesRef = useRef(new Map<string, RunChange>())
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
@@ -102,6 +104,7 @@ export function BulkHideModal() {
     setProgress(null)
     setSummary(null)
     setCounts(NO_COUNTS)
+    runChangesRef.current = new Map()
     setAuthorName(target.authorName ?? null)
     if (!target.authorName) {
       // Only for this opening: a lookup that answers after the dialog was opened for someone else is dropped.
@@ -119,8 +122,9 @@ export function BulkHideModal() {
     setList({ status: 'loading', count: 0 })
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read) setList({ status: 'loading', count })
-    }).then(({ items, truncated }) => {
+    }).then(({ items: fresh, truncated }) => {
       if (readRef.current !== read) return
+      const items = withRunChanges(fresh, which, runChangesRef.current)
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
@@ -139,7 +143,12 @@ export function BulkHideModal() {
     if (!isOpen || !authorId) return
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
-    bulkHideService.count(authorId, other).then((count) => {
+    const changes = runChangesRef.current
+    const now = Date.now()
+    const counted = ![...changes.values()].some((change) => change.until > now)
+      ? bulkHideService.count(authorId, other)
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated }) => (truncated ? bulkHideService.count(authorId, other) : withRunChanges(items, other, changes).length))
+    counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
     }).catch(() => { /* the tab shows no count */ })
     return () => {
@@ -212,6 +221,7 @@ export function BulkHideModal() {
       close()
       return false
     }
+    for (const item of batchItems) runChangesRef.current.delete(item.id)
     stopRef.current = false
     setStopping(false)
     setRunning(true)
@@ -236,6 +246,10 @@ export function BulkHideModal() {
       // The cards already on screen show each change as soon as it is confirmed:
       // this run's own as it asked, one settled by a read as the read holds it.
       onDone: (item, change) => {
+        if (sameOpening()) {
+          const tab = tabAfter(mode, change)
+          if (tab) runChangesRef.current.set(item.id, { item, tab, until: Date.now() + SETTLE_MS + RUN_CHANGE_TTL_MS })
+        }
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
         recordMarks(item.id, change.marks === undefined ? asked : change.marks, { at: change.marks === undefined ? at : change.marks?.moderatedAt })
