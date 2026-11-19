@@ -16,7 +16,8 @@ import {
   readEveryPage,
   runBulk,
   laneOf,
-  nextRunChangeExpiry,
+  oldestBlockTime,
+  readPredatesRun,
   tabAfter,
   withRunChanges,
   type BulkApplyResult,
@@ -27,6 +28,7 @@ import {
   type BulkMode,
   type BulkPage,
   type BulkProgress,
+  type BulkSeen,
 } from './moderation-bulk'
 
 const HOUR = 3_600_000
@@ -78,7 +80,7 @@ describe('paging', () => {
   const pages = (all: BulkItem[], size: number) => vi.fn(async (startAfter?: string): Promise<BulkPage> => {
     const from = startAfter ? all.findIndex((i) => i.id === startAfter) + 1 : 0
     const items = all.slice(from, from + size)
-    return { items, ...(items.length === size ? { next: items[items.length - 1].id } : {}) }
+    return { items, at: 1000 - from, ...(items.length === size ? { next: items[items.length - 1].id } : {}) }
   })
 
   it('reads every page until a short one', async () => {
@@ -91,6 +93,14 @@ describe('paging', () => {
     expect(readPage).toHaveBeenCalledTimes(3)
     expect(readPage.mock.calls.map(([cursor]) => cursor)).toEqual([undefined, 'i99', 'i199'])
     expect(seen).toEqual([100, 200, 250])
+    // As fresh as its oldest page.
+    expect(result.at).toBe(800)
+  })
+
+  it('dates a read made of several answers by the oldest, and by none when one carries no block time', () => {
+    expect(oldestBlockTime([30, 10, 20])).toBe(10)
+    expect(oldestBlockTime([30, undefined])).toBeNaN()
+    expect(oldestBlockTime([30, NaN])).toBeNaN()
   })
 
   it('reads one more page after a full last one, and stops at the cap', async () => {
@@ -130,7 +140,8 @@ describe('cost', () => {
 describe("a run's changes over a lagging read", () => {
   const doc = (id: string, createdAt: number): BulkItem => ({ id, kind: 'post', createdAt, preview: id })
   const NOW = 1_000_000
-  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.map(([item, tab, until = NOW + 1]) => [item.id, { item, tab, until }] as const))
+  /** Run changes, each known as of a block time (default: just after the read at NOW). */
+  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.map(([item, tab, at = NOW + 1]) => [item.id, { item, tab, at }] as const))
 
   it('puts a document where the change leaves it: its own transition per the run, a read per its marks', () => {
     expect(tabAfter('hide', {})).toBe('unhide')
@@ -161,10 +172,27 @@ describe("a run's changes over a lagging read", () => {
     expect(laneOf({ live: 0 })).toBeNull()
   })
 
-  it('reads the lists again when the first recent change stops outranking the read', () => {
-    expect(nextRunChangeExpiry(new Map(), NOW)).toBeNull()
-    expect(nextRunChangeExpiry(changes([doc('a', 1), 'hide', NOW + 50], [doc('b', 2), 'unhide', NOW + 20], [doc('c', 3), 'hide', NOW]), NOW)).toBe(NOW + 20)
-    expect(nextRunChangeExpiry(changes([doc('a', 1), 'hide', NOW]), NOW)).toBeNull()
+  it('reads the lists again while a read was proved before a run change', () => {
+    expect(readPredatesRun(new Map(), NOW)).toBe(false)
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NOW)).toBe(false)
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW], [doc('b', 2), 'unhide', NOW + 20]), NOW)).toBe(true)
+    // A read of unknown age may predate any of them.
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NaN)).toBe(true)
+  })
+
+  it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
+    const hidden = doc('h', 2)
+    // This run hid h at NOW; its author deleted it a block later, and the Hidden read was proved after that.
+    expect(withRunChanges([], 'unhide', changes([hidden, 'unhide', NOW]), NOW + 1)).toEqual([])
+    // A node still a block behind the hide lists it as showing: the run's change wins there.
+    expect(withRunChanges([hidden], 'hide', changes([hidden, 'unhide', NOW]), NOW - 1)).toEqual([])
+  })
+
+  it('never ranks a change of unknown block time above a read, and ranks every known one above a read of unknown age', () => {
+    const x = doc('x', 1)
+    const unknown = new Map([[x.id, { item: x, tab: 'unhide' as const }]])
+    expect(withRunChanges([x], 'hide', unknown, NOW).map((item) => item.id)).toEqual(['x'])
+    expect(withRunChanges([x], 'hide', changes([x, 'unhide', NOW]), undefined)).toEqual([])
   })
 
   it('lists what the run unhid under Showing and not under Hidden, whatever the read reached', () => {
@@ -177,11 +205,11 @@ describe("a run's changes over a lagging read", () => {
     expect(withRunChanges([b], 'unhide', unhid, NOW)).toEqual([])
   })
 
-  it('leaves a read alone when the run changed nothing in it, or once its changes are no longer recent', () => {
+  it('leaves a read alone when the run changed nothing in it, or when it was proved at or after its changes', () => {
     const read = [doc('x', 2), doc('y', 1)]
     expect(withRunChanges(read, 'unhide', new Map(), NOW)).toEqual(read)
     expect(withRunChanges(read, 'unhide', changes([doc('z', 3), 'hide']), NOW)).toEqual(read)
-    // Another moderator unhid x after this run hid it: once the change is old, the read wins.
+    // Another moderator unhid x after this run hid it: a read proved since wins.
     expect(withRunChanges([doc('x', 2)], 'hide', changes([doc('x', 2), 'unhide', NOW]), NOW).map((item) => item.id)).toEqual(['x'])
   })
 })
@@ -209,6 +237,7 @@ describe('runBulk', () => {
         return { todo: still, changed: new Set(changed), marks: new Map(done.map((i) => [i.id, null])) }
       }),
       onDone: vi.fn<(item: BulkItem, change: BulkChange) => void>(),
+      onSeen: vi.fn<(item: BulkItem, seen: BulkSeen) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
       // The one-document read just before signing, found as `recheck` says (done: listed, no marks).
       ...(recheck ? {
@@ -218,7 +247,7 @@ describe('runBulk', () => {
             todo: new Set(state === 'todo' ? [i.id] : []),
             changed: new Set(state === 'changed' ? [i.id] : []),
             marks: new Map(state === 'done' ? [[i.id, null]] : []),
-            lanes: new Map(state === 'done' ? [[i.id, 'unhide' as const]] : []),
+            lanes: new Map<string, BulkMode | null>(state === 'done' ? [[i.id, 'unhide']] : state === 'changed' ? [[i.id, null]] : []),
           }
         }),
       } : {}),
@@ -272,6 +301,26 @@ describe('runBulk', () => {
     expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
     // c was done by someone else: counted, and announced with what that read holds, where it lists it.
     expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', {}], ['c', { marks: null, tab: 'unhide' }]])
+    // b is not done, but the read found it in neither tab: that is said apart from the count.
+    expect(d.onSeen.mock.calls.map(([i, seen]) => [i.id, seen])).toEqual([['b', { tab: null }]])
+  })
+
+  it('says where the first read lists one that changed some other way, as of that read, without counting it', async () => {
+    const d = deps()
+    // The author deleted a hidden post before its unhide: it keeps its mod, but is listed nowhere.
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(['a']), marks: new Map(), lanes: new Map([['a', null]]), at: 5 }))
+    const summary = await runBulk([items[0]], d)
+    expect(summary.done).toBe(0)
+    expect(summary.failures).toMatchObject([{ item: { id: 'a' }, retryable: false }])
+    expect(d.onDone).not.toHaveBeenCalled()
+    expect(d.onSeen).toHaveBeenCalledWith(items[0], { tab: null, seenAt: 5 })
+  })
+
+  it('dates what a read settled by the block time it was proved at', async () => {
+    const d = deps()
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(), marks: new Map([['a', null]]), lanes: new Map([['a', 'hide']]), at: 7 }))
+    await runBulk([items[0]], d)
+    expect(d.onDone).toHaveBeenCalledWith(items[0], { marks: null, tab: 'hide', seenAt: 7 })
   })
 
   it('sends nothing for a document it cannot read again, and stops after three in a row', async () => {
