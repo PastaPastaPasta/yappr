@@ -1,10 +1,15 @@
 # Social contract v20
 
-Social v20 is [v19](SOCIAL_V19.md) with one more kept field: a moderator's
-removal record of a `reply` also keeps `replyToReplyId`, the reply it answered.
+Social v20 is [v19](SOCIAL_V19.md) with two changes: a moderator's removal
+record of a `reply` also keeps `replyToReplyId`, the reply it answered, and three
+identifiers a document stores must name something that exists
+([below](#ids-that-must-exist)).
 
 - Reply removal records keep `[rootPostId, replyToReplyId, $createdAt, $updatedAt, $updatedAtBlockHeight]`
   (v19: `[rootPostId, $createdAt, $updatedAt, $updatedAtBlockHeight]`).
+- `followRequest.targetId` and `report.targetOwnerId` declare
+  `"refersTo": { "type": "identity" }`, and `post.embedContractId` declares
+  `"refersTo": { "type": "contract" }` (v19: none of the three declares a reference).
 
 Nothing else changes: version, config, tokens, moderation declaration, fees,
 indexes, required fields, document content and every other type's kept fields
@@ -50,18 +55,66 @@ The same record on v20:
 }
 ```
 
+## Ids that must exist
+
+`follow.followingId` and the elements of `mentionedUserIds` already declare
+`"refersTo": { "type": "identity" }`: Platform refuses a write naming an
+identity that does not exist (`ReferencedEntityNotFoundError`, 40120). Three
+other identifiers declared nothing on v19, so a document could name something
+that was never there. v20 gives each the same check:
+
+| Property | v19 | v20 | A write is refused (40120) when |
+| --- | --- | --- | --- |
+| `followRequest.targetId` | `distinctFrom: "$ownerId"` | adds `refersTo: { "type": "identity" }` | the identity asked for access does not exist |
+| `report.targetOwnerId` | `distinctFrom: "$ownerId"` | adds `refersTo: { "type": "identity" }` | the reported identity does not exist |
+| `post.embedContractId` | no check | `refersTo: { "type": "contract" }` | the embed names a data contract that does not exist |
+
+- **`report.targetOwnerId`.** A report of a post or reply was already tied to
+  the content's owner (`where: { "$ownerId": "targetOwnerId" }` on `postId` and
+  `replyId`), so only an account report (`about: 1`) could name an identity
+  that does not exist. The declaration sits on the property, so every report
+  reads the identity.
+- **`post.embedContractId`.** Only the contract is checked.
+  `embedDocType` and `embedId` stay as they were: an embed may point at any
+  document type, deletable ones included, and a document reference would have
+  to name one type and one kind of target.
+- **Unchanged around them.** `followRequest.targetId` stays immutable and stays
+  the key `privateFeedGrant.recipientId` finds a request by (`findBy`);
+  `targetOwnerId` is still what the `where` of `postId` and `replyId` compares;
+  `embedContractId` stays frozen while the post is not a tombstone. An identity
+  or contract reference under an immutable property is allowed (the restriction
+  is on `deletableDocument` references), and identities and contracts are never
+  removed, so a checked reference never dangles.
+- **When it is checked.** On create. A replace checks an identity or contract
+  reference again only when the value changed: a follow request's target cannot
+  change, a report cannot be replaced, and a tombstone drops the embed, which
+  leaves nothing to check. A moderator's restore checks no reference.
+- **Cost.** One more billed read on the write: the identity's revision for a
+  follow request and for every report, the contract for a post that carries an
+  embed (a post without one reads nothing more). The offline estimate
+  (`validate-contract-offline.mjs --cost`) does not count reference reads, and
+  the fees have not been measured on a network.
+- **Client.** Nothing changes: the app asks to follow a profile it has loaded,
+  reports an account or content it shows, and embeds a poll of the Pollr
+  contract (`lib/poll-embed.ts`) or a quoted blog post of the blog contract
+  (`lib/feed/resolve-quoted-posts.ts`), both members of the release set. No
+  write built by the app named a made-up id.
+
+`refersTo` is fixed on update (10246), like `deleteKeepsFields`: a registered
+contract cannot gain these checks.
+
 ## The file
 
 | Property | Value |
 | --- | --- |
 | File | `contracts/yappr-social-contract-v20.json` |
-| SHA-256 | `3e6c962264392f3fc97cb57a7d983d2ae053f9d455ff64dde64b16805d7ae87e` |
-| Signed create estimate | **18,277 B**, testnet and mainnet, rc.4 SDK (v19: 18,261 B); 1,723 B under the 20,000 B budget |
+| SHA-256 | `40614b818a9acfb75a2323981f3edf5dc1adfa74db28eff2157e18b759662e98` |
+| Signed create estimate | **18,361 B**, testnet and mainnet, rc.4 SDK (v19: 18,261 B; 16 B for the kept field, 84 B for the three references); 1,639 B under the 20,000 B budget |
 | Status | **Not registered on any network.** |
 
-`deleteKeepsFields` is fixed once a contract is registered, so no update can add
-the field to a registered contract. The testnet set registered on 2026-11-12
-(social v19 `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`) keeps the v19 list
+`deleteKeepsFields` and `refersTo` are fixed once a contract is registered, so no
+update can add the kept field or the three references to a registered contract. The testnet set registered on 2026-11-12
+(social v19 `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`) keeps the v19 schema
 until a set is registered again, and its source file stays byte-identical
 (SHA-256 `bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971`).
 `.env.testnet` and the bundled testnet snapshot still name that set with
@@ -99,6 +152,13 @@ read off the file's `deleteKeepsFields`.
   which the signed create supplies and the record's `documentHash` commits to.
   An offline regression rebuilds a v20 nested reply and a direct reply
   (`scripts/recovery/content.test.mjs`).
+- `verify-v10.mjs` reads the three references off the file: `d1e`, `r1z3a` and
+  `c1e` expect 40120 for a follow request to, an account report of and an embed
+  from something that does not exist, and `c1f` an embed naming a contract that
+  exists. The m2/s1 unpriced probe (a follow request to a made-up id through
+  v19) asks the contract's owner on v20, and `measure-social-fees.mjs` reports
+  the poster's account instead of a made-up one. None of these has run on a
+  network; `--self-test` and `--dry-run` cover them offline.
 - `verify-v10.mjs --self-test` pins the v20 reply list. `prove-merged-counts.mjs`
   removes a nested reply (`kf-2n`) and a direct one (`kf-2`) and compares each
   record with the fields the document holds.

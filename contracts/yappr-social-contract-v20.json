@@ -191,6 +191,9 @@
         "targetId": {
           "type": "identifier",
           "position": 0,
+          "refersTo": {
+            "type": "identity"
+          },
           "distinctFrom": "$ownerId"
         },
         "publicKey": {
@@ -602,7 +605,10 @@
         },
         "embedContractId": {
           "type": "identifier",
-          "position": 8
+          "position": 8,
+          "refersTo": {
+            "type": "contract"
+          }
         },
         "embedDocType": {
           "type": "string",
@@ -1819,6 +1825,9 @@
         "targetOwnerId": {
           "type": "identifier",
           "position": 2,
+          "refersTo": {
+            "type": "identity"
+          },
           "distinctFrom": "$ownerId"
         },
         "reason": {

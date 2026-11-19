@@ -137,7 +137,12 @@
  *
  * **v20** (`--contract-file contracts/yappr-social-contract-v20.json`,
  * docs/SOCIAL_V20.md) is v19 whose reply removal record also keeps
- * `replyToReplyId`; `--self-test` pins the list. Every live case is v19's.
+ * `replyToReplyId`; `--self-test` pins the list. It also checks that three stored
+ * ids name something that exists (`refersTo`, 40120 otherwise): a follow request's
+ * `targetId` (d1e) and a report's `targetOwnerId` (r1z3a) an identity, a post's
+ * `embedContractId` a data contract (c1e, c1f). The m2/s1 unpriced probe is a follow
+ * request, so on v20 it asks the contract's owner instead of a made-up id, and r1d's
+ * wrong author is the contract's owner. Every other live case is v19's.
  *
  * Its 5.0.0-beta.6 successor **v16** (`--contract-file
  * contracts/yappr-social-contract-v16.json`, docs/SOCIAL_V16.md) keeps every
@@ -487,6 +492,15 @@ const PRIVATE_FEEDS = SOCIAL.cut.privateFeeds;
 const NO_SELF_LIKES = V10.documentSchemas.like.properties.postAuthor?.distinctFrom === '$ownerId';
 /** The type a feed owner opens: `privateFeed` (v17), `privateFeedState` before. */
 const FEED_TYPE = PRIVATE_FEEDS ? 'privateFeed' : 'privateFeedState';
+/**
+ * v20 (docs/SOCIAL_V20.md): three stored ids must name something that exists, as `follow.followingId`
+ * always had to (40120 otherwise): a follow request's target and an account report's target an
+ * identity, a post's embed a data contract. Each is read from the schema, so an earlier cut skips its case.
+ */
+const refersToType = (type, property) => V10.documentSchemas[type]?.properties?.[property]?.refersTo?.type;
+const REQUEST_TARGET_CHECKED = refersToType('followRequest', 'targetId') === 'identity';
+const REPORT_TARGET_CHECKED = refersToType('report', 'targetOwnerId') === 'identity';
+const EMBED_CONTRACT_CHECKED = refersToType('post', 'embedContractId') === 'contract';
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -759,11 +773,22 @@ const createPost = (ctx, who, content) => createFeed(ctx, who, 'post', postData(
 /**
  * An unpriced social create that lands every time, the bar's control (m2, s1): a block of a
  * fresh id up to v12; on v13 a follow request to one, since blocks moved to their own,
- * unmoderated contract, where a social ban or suspension bars nothing.
+ * unmoderated contract, where a social ban or suspension bars nothing. From v20 a request's
+ * target must be an identity that exists, so the probe asks the contract's owner (or A, when
+ * the owner is the one probing) and first withdraws the request an earlier probe left there:
+ * a request is one per pair.
  */
-const unpricedProbe = (ctx, who) => attemptCreate(ctx.sdk, who, SOCIAL.cut.blocksInSocial
-  ? { contractId: ctx.contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) }
-  : { contractId: ctx.contractId, docType: 'followRequest', data: followRequestData({ targetId: randomIdBytes() }) });
+async function unpricedProbe(ctx, who) {
+  if (SOCIAL.cut.blocksInSocial) return attemptCreate(ctx.sdk, who, { contractId: ctx.contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) });
+  if (!REQUEST_TARGET_CHECKED) return attemptCreate(ctx.sdk, who, { contractId: ctx.contractId, docType: 'followRequest', data: followRequestData({ targetId: randomIdBytes() }) });
+  const target = who.ownerId === ctx.ownerId ? ctx.botA.ownerId : ctx.ownerId;
+  const standing = await queryOne(ctx, 'followRequest', [['targetId', '==', target], ['$ownerId', '==', who.ownerId]]);
+  if (standing) {
+    await deleteOwn(ctx, who, 'followRequest', idOf(standing.id));
+    await settle();
+  }
+  return attemptCreate(ctx.sdk, who, { contractId: ctx.contractId, docType: 'followRequest', data: followRequestData({ targetId: bs58.decode(target) }) });
+}
 
 /** Interim-owner cases apply only before seating and when the declaration grants that authority. */
 function interimOnly(ctx, key) {
@@ -818,6 +843,7 @@ async function caseD1DistinctFrom(ctx) {
   await expectCreateRefused(ctx, 'd1a a self-follow is refused (10419)', botA, 'follow', followData({ followingId: self }), NOT_DISTINCT);
   if (!blocksUnreachable('d1b')) await expectCreateRefused(ctx, `d1b a self-block is refused (10419${SOCIAL.cut.blocksInSocial ? '' : ', in the blocks contract'})`, botA, 'block', blockData({ blockedId: self }), NOT_DISTINCT);
   await expectCreateRefused(ctx, 'd1c a self follow-request is refused (10419)', botA, 'followRequest', followRequestData({ targetId: self }), NOT_DISTINCT);
+  if (REQUEST_TARGET_CHECKED) await expectCreateRefused(ctx, 'd1e (v20) a follow request to an identity that does not exist is refused (40120 on targetId)', botA, 'followRequest', followRequestData({ targetId: randomIdBytes() }), REFERENCE_NOT_FOUND, /targetId/);
   const existing = await queryOne(ctx, 'follow', [['$ownerId', '==', botA.ownerId], ['followingId', '==', botB.ownerId]]);
   if (existing) {
     check('d1d A already follows B (an earlier run): the control is the existing follow', true, `id=${idOf(existing.id)}`);
@@ -1481,6 +1507,13 @@ async function caseC1PropertyConstraints(ctx) {
       await expectFeedRefused(ctx, `c1 ${label} is refused (10422 ${rule})`, botA, docType, fields(data), constraintViolation(rule));
     }
   }
+  if (EMBED_CONTRACT_CHECKED) {
+    // The embed rule wants all three fields; v20 also reads the contract. The document it names stays unchecked.
+    const embedOf = (embedContractId) => SOCIAL.post({ content: 'c1 embed', embedContractId, embedDocType: 'poll', embedId: randomIdBytes() });
+    await expectFeedRefused(ctx, 'c1e (v20) a post embedding from a contract that does not exist is refused (40120 on embedContractId)', botA, 'post', embedOf(randomIdBytes()), REFERENCE_NOT_FOUND);
+    expectAccepted('c1f (v20) …and one naming a contract that exists lands, whatever document it names (embedId is not checked)',
+      await createFeedOutcome(ctx, botA, 'post', embedOf(bs58.decode(ctx.contractId))));
+  }
 }
 
 // ---- v10: reports the moderators resolve ------------------------------------------
@@ -1506,7 +1539,9 @@ async function caseR1Reports(ctx) {
   await expectCreateRefused(ctx, 'r1b a second report of the same post by A is refused (40105)', botA, 'report', reportData({ postId: post, targetOwnerId: author, reason: 1 }), DUPLICATE_UNIQUE);
   const replyReport = await report({ replyId: reply, targetOwnerId: author, reason: 8, note: 'v10 battery report' });
   expectAccepted('r1c A reports B\'s reply ("something else", with a note)', replyReport);
-  await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: randomIdBytes(), reason: 0 }), PROPERTY_MISMATCH);
+  // v20 also reads the named identity (40120 for one that does not exist), so the stranger is the contract's owner there.
+  const stranger = REPORT_TARGET_CHECKED ? bs58.decode(ctx.ownerId) : randomIdBytes();
+  await expectCreateRefused(ctx, 'r1d a report naming someone other than the author is refused (40127)', botA, 'report', reportData({ postId: other, targetOwnerId: stranger, reason: 0 }), PROPERTY_MISMATCH);
   await expectCreateRefused(ctx, 'r1e B reporting its own post is refused (10419)', botB, 'report', reportData({ postId: post, targetOwnerId: author, reason: 0 }), NOT_DISTINCT);
   await expectCreateRefused(ctx, 'r1f a report of a post that does not exist is refused (40120)', botA, 'report', reportData({ postId: randomIdBytes(), targetOwnerId: author, reason: 0 }), REFERENCE_NOT_FOUND);
   for (const [label, data, rule] of refusedCreates(CONTRACT_NAME, 'report')) {
@@ -1647,6 +1682,7 @@ async function profileReportCases(ctx, author) {
   const potAfter = (await moderatorsPot(ctx)).credits;
   check('r1z2 (v13) the moderators pot grew by the report fee × the epoch multiplier', potAfter - potBefore === fee, `pot ${potBefore}→${potAfter} (Δ${potAfter - potBefore}, expected ${fee})`);
   await expectCreateRefused(ctx, 'r1z3 (v13) a second profile report of B by A is refused (40105 byTarget)', botA, 'report', reportData({ about: 1, targetOwnerId: author, reason: 2 }), DUPLICATE_UNIQUE);
+  if (REPORT_TARGET_CHECKED) await expectCreateRefused(ctx, 'r1z3a (v20) a profile report of an identity that does not exist is refused (40120 on targetOwnerId)', botA, 'report', reportData({ about: 1, targetOwnerId: randomIdBytes(), reason: 1 }), REFERENCE_NOT_FOUND, /targetOwnerId/);
   const listed = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report',
     where: [['targetOwnerId', '==', botB.ownerId], ['about', '==', 1]], orderBy: [['targetOwnerId', 'asc'], ['about', 'asc'], ['$ownerId', 'asc']], limit: 50 }));
   check('r1z4 (v13) byTarget lists A\'s profile report of B (`targetOwnerId ==`, `about == 1`)', [...listed.keys()].map(idOf).includes(filed.id), `${listed.size} report(s)`);
@@ -2931,8 +2967,17 @@ function selfTest() {
   for (const [type, prop] of [['follow', 'followingId'], ['block', 'blockedId'], ['followRequest', 'targetId'], ['privateFeedGrant', 'recipientId']]) {
     expect(`${type}.${prop} is distinctFrom $ownerId (d1, p1i)`, schemaOf(type).properties[prop].distinctFrom === '$ownerId');
   }
-  expect('the m2/s1 unpriced probe writes a type the social contract holds, with a target nothing refers to',
-    SOCIAL.cut.blocksInSocial ? schemas.block.properties.blockedId.refersTo === undefined : schemas.followRequest.properties.targetId.refersTo === undefined);
+  expect('the m2/s1 unpriced probe writes a type the social contract holds, with a target nothing refers to (v20: an identity, so it asks the contract\'s owner)',
+    SOCIAL.cut.blocksInSocial ? schemas.block.properties.blockedId.refersTo === undefined
+      : REQUEST_TARGET_CHECKED ? JSON.stringify(schemas.followRequest.properties.targetId.refersTo) === '{"type":"identity"}' : schemas.followRequest.properties.targetId.refersTo === undefined);
+  expect('a follow request\'s target, an account report\'s target and an embed\'s contract are checked together or not at all (d1e, r1z3a, c1e)',
+    new Set([REQUEST_TARGET_CHECKED, REPORT_TARGET_CHECKED, EMBED_CONTRACT_CHECKED]).size === 1);
+  if (EMBED_CONTRACT_CHECKED) {
+    expect('v20: the embed names a contract with no requirement, and its document type and id stay unchecked (c1f)',
+      JSON.stringify(schemas.post.properties.embedContractId.refersTo) === '{"type":"contract"}' && schemas.post.properties.embedId.refersTo === undefined && schemas.post.properties.embedDocType.refersTo === undefined);
+    expect('v20: a report\'s target is an identity besides agreeing with the reported post or reply (r1d, r1z3a)',
+      JSON.stringify(schemas.report.properties.targetOwnerId.refersTo) === '{"type":"identity"}' && where('report', 'postId').$ownerId === 'targetOwnerId' && where('report', 'replyId').$ownerId === 'targetOwnerId');
+  }
   if (!SOCIAL.cut.blocksInSocial) {
     expect('v13: no block type is left in social, and the blocks contract keeps ownerAndBlocked but not ownerBlocks', BLOCK_TYPES.every((type) => !schemas[type])
       && BLOCKS_SCHEMAS.block.indices.some((i) => i.name === 'ownerAndBlocked') && !BLOCKS_SCHEMAS.block.indices.some((i) => i.name === 'ownerBlocks'));

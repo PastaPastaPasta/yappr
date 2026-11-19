@@ -70,7 +70,7 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | Nonce | Entry | File | sha256 | Signed create | Env |
 | ---: | --- | --- | --- | ---: | --- |
 | N | `app` (registers the group) | `yappr-app-contract.json` | `d3acd888…` | 707 B | `NEXT_PUBLIC_APP_CONNECT_APP_ID` |
-| N+1 | `social` (v20) | `yappr-social-contract-v20.json` | `3e6c9622…` | ~18,277 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
+| N+1 | `social` (v20) | `yappr-social-contract-v20.json` | `40614b81…` | ~18,361 B | `NEXT_PUBLIC_YAPPR_CONTRACT_ID` |
 | N+2 | `blocks` | `yappr-blocks-contract.json` | `ba0ef67a…` | 1,258 B | `NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID` |
 | N+3 | `dmV5` | `yappr-dm-contract-v5.json` | `4fe2b3f4…` | 3,557 B | `NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID` |
 | N+4 | `blog` (v11) | `yappr-blog-contract-v11.json` | `d1a53c31…` | ~9,454 B | `NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID` |

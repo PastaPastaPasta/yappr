@@ -5,7 +5,8 @@ The clean-start testnet release (social v17, blog v9, storefront v10, pollr v8
 and DM v5, behind an App Connect anchor and group) was registered on
 2026-10-21. The set registered on 2026-11-12 uses social v19, blog v11 and storefront v12
 (D46). Fresh release registrations take social v20, which also keeps
-`replyToReplyId` in a reply's removal record ([SOCIAL_V20.md](../docs/SOCIAL_V20.md));
+`replyToReplyId` in a reply's removal record and checks that a follow request's
+target, a report's target and an embed's contract exist ([SOCIAL_V20.md](../docs/SOCIAL_V20.md));
 it is not registered on any network. The "hide,
 don't delete" re-cuts (social v18, blog v10 and storefront v11, D42–D44,
 [SOCIAL_V18.md](../docs/SOCIAL_V18.md)) were an experiment: a rehearsal copy
@@ -29,7 +30,7 @@ network-specific moderation configuration.
 | Role | Source file | SHA-256 |
 | --- | --- | --- |
 | app | [yappr-app-contract.json](yappr-app-contract.json) | `d3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41` |
-| social | [yappr-social-contract-v20.json](yappr-social-contract-v20.json) | `3e6c962264392f3fc97cb57a7d983d2ae053f9d455ff64dde64b16805d7ae87e` |
+| social | [yappr-social-contract-v20.json](yappr-social-contract-v20.json) | `40614b818a9acfb75a2323981f3edf5dc1adfa74db28eff2157e18b759662e98` |
 | blocks | [yappr-blocks-contract.json](yappr-blocks-contract.json) | `ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677` |
 | dmV5 | [yappr-dm-contract-v5.json](yappr-dm-contract-v5.json) | `4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21` |
 | blog | [yappr-blog-contract-v11.json](yappr-blog-contract-v11.json) | `d1a53c31803a2f6f057700b358755b4d927318bfdcd5d2cb5b6718e8942dca6c` |
@@ -64,7 +65,7 @@ The password-era vault is not a release member.
 - [Social v18, blog v10 and storefront v11](../docs/SOCIAL_V18.md): no moderator
   delete, the `mod` lane in every listing, the moderation logs, restriction
   instead of bans, and the archive and log queries.
-- [Social v20](../docs/SOCIAL_V20.md): v19 whose reply removal record also keeps `replyToReplyId`.
+- [Social v20](../docs/SOCIAL_V20.md): v19 whose reply removal record also keeps `replyToReplyId`, and whose follow requests, reports and embeds name an identity or contract that exists.
 - [Social v19](../docs/SOCIAL_V19.md): the release social registered on testnet, derived only from v17.
 - [Blog v11](../docs/BLOG_V11.md) and [storefront v12](../docs/STOREFRONT_V12.md): recoverable removal on the deletion cuts.
 - [Social v17](../docs/SOCIAL_V17.md): the unchanged registered testnet cut.

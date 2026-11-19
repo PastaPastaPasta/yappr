@@ -1565,12 +1565,21 @@ describe('contract topology', () => {
       expect(v19.liveValueFor('reply', true)).toBe(true)
     })
   })
-  describe('v20 (v19 whose reply removal record keeps the reply it answered)', () => {
-    it('differs from v19 only in the reply\'s kept fields', () => {
-      const expected = structuredClone(socialContractV19) as unknown as { documentSchemas: Schemas }
+  describe('v20 (v19 whose reply removal record keeps the reply it answered, and whose targets must exist)', () => {
+    it('differs from v19 only in the reply\'s kept fields and three references', () => {
+      const expected = structuredClone(socialContractV19) as unknown as { documentSchemas: Record<string, { properties: Record<string, Record<string, unknown>>, moderatorAbilities?: unknown }> }
       const abilities = expected.documentSchemas.reply.moderatorAbilities as { deleteKeepsFields: string[] }
       abilities.deleteKeepsFields = ['rootPostId', 'replyToReplyId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight']
+      // A follow request's target and a report's target name an identity, an embed a data contract, each one that exists.
+      const references = [['followRequest', 'targetId', 'identity'], ['report', 'targetOwnerId', 'identity'], ['post', 'embedContractId', 'contract']] as const
+      for (const [docType, property, type] of references) {
+        expect(expected.documentSchemas[docType].properties[property].refersTo, `v19 ${docType}.${property}`).toBeUndefined()
+        expected.documentSchemas[docType].properties[property].refersTo = { type }
+      }
       expect(socialContractV20).toEqual(expected)
+      // As `follow.followingId` always declared it. The embed's document type and id stay unchecked.
+      expect(V20.follow.properties.followingId.refersTo).toEqual({ type: 'identity' })
+      for (const property of ['embedDocType', 'embedId']) expect(V20.post.properties[property].refersTo, property).toBeUndefined()
       // The kept property is the reply's own optional, immutable link to the reply it answers.
       expect(V20.reply.properties.replyToReplyId).toBeDefined()
       expect(V20.reply.required).not.toContain('replyToReplyId')

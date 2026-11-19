@@ -579,7 +579,9 @@ export function keyNetwork(): KeyNetwork {
 // `v19` is v17 with the last update height required and kept with both times
 // in post/reply/profile removal records (docs/SOCIAL_V19.md); it keeps deletion moderation.
 // `v20` is v19 with `replyToReplyId` kept in a reply's removal record, so a
-// removed nested reply keeps its place in the thread (docs/SOCIAL_V20.md).
+// removed nested reply keeps its place in the thread, and with three ids checked
+// for existence on write: a follow request's and a report's target (an identity)
+// and an embed's contract (docs/SOCIAL_V20.md).
 export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19', 'v20'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]

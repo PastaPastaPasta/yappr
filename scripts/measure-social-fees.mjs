@@ -346,6 +346,7 @@ async function measureCut(cut, { P, likers }) {
   const contract = await withReconnect(() => sdk.contracts.fetch(contractId));
   const id = (value) => bs58.decode(value);
   const tombstones = source.documentSchemas.post.properties.deleted !== undefined;
+  const reportTargetChecked = source.documentSchemas.report?.properties?.targetOwnerId?.refersTo?.type === 'identity';
   /** The writes below are v12-shaped; `fit` adapts them to the cut (v13: live, rootOwnerId, `{ replyId }` likes). */
   const shapes = socialShapes(source);
   const stripped = strippedActionFees(cut.file);
@@ -481,9 +482,17 @@ async function measureCut(cut, { P, likers }) {
     }
     if (shapes.cut.profileReports) {
       // One report per reporter and target: a liker reports this run's post, and a fresh identity's profile.
+      // From v20 the reported account must exist (40120 otherwise): the liker reports P's, and withdraws
+      // the report so the same pair can file again on a reused contract.
       const reporter = likers[run % 3];
       record('report-post', await costOf(reporter, () => create(reporter, 'report', shapes.report({ postId: id(post.id), targetOwnerId: id(P.ownerId), reason: 1 }))));
-      record('report-profile', await costOf(reporter, () => create(reporter, 'report', shapes.report({ about: 1, targetOwnerId: randomIdBytes(), reason: 1 }))));
+      const profile = shapes.report({ about: 1, targetOwnerId: reportTargetChecked ? id(P.ownerId) : randomIdBytes(), reason: 1 });
+      const filed = await costOf(reporter, () => create(reporter, 'report', profile));
+      record('report-profile', filed);
+      if (reportTargetChecked && filed?.id) {
+        const { document } = buildDocument({ contractId, docType: 'report', ownerId: reporter.ownerId, data: shapes.fit('report', profile), id: bs58.decode(filed.id) });
+        await sdk.documents.delete({ document, identityKey: reporter.identityKey, signer: reporter.signer }).catch((e) => console.log(`     (could not withdraw the profile report ${filed.id}: ${describeErr(e).slice(0, 160)})`));
+      }
     }
     // A deliberate pause keeps a run's writes clear of the next run's quorum checks.
     await sleep(2000);

@@ -159,9 +159,10 @@ The release set `/staging` runs is social **v19**, blocks,
 (`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md)),
 all members of one App Connect anchor's permanent contract group (D45/D46).
 A fresh registration, mainnet's included, takes the same set with social **v20**:
-v19 whose reply removal record also keeps `replyToReplyId`
-([docs/SOCIAL_V20.md](docs/SOCIAL_V20.md)). Kept fields are fixed at registration,
-so the registered v19 set keeps its list until a set is registered again.
+v19 whose reply removal record also keeps `replyToReplyId`, and whose follow
+requests, reports and embeds must name an identity or contract that exists
+([docs/SOCIAL_V20.md](docs/SOCIAL_V20.md)). Kept fields and references are fixed at
+registration, so the registered v19 set keeps its schema until a set is registered again.
 Social v19, blog v11 and storefront v12 extend the deletion cuts
 with required and kept times and the last signed transition height for every
 recoverable removal ([docs/SOCIAL_V19.md](docs/SOCIAL_V19.md)). `scripts/app-connect-set.mjs` owns the files, hashes and
