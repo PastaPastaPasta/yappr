@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger'
 import { appConnectPins } from '@/lib/app-connect/config'
 import { AppConnectLogin, type AppConnectLoginState } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
-import { rememberSignInReturn } from '@/lib/app-connect/sign-in-return'
+import { fileSignInReturn } from '@/lib/app-connect/sign-in-return'
 import { signInReturnRoute } from '@/lib/auth/return-to'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
@@ -45,13 +45,21 @@ export function useAppConnectLogin(identityHint?: string): { login: AppConnectLo
     const instance = createLogin(identityHint)
     if (!instance) return
     setLogin(instance)
-    const unsubscribe = instance.subscribe(setState)
+    // A sign-in (not a renewal) the wallet may finish in a new tab carries on from there to its page: each request
+    // the flow makes ("Check again" makes another) is filed with it.
+    let filed: string | null = null
+    const file = () => {
+      const requestHash = instance.requestHashHex()
+      if (identityHint || !requestHash || requestHash === filed) return
+      fileSignInReturn(requestHash, filed, signInReturnRoute())
+      filed = requestHash
+    }
+    const unsubscribe = instance.subscribe((next) => {
+      setState(next)
+      file()
+    })
     instance.start({ identityHint })
-      .then(() => {
-        // A sign-in (not a renewal) the wallet may finish in a new tab: that tab carries on to this page.
-        const requestHash = instance.requestHashHex()
-        if (!identityHint && requestHash) rememberSignInReturn(requestHash, signInReturnRoute())
-      })
+      .then(file)
       .catch((error: unknown) => logger.error('App Connect: sign-in failed to start', error))
 
     const onFocus = () => instance.pollNow()

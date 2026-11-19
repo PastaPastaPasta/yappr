@@ -9,7 +9,30 @@ import { scopedKey } from '@/lib/storage-scope'
  */
 const KEY = scopedKey('yappr-app-connect-sign-in-return')
 
-export function rememberSignInReturn(requestHash: string, route: string | null): void {
+function stored(): { requestHash: string; route: string } | null {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (raw === null) return null
+    const parsed = JSON.parse(raw) as { requestHash?: unknown; route?: unknown }
+    return typeof parsed.requestHash === 'string' && typeof parsed.route === 'string' ? { requestHash: parsed.requestHash, route: parsed.route } : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Files `route` as the page the sign-in of request `requestHash` returns to,
+ * when the browser's pending request is created. A request already filed
+ * (resumed, perhaps by a panel on another page) keeps its page, and one that
+ * replaces `previousHash` ("Check again", "That's not me") keeps that one's.
+ */
+export function fileSignInReturn(requestHash: string, previousHash: string | null, route: string | null): void {
+  const filed = stored()
+  if (filed?.requestHash === requestHash) return
+  remember(requestHash, filed && previousHash !== null && filed.requestHash === previousHash ? filed.route : route)
+}
+
+function remember(requestHash: string, route: string | null): void {
   const safe = sanitizeReturnTo(route)
   try {
     if (safe) localStorage.setItem(KEY, JSON.stringify({ requestHash, route: safe }))
@@ -21,14 +44,12 @@ export function rememberSignInReturn(requestHash: string, route: string | null):
 
 /** The route the sign-in for `requestHash` started from, once; null for any other request. */
 export function takeSignInReturn(requestHash: string): string | null {
+  const filed = stored()
+  if (filed?.requestHash !== requestHash) return null
   try {
-    const raw = localStorage.getItem(KEY)
-    if (raw === null) return null
-    const stored = JSON.parse(raw) as { requestHash?: unknown; route?: unknown }
-    if (stored.requestHash !== requestHash || typeof stored.route !== 'string') return null
     localStorage.removeItem(KEY)
-    return sanitizeReturnTo(stored.route)
   } catch {
-    return null
+    // Storage blocked: the route is still given back once.
   }
+  return sanitizeReturnTo(filed.route)
 }

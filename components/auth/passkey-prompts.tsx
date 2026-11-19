@@ -6,7 +6,7 @@ import { CheckCircleIcon, KeyIcon } from '@heroicons/react/24/outline'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { usePasskeyPrompts } from '@/hooks/use-passkey-prompts'
-import { useUsernameModal } from '@/hooks/use-username-modal'
+import { useRegistrationUsernameDialog, useUsernameModal } from '@/hooks/use-username-modal'
 import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { markPasskeyOfferMade, passkeyOfferMade, passkeysHere } from '@/lib/auth/passkey-device'
 import {
@@ -33,15 +33,20 @@ import { Spinner } from '@/components/ui/spinner'
 import { enrolErrorCopy, lockOutCopy, passkeyDetails, passkeyLabel } from './passkey-copy'
 import { enrolmentOwner } from '@/lib/auth/passkey-enrolment-owner'
 
-/** Resolves once the username prompt (opened by a sign-in without a Dash username) is closed. */
+/** Whether a username prompt is open: the one a sign-in without a Dash username opens, or the registration page's. */
+const usernamePromptOpen = () => useUsernameModal.getState().isOpen || useRegistrationUsernameDialog.getState().isOpen
+
+/** Resolves once no username prompt is open. */
 function usernamePromptClosed(): Promise<void> {
-  if (!useUsernameModal.getState().isOpen) return Promise.resolve()
+  if (!usernamePromptOpen()) return Promise.resolve()
   return new Promise((resolve) => {
-    const unsubscribe = useUsernameModal.subscribe((state) => {
-      if (state.isOpen) return
-      unsubscribe()
+    const unsubscribes: Array<() => void> = []
+    const check = () => {
+      if (usernamePromptOpen()) return
+      for (const unsubscribe of unsubscribes) unsubscribe()
       resolve()
-    })
+    }
+    unsubscribes.push(useUsernameModal.subscribe(check), useRegistrationUsernameDialog.subscribe(check))
   })
 }
 

@@ -6,6 +6,7 @@ import { UsernameModal } from '@/components/dpns/username-modal'
 import { useAuth } from '@/contexts/auth-context'
 import Link from 'next/link'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useRegistrationUsernameDialog } from '@/hooks/use-username-modal'
 import { DEFAULT_RETURN_TO, currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function DPNSRegisterPage() {
@@ -20,6 +21,12 @@ export default function DPNSRegisterPage() {
       setIsModalOpen(true)
     }
   }, [user])
+
+  // Other prompts after a sign-in (a passkey offer) wait while this dialog is open, as for the global one.
+  useEffect(() => {
+    useRegistrationUsernameDialog.setState({ isOpen: isModalOpen })
+    return () => useRegistrationUsernameDialog.setState({ isOpen: false })
+  }, [isModalOpen])
 
   // Skip and Continue close the modal and go on through `returnWhenDone` (Skip
   // keeps `next`; Continue keeps it only once a username exists).
