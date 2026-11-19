@@ -25,6 +25,7 @@ import { copy } from './copy';
 import {
   capabilityRows,
   CONTRACTS,
+  contractId,
   dapiEndpointCount,
   diagCopy,
   diagnosticsText,
@@ -344,7 +345,7 @@ export function DiagnosticsScreen() {
         {bundleMismatch ? <Row label="" value="differs from the build's engine (dev URL?)" tone="warn" /> : null}
         <Row label="Topology" value={info?.topology ?? config.engine?.topology ?? '—'} />
         {CONTRACTS.map(({ key, label }) => (
-          <ContractRow key={key} label={label} id={info?.contracts[key]} testID={`diagnostics-copy-${key}`} />
+          <ContractRow key={key} label={label} id={contractId(info, key)} testID={`diagnostics-copy-${key}`} />
         ))}
         <Disclosure
           title={diagCopy.dapi}

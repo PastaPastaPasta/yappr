@@ -37,6 +37,11 @@ export const CONTRACTS = [
   { key: 'pollr', label: 'Pollr contract' },
 ] as const satisfies readonly { key: keyof EngineInfo['contracts']; label: string }[];
 
+export function contractId(info: EngineInfo | null | undefined, key: (typeof CONTRACTS)[number]['key']): string | undefined {
+  if (!info) return undefined;
+  return key === 'dm' && info.capabilities.dm === 'v5' ? info.contracts.dmV5 : info.contracts[key];
+}
+
 export const shortId = (value: string | undefined) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—');
 
 /** "18.2 MB": the cache size row. */
