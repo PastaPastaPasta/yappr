@@ -90,6 +90,26 @@ export function loginRoute(currentPath: string, basePath?: string): string {
   return next ? `/login?${RETURN_TO_PARAM}=${encodeURIComponent(next)}` : '/login'
 }
 
+/** The current page as `window.location` has it: path, query and fragment. Client-only. */
+export function currentPagePath(): string {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`
+}
+
+/**
+ * Where a sign-in started here should return to: this page, or, on a detour
+ * page (/login, /dpns/register), the `next` it carries. Null when neither is
+ * a route worth returning to. Client-only.
+ */
+export function signInReturnRoute(): string | null {
+  return sanitizeReturnTo(currentPagePath()) ?? sanitizeReturnTo(currentReturnToParam())
+}
+
+/** True on the username registration page, which asks for a username itself. Client-only. */
+export function onRegistrationPage(): boolean {
+  const path = window.location.pathname.replace(/\/+$/, '')
+  return path === DPNS_REGISTER_ROUTE || path.endsWith(DPNS_REGISTER_ROUTE)
+}
+
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */
 export function currentReturnToParam(): string | null {
   if (typeof window === 'undefined') return null

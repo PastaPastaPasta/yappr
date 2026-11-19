@@ -6,7 +6,7 @@ import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
-import { loginRoute } from '@/lib/auth/return-to'
+import { currentPagePath, loginRoute, onRegistrationPage, signInReturnRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -193,8 +193,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)
-    if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
-    else if (next.kind === 'route') router.push(next.href)
+    // The registration page asks for the username itself, and follows `next` when done.
+    if (next.kind === 'username-prompt') {
+      if (!onRegistrationPage()) useUsernameModal.getState().open(next.identityId)
+    }
+    // Signed out: to sign in again, carrying this page (replaced, so Back doesn't land on a page that needs the account).
+    else if (next.kind === 'route') router.replace(loginRoute(signInReturnRoute() ?? ''))
   }, [router])
 
   /**
@@ -381,7 +385,7 @@ export function withAuth<P extends object>(
     useEffect(() => {
       if (isAuthRestoring || user || options?.optional) return
       // Replace, so Back from the sign-in page doesn't land here and bounce again.
-      router.replace(loginRoute(`${window.location.pathname}${window.location.search}`))
+      router.replace(loginRoute(currentPagePath()))
     }, [user, isAuthRestoring, router])
 
     if (isAuthRestoring) {

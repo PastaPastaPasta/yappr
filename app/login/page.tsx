@@ -9,15 +9,15 @@ import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function LoginPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isAuthRestoring } = useAuth()
   const { open } = useLoginModal()
 
-  // Open the login modal when this page loads
+  // Open the login modal once no saved session is coming back
   useEffect(() => {
-    if (!user) {
+    if (!user && !isAuthRestoring) {
       open()
     }
-  }, [user, open])
+  }, [user, isAuthRestoring, open])
 
   // Signed in: on to the page that sent the visitor here, or the feed
   useEffect(() => {

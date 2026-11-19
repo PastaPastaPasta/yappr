@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
 import { isPendingRenewal } from '@/lib/app-connect/pending-request'
+import { takeSignInReturn } from '@/lib/app-connect/sign-in-return'
+import { loginRoute } from '@/lib/auth/return-to'
 import {
   APP_CONNECT_CHANNEL,
   appReturnLink,
@@ -55,6 +57,8 @@ export default function ConnectPage() {
     const identityId = user?.identityId
     // A renewal of the signed-in account resumes in its renew dialog; anything else is a sign-in.
     const pendingRenewal = identityId ? isPendingRenewal(identityId, requestHash) : Promise.resolve(false)
+    // Sign-in goes on to the page it started from, carried as `next`.
+    const signIn = () => router.replace(loginRoute(takeSignInReturn(requestHash) ?? ''))
     pendingRenewal
       .catch(() => false)
       .then((renewal) => {
@@ -62,10 +66,10 @@ export default function ConnectPage() {
           useRenewModal.getState().open()
           router.replace('/feed/')
         } else {
-          router.replace('/login/')
+          signIn()
         }
       })
-      .catch(() => router.replace('/login/'))
+      .catch(signIn)
   }, [continueHere, isAuthRestoring, router, user?.identityId])
 
   useEffect(() => {

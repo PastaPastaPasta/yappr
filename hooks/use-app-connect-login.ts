@@ -5,6 +5,8 @@ import { logger } from '@/lib/logger'
 import { appConnectPins } from '@/lib/app-connect/config'
 import { AppConnectLogin, type AppConnectLoginState } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
+import { rememberSignInReturn } from '@/lib/app-connect/sign-in-return'
+import { signInReturnRoute } from '@/lib/auth/return-to'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import { APP_CONNECT_CHANNEL, isConnectCallbackMessage } from '@/lib/app-connect/callback-channel'
@@ -44,7 +46,13 @@ export function useAppConnectLogin(identityHint?: string): { login: AppConnectLo
     if (!instance) return
     setLogin(instance)
     const unsubscribe = instance.subscribe(setState)
-    instance.start({ identityHint }).catch((error: unknown) => logger.error('App Connect: sign-in failed to start', error))
+    instance.start({ identityHint })
+      .then(() => {
+        // A sign-in (not a renewal) the wallet may finish in a new tab: that tab carries on to this page.
+        const requestHash = instance.requestHashHex()
+        if (!identityHint && requestHash) rememberSignInReturn(requestHash, signInReturnRoute())
+      })
+      .catch((error: unknown) => logger.error('App Connect: sign-in failed to start', error))
 
     const onFocus = () => instance.pollNow()
     window.addEventListener('focus', onFocus)

@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
   loginRoute,
+  onRegistrationPage,
   returnToOrDefault,
   sanitizeReturnTo,
+  signInReturnRoute,
 } from './return-to'
 
 describe('sanitizeReturnTo', () => {
@@ -113,5 +115,29 @@ describe('loginRoute', () => {
   it('carries nothing it would refuse to follow', () => {
     expect(loginRoute('/login/', '')).toBe('/login')
     expect(loginRoute('//evil.example', '')).toBe('/login')
+  })
+})
+
+describe('where a sign-in started here returns to', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const at = (pathname: string, search = '', hash = '') => vi.stubGlobal('window', { location: { pathname, search, hash } })
+
+  it('is this page, fragment included', () => {
+    at('/settings/', '?section=privateFeed', '#private-feed-requests')
+    expect(signInReturnRoute()).toBe('/settings/?section=privateFeed#private-feed-requests')
+  })
+
+  it('is the `next` a detour page carries', () => {
+    at('/login/', '?next=%2Fmessages%2F')
+    expect(signInReturnRoute()).toBe('/messages/')
+    at('/login/', '?next=%2F%2Fevil.example')
+    expect(signInReturnRoute()).toBeNull()
+  })
+
+  it('knows the registration page, under a base path too', () => {
+    at('/staging/dpns/register/')
+    expect(onRegistrationPage()).toBe(true)
+    at('/settings/')
+    expect(onRegistrationPage()).toBe(false)
   })
 })
