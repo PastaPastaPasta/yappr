@@ -1,7 +1,7 @@
 import { listingsCarryModLane } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import { moderatedContract } from '@/lib/moderated-contracts'
-import { chainState, inLane, laneMod, newestFirst, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
+import { chainState, inLane, laneMod, laneOf, newestFirst, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
 import { getEvoSdk } from './evo-sdk-service'
 import { moderationService } from './moderation-service'
 import { moderationMarksOf, moderationViewAll } from '@/lib/moderation-view'
@@ -129,12 +129,15 @@ class BulkHideService {
         }
       }
     }
-    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map() }
+    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map(), lanes: new Map() }
     for (const item of items) {
       const doc = found.get(item.id)
       const state = chainState(doc, mode)
       if (state !== 'done') read[state].add(item.id)
-      else if (doc) read.marks?.set(item.id, moderationMarksOf(doc))
+      else if (doc) {
+        read.marks?.set(item.id, moderationMarksOf(doc))
+        read.lanes?.set(item.id, laneOf(doc))
+      }
     }
     logger.info(`bulkHide: ${read.todo.size} of ${items.length} still to ${mode}, ${read.changed.size} changed`)
     return read

@@ -15,6 +15,8 @@ import {
   newestFirst,
   readEveryPage,
   runBulk,
+  laneOf,
+  nextRunChangeExpiry,
   tabAfter,
   withRunChanges,
   type BulkApplyResult,
@@ -128,8 +130,7 @@ describe('cost', () => {
 describe("a run's changes over a lagging read", () => {
   const doc = (id: string, createdAt: number): BulkItem => ({ id, kind: 'post', createdAt, preview: id })
   const NOW = 1_000_000
-  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.flatMap(([item, tab, until = NOW + 1]) => (
-    tab ? [[item.id, { item, tab, until }] as const] : [])))
+  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.map(([item, tab, until = NOW + 1]) => [item.id, { item, tab, until }] as const))
 
   it('puts a document where the change leaves it: its own transition per the run, a read per its marks', () => {
     expect(tabAfter('hide', {})).toBe('unhide')
@@ -140,6 +141,30 @@ describe("a run's changes over a lagging read", () => {
     expect(tabAfter('unhide', { marks: { moderatedBy: 'x', moderatedAt: 1 } as BulkChange['marks'] })).toBe('hide')
     expect(tabAfter('unhide', { marks: { mod: 1 } as BulkChange['marks'] })).toBe('unhide')
     expect(tabAfter('hide', { marks: { mod: 2 } as BulkChange['marks'] })).toBeNull()
+    // A read that says where it lists the document wins over its marks (a tombstone keeps its mod).
+    expect(tabAfter('unhide', { marks: { mod: 1 } as BulkChange['marks'], tab: null })).toBeNull()
+    expect(tabAfter('hide', { marks: null, tab: 'unhide' })).toBe('unhide')
+  })
+
+  it('lists a document a read found in neither tab (a legal hold, a tombstone) in neither, whatever a lagging read shows', () => {
+    const held = doc('h', 2)
+    const other = doc('o', 1)
+    const neither = changes([held, null])
+    expect(withRunChanges([held, other], 'hide', neither, NOW).map((item) => item.id)).toEqual(['o'])
+    expect(withRunChanges([held], 'unhide', neither, NOW)).toEqual([])
+  })
+
+  it('knows where a stored document is listed', () => {
+    expect(laneOf({ live: 1 })).toBe('hide')
+    expect(laneOf({ live: 1, mod: 1 })).toBe('unhide')
+    expect(laneOf({ live: 1, mod: 2 })).toBeNull()
+    expect(laneOf({ live: 0 })).toBeNull()
+  })
+
+  it('reads the lists again when the first recent change stops outranking the read', () => {
+    expect(nextRunChangeExpiry(new Map(), NOW)).toBeNull()
+    expect(nextRunChangeExpiry(changes([doc('a', 1), 'hide', NOW + 50], [doc('b', 2), 'unhide', NOW + 20], [doc('c', 3), 'hide', NOW]), NOW)).toBe(NOW + 20)
+    expect(nextRunChangeExpiry(changes([doc('a', 1), 'hide', NOW]), NOW)).toBeNull()
   })
 
   it('lists what the run unhid under Showing and not under Hidden, whatever the read reached', () => {
@@ -185,7 +210,18 @@ describe('runBulk', () => {
       }),
       onDone: vi.fn<(item: BulkItem, change: BulkChange) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
-      ...(recheck ? { recheck: vi.fn(recheck) } : {}),
+      // The one-document read just before signing, found as `recheck` says (done: listed, no marks).
+      ...(recheck ? {
+        recheck: vi.fn(async (i: BulkItem): Promise<BulkChainRead> => {
+          const state = await recheck(i)
+          return {
+            todo: new Set(state === 'todo' ? [i.id] : []),
+            changed: new Set(state === 'changed' ? [i.id] : []),
+            marks: new Map(state === 'done' ? [[i.id, null]] : []),
+            lanes: new Map(state === 'done' ? [[i.id, 'unhide' as const]] : []),
+          }
+        }),
+      } : {}),
       cancelled,
       onProgress,
     }
@@ -234,8 +270,8 @@ describe('runBulk', () => {
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['a'])
     expect(summary.done).toBe(2)
     expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
-    // c was done by someone else: counted, not announced.
-    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['a'])
+    // c was done by someone else: counted, and announced with what that read holds, where it lists it.
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', {}], ['c', { marks: null, tab: 'unhide' }]])
   })
 
   it('sends nothing for a document it cannot read again, and stops after three in a row', async () => {
@@ -245,6 +281,15 @@ describe('runBulk', () => {
     expect(d.apply).not.toHaveBeenCalled()
     expect(summary.failures).toHaveLength(SAME_REFUSAL_LIMIT)
     expect(summary.stopped).toBe('fatal')
+  })
+
+  it('announces a document the first read found under a legal hold with the tab that read lists it in: neither', async () => {
+    const d = deps()
+    const held = { mod: 2 } as NonNullable<BulkChange['marks']>
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(), marks: new Map([['a', held]]), lanes: new Map([['a', null]]) }))
+    await runBulk([items[0]], d)
+    expect(d.onDone.mock.calls[0][1]).toEqual({ marks: held, tab: null })
+    expect(tabAfter('hide', d.onDone.mock.calls[0][1])).toBeNull()
   })
 
   it('counts an unconfirmed change the chain shows landed, announcing what the read holds', async () => {

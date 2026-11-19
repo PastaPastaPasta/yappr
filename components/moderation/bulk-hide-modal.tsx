@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, RUN_CHANGE_TTL_MS, bulkCostLine, closedKeySheet, idsWithin, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, RUN_CHANGE_TTL_MS, bulkCostLine, closedKeySheet, idsWithin, nextRunChangeExpiry, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -87,6 +87,8 @@ export function BulkHideModal() {
   const readRef = useRef(0)
   /** What runs in this opening just hid or unhid, listed where each now belongs while a read may still lag. */
   const runChangesRef = useRef(new Map<string, RunChange>())
+  /** Reads both tabs again once the first recent run change stops outranking the read. */
+  const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
@@ -115,6 +117,22 @@ export function BulkHideModal() {
     }
   }, [isOpen, target])
 
+  const scheduleExpiryRead = useCallback(() => {
+    if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current)
+    expiryTimerRef.current = null
+    const expiry = nextRunChangeExpiry(runChangesRef.current)
+    if (expiry === null) return
+    const opening = openingRef.current
+    expiryTimerRef.current = setTimeout(() => {
+      expiryTimerRef.current = null
+      if (openingRef.current === opening) setReadEpoch((epoch) => epoch + 1)
+    }, expiry - Date.now() + 1)
+  }, [])
+
+  useEffect(() => () => {
+    if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current)
+  }, [isOpen])
+
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
   const load = useCallback((which: BulkMode) => {
     if (!authorId) return
@@ -125,6 +143,7 @@ export function BulkHideModal() {
     }).then(({ items: fresh, truncated }) => {
       if (readRef.current !== read) return
       const items = withRunChanges(fresh, which, runChangesRef.current)
+      scheduleExpiryRead()
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
@@ -132,7 +151,7 @@ export function BulkHideModal() {
     }).catch(() => {
       if (readRef.current === read) setList({ status: 'failed' })
     })
-  }, [authorId])
+  }, [authorId, scheduleExpiryRead])
 
   useEffect(() => {
     if (isOpen && authorId) load(mode)
@@ -144,10 +163,11 @@ export function BulkHideModal() {
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
     const changes = runChangesRef.current
-    const now = Date.now()
-    const counted = ![...changes.values()].some((change) => change.until > now)
+    // While a run change is recent the count comes from the overlaid list; a
+    // list too long to read whole has no count until the change is no longer recent.
+    const counted: Promise<number | null> = nextRunChangeExpiry(changes) === null
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated }) => (truncated ? bulkHideService.count(authorId, other) : withRunChanges(items, other, changes).length))
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated }) => (truncated ? null : withRunChanges(items, other, changes).length))
     counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
     }).catch(() => { /* the tab shows no count */ })
@@ -221,7 +241,6 @@ export function BulkHideModal() {
       close()
       return false
     }
-    for (const item of batchItems) runChangesRef.current.delete(item.id)
     stopRef.current = false
     setStopping(false)
     setRunning(true)
@@ -242,13 +261,12 @@ export function BulkHideModal() {
         ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) }, guard)
         : batch.unhide(item.kind, item.id, reasonFor(item), guard),
       pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
-      recheck: (item) => bulkHideService.pending([item], mode).then((read) => (read.todo.has(item.id) ? 'todo' : read.changed.has(item.id) ? 'changed' : 'done')),
+      recheck: (item) => bulkHideService.pending([item], mode),
       // The cards already on screen show each change as soon as it is confirmed:
       // this run's own as it asked, one settled by a read as the read holds it.
       onDone: (item, change) => {
         if (sameOpening()) {
-          const tab = tabAfter(mode, change)
-          if (tab) runChangesRef.current.set(item.id, { item, tab, until: Date.now() + SETTLE_MS + RUN_CHANGE_TTL_MS })
+          runChangesRef.current.set(item.id, { item, tab: tabAfter(mode, change), until: Date.now() + SETTLE_MS + RUN_CHANGE_TTL_MS })
         }
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
