@@ -678,9 +678,19 @@ async function main() {
   const estimates = new Map(created.map((entry) => [entry.name, prepare(entry, { plan, platformVersion, signing: null, policy, feeMultiplierPermille }).estimate]));
 
   // What this run would still pay for: a live run skips what its journal verified and stops at --upto.
-  // (A create a crashed run left `prepared` or `broadcasting` may have been paid already; it is counted again.)
+  // A create a crashed run left `prepared` or `broadcasting` is counted again unless its contract is on chain
+  // (then it was paid; registerLive verifies it without signing again).
   const last = args.upto ? plan.contracts.findIndex((c) => c.name === args.upto) : plan.contracts.length - 1;
-  const pending = plan.contracts.slice(0, last + 1).filter((c) => created.includes(c) && journal?.contracts?.[c.name]?.state !== 'verified');
+  const unverified = plan.contracts.slice(0, last + 1).filter((c) => created.includes(c) && journal?.contracts?.[c.name]?.state !== 'verified');
+  const pending = [];
+  for (const c of unverified) {
+    const saved = journal?.contracts?.[c.name];
+    if (handle && saved?.id && await readback(handle, () => handle.sdk.contracts.fetch(saved.id))) {
+      console.log(`${c.name}: ${saved.id} is on chain already (journal: ${saved.state}); not budgeted again`);
+      continue;
+    }
+    pending.push(c);
+  }
   const estimate = pending.reduce((sum, c) => sum + estimates.get(c.name), 0n);
   console.log(`\nestimated cost of ${pending.map((c) => c.name).join(', ') || 'nothing'}: ${formatCredits(estimate)}`);
   if (balance !== null) {

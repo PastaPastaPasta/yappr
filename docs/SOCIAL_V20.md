@@ -156,8 +156,34 @@ The read-only dry run passed on 2026-11-19 at height 716436 (proved epoch
 with the maker at nonce 8 and holding 129.14e9 credits. Social v20 is planned
 at nonce 9 as `63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D`. The estimate is
 92.94e9 credits (≈5,576¢), and the balance gate needs 111.53e9. The id holds
-only while the maker spends no other nonce first. The cut-over after the create
-pins the nine members and lets the build gate accept social v19 as an unused member.
+only while the maker spends no other nonce first.
+
+**Order.** The App Connect client requires the group's members to equal its
+pins exactly (`checkAppConnectTrust`). Once social v20 joins, a build that pins
+eight members refuses new App Connect sign-ins as `unexpected-members`.
+Sessions already signed in keep signing for the eight pinned members. A build
+that pins nine fails the same way before the create (`missing-members`), so no
+one build bridges the two states. Memberships cannot be removed, so there is
+no rollback to the eight-member build, and a failed cut-over is fixed forward.
+Keep the window between the create and the redeploy short:
+
+1. Before registering, prepare the cut-over branch. `.env.testnet` gets the
+   planned id, topology `v20`, all nine pins (`id:1`) and YAPP
+   `tokens.calculateId(<v20 id>, 0)`. The build gate already accepts social
+   v19 as an unused pin of this group when the build names another social
+   contract (`unusedMembersOf` in `scripts/release-config.cjs`).
+2. Run `--signed-dry-run` and confirm the maker's nonce is still 8.
+3. Run `--live`. Check the landed id against the branch. If it differs, take
+   the id from the journal.
+4. Refresh the bundled testnet snapshot (`NETWORK=testnet npm run
+   contracts:snapshot -- --prune`, with `CONTRACT_IDS` naming the `/testing`
+   defaults as in the activation), then build, push and merge into `staging`
+   at once. `/staging` refuses new App Connect sign-ins from step 3 until this
+   deploy is live.
+5. File the social charter for the new contract with
+   `file-release-charters.mjs`, as on 2026-11-12. The contract accepts no
+   posts (`notYetUsable`) until its team is seated, which takes about two hours
+   with the one-hour windows and delay.
 
 
 ## Client

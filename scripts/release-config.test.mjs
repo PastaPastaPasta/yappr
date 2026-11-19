@@ -470,6 +470,15 @@ describe('release build configuration', () => {
     for (const key of ['NEXT_PUBLIC_APP_CONNECT_GROUP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER', 'NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_YAPPR_CONTRACT_ID']) {
       expect(() => assertReleaseConfig({ ...registered, [key]: fresh[key] })).toThrow('must be v20')
     }
+    // Social v20 appended to that group: the v19 member stays pinned, unused, and no contract variable names it.
+    const v20 = '63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D'
+    const appended = { ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v20', NEXT_PUBLIC_YAPPR_CONTRACT_ID: v20,
+      NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${registered.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS},${v20}:1` }
+    expect(() => assertReleaseConfig(appended)).not.toThrow()
+    const withoutV19 = appended.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').filter(pin => !pin.startsWith(registered.NEXT_PUBLIC_YAPPR_CONTRACT_ID)).join(',')
+    expect(() => assertReleaseConfig({ ...appended, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: withoutV19 })).toThrow(`must pin ${registered.NEXT_PUBLIC_YAPPR_CONTRACT_ID}`)
+    expect(() => assertReleaseConfig({ ...appended, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19' })).toThrow('must be v20')
+    expect(() => assertReleaseConfig({ ...registered, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: appended.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS })).toThrow(`unexpected member ${v20}`)
     // The retired 2026-10-21 v17 set (group 4MjVAxDY…) no longer builds.
     const retired = { ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10',
       NEXT_PUBLIC_APP_CONNECT_GROUP_ID: '4MjVAxDYjCdQqFBT48gzdvCsbVwFwtZzALEMWjns33pv', NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A' }

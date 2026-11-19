@@ -156,6 +156,21 @@ const QA_BUILDS = {
   },
 }
 
+/**
+ * The group members a build pins but never reads. A QA build lists its own.
+ * A testnet release build on the 2026-11-12 group with another social contract
+ * (social v20, appended to that group: docs/SOCIAL_V20.md) leaves the v19
+ * member unused, since memberships cannot be removed.
+ */
+function unusedMembersOf(env) {
+  const qa = qaBuildOf(env)
+  if (qa) return qa.unusedMembers ?? []
+  const set = REGISTERED_V19_SET
+  const onRegisteredGroup = env.NEXT_PUBLIC_NETWORK === 'testnet' && env.NEXT_PUBLIC_APP_CONNECT_GROUP_ID === set.groupId &&
+    env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER === set.owner && env.NEXT_PUBLIC_APP_CONNECT_APP_ID === set.appId
+  return onRegisteredGroup && env.NEXT_PUBLIC_YAPPR_CONTRACT_ID !== set.socialId ? [set.socialId] : []
+}
+
 /** The QA build `env` names (YAPPR_QA_BUILD), null for a release build; throws on an unknown name. */
 function qaBuildOf(env) {
   const name = env.YAPPR_QA_BUILD
@@ -233,9 +248,10 @@ function assertReleaseConfig(env) {
     if (isIdentifier(env[key]) && !members.has(env[key])) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${key}`)
   }
   const expectedIds = new Set(expected.map(key => env[key]))
-  for (const id of qa?.unusedMembers ?? []) {
-    if (expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: ${id} is unused by the ${qa.name} build, so no contract variable may name it`)
-    else if (!members.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${id}, a member of the group the ${qa.name} build does not read`)
+  const buildName = qa?.name ?? 'release'
+  for (const id of unusedMembersOf(env)) {
+    if (expectedIds.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: ${id} is unused by the ${buildName} build, so no contract variable may name it`)
+    else if (!members.has(id)) errors.push(`NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS must pin ${id}, a member of the group the ${buildName} build does not read`)
     expectedIds.add(id)
   }
   for (const id of members) {
@@ -259,7 +275,7 @@ function storageScope(basePath, epoch = '') {
 
 /** A snapshot must contain exactly the pinned contracts it reads, plus the profile and system contracts. */
 function assertSnapshotPins(snapshot, env) {
-  const unused = new Set(qaBuildOf(env)?.unusedMembers ?? [])
+  const unused = new Set(unusedMembersOf(env))
   const pins = env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').map(pin => pin.split(':')).filter(([id]) => !unused.has(id))
   const expectedIds = new Set([...pins.map(([id]) => id), env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID,
     env.NEXT_PUBLIC_DPNS_CONTRACT_ID, env.NEXT_PUBLIC_TOKEN_HISTORY_CONTRACT_ID])
