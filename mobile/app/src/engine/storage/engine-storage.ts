@@ -7,6 +7,7 @@ import { wipeKeychainServices } from '../../../modules/background-flush';
 
 import {
   identityInKey,
+  isSharedKey,
   isAuthKeyOf,
   SECURE_CHUNK_CHARS,
   secureItemName,
@@ -200,7 +201,7 @@ export function createEngineStorage(
   const ownerNow = () => epochIdentity ?? sessionIdentity();
 
   const setSecret = async (key: string, value: string, owner: string | null) => {
-    const bucket = identityInKey(key) ?? owner ?? SHARED_BUCKET;
+    const bucket = identityInKey(key) ?? (isSharedKey(key) ? SHARED_BUCKET : owner) ?? SHARED_BUCKET;
     const previous = readIndex()[bucket]?.[key];
     // Write the other slot, then point the index at it: a crash leaves the old value whole.
     const chunks = chunk(value);

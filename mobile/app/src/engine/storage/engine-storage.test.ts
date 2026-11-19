@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as mmkv from 'react-native-mmkv';
 
 import { createEngineStorage } from './engine-storage';
-import { decodeSecureKey, encodeSecureKey, identityInKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
+import { decodeSecureKey, encodeSecureKey, identityInKey, isSharedKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
 
 const keychain = (SecureStore as unknown as { __items: Map<string, string> }).__items;
 /** The jest.setup.js MMKV: a new process, or an uninstall (its files go, Keychain items stay). */
@@ -54,6 +54,14 @@ describe('secure key names', () => {
     expect(secureItemName('', 'k', 'a', 1)).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 
+  it('keeps only App Connect sign-in requests in the shared bucket by name', () => {
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_login')).toBe(true);
+    expect(isSharedKey('staging:yappr_secure_ac_secret_devnet_pending_request_reauth')).toBe(true);
+    expect(isSharedKey(`yappr_secure_ac_secret_testnet_pending_request_${ALICE}`)).toBe(false);
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_login_x')).toBe(false);
+    expect(isSharedKey('yappr:pf:feed_seed')).toBe(false);
+  });
+
   it('reads the identity only from lib secret-store keys', () => {
     expect(identityInKey(`yappr_secure_pk_${ALICE}`)).toBe(ALICE);
     expect(identityInKey(`yappr_secure_ek_type_${BOB}`)).toBe(BOB);
@@ -98,6 +106,30 @@ describe('engine storage', () => {
     });
     expect((await storage.snapshot()).secure).toEqual({ 'yappr:pf:feed_seed': 'bob-seed' });
     expect(storage.stats()).toMatchObject({ secureKeys: 4, identities: 2 });
+  });
+
+  it('keeps pending wallet sign-ins in the shared bucket, even from a boot bound to an account', async () => {
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.snapshot(ALICE);
+    const login = 'yappr_secure_ac_secret_testnet_pending_request_login';
+    const reauth = 'yappr_secure_ac_secret_testnet_pending_request_reauth';
+    const renewal = `yappr_secure_ac_secret_testnet_pending_request_${ALICE}`;
+    await storage.apply({
+      area: 'secure',
+      seq: 2,
+      ops: [
+        ['set', login, 'login'],
+        ['set', reauth, 'reauth'],
+        ['set', renewal, 'renewal'],
+      ],
+    });
+    storage.apply({ area: 'local', seq: 3, ops: [['del', 'yappr_session']] });
+
+    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login', [reauth]: 'reauth' });
+    expect((await storage.snapshot(BOB)).secure).toEqual({ [login]: 'login', [reauth]: 'reauth' });
+    expect((await storage.snapshot(ALICE)).secure).toMatchObject({ [renewal]: 'renewal' });
+    await storage.apply({ area: 'secure', seq: 4, ops: [['del', reauth]] });
+    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login' });
   });
 
   it('chunks long values and replaces them without leaving items behind', async () => {

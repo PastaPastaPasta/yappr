@@ -151,6 +151,8 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
+  /** Every deletion of a stored request issued so far, settled (a failure is reported through `onError`). */
+  private clearing: Promise<void> = Promise.resolve()
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -354,7 +356,18 @@ export class AppConnectLogin {
   }
 
   private clearRecord(record: StoredAppConnectRequest): void {
-    this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
+    const clear = this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
+    this.clearing = Promise.all([this.clearing, clear]).then(() => undefined)
+  }
+
+  /**
+   * Resolves once every stored request this flow has forgotten so far
+   * (`finish`, `accept`, `dispose`) is gone from the record store, so a
+   * caller can report a cancel or a sign-in only after a relaunch can no
+   * longer resume its request.
+   */
+  cleared(): Promise<void> {
+    return this.clearing
   }
 
   private stop(): void {

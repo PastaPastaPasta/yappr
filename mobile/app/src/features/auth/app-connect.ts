@@ -269,6 +269,10 @@ export async function acceptAccount(identityId: string): Promise<void> {
     set({ step: { name: 'done' } });
   } catch (error) {
     if (stale(gen)) return;
+    if (errorCode(error) === 'ENGINE_RESTARTED') {
+      await settleRestartedAccept(gen, identityId);
+      return;
+    }
     appendLog('warn', 'host', `Wallet sign-in failed: ${errorMessage(error)}`);
     // Refused because an account is signed in already: say so; anything else, start over.
     const slotTaken = errorCode(error) === 'BAD_REQUEST' && /signed in/i.test(errorMessage(error));
@@ -278,24 +282,64 @@ export async function acceptAccount(identityId: string): Promise<void> {
   }
 }
 
+/**
+ * The engine restarted while it took the confirmed answer. The old engine
+ * may have adopted the grant before it went: the new one then restores that
+ * session, and the sign-in is done. Otherwise the request is picked up again
+ * (a renewal whose request is still stored finds the same answer again).
+ */
+async function settleRestartedAccept(gen: number, identityId: string): Promise<void> {
+  const { mode, renew, reauth } = get();
+  try {
+    const session = await engine.api.session.current();
+    const landed = session?.identityId === identityId && session.method === 'app-connect';
+    const renewalWaits = landed && renew ? await engine.api.session.appConnectPending({ renew: true }) : false;
+    if (stale(gen)) return;
+    if (landed && !renewalWaits) {
+      set({ step: { name: 'done' } });
+      return;
+    }
+  } catch (error) {
+    if (stale(gen)) return;
+    appendLog('warn', 'host', `Reading the session after the engine restarted failed: ${errorMessage(error)}`);
+  }
+  await startAppConnect(mode, { renew, reauth, resume: true });
+}
+
+/**
+ * Tells the engine to forget the request of this kind and any answer. A
+ * cancel an engine restart cut short is sent again: the new engine runs no
+ * flow, and forgets the stored request the cancel names, unless a newer
+ * sign-in has started here since (`gen`).
+ */
+function cancelInEngine(gen: number, { renew, reauth }: Pick<AppConnectState, 'renew' | 'reauth'>): void {
+  const kind = { renew, ...(reauth ? { reauth } : {}) };
+  const send = (again: boolean) => {
+    engine.api.session.appConnectCancel(kind).catch((error: unknown) => {
+      if (again && errorCode(error) === 'ENGINE_RESTARTED' && !stale(gen)) {
+        send(false);
+        return;
+      }
+      appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
+    });
+  };
+  send(true);
+}
+
 /** The wallet handed the user back saying it did not sign in (`ac=declined`, …). */
 function walletReported(status: string): void {
   const text = copy.connect.returned[status as keyof typeof copy.connect.returned] ?? copy.connect.returned.failed;
-  next();
+  const gen = next();
   set({ step: { name: 'error', title: text.title, message: text.body } });
-  engine.api.session.appConnectCancel().catch(() => undefined);
+  cancelInEngine(gen, get());
 }
 
 /** "Cancel", or leaving the flow: the engine forgets the request and any answer. */
 export function cancelAppConnect(): void {
-  const { step } = get();
-  next();
+  const { step, renew, reauth } = get();
+  const gen = next();
   set(initial);
-  if (step.name !== 'idle' && step.name !== 'done') {
-    engine.api.session.appConnectCancel().catch((error: unknown) => {
-      appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
-    });
-  }
+  if (step.name !== 'idle' && step.name !== 'done') cancelInEngine(gen, { renew, reauth });
 }
 
 /** The finished state was handed off: forget it without cancelling anything. */

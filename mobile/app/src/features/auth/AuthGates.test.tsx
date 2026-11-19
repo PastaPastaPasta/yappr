@@ -357,3 +357,57 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
   });
 });
+
+describe('a wallet sign-in the last launch was killed in, on App Connect builds', () => {
+  /** Where `accounts.ts` keeps an "Add account" in progress across an app kill. */
+  const ADDING_KEY = 'yappr.accounts.adding.devnet-test';
+
+  beforeEach(() => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    useAccounts.setState({ transition: null, returnTo: null, reauth: null });
+    fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { walletSignIn: 'app-connect' } as never } });
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => syncStorage.removeItem(ADDING_KEY));
+
+  it('reopens "Sign in again" for its account, still able to go back to the parked one', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?mode=(wallet|qr)&resume=1$/));
+    expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'bob' });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
+
+  it('reopens "Sign in again" with nobody parked (a renewal interrupted twice, carried over by the engine)', async () => {
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'alice' });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?mode=(wallet|qr)&resume=1$/));
+    expect(useAccounts.getState().reauth).toBe('alice');
+  });
+
+  it('reopens a plain sign-in as itself, even when the interrupted flow was "Sign in again"', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: null });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+    expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: null });
+  });
+
+  it('goes back to the parked account when no sign-in is stored', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine
+      .method('session.accounts')
+      .mockResolvedValue([{ identityId: 'alice', username: 'alice.dash', method: 'app-connect', lastUsedAt: new Date(0), active: false }]);
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue(null);
+    mount('/');
+    await flush();
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+  });
+});

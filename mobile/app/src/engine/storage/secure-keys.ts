@@ -69,6 +69,20 @@ export function identityInKey(key: string): string | null {
   return IDENTITY_KEY.exec(key)?.[1] ?? null;
 }
 
+/**
+ * App Connect's pending sign-in requests (`pending-request:login` and
+ * "Sign in again"'s `pending-request:reauth`): made while nobody is signed in,
+ * and resumed by a signed-out launch, which reads only the shared bucket. A
+ * boot whose account could not be restored still runs as that account, so
+ * without this rule they would land in its bucket, out of that launch's reach.
+ */
+const SIGNED_OUT_REQUEST = /^(?:[^:]+:)?yappr_secure_ac_secret_[A-Za-z0-9]+_pending_request_(?:login|reauth)$/;
+
+/** Whether a secure key always belongs to the shared bucket, whoever is signed in when it is written. */
+export function isSharedKey(key: string): boolean {
+  return SIGNED_OUT_REQUEST.test(key);
+}
+
 /** Signing an identity out deletes its auth key; for a non-active identity that is the cue to purge its bucket. */
 export function isAuthKeyOf(key: string, identityId: string): boolean {
   return key === `yappr_secure_pk_${identityId}`;
