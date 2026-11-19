@@ -28,6 +28,7 @@ import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import Link from 'next/link'
 import { BLOG_POSTS_DISCOVERY_URL, boundedPostListState, enrichBlogPostsWithAuthors, enrichBlogPostsWithBlogNames, getBlogPostUrl } from '@/lib/blog/content-utils'
 import { blogIsV7 } from '@/lib/constants'
+import { isSearchable } from '@/lib/search-query'
 
 type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
@@ -288,6 +289,7 @@ export default function ExplorePage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchFocused(true)}
+                  aria-label="Search Yappr"
                   placeholder="Search Yappr"
                   className="w-full h-12 pl-12 pr-4 bg-gray-100 dark:bg-gray-900 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
                 />
@@ -318,7 +320,7 @@ export default function ExplorePage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
               >
-                {trimmedSearchQuery.length >= 3 && (
+                {isSearchable(trimmedSearchQuery) && (
                   <Link
                     href={`/search?q=${encodeURIComponent(trimmedSearchQuery)}`}
                     className="flex items-center gap-3 border-b border-gray-200 px-4 py-3 text-yappr-600 hover:bg-gray-50 dark:border-gray-800 dark:text-yappr-400 dark:hover:bg-gray-950"

@@ -20,6 +20,7 @@ import { unifiedProfileService } from '@/lib/services'
 import type { UnifiedProfileDocument } from '@/lib/services/unified-profile-service'
 import type { BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { MIN_QUERY_LENGTH, isSearchable } from '@/lib/search-query'
 
 interface UserResult {
   id: string
@@ -34,8 +35,6 @@ interface HashtagResult {
   postCount: number
   unit: 'like' | 'post'
 }
-
-const MIN_QUERY_LENGTH = 3
 
 type Section = 'users' | 'hashtags' | 'blogPosts'
 
@@ -122,7 +121,7 @@ async function searchBlogPosts(searchQuery: string): Promise<BlogPostWithAuthor[
   if (allBlogs.length === 0) return []
 
   const blogMap = new Map(allBlogs.map(b => [b.id, b]))
-  const matchingPosts = await blogPostService.searchPosts(allBlogs.map(b => b.id), searchQuery, 10)
+  const matchingPosts = await blogPostService.searchPosts(allBlogs.map(b => b.id), searchQuery, 10, { failWhenUnread: true })
   return enrichBlogPostsWithAuthors(matchingPosts, blogMap)
 }
 
@@ -177,6 +176,7 @@ function SearchPageContent() {
   const searchParams = useSearchParams()
   const query = searchParams.get('q') || ''
   const trimmedQuery = query.trim()
+  const searchable = isSearchable(trimmedQuery)
   const { isReady: sdkReady, error: sdkError } = useSdk()
 
   const [users, setUsers] = useState<UserResult[]>([])
@@ -192,11 +192,12 @@ function SearchPageContent() {
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
 
-    if (trimmedQuery.length < MIN_QUERY_LENGTH) {
+    if (!searchable) {
       setUsers([])
       setHashtags([])
       setBlogPosts([])
       setFailed(new Set())
+      setSettledFor(null)
       return
     }
 
@@ -229,7 +230,7 @@ function SearchPageContent() {
     }
 
     performSearch().catch(err => logger.error('Search failed:', err))
-  }, [trimmedQuery, sdkReady, sdkError, attempt])
+  }, [trimmedQuery, searchable, sdkReady, sdkError, attempt])
 
   const retry = () => setAttempt((n) => n + 1)
 
@@ -289,7 +290,7 @@ function SearchPageContent() {
           </PageHeader>
 
           {/* Content */}
-          {trimmedQuery.length < MIN_QUERY_LENGTH ? (
+          {!searchable ? (
             <div className="p-8 text-center">
               <p className="text-gray-500">Type at least {MIN_QUERY_LENGTH} characters to search.</p>
             </div>

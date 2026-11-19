@@ -10,7 +10,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.addInitScript((value) => localStorage.setItem('theme', value), theme)
     await page.goto(appUrl('/explore/'))
-    await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Search Yappr' })).toBeVisible()
     expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([])
   })
 }
