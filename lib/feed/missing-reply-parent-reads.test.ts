@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const m = vi.hoisted(() => ({ getRemovals: vi.fn(), getManyOrThrow: vi.fn(), provenAbsent: vi.fn() }))
 vi.mock('@/lib/services/moderation-service', () => ({ moderationService: { getRemovals: m.getRemovals } }))
 vi.mock('@/lib/services/reply-service', () => ({ replyService: { getManyOrThrow: m.getManyOrThrow } }))
-vi.mock('./prove-absent', () => ({ provenAbsent: m.provenAbsent }))
+vi.mock('@/lib/feed/prove-absent', () => ({ provenAbsent: m.provenAbsent }))
 
 const { missingReplyParentReads: reads } = await import('./missing-reply-parent-reads')
 
