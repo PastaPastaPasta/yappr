@@ -65,17 +65,21 @@ const STORAGE_KEY = scopedKey('wallet-payments:v1');
  * it, so a genuinely new payment of the same amount still goes through, and
  * one the user explicitly asked to send again (`allowAnother`) ignores it.
  */
-type PaymentAttempt = { id: string; key: string; startedAt: number; settledBy?: { reservationId: string; receiptId?: string } };
-const ATTEMPT_LIFETIME_MS = 60 * 60_000;
+type PaymentSettlement = { reservationId: string; receiptId?: string };
+type PaymentAttempt = { id: string; key: string; startedAt: number; settledBy?: PaymentSettlement[] };
+/** Ended in `finally`: only a page that died mid-attempt leaves one behind, and it signs nothing. */
+const ATTEMPT_LIFETIME_MS = 24 * 60 * 60_000;
 const attemptsKey = (ownerId: string) => scopedKey(`wallet-payment-attempts:v1:${ownerId}`);
 
 function readAttempts(ownerId: string): PaymentAttempt[] {
   const raw = localStorage.getItem(attemptsKey(ownerId));
   if (!raw) return [];
-  const parsed = JSON.parse(raw) as PaymentAttempt[];
-  if (!Array.isArray(parsed)) throw new Error('Could not read the payments under way');
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  // Unreadable: read as none, so it is overwritten; an attempt it held reads as gone and signs nothing.
+  if (!Array.isArray(parsed)) return [];
   const now = Date.now();
-  return parsed.filter(attempt => now - attempt.startedAt < ATTEMPT_LIFETIME_MS);
+  return (parsed as PaymentAttempt[]).filter(attempt => now - attempt.startedAt < ATTEMPT_LIFETIME_MS);
 }
 
 function writeAttempts(ownerId: string, attempts: PaymentAttempt[]): void {
@@ -102,19 +106,24 @@ export function endLocalWalletPayment(ownerId: string, attemptId: string): Promi
   });
 }
 
-/** Under the write lock: a completed payment settles every confirmation of the same payment still under way. */
+/**
+ * Under the write lock: a completed payment settles every confirmation of the
+ * same payment still under way. Each completion is kept, with the receipt it
+ * wrote, so one the user chose to send past never hides a later one.
+ */
 function settleAttempts(ownerId: string, record: PersistedWalletPayment): void {
   const attempts = readAttempts(ownerId);
-  if (!attempts.some(attempt => attempt.key === record.key && !attempt.settledBy)) return;
+  const settles = (attempt: PaymentAttempt) => attempt.key === record.key
+    && !attempt.settledBy?.some(item => item.reservationId === record.reservationId);
+  if (!attempts.some(settles)) return;
   let receiptId: string | undefined;
   try {
     receiptId = restorePayment(ownerId, record).receiptId;
   } catch (error) {
     logger.debug('Could not read the completed wallet payment receipt:', error);
   }
-  writeAttempts(ownerId, attempts.map(attempt => (attempt.key === record.key && !attempt.settledBy
-    ? { ...attempt, settledBy: { reservationId: record.reservationId, ...(receiptId ? { receiptId } : {}) } }
-    : attempt)));
+  const settlement: PaymentSettlement = { reservationId: record.reservationId, ...(receiptId ? { receiptId } : {}) };
+  writeAttempts(ownerId, attempts.map(attempt => (settles(attempt) ? { ...attempt, settledBy: [...(attempt.settledBy ?? []), settlement] } : attempt)));
 }
 
 /** Whether a local confirmation was settled by a completed payment, or can no longer be told apart (gone). */
@@ -122,7 +131,10 @@ function attemptSettled(context: PaymentContext): 'settled' | 'gone' | null {
   if (!context.attemptId) return null;
   const attempt = readAttempts(context.ownerId).find(item => item.id === context.attemptId);
   if (!attempt) return 'gone';
-  return attempt.settledBy && !context.allowAnother?.has(attempt.settledBy.reservationId) ? 'settled' : null;
+  const settlement = attempt.settledBy?.find(item => !context.allowAnother?.has(item.reservationId));
+  if (!settlement) return null;
+  logger.info(`Wallet payment settled by ${settlement.reservationId}${settlement.receiptId ? ` (receipt ${settlement.receiptId})` : ''} during a local confirmation`);
+  return 'settled';
 }
 
 function readPersisted(ownerId: string): PersistedWalletPayment[] {
