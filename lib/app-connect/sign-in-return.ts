@@ -42,14 +42,8 @@ function remember(requestHash: string, route: string | null): void {
   }
 }
 
-/** The route the sign-in for `requestHash` started from, once; null for any other request. */
-export function takeSignInReturn(requestHash: string): string | null {
+/** The route the sign-in for `requestHash` started from; null for any other request. Kept until another request is filed. */
+export function signInReturnFor(requestHash: string): string | null {
   const filed = stored()
-  if (filed?.requestHash !== requestHash) return null
-  try {
-    localStorage.removeItem(KEY)
-  } catch {
-    // Storage blocked: the route is still given back once.
-  }
-  return sanitizeReturnTo(filed.route)
+  return filed?.requestHash === requestHash ? sanitizeReturnTo(filed.route) : null
 }

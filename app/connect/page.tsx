@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
 import { isPendingRenewal } from '@/lib/app-connect/pending-request'
-import { takeSignInReturn } from '@/lib/app-connect/sign-in-return'
+import { signInReturnFor } from '@/lib/app-connect/sign-in-return'
 import { loginRoute } from '@/lib/auth/return-to'
 import {
   APP_CONNECT_CHANNEL,
@@ -32,7 +32,7 @@ const STATUS_COPY: Record<string, { title: string; description: string }> = {
 type View =
   | { kind: 'waiting' }
   | { kind: 'other-tab' }
-  | { kind: 'status'; title: string; description: string }
+  | { kind: 'status'; title: string; description: string; retry: string }
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
 
@@ -58,7 +58,7 @@ export default function ConnectPage() {
     // A renewal of the signed-in account resumes in its renew dialog; anything else is a sign-in.
     const pendingRenewal = identityId ? isPendingRenewal(identityId, requestHash) : Promise.resolve(false)
     // Sign-in goes on to the page it started from, carried as `next`.
-    const signIn = () => router.replace(loginRoute(takeSignInReturn(requestHash) ?? ''))
+    const signIn = () => router.replace(loginRoute(signInReturnFor(requestHash) ?? ''))
     pendingRenewal
       .catch(() => false)
       .then((renewal) => {
@@ -87,7 +87,7 @@ export default function ConnectPage() {
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
     if (failure) {
-      setView({ kind: 'status', ...failure })
+      setView({ kind: 'status', ...failure, retry: loginRoute(signInReturnFor(callback.requestHash) ?? '') })
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
@@ -142,7 +142,7 @@ export default function ConnectPage() {
             <p className="font-medium text-gray-900 dark:text-white">{view.title}</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">{view.description}</p>
             <Button asChild>
-              <Link href="/login/">Back to Yappr</Link>
+              <Link href={view.retry}>Back to Yappr</Link>
             </Button>
           </>
         )}
