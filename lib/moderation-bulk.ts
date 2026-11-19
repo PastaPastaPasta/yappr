@@ -46,6 +46,43 @@ export interface BulkItem {
   preview: string
 }
 
+/** A document a run changed, the tab it is listed in now, and until when that outranks a read. */
+export interface RunChange {
+  item: BulkItem
+  tab: BulkMode
+  until: number
+}
+
+/** How long a run's change outranks a read: past the dialog's settle wait, a read that still disagrees saw a later change. */
+export const RUN_CHANGE_TTL_MS = 30_000
+
+/**
+ * The tab a run's change puts its document in: this run's own transition per
+ * `mode`, or one settled by a chain read per the marks it holds. Null when it
+ * is in neither (a legal hold, or gone).
+ */
+export function tabAfter(mode: BulkMode, change: BulkChange): BulkMode | null {
+  if (change.marks === undefined) return mode === 'hide' ? 'unhide' : 'hide'
+  const mod = change.marks?.mod
+  if (mod === undefined) return 'hide'
+  return mod === laneMod('unhide') ? 'unhide' : null
+}
+
+/**
+ * `tab`'s list as read, with recent run changes where they now belong. Each
+ * came back proved, but the read can reach a node a block behind the last of
+ * them, which would leave a document out of both tabs.
+ */
+export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, now = Date.now()): BulkItem[] {
+  const recent = [...changes.values()].filter((change) => change.until > now)
+  if (recent.length === 0) return [...items]
+  const moved = new Map(recent.map((change) => [change.item.id, change]))
+  const kept = items.filter((item) => (moved.get(item.id)?.tab ?? tab) === tab)
+  const listed = new Set(kept.map((item) => item.id))
+  const added = recent.filter((change) => change.tab === tab && !listed.has(change.item.id)).map((change) => change.item)
+  return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
+}
+
 /** How far back "select by time" reaches. */
 export type BulkRange = 'day' | 'week' | 'all'
 
@@ -150,6 +187,7 @@ export function bulkCostLine(count: number, perDocument = HIDE_FEE_CREDITS): str
   const total = count * perDocument
   const each = `${formatCredits(perDocument)} credits (${formatCents(creditsToCents(perDocument))}) each`
   if (count === 0) return `About ${each}.`
+  if (count === 1) return `About ${formatCredits(total)} credits (${formatCents(creditsToCents(total))}).`
   return `About ${formatCredits(total)} credits (${formatCents(creditsToCents(total))}), ${each}.`
 }
 

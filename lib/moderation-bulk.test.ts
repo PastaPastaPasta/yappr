@@ -15,11 +15,14 @@ import {
   newestFirst,
   readEveryPage,
   runBulk,
+  tabAfter,
+  withRunChanges,
   type BulkApplyResult,
   type BulkChange,
   type BulkChainRead,
   type BulkChainState,
   type BulkItem,
+  type BulkMode,
   type BulkPage,
   type BulkProgress,
 } from './moderation-bulk'
@@ -118,6 +121,43 @@ describe('cost', () => {
     expect(bulkCostLine(0, 100_000_000)).toBe('About 100M credits (6¢) each.')
     expect(bulkCostLine(10, 100_000_000)).toBe('About 1B credits (60¢), 100M credits (6¢) each.')
     expect(bulkCostLine(1)).toContain(formatCredits(HIDE_FEE_CREDITS))
+    expect(bulkCostLine(1, 100_000_000)).toBe('About 100M credits (6¢).')
+  })
+})
+
+describe("a run's changes over a lagging read", () => {
+  const doc = (id: string, createdAt: number): BulkItem => ({ id, kind: 'post', createdAt, preview: id })
+  const NOW = 1_000_000
+  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.flatMap(([item, tab, until = NOW + 1]) => (
+    tab ? [[item.id, { item, tab, until }] as const] : [])))
+
+  it('puts a document where the change leaves it: its own transition per the run, a read per its marks', () => {
+    expect(tabAfter('hide', {})).toBe('unhide')
+    expect(tabAfter('unhide', {})).toBe('hide')
+    expect(tabAfter('hide', { marks: null })).toBe('hide')
+    // What a chain read holds for a listed document: no mod, maybe who cleared it.
+    expect(tabAfter('unhide', { marks: {} })).toBe('hide')
+    expect(tabAfter('unhide', { marks: { moderatedBy: 'x', moderatedAt: 1 } as BulkChange['marks'] })).toBe('hide')
+    expect(tabAfter('unhide', { marks: { mod: 1 } as BulkChange['marks'] })).toBe('unhide')
+    expect(tabAfter('hide', { marks: { mod: 2 } as BulkChange['marks'] })).toBeNull()
+  })
+
+  it('lists what the run unhid under Showing and not under Hidden, whatever the read reached', () => {
+    const a = doc('a', 3)
+    const b = doc('b', 2)
+    const c = doc('c', 1)
+    const unhid = changes([a, 'hide'], [b, 'hide'])
+    // One unhide landed a block after the other: this node shows only a, and still lists b as hidden.
+    expect(withRunChanges([a, c], 'hide', unhid, NOW).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+    expect(withRunChanges([b], 'unhide', unhid, NOW)).toEqual([])
+  })
+
+  it('leaves a read alone when the run changed nothing in it, or once its changes are no longer recent', () => {
+    const read = [doc('x', 2), doc('y', 1)]
+    expect(withRunChanges(read, 'unhide', new Map(), NOW)).toEqual(read)
+    expect(withRunChanges(read, 'unhide', changes([doc('z', 3), 'hide']), NOW)).toEqual(read)
+    // Another moderator unhid x after this run hid it: once the change is old, the read wins.
+    expect(withRunChanges([doc('x', 2)], 'hide', changes([doc('x', 2), 'unhide', NOW]), NOW).map((item) => item.id)).toEqual(['x'])
   })
 })
 
