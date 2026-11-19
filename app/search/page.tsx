@@ -4,10 +4,12 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ArrowLeftIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, ArrowPathIcon, MagnifyingGlassIcon, HashtagIcon, UserIcon, DocumentTextIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Spinner } from '@/components/ui/spinner'
+import { Button } from '@/components/ui/button'
+import { useSdk } from '@/contexts/sdk-context'
 import { BlogPostCard } from '@/components/blog/blog-post-card'
 import { formatNumber } from '@/lib/utils'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -33,208 +35,203 @@ interface HashtagResult {
   unit: 'like' | 'post'
 }
 
+const MIN_QUERY_LENGTH = 3
+
+type Section = 'users' | 'hashtags' | 'blogPosts'
+
+/** DPNS names starting with the query (or the exact name), with profile display names. Rejects when DPNS can't be read. */
+async function searchUsers(query: string): Promise<UserResult[]> {
+  const searchQuery = query.replace(/^@/, '')
+  const dpnsResults = await dpnsService.findUsernamesByPrefix(searchQuery, 10)
+
+  if (dpnsResults.length === 0) {
+    const exactIdentity = await dpnsService.findIdentityByName(searchQuery)
+    if (exactIdentity) {
+      dpnsResults.push({
+        username: `${searchQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
+        ownerId: exactIdentity
+      })
+    }
+  }
+
+  if (dpnsResults.length === 0) return []
+
+  const ownerIds = Array.from(new Set(dpnsResults.map(r => r.ownerId).filter(Boolean)))
+
+  // Display names are optional: a failed profile read still lists the names.
+  let profiles: UnifiedProfileDocument[] = []
+  try {
+    profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
+  } catch (error) {
+    logger.error('Failed to fetch profiles:', error)
+  }
+  const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
+
+  // One result per owner, picking the best matched name via the canonical ordering
+  const ownerToNames = new Map<string, string[]>()
+  for (const result of dpnsResults) {
+    if (!result.ownerId) continue
+    const names = ownerToNames.get(result.ownerId) || []
+    names.push(result.username)
+    ownerToNames.set(result.ownerId, names)
+  }
+
+  return Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
+    const profile = profileMap.get(ownerId)
+    const primaryUsername = getPrimaryUsername(names) ?? names[0]
+    return {
+      id: ownerId,
+      username: primaryUsername,
+      displayName: profile?.displayName || primaryUsername,
+      bio: profile?.bio
+    }
+  })
+}
+
+async function searchHashtags(searchQuery: string): Promise<HashtagResult[]> {
+  const results: HashtagResult[] = []
+  const normalizedQuery = searchQuery.replace(/^#/, '').toLowerCase()
+
+  // Trending hashtags of the last week that contain the query
+  const trending = await hashtagService.getTrendingHashtags({
+    timeWindowHours: 168,
+    minPosts: 1,
+    limit: 50
+  })
+  const matchingTrending = trending.filter(h => h.hashtag.includes(normalizedQuery))
+
+  // The ranked trending list counts likes on tagged posts (as the trending box says), not posts.
+  const trendingUnit = prefixRankingsAvailable() ? 'like' : 'post'
+  results.push(...matchingTrending.map((h) => ({ ...h, unit: trendingUnit } as const)))
+
+  // An exact tag that isn't trending, if it has posts
+  if (/^[a-z0-9_]{1,63}$/.test(normalizedQuery) && !results.some(h => h.hashtag === normalizedQuery)) {
+    const postCount = await hashtagService.getPostCountByHashtag(normalizedQuery)
+    if (postCount > 0) {
+      results.unshift({ hashtag: normalizedQuery, postCount, unit: 'post' })
+    }
+  }
+
+  return results
+}
+
+async function searchBlogPosts(searchQuery: string): Promise<BlogPostWithAuthor[]> {
+  const { blogService, blogPostService } = await import('@/lib/services')
+
+  const { blogs: allBlogs } = await blogService.getNewestBlogs()
+  if (allBlogs.length === 0) return []
+
+  const blogMap = new Map(allBlogs.map(b => [b.id, b]))
+  const matchingPosts = await blogPostService.searchPosts(allBlogs.map(b => b.id), searchQuery, 10)
+  return enrichBlogPostsWithAuthors(matchingPosts, blogMap)
+}
+
+function SearchField({ query }: { query: string }) {
+  const router = useRouter()
+  const [value, setValue] = useState(query)
+
+  return (
+    <form
+      role="search"
+      className="relative"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const trimmed = value.trim()
+        if (trimmed) router.push(`/search?q=${encodeURIComponent(trimmed)}`)
+      }}
+    >
+      <MagnifyingGlassIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
+      <input
+        type="search"
+        enterKeyHint="search"
+        aria-label="Search people and hashtags"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Search people and hashtags"
+        className="w-full h-12 pl-12 pr-4 bg-gray-100 dark:bg-gray-900 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
+      />
+    </form>
+  )
+}
+
+function SectionEmpty({ failed, emptyText, onRetry }: { failed: boolean; emptyText: string; onRetry: () => void }) {
+  return (
+    <div className="p-8 text-center">
+      {failed ? (
+        <>
+          <p className="mb-4 text-gray-500">Couldn&apos;t load these results.</p>
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <ArrowPathIcon className="mr-2 h-4 w-4" />
+            Try again
+          </Button>
+        </>
+      ) : (
+        <p className="text-gray-500">{emptyText}</p>
+      )}
+    </div>
+  )
+}
+
 function SearchPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const query = searchParams.get('q') || ''
+  const trimmedQuery = query.trim()
+  const { isReady: sdkReady, error: sdkError } = useSdk()
 
   const [users, setUsers] = useState<UserResult[]>([])
   const [hashtags, setHashtags] = useState<HashtagResult[]>([])
   const [blogPosts, setBlogPosts] = useState<BlogPostWithAuthor[]>([])
-  const [isLoading, setIsLoading] = useState(query.trim().length >= 3)
+  const [failed, setFailed] = useState<ReadonlySet<Section>>(new Set())
+  const [attempt, setAttempt] = useState(0)
+  /** The query and attempt the shown results belong to; anything else is still loading. */
+  const [settledFor, setSettledFor] = useState<string | null>(null)
+  const searchKey = `${attempt}:${trimmedQuery}`
   const searchIdRef = useRef(0)
 
   useEffect(() => {
     const currentSearchId = ++searchIdRef.current
-    logger.debug(`Search: Starting search #${currentSearchId} for query: "${query}"`)
+
+    if (trimmedQuery.length < MIN_QUERY_LENGTH) {
+      setUsers([])
+      setHashtags([])
+      setBlogPosts([])
+      setFailed(new Set())
+      return
+    }
+
+    // On a direct load this effect runs before the SDK provider's, which
+    // configures the SDK: searching now would fail and read as "no results".
+    // A failed setup searches anyway, so the sections offer a retry.
+    if (!sdkReady && !sdkError) return
+    const key = `${attempt}:${trimmedQuery}`
 
     const performSearch = async () => {
-      const trimmedQuery = query.trim()
+      const [userResults, hashtagResults, blogResults] = await Promise.allSettled([
+        searchUsers(trimmedQuery),
+        searchHashtags(trimmedQuery),
+        searchBlogPosts(trimmedQuery),
+      ])
+      if (currentSearchId !== searchIdRef.current) return
 
-      if (!trimmedQuery) {
-        setUsers([])
-        setHashtags([])
-        setBlogPosts([])
-        setIsLoading(false)
-        return
+      const nextFailed = new Set<Section>()
+      const settle = <T,>(section: Section, result: PromiseSettledResult<T[]>): T[] => {
+        if (result.status === 'fulfilled') return result.value
+        logger.error(`Search: ${section} search failed:`, result.reason)
+        nextFailed.add(section)
+        return []
       }
-
-      // Require at least 3 characters to search (like DashPay)
-      if (trimmedQuery.length < 3) {
-        logger.debug('Search: Query too short, need at least 3 characters')
-        setUsers([])
-        setHashtags([])
-        setBlogPosts([])
-        setIsLoading(false)
-        return
-      }
-
-      setIsLoading(true)
-
-      try {
-        // Search in parallel
-        const [userResults, hashtagResults, blogResults] = await Promise.all([
-          searchUsers(trimmedQuery),
-          searchHashtags(trimmedQuery),
-          searchBlogPosts(trimmedQuery),
-        ])
-
-        // Only update state if this is still the current search
-        if (currentSearchId !== searchIdRef.current) {
-          logger.debug(`Search: Ignoring stale results for search #${currentSearchId}`)
-          return
-        }
-
-        setUsers(userResults)
-        setHashtags(hashtagResults)
-        setBlogPosts(blogResults)
-      } catch (error) {
-        logger.error('Search failed:', error)
-      } finally {
-        if (currentSearchId === searchIdRef.current) {
-          setIsLoading(false)
-        }
-      }
+      setUsers(settle('users', userResults))
+      setHashtags(settle('hashtags', hashtagResults))
+      setBlogPosts(settle('blogPosts', blogResults))
+      setFailed(nextFailed)
+      setSettledFor(key)
     }
 
     performSearch().catch(err => logger.error('Search failed:', err))
-  }, [query])
+  }, [trimmedQuery, sdkReady, sdkError, attempt])
 
-  const searchUsers = async (searchQuery: string): Promise<UserResult[]> => {
-    try {
-      const trimmedQuery = searchQuery.trim()
-      logger.debug(`Search: searchUsers called with: "${trimmedQuery}"`)
-
-      // Require at least 3 characters to search (like DashPay)
-      if (trimmedQuery.length < 3) {
-        logger.debug('Search: Query too short, need at least 3 characters')
-        return []
-      }
-
-      // Search DPNS usernames by prefix
-      const dpnsResults = await dpnsService.searchUsernamesWithDetails(trimmedQuery, 10)
-      logger.debug(`Search: DPNS prefix search returned ${dpnsResults.length} results`)
-
-      // If prefix search returns nothing, try exact name resolution as fallback
-      if (dpnsResults.length === 0) {
-        logger.debug(`Search: Trying exact name resolution for "${trimmedQuery}"`)
-        const exactIdentity = await dpnsService.resolveIdentity(trimmedQuery)
-        if (exactIdentity) {
-          logger.debug(`Search: Found exact match for "${trimmedQuery}"`)
-          dpnsResults.push({
-            username: `${trimmedQuery.toLowerCase().replace(/\.dash$/, '')}.dash`,
-            ownerId: exactIdentity
-          })
-        }
-      }
-
-      if (dpnsResults.length === 0) {
-        return []
-      }
-
-      // Get unique owner IDs
-      const ownerIds = Array.from(new Set(dpnsResults.map(r => r.ownerId).filter(Boolean)))
-
-      // Fetch profiles for display names
-      let profiles: UnifiedProfileDocument[] = []
-      if (ownerIds.length > 0) {
-        try {
-          profiles = await unifiedProfileService.getProfilesByIdentityIds(ownerIds)
-        } catch (error) {
-          logger.error('Failed to fetch profiles:', error)
-        }
-      }
-
-      // Create profile map
-      const profileMap = new Map(profiles.map(p => [p.$ownerId, p]))
-
-      // Group by owner to handle multiple usernames per owner
-      const ownerToNames = new Map<string, string[]>()
-      dpnsResults.forEach(result => {
-        if (result.ownerId) {
-          const names = ownerToNames.get(result.ownerId) || []
-          names.push(result.username)
-          ownerToNames.set(result.ownerId, names)
-        }
-      })
-
-      // Build results, picking the best matched name via the canonical ordering
-      const results: UserResult[] = Array.from(ownerToNames.entries()).map(([ownerId, names]) => {
-        const profile = profileMap.get(ownerId)
-        const primaryUsername = getPrimaryUsername(names) ?? names[0]
-
-        return {
-          id: ownerId,
-          username: primaryUsername,
-          displayName: profile?.displayName || primaryUsername,
-          bio: profile?.bio
-        }
-      })
-
-      return results
-    } catch (error) {
-      logger.error('User search failed:', error)
-      return []
-    }
-  }
-
-  const searchHashtags = async (searchQuery: string): Promise<HashtagResult[]> => {
-    try {
-      const results: HashtagResult[] = []
-      const normalizedQuery = searchQuery.replace(/^#/, '').toLowerCase()
-
-      // Get trending hashtags and filter by query
-      const trending = await hashtagService.getTrendingHashtags({
-        timeWindowHours: 168, // 1 week
-        minPosts: 1,
-        limit: 50
-      })
-
-      // Filter trending hashtags that contain the query
-      const matchingTrending = trending.filter(h =>
-        h.hashtag.includes(normalizedQuery)
-      )
-
-      // The ranked trending list counts likes on tagged posts (as the trending box says), not posts.
-      const trendingUnit = prefixRankingsAvailable() ? 'like' : 'post'
-      results.push(...matchingTrending.map((h) => ({ ...h, unit: trendingUnit } as const)))
-
-      // Check if exact match exists but isn't in trending
-      if (/^[a-z0-9_]{1,63}$/.test(normalizedQuery)) {
-        const alreadyExists = results.some(h => h.hashtag === normalizedQuery)
-        if (!alreadyExists) {
-          // Check if hashtag has any posts and get real count
-          const postCount = await hashtagService.getPostCountByHashtag(normalizedQuery)
-          if (postCount > 0) {
-            results.unshift({ hashtag: normalizedQuery, postCount, unit: 'post' })
-          }
-        }
-      }
-
-      return results
-    } catch (error) {
-      logger.error('Hashtag search failed:', error)
-      return []
-    }
-  }
-
-  const searchBlogPosts = async (searchQuery: string): Promise<BlogPostWithAuthor[]> => {
-    try {
-      const { blogService, blogPostService } = await import('@/lib/services')
-
-      const { blogs: allBlogs } = await blogService.getNewestBlogs()
-      if (allBlogs.length === 0) return []
-
-      const blogMap = new Map(allBlogs.map(b => [b.id, b]))
-      const blogIds = allBlogs.map(b => b.id)
-      const matchingPosts = await blogPostService.searchPosts(blogIds, searchQuery, 10)
-
-      return enrichBlogPostsWithAuthors(matchingPosts, blogMap)
-    } catch (error) {
-      logger.error('Blog post search failed:', error)
-      return []
-    }
-  }
+  const retry = () => setAttempt((n) => n + 1)
 
   const handleUserClick = (userId: string) => {
     router.push(`/user?id=${userId}`)
@@ -250,14 +247,17 @@ function SearchPageContent() {
     }
   }
 
-  if (!query) {
+  if (!trimmedQuery) {
     return (
       <PageShell>
+            <div className="p-4 lg:hidden">
+              <SearchField query="" />
+            </div>
             <div className="p-12 text-center">
               <MagnifyingGlassIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Search Yappr</h2>
               <p className="text-gray-500">
-                Enter a search term to find users and hashtags
+                Find people by username, hashtags and blog posts
               </p>
             </div>
       </PageShell>
@@ -279,14 +279,21 @@ function SearchPageContent() {
               <div>
                 <h1 className="text-xl font-bold">Search</h1>
                 <p className="text-sm text-gray-500">
-                  Results for &quot;{query}&quot;
+                  Results for &quot;{trimmedQuery}&quot;
                 </p>
               </div>
+            </div>
+            <div className="px-4 pb-3 lg:hidden">
+              <SearchField key={query} query={query} />
             </div>
           </PageHeader>
 
           {/* Content */}
-          {isLoading ? (
+          {trimmedQuery.length < MIN_QUERY_LENGTH ? (
+            <div className="p-8 text-center">
+              <p className="text-gray-500">Type at least {MIN_QUERY_LENGTH} characters to search.</p>
+            </div>
+          ) : settledFor !== searchKey ? (
             <div className="p-8 text-center">
               <Spinner size="md" className="mx-auto mb-4" />
               <p className="text-gray-500">Searching...</p>
@@ -326,9 +333,7 @@ function SearchPageContent() {
                     ))}
                   </div>
                 ) : (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500">No users found</p>
-                  </div>
+                  <SectionEmpty failed={failed.has('users')} emptyText="No users found" onRetry={retry} />
                 )}
               </section>
 
@@ -359,9 +364,7 @@ function SearchPageContent() {
                     ))}
                   </div>
                 ) : (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500">No hashtags found</p>
-                  </div>
+                  <SectionEmpty failed={failed.has('hashtags')} emptyText="No hashtags found" onRetry={retry} />
                 )}
               </section>
 
@@ -380,9 +383,7 @@ function SearchPageContent() {
                     ))}
                   </div>
                 ) : (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500">No blog posts found</p>
-                  </div>
+                  <SectionEmpty failed={failed.has('blogPosts')} emptyText="No blog posts found" onRetry={retry} />
                 )}
               </section>
             </div>

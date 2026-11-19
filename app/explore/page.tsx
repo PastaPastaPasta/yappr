@@ -3,7 +3,7 @@
 import { logger } from '@/lib/logger';
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, TrophyIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, ArrowLeftIcon, HashtagIcon, DocumentTextIcon, TrophyIcon, UserIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { PostCard } from '@/components/post/post-card'
 import { Spinner } from '@/components/ui/spinner'
@@ -39,6 +39,7 @@ export default function ExplorePage() {
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
   const [searchQuery, setSearchQuery] = useState('')
+  const trimmedSearchQuery = searchQuery.trim()
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [searchResults, setSearchResults] = useState<Post[]>([])
   const [blogSearchResults, setBlogSearchResults] = useState<BlogPostWithAuthor[]>([])
@@ -287,7 +288,7 @@ export default function ExplorePage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setIsSearchFocused(true)}
-                  placeholder="Search posts and blog articles"
+                  placeholder="Search Yappr"
                   className="w-full h-12 pl-12 pr-4 bg-gray-100 dark:bg-gray-900 rounded-full focus:outline-none focus:ring-2 focus:ring-yappr-500 focus:bg-transparent dark:focus:bg-transparent"
                 />
               </div>
@@ -317,6 +318,15 @@ export default function ExplorePage() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
               >
+                {trimmedSearchQuery.length >= 3 && (
+                  <Link
+                    href={`/search?q=${encodeURIComponent(trimmedSearchQuery)}`}
+                    className="flex items-center gap-3 border-b border-gray-200 px-4 py-3 text-yappr-600 hover:bg-gray-50 dark:border-gray-800 dark:text-yappr-400 dark:hover:bg-gray-950"
+                  >
+                    <UserIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">Search people and hashtags for &quot;{trimmedSearchQuery}&quot;</span>
+                  </Link>
+                )}
                 {isSearching ? (
                   <div className="p-8 text-center">
                     <Spinner size="md" className="mx-auto mb-4" />
