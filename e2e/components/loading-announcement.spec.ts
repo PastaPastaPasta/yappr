@@ -17,3 +17,33 @@ test('the status region is mounted before loading starts and announces it, while
   await expect(status).toHaveText('')
   await expect(page.getByText('Loaded')).toBeVisible()
 })
+
+test('a view that opens already loading mounts its status region empty, then announces', async ({ page }) => {
+  // Records each status text as the region first appears and as it changes after.
+  await page.addInitScript(() => {
+    const seen: string[] = []
+    ;(window as unknown as { statusTexts: string[] }).statusTexts = seen
+    new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement) {
+            for (const region of node.querySelectorAll('[role="status"]')) seen.push(`mounted:${region.textContent ?? ''}`)
+          }
+        }
+        if (mutation.type === 'characterData' || (mutation.target instanceof HTMLElement && mutation.target.getAttribute('role') === 'status')) {
+          const region = mutation.target instanceof HTMLElement ? mutation.target : mutation.target.parentElement
+          if (region?.getAttribute('role') === 'status') seen.push(`changed:${region.textContent ?? ''}`)
+        }
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true })
+  })
+  await page.goto('/loading-announcement.html?opens-loading')
+  const region = page.getByRole('region', { name: 'Opens loading' }).getByRole('status')
+  await expect(region).toHaveText('Loading creators')
+  const seen = await page.evaluate(() => (window as unknown as { statusTexts: string[] }).statusTexts)
+  expect(seen).toContain('mounted:')
+  expect(seen).not.toContain('mounted:Loading creators')
+  expect(seen).toContain('changed:Loading creators')
+  await page.getByRole('button', { name: 'Settle' }).click()
+  await expect(region).toHaveText('')
+})

@@ -16,4 +16,18 @@ function Fixture() {
   )
 }
 
-createRoot(document.getElementById('root')!).render(<Fixture />)
+/** A view that opens already loading (Explore's first trending read). */
+function OpensLoading() {
+  const [loading, setLoading] = useState(true)
+  return (
+    <section aria-label="Opens loading">
+      <button type="button" onClick={() => setLoading(false)}>Settle</button>
+      <LoadingAnnouncement loading={loading} label="Loading creators" />
+    </section>
+  )
+}
+
+createRoot(document.getElementById('root')!).render(<>
+  <Fixture />
+  {new URLSearchParams(window.location.search).has('opens-loading') ? <OpensLoading /> : null}
+</>)
