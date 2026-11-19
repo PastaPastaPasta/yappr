@@ -419,15 +419,20 @@ function isVerdict(error: unknown): boolean {
  * nonce is reserved, so nothing this browser signs can land between the check
  * and the write. When it resolves false the write fails with
  * {@link WRITE_PRECONDITION_FAILED} and nothing is reserved or sent.
+ *
+ * `beforeNonce`, when given, runs under the same lock before the wait for
+ * earlier transitions (to free reservations the caller knows are orphaned).
  */
 export async function withSdkSignedWrite<T>(
   ownerId: string,
   contractId: string,
   write: () => Promise<T>,
   scope?: string,
-  precondition?: () => Promise<boolean>
+  precondition?: () => Promise<boolean>,
+  beforeNonce?: () => void
 ): Promise<T> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
+    beforeNonce?.()
     const { current } = await awaitNonce(ownerId, contractId, (tip, reservation) => (stillPending(tip, reservation).length === 0 ? true : null));
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
     const sdk = await getEvoSdk();

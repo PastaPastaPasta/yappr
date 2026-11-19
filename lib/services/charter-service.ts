@@ -56,6 +56,7 @@ import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, 
 import { stateTransitionService } from './state-transition-service'
 import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
+import { STALE_IDENTITY_ERROR, identityForUpdate, noteProvedIdentityRevision } from './identity-service'
 
 /** A join request as the leader's list shows it (its message is read separately). */
 export interface JoinRequest {
@@ -285,11 +286,14 @@ function releaseOrphanedReservations(ownerId: string): void {
   for (const entry of pending) {
     const [owner, type] = entry.scope?.split(':') ?? []
     if (entry.nonce === null || !entry.scope || owner !== ownerId || !CREATE_SLOT_TYPES.has(type)) continue
+    let stored: StoredSlot | null
     try {
-      if (storedReservationId(entry.scope) === entry.id) continue
+      stored = loadSlot(entry.scope)
     } catch {
+      // Unreadable: it may be this reservation's signed create, still able to land.
       continue
     }
+    if (stored && !isLanded(stored) && stored.reservation.id === entry.id) continue
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
   }
 }
@@ -672,14 +676,19 @@ class CharterService {
       await withIdentityUpdateLock(identityId, async () => {
         const sdk = await getEvoSdk()
         const w = await wasmModule()
-        // Read under the lock: another tab's key update has been proved by now, so this one picks the next key id and revision.
-        const identity = await fetchIdentity(identityId)
+        // Read under the lock, at least as fresh as the last update proved here: this one picks the next key id and revision.
+        const identity = await identityForUpdate(identityId).catch((error: unknown) => {
+          if (error instanceof Error && error.message === STALE_IDENTITY_ERROR) throw new CharterActionError(STALE_IDENTITY_ERROR, 'refused')
+          throw error
+        })
+        if (!identity) throw new CharterActionError("Your account couldn't be read. Try again in a moment.", 'refused')
         // A session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
         this.assertSameSession(generation, identityId)
         const { purpose, documentType } = CHARTER_KEYS[role]
-        const charterKeys = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType))
-        if (charterKeys.some((key) => keyMatches(charterKey, keyData(key)))) return
-        if (charterKeys.length > 0) throw new CharterActionError('A charter key was just added to this account from somewhere else. Try again to unlock it.', 'refused')
+        // The role's current key, as charterKey picks it: added from somewhere else meanwhile, it is used only when it is this one.
+        const current = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType)).sort((a, b) => b.keyId - a.keyId)[0]
+        if (current && keyMatches(charterKey, keyData(current))) return
+        if (current) throw new CharterActionError('A charter key was just added to this account from somewhere else. Try again to unlock it.', 'refused')
         const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
         const publicKey = secp256k1.getPublicKey(charterKey, true)
         const signer = new w.IdentitySigner()
@@ -701,7 +710,10 @@ class CharterService {
         }
         for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
           const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
-          if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
+          if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) {
+            noteProvedIdentityRevision(identityId, fresh.revision)
+            return
+          }
           await sleep(PROOF_PAUSE_MS)
         }
         throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
@@ -886,7 +898,6 @@ class CharterService {
     // create or another tab's stored one, is the same signed bytes under the same nonce.)
     const first = await lock(async () => {
       this.assertSameSession(generation, ownerId)
-      releaseOrphanedReservations(ownerId)
       const slot = await resolveSlot()
       if (slot.kind === 'landed') return slot.id
       return slot.kind === 'pending' ? send(slot.entry, false) : null
@@ -903,6 +914,8 @@ class CharterService {
         if (slot.kind === 'landed') return slot.id
         if (slot.kind === 'pending') return send(slot.entry, false)
         this.assertSameSession(generation, ownerId)
+        // In the same lock as the allocation: no reservation can be orphaned between the sweep and it.
+        releaseOrphanedReservations(ownerId)
         const { current: tip, value: nonce } = await awaitNonce(ownerId, CHARTERS_CONTRACT_ID, allocateNonce)
         this.assertSameSession(generation, ownerId)
         // The nonce read above stays this write's while the re-check reads the network: the lock holds every
@@ -1139,7 +1152,6 @@ class CharterService {
       const { wif, identityKey } = await this.signingKey(ownerId, generation)
       const sdk = await getEvoSdk()
       const w = await wasmModule()
-      await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => releaseOrphanedReservations(ownerId))
       // The SDK picks this nonce itself: the coordinator holds other writes off it. Queued behind
       // another write, a session forgotten meanwhile fails the precondition: nothing reserved or sent.
       await withSdkSignedWrite(ownerId, CHARTERS_CONTRACT_ID, async () => {
@@ -1158,7 +1170,7 @@ class CharterService {
           signer.free()
           privateKey.free()
         }
-      }, `${type}:${documentId}`, async () => this.isLive(generation, ownerId))
+      }, `${type}:${documentId}`, async () => this.isLive(generation, ownerId), () => releaseOrphanedReservations(ownerId))
     } catch (error) {
       if (error instanceof Error && error.message === WRITE_PRECONDITION_FAILED) throw new CharterActionError('Nothing was sent.', 'cancelled')
       throw charterActionError('undo-team-change', error)

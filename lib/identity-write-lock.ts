@@ -42,13 +42,20 @@ export async function withIdentityWriteLock<T>(ownerId: string, contractId: stri
   return run
 }
 
+export const IDENTITY_UPDATE_UNLOCKED = "This browser can't add a key to your account safely. Update it, or use another browser."
+
 /**
  * One identity update the app signs at a time per identity, across tabs. An
  * update picks its key id and revision from the identity it reads under this
  * lock and holds it until it has its answer, so the next one reads it.
- * Wallet-signed updates (identity-update-builder) are not covered: the lock
- * can't be held across a wallet round trip.
+ * Without the Web Locks API no tab can hold the others off, and an identity
+ * update has no collision recovery, so none is signed (rejects with
+ * {@link IDENTITY_UPDATE_UNLOCKED}). Wallet-signed updates
+ * (identity-update-builder) are not covered: the lock can't be held across a
+ * wallet round trip.
  */
-export function withIdentityUpdateLock<T>(identityId: string, update: () => Promise<T>): Promise<T> {
-  return withIdentityWriteLock(identityId, 'identity-update', update)
+export async function withIdentityUpdateLock<T>(identityId: string, update: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  if (!locks) throw new Error(IDENTITY_UPDATE_UNLOCKED)
+  return await locks.request(lockName(identityId, 'identity-update'), update)
 }

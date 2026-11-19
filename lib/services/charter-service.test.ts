@@ -30,6 +30,7 @@ const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
 const sdkLocks = vi.hoisted(() => vi.fn())
+const sdkNonceWaits = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
 
@@ -65,9 +66,11 @@ vi.mock('./identity-nonce', () => ({
   loadReservation: nonces.load,
   releaseNonce: nonces.release,
   WRITE_PRECONDITION_FAILED: 'This was not sent: what it depended on changed.',
-  withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>) => {
+  withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>, beforeNonce?: () => void) => {
     sdkPreconditions.push(precondition)
     await sdkLocks()
+    beforeNonce?.()
+    sdkNonceWaits()
     if (precondition && !(await precondition())) throw new Error('This was not sent: what it depended on changed.')
     // The real coordinator reserves a nonce here, then awaits the SDK's nonce refresh before the write.
     hooks.afterReserve?.()
@@ -1094,6 +1097,32 @@ describe('a charter key added from two tabs at once', () => {
     expect(sdk.identities.update).not.toHaveBeenCalled()
   })
 
+  it('adds nothing and uses no older key when the role has a newer, different one by the time the lock is held', async () => {
+    const { publicKey } = await leaderKey()
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, publicKey, 'leader'), charterKeyOnChain(4, new Uint8Array(33).fill(1), 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'refused' })
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+
+  it('waits for a read as fresh as the last key update proved here before picking a key id', async () => {
+    const { key, publicKey } = await leaderKey()
+    localStorage.setItem(`yappr:identity-revision:${OWNER}`, '3')
+    const proved = { revision: 3, publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ revision: 2, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce({ revision: 2, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce(proved)
+      .mockResolvedValue({ revision: 4, publicKeys: [...proved.publicKeys, charterKeyOnChain(4, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: proved }))
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 4 }))
+    expect(localStorage.getItem(`yappr:identity-revision:${OWNER}`)).toBe('4')
+  })
+
   it('adds no second charter key of the role when another one appeared meanwhile', async () => {
     sdk.identities.fetch
       .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
@@ -1120,7 +1149,10 @@ describe('a create reservation left without its stored create (the page died bet
       entry('r-unscoped', 5n),
       entry('r-other-owner', 4n, 'owner2:reason:spam'),
       entry('r-not-a-slot', 3n, `${OWNER}:poll:x`),
+      entry('r-malformed', 2n, `${OWNER}:reason:malformed`),
     ]
+    // Parseable but not a slot loadSlot accepts: it may still be a signed create, so its nonce stays held.
+    storage.setItem(slotKey('reason', 'malformed'), JSON.stringify({ reservation: { id: 'r-other' } }))
     storage.setItem(slotKey('reason', 'other'), JSON.stringify({
       signed: { id: 'doc-8', type: 'reason', owner: OWNER, nonce: '8', bytes: 'CA==', hash: 'h8' }, fingerprint: 'f', reservation: { id: 'r-kept', nonce: '8', expiresAt: null },
     }))
@@ -1141,7 +1173,9 @@ describe('a create reservation left without its stored create (the page died bet
     nonces.release.mockClear()
     await charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e4', memberId: 'm1' })
     expect(released()).toEqual([['r-orphan', 9n]])
-    expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(sdkLocks.mock.invocationCallOrder[0])
+    // Under the delete's own lock, before its wait on earlier transitions: nothing can be orphaned in between.
+    expect(sdkLocks.mock.invocationCallOrder[0]).toBeLessThan(nonces.release.mock.invocationCallOrder[0])
+    expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(sdkNonceWaits.mock.invocationCallOrder[0])
     expect(sdk.documents.delete).toHaveBeenCalledTimes(1)
   })
 })

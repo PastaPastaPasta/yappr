@@ -11,6 +11,57 @@ import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 import { withIdentityUpdateLock } from '@/lib/identity-write-lock'
+import { scopedKey } from '@/lib/storage-scope'
+import { sleep } from '@/lib/retry-utils'
+import { Identifier } from '@dashevo/wasm-sdk'
+
+const PROVED_REVISION_PREFIX = 'yappr:identity-revision:'
+const FRESH_READS = 5
+const FRESH_READ_PAUSE_MS = 1500
+export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached the network yet. Try again in a moment."
+
+/** The revision the last identity update this browser proved left the identity at, or null. */
+function provedIdentityRevision(identityId: string): number | null {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(scopedKey(PROVED_REVISION_PREFIX + identityId))
+  } catch {
+    // Storage blocked: nothing was noted.
+  }
+  const revision = raw === null ? NaN : Number(raw)
+  return Number.isSafeInteger(revision) ? revision : null
+}
+
+/** Records a proved identity update, so the next one (any tab) waits for a read that has it. */
+export function noteProvedIdentityRevision(identityId: string, revision: unknown): void {
+  const value = Number(revision)
+  if (!Number.isSafeInteger(value) || value <= (provedIdentityRevision(identityId) ?? -1)) return
+  try {
+    localStorage.setItem(scopedKey(PROVED_REVISION_PREFIX + identityId), String(value))
+  } catch {
+    // Storage blocked: the next update reads without a floor.
+  }
+}
+
+/**
+ * Under {@link withIdentityUpdateLock}: the identity to build an update on,
+ * read at least as fresh as the last update this browser proved (a node a
+ * block behind would hand back the key id and revision that update took),
+ * with the SDK's cached identity nonce refreshed (another tab may have used
+ * it). Null when there is no such identity; rejects with
+ * {@link STALE_IDENTITY_ERROR} when no read catches up.
+ */
+export async function identityForUpdate(identityId: string) {
+  const sdk = await getEvoSdk()
+  try { await sdk.wasm.refreshIdentityNonce(new Identifier(identityId)) } catch { /* best effort */ }
+  const floor = provedIdentityRevision(identityId)
+  for (let attempt = 0; ; attempt++) {
+    const identity = await sdk.identities.fetch(identityId)
+    if (!identity || floor === null || Number(identity.revision ?? 0) >= floor) return identity
+    if (attempt + 1 >= FRESH_READS) throw new Error(STALE_IDENTITY_ERROR)
+    await sleep(FRESH_READ_PAUSE_MS)
+  }
+}
 
 export interface IdentityPublicKey {
   id: number;
@@ -358,7 +409,8 @@ class IdentityService {
     _contractId?: string, // Reserved for future use: contract-bound keys
     options: { cancelled?: () => boolean } = {}
   ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
-    return withIdentityUpdateLock(identityId, () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options));
+    return withIdentityUpdateLock(identityId, () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options))
+      .catch((error: unknown) => ({ success: false, error: extractErrorMessage(error) }));
   }
 
   private async addEncryptionKeyLocked(
@@ -370,8 +422,7 @@ class IdentityService {
     try {
       const sdk = await getEvoSdk();
 
-      // Fetch current identity
-      const identity = await sdk.identities.fetch(identityId);
+      const identity = await identityForUpdate(identityId);
       if (!identity) {
         return { success: false, error: 'Identity not found' };
       }
@@ -469,6 +520,7 @@ class IdentityService {
         // during a quorum rotation): the key may be on the identity already.
         if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
           logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
+          noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
           this.clearCache(identityId);
           return { success: true, keyId: newKeyId };
         }
@@ -490,6 +542,7 @@ class IdentityService {
       }
 
       logger.debug('Encryption key added successfully');
+      noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
 
       // Clear cache to reflect the update
       this.clearCache(identityId);
