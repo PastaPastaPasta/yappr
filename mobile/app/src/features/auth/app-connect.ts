@@ -227,13 +227,13 @@ export async function startAppConnect(
   openOnReady = !resume;
   floor = lastFlow;
   set({ ...initial, mode, renew, reauth: renew ? null : reauth, rejected: get().rejected && fresh, step: { name: 'starting' } });
-  // The engine has the cancel before this start, so the cancel can only stop the flow it was for.
-  await cancelling;
-  if (stale(gen)) return;
-  // A cancel that could not be confirmed is superseded by this sign-in: a later launch must not forget what it resumes.
-  syncStorage.removeItem(CANCEL_KEY);
   try {
     flowEpoch = engineSupervisor.getStatus().epoch;
+    // The engine has every cancel before this start, so a cancel can only stop the flow it was for, and this start
+    // never takes up a request the user cancelled: one the engine still cannot forget stops it.
+    const confirmed = await sendKeptCancelsInTurn();
+    if (stale(gen)) return;
+    if (!confirmed) throw new Error('A cancelled request is still on the device');
     const flow = await engine.api.session.appConnectStart({
       renew,
       ...(reauth && !renew ? { reauth } : {}),
@@ -359,43 +359,97 @@ interface StoredCancel extends CancelIntent {
 }
 
 /**
- * A cancel the engine has not confirmed yet, kept on the device: the app can
- * be killed before the engine replies, and the next launch sends it again
- * before it looks for a request to resume (`replayInterruptedCancel`).
+ * The cancels the engine has not confirmed yet, oldest first, kept on the
+ * device: the app can be killed before the engine replies, and the next
+ * launch (or start) sends them again before it looks for a request to resume.
  */
 const CANCEL_KEY = `yappr.signin.connect-cancel.${engineNetworkKey}`;
+const KEPT_CANCELS = 8;
 
-function readCancel(): StoredCancel | null {
+function readCancel(stored: Partial<StoredCancel> | null): StoredCancel | null {
+  if (typeof stored?.renew !== 'boolean' || typeof stored.id !== 'string') return null;
+  return {
+    id: stored.id,
+    renew: stored.renew,
+    ...(typeof stored.reauth === 'string' ? { reauth: stored.reauth } : {}),
+    ...(typeof stored.account === 'string' ? { account: stored.account } : {}),
+    ...(typeof stored.requestHash === 'string' ? { requestHash: stored.requestHash } : {}),
+  };
+}
+
+function readCancels(): StoredCancel[] {
   try {
-    const stored = JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null') as Partial<StoredCancel> | null;
-    if (typeof stored?.renew !== 'boolean' || typeof stored.id !== 'string') return null;
-    return {
-      id: stored.id,
-      renew: stored.renew,
-      ...(typeof stored.reauth === 'string' ? { reauth: stored.reauth } : {}),
-      ...(typeof stored.account === 'string' ? { account: stored.account } : {}),
-      ...(typeof stored.requestHash === 'string' ? { requestHash: stored.requestHash } : {}),
-    };
+    const stored: unknown = JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? '[]');
+    return Array.isArray(stored) ? stored.flatMap((entry: Partial<StoredCancel> | null) => readCancel(entry) ?? []) : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
+function writeCancels(cancels: readonly StoredCancel[]): void {
+  if (cancels.length) syncStorage.setItem(CANCEL_KEY, JSON.stringify(cancels.slice(-KEPT_CANCELS)));
+  else syncStorage.removeItem(CANCEL_KEY);
+}
+
+/**
+ * Whether the engine can forget what the cancel names now: a renewal is
+ * filed with its account's secrets, which the engine holds only while that
+ * account is signed in (or, once it could not be restored, nobody is).
+ */
+function reachable(cancel: CancelIntent): boolean {
+  const active = useSessionStore.getState().session?.identityId;
+  return !cancel.renew || !cancel.account || !active || active === cancel.account;
+}
+
 let cancels = 0;
-/** The cancel on its way to the engine, if any: a start waits for it. Never rejects. */
+/** The cancels on their way to the engine, if any: a start waits for them. Never rejects. */
 let cancelling: Promise<void> = Promise.resolve();
 
-/** Sends a cancel and forgets it on the device once the engine confirms it, unless a newer one replaced it. */
-async function sendCancel({ id, ...intent }: StoredCancel): Promise<void> {
-  await engine.api.session.appConnectCancel(intent);
-  if (readCancel()?.id === id) syncStorage.removeItem(CANCEL_KEY);
+/** Sends a cancel and forgets it on the device once the engine confirms it. An engine restart under it sends it once more. */
+async function sendCancel({ id, ...intent }: StoredCancel, again = true): Promise<void> {
+  try {
+    await engine.api.session.appConnectCancel(intent);
+  } catch (error) {
+    if (again && errorCode(error) === 'ENGINE_RESTARTED') return sendCancel({ id, ...intent }, false);
+    throw error;
+  }
+  writeCancels(readCancels().filter((cancel) => cancel.id !== id));
+}
+
+/**
+ * Sends again every kept cancel the engine can act on now. False when one is
+ * still unconfirmed (it stays kept); only a second engine restart rejects.
+ */
+async function sendKeptCancels(): Promise<boolean> {
+  let confirmed = true;
+  for (const cancel of readCancels().filter(reachable)) {
+    try {
+      await sendCancel(cancel);
+    } catch (error) {
+      if (errorCode(error) === 'ENGINE_RESTARTED') throw error;
+      appendLog('warn', 'host', `Cancelling the interrupted wallet sign-in failed: ${errorMessage(error)}`);
+      confirmed = false;
+    }
+  }
+  return confirmed;
+}
+
+/** `sendKeptCancels` once the cancels before it are through. */
+function sendKeptCancelsInTurn(): Promise<boolean> {
+  const sent = cancelling.then(sendKeptCancels);
+  cancelling = sent.then(
+    () => undefined,
+    () => undefined,
+  );
+  return sent;
 }
 
 /**
  * Tells the engine to forget the request the screen showed and any answer.
  * A cancel an engine restart cut short is sent again: the new engine runs
- * no flow, and forgets the stored request the cancel names. One the app is
- * killed under is sent again at the next launch. A start waits for it.
+ * no flow, and forgets the stored request the cancel names. One the engine
+ * could not confirm, or the app is killed under, is kept and sent again at
+ * the next launch or start, which waits for it.
  */
 function cancelInEngine({ renew, reauth, flow }: Pick<AppConnectState, 'renew' | 'reauth' | 'flow'>): void {
   const account = renew ? (renewAccount ?? useSessionStore.getState().session?.identityId) : undefined;
@@ -407,34 +461,22 @@ function cancelInEngine({ renew, reauth, flow }: Pick<AppConnectState, 'renew' |
     ...(account ? { account } : {}),
     ...(requestHash ? { requestHash } : {}),
   };
-  syncStorage.setItem(CANCEL_KEY, JSON.stringify(intent));
-  const send = (again: boolean): Promise<void> =>
+  writeCancels([...readCancels(), intent]);
+  cancelling = cancelling.then(() =>
     sendCancel(intent).catch((error: unknown) => {
-      if (again && errorCode(error) === 'ENGINE_RESTARTED') return send(false);
       appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
-    });
-  cancelling = cancelling.then(() => send(true));
+    }),
+  );
 }
 
 /**
- * At launch, before looking for a request to resume: a cancel the last
- * launch was killed under (or could not confirm) is sent again. Only an
+ * At launch, before looking for a request to resume: the cancels the last
+ * launch was killed under (or could not confirm) are sent again. Only an
  * engine restart rejects (the caller looks again later); any other failure
  * is logged, and the cancel is kept for the next launch.
  */
 export async function replayInterruptedCancel(): Promise<void> {
-  // Read once the cancels before it are through: a start that went first may have superseded it.
-  const replay = cancelling.then(() => {
-    const cancel = readCancel();
-    return cancel ? sendCancel(cancel) : undefined;
-  });
-  cancelling = replay.catch(() => undefined);
-  try {
-    await replay;
-  } catch (error) {
-    if (errorCode(error) === 'ENGINE_RESTARTED') throw error;
-    appendLog('warn', 'host', `Cancelling the interrupted wallet sign-in failed: ${errorMessage(error)}`);
-  }
+  await sendKeptCancelsInTurn();
 }
 
 /** The wallet handed the user back saying it did not sign in (`ac=declined`, …). */

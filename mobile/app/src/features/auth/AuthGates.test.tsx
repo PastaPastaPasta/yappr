@@ -399,7 +399,7 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
   });
 
   it('sends a cancel the last launch was killed under before it looks, so the cancelled request stays shut', async () => {
-    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify({ id: 'c1', renew: false, reauth: 'bob' }));
+    syncStorage.setItem('yappr.signin.connect-cancel.devnet-test', JSON.stringify([{ id: 'c1', renew: false, reauth: 'bob' }]));
     fakeEngine.method('session.appConnectCancel').mockResolvedValue(undefined);
     fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue(null);
     mount('/');

@@ -554,22 +554,26 @@ export function createSessionModule(options: SessionModuleOptions) {
   }
 
   /**
-   * The stored request a cancel names; null when it names none. A renewal is
-   * `account`'s (the active account's when it names none): its renewal while
-   * that account is active here, else what that renewal became when its
-   * account could not be restored (`carryRenewalOver`). `forget` deletes a
-   * "Sign in again" only when it is for the account named.
+   * The stored requests a cancel names. A renewal is `account`'s (the active
+   * account's when it names none): its renewal while that account is active
+   * here; signed out, also what that renewal became when its account could
+   * not be restored (`carryRenewalOver`). While another account is active,
+   * the renewal is filed with its own account's secrets, out of this
+   * engine's reach, so the cancel is refused. `forget` deletes a "Sign in
+   * again" only when it is for the account named.
    */
-  function cancelledKind(opts: { renew?: boolean; reauth?: string; account?: string }): AppConnectRequestKind | null {
+  function cancelledKinds(opts: { renew?: boolean; reauth?: string; account?: string }): AppConnectRequestKind[] {
     const named = (id: unknown): id is string => typeof id === 'string' && isIdentityId(id)
     if (opts.renew) {
       const active = registry.activeIdentityId()
       const account = named(opts.account) ? opts.account : active
-      if (!account) return null
-      return account === active ? { identityHint: account, renew: true } : { identityHint: account }
+      if (!account) return []
+      if (account === active) return [{ identityHint: account, renew: true }]
+      if (active) throw new RpcError('That renewal is for an account that is not signed in here', 'NOT_SIGNED_IN')
+      return [{ identityHint: account, renew: true }, { identityHint: account }]
     }
-    if (opts.reauth === undefined) return {}
-    return named(opts.reauth) ? { identityHint: opts.reauth } : null
+    if (opts.reauth === undefined) return [{}]
+    return named(opts.reauth) ? [{ identityHint: opts.reauth }] : []
   }
 
   /** The keys the wallets granted the active account, with this device's marked (Settings). */
@@ -616,6 +620,9 @@ export function createSessionModule(options: SessionModuleOptions) {
     const identityId = opts.identityId ?? active
     if (!identityId) return
     const isActive = identityId === active
+    // Its pending renewal, and a "Sign in again" kept apart from its secrets, go first: one that cannot be deleted
+    // fails the sign-out, so a later launch never resumes a request of an account the user signed out.
+    for (const kind of [{ identityHint: identityId, renew: true }, { identityHint: identityId }]) await appConnect.forget(kind)
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.
       await stopDm()
@@ -634,12 +641,6 @@ export function createSessionModule(options: SessionModuleOptions) {
     options.tickets?.forgetIdentity(identityId)
     options.forgetDm?.(identityId)
     if (appConnect.renewing() === identityId) appConnect.cancel()
-    // Its pending renewal, and a "Sign in again" kept apart from its secrets, go too.
-    for (const kind of [{ identityHint: identityId, renew: true }, { identityHint: identityId }]) {
-      await appConnect.forget(kind).catch((error: unknown) => {
-        logger.warn('App Connect: could not forget the account\'s pending request:', error)
-      })
-    }
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
     if (isActive) announce('signed-out')
@@ -810,7 +811,8 @@ export function createSessionModule(options: SessionModuleOptions) {
      * Resolves once the request is gone from the device, and fails if it
      * could not be deleted. With no flow running (the engine restarted under
      * the cancel, which runs none), the stored request the host names is
-     * forgotten instead: `renew` for `account`'s renewal, `reauth` for
+     * forgotten instead: `renew` for `account`'s renewal (refused while
+     * another account is active, `NOT_SIGNED_IN`), `reauth` for
      * signing that account in again, else a sign-in. With `requestHash` (hex)
      * the cancel names its request: a flow that never showed it is left
      * alone, and a stored request goes only if it is that one.
@@ -822,11 +824,12 @@ export function createSessionModule(options: SessionModuleOptions) {
       }
       if (named !== undefined && !appConnect.showed(named)) {
         await restored()
-        const kind = cancelledKind(opts)
-        // Not under a start that may be resuming that very request.
         const running = appConnect.runningKind()
-        const resuming = kind && running && running.identityHint === kind.identityHint && running.renew === (kind.renew === true)
-        if (kind && !resuming) await appConnect.forget(kind, named)
+        for (const kind of cancelledKinds(opts)) {
+          // Not under a start that may be resuming that very request.
+          const resuming = running && running.identityHint === kind.identityHint && running.renew === (kind.renew === true)
+          if (!resuming) await appConnect.forget(kind, named)
+        }
         // A revoke the cancelled renewal held back goes ahead once no renewal of that account is stored.
         const held = deferredRevoke
         if (held && !(await appConnect.pending({ identityHint: held, renew: true }))) settleDeferredRevoke()
@@ -839,9 +842,9 @@ export function createSessionModule(options: SessionModuleOptions) {
       appConnect.cancel()
       settleDeferredRevoke()
       await restored()
-      const kind = running ?? cancelledKind(opts ?? {})
+      const kinds = running ? [running] : cancelledKinds(opts ?? {})
       // Unless a start since then has made the request this would find.
-      if (kind && appConnectStarts === cancelled) await appConnect.forget(kind)
+      for (const kind of kinds) if (appConnectStarts === cancelled) await appConnect.forget(kind)
       await options.secureDurable?.()
     },
 

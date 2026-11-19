@@ -589,6 +589,16 @@ describe('App Connect requests across kills and engine restarts', () => {
     await walletAnswers(uri, OWNER, granted)
   }
 
+  /** Signs OWNER in through the wallet, with fresh key ids. */
+  async function walletSignIn(on: Session, ids: [number, number]): Promise<void> {
+    const started = await on.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    await walletGrants(started.uri, ids)
+    await on.appConnectPollNow()
+    await untilPhase(on, 'confirm')
+    expect(await on.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+  }
+
   it('reports a cancel only once its stored request is gone from the device', async () => {
     const fresh = boot()
     session = fresh
@@ -770,6 +780,38 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
     await next.appConnectCancel({ renew: true, account: OWNER })
     expect(await next.appConnectPendingSignIn()).toBeNull()
+  })
+
+  it('refuses a renewal cancel for an account other than the one signed in, whose renewal it cannot reach', async () => {
+    await walletSignIn(session, [30, 31])
+    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    await expect(next.appConnectCancel({ renew: true, account: MAKER, requestHash: 'cd'.repeat(20) })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    await expect(next.appConnectCancel({ renew: true, account: MAKER })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    expect(await next.appConnectPending({ renew: true })).toBe(true)
+    await next.appConnectCancel({ renew: true, account: OWNER, requestHash: renewal.requestHash })
+    expect(await next.appConnectPending({ renew: true })).toBe(false)
+    await next.signOut()
+  })
+
+  it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
+    await walletSignIn(session, [32, 33])
+    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
+    try {
+      await expect(session.signOut()).rejects.toThrow('storage failed')
+    } finally {
+      deletes.mockRestore()
+    }
+    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    expect(stored()).toContain(RENEWAL_SLOT)
+    await session.signOut()
+    expect(await session.current()).toBeNull()
+    expect(stored()).not.toContain(RENEWAL_SLOT)
   })
 
   it('restores a wallet session killed before it recorded its method as a wallet session', async () => {
