@@ -52,15 +52,16 @@ export interface BulkItem {
   preview: string
 }
 
-/** A document a run changed, the tab it is listed in now (null: neither), and until when that outranks a read. */
+/**
+ * A document a run changed or read, the tab it is listed in now (null:
+ * neither), and the chain's block time that state is known at: its own
+ * transition's, or the proved read's. Without one it never outranks a read.
+ */
 export interface RunChange {
   item: BulkItem
   tab: BulkMode | null
-  until: number
+  at?: number
 }
-
-/** How long a run's change outranks a read: past the dialog's settle wait, a read that still disagrees saw a later change. */
-export const RUN_CHANGE_TTL_MS = 30_000
 
 /**
  * The tab a run's change puts its document in: one settled by a chain read
@@ -76,12 +77,19 @@ export function tabAfter(mode: BulkMode, change: BulkChange): BulkMode | null {
 }
 
 /**
- * `tab`'s list as read, with recent run changes where they now belong. Each
- * came back proved, but the read can reach a node a block behind the last of
- * them, which would leave a document out of both tabs.
+ * The run changes a read proved at block time `readAt` (NaN or undefined:
+ * unknown) predates. Each came back proved, but the read can reach a node a
+ * block behind them; a read at or after one already shows it, and whatever
+ * changed since (an author's tombstone).
  */
-export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, now = Date.now()): BulkItem[] {
-  const recent = [...changes.values()].filter((change) => change.until > now)
+function newerThan(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): RunChange[] {
+  const known = readAt !== undefined && Number.isFinite(readAt)
+  return [...changes.values()].filter((change) => change.at !== undefined && (!known || change.at > readAt))
+}
+
+/** `tab`'s list as a read proved it at block time `readAt`, with the run changes it predates where they now belong. */
+export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): BulkItem[] {
+  const recent = newerThan(changes, readAt)
   if (recent.length === 0) return [...items]
   const moved = new Map(recent.map((change) => [change.item.id, change]))
   const kept = items.filter((item) => !moved.has(item.id) || moved.get(item.id)?.tab === tab)
@@ -90,10 +98,9 @@ export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, change
   return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
 }
 
-/** When the first of the still-recent run changes stops outranking a read: the lists are read again then. */
-export function nextRunChangeExpiry(changes: ReadonlyMap<string, RunChange>, now = Date.now()): number | null {
-  const ahead = [...changes.values()].map((change) => change.until).filter((until) => until > now)
-  return ahead.length === 0 ? null : Math.min(...ahead)
+/** Whether a read proved at block time `readAt` predates a run change: the lists are read again a little later. */
+export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): boolean {
+  return newerThan(changes, readAt).length > 0
 }
 
 /** How far back "select by time" reaches. */
@@ -120,10 +127,16 @@ export function newestFirst(posts: readonly BulkItem[], replies: readonly BulkIt
   return merged
 }
 
-/** One page of a listing: its items and the cursor for the next, absent on the last page. */
+/** One page of a listing: its items, the cursor for the next (absent on the last page), and the block time it was proved at. */
 export interface BulkPage {
   items: BulkItem[]
   next?: string
+  at?: number
+}
+
+/** The block time of a read made of several proved answers: the oldest of them (NaN when one carries none). */
+export function oldestBlockTime(times: readonly (number | undefined)[]): number {
+  return times.reduce<number>((oldest, time) => (time === undefined || !Number.isFinite(time) ? NaN : Math.min(oldest, time)), Infinity)
 }
 
 /** Most documents of one type the dialog reads for an account. */
@@ -132,18 +145,21 @@ export const MAX_ITEMS_PER_KIND = 5000
 /**
  * Every page of a listing, from the first, following `next` until a page has
  * none or `max` items are in. `onPage` sees the total so far after each page.
- * Returns the items and whether `max` cut the listing short.
+ * Returns the items, whether `max` cut the listing short, and the block time
+ * of its oldest page.
  */
 export async function readEveryPage(
   readPage: (startAfter?: string) => Promise<BulkPage>,
   { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[]) => void } = {}
-): Promise<{ items: BulkItem[]; truncated: boolean }> {
+): Promise<{ items: BulkItem[]; truncated: boolean; at: number }> {
   const items: BulkItem[] = []
   const seen = new Set<string>()
+  const times: (number | undefined)[] = []
   let cursor: string | undefined
   let stalled = false
   do {
     const page = await readPage(cursor)
+    times.push(page.at)
     for (const item of page.items) {
       if (seen.has(item.id)) continue
       seen.add(item.id)
@@ -155,7 +171,7 @@ export async function readEveryPage(
     stalled = page.next !== undefined && page.next === cursor
     cursor = page.next && !stalled ? page.next : undefined
   } while (cursor && items.length < max)
-  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max }
+  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times) }
 }
 
 /**
@@ -231,6 +247,14 @@ export interface BulkChange {
   /** For one settled by a chain read: the tab the read lists it in (null: neither). */
   tab?: BulkMode | null
   at?: number
+  /** For one settled by a chain read: the block time the read was proved at. */
+  seenAt?: number
+}
+
+/** Where a chain read found a document that changed some other way: the tab it is listed in (null: neither), as of `seenAt`. */
+export interface BulkSeen {
+  tab: BulkMode | null
+  seenAt?: number
 }
 
 export interface BulkProgress {
@@ -267,8 +291,10 @@ export interface BulkChainRead {
   changed: Set<string>
   /** What each document read holds now (null: no marks), for the cards on screen. */
   marks?: Map<string, ModerationMarks | null>
-  /** The tab each document read is listed in now ({@link laneOf}). */
+  /** The tab each document no longer to do is listed in now ({@link laneOf}; null: neither, or gone). */
   lanes?: Map<string, BulkMode | null>
+  /** The block time the read was proved at (the oldest of its answers). */
+  at?: number
 }
 
 /** Where `item` stands in a chain read ({@link BulkRunDeps.pending}): an id in neither set is done. */
@@ -299,6 +325,8 @@ export interface BulkRunDeps {
    * read (`change.marks` what the read holds, which may be another moderator's).
    */
   onDone?: (item: BulkItem, change: BulkChange) => void
+  /** Each document a chain read found changed some other way, with where that read lists it: not done, but no longer where it was. */
+  onSeen?: (item: BulkItem, seen: BulkSeen) => void
   onProgress?: (progress: BulkProgress) => void
   /** Checked before each transition: true stops the run after the one under way. */
   cancelled?: () => boolean
@@ -419,12 +447,23 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const fail = (item: BulkItem, error: string, retryable = true) => {
     progress.failures.push({ item, error, retryable })
   }
+  const seenAt = (read: BulkChainRead) => (read.at !== undefined ? { seenAt: read.at } : {})
   /** What a read that found `item` done holds for it; null when it did not find it (gone). */
   const readChange = (read: BulkChainRead, item: BulkItem): BulkChange | null => {
     const marks = read.marks?.get(item.id)
     if (marks === undefined) return null
     const tab = read.lanes?.get(item.id)
-    return tab === undefined ? { marks } : { marks, tab }
+    return tab === undefined ? { marks, ...seenAt(read) } : { marks, tab, ...seenAt(read) }
+  }
+  /** Where a read that found `item` changed some other way lists it, if the read says. */
+  const readSeen = (read: BulkChainRead, item: BulkItem): BulkSeen | null => {
+    const tab = read.lanes?.get(item.id)
+    return tab === undefined ? null : { tab, ...seenAt(read) }
+  }
+  /** Fails `item` as changed some other way, and says where the read lists it now. */
+  const failChanged = (item: BulkItem, seen: BulkSeen | null) => {
+    fail(item, CHANGED_ERROR, false)
+    if (seen) deps.onSeen?.(item, seen)
   }
   /**
    * Counts what a chain read says is done or changed; returns what it says is
@@ -435,7 +474,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const settle = (read: BulkChainRead, asked: readonly BulkItem[], stillError: string | null): BulkItem[] => {
     const still: BulkItem[] = []
     for (const item of asked) {
-      if (read.changed.has(item.id)) fail(item, CHANGED_ERROR, false)
+      if (read.changed.has(item.id)) failChanged(item, readSeen(read, item))
       else if (!read.todo.has(item.id)) {
         // Announced with what the read holds; a document the read did not find (gone) is counted, not announced.
         const change = readChange(read, item)
@@ -467,8 +506,9 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   let streakCount = 0
   let waitMs = 0
 
-  /** What the check just before a transition read for each one it found done already. */
+  /** What the check just before a transition read for each one it found done already, or changed some other way. */
   const foundDone = new Map<string, BulkChange | null>()
+  const foundChanged = new Map<string, BulkSeen | null>()
   /**
    * Whether `item` may still be sent: the run not stopped, and the chain read
    * just now still showing it to do. Its answer, when it says no, as the loop
@@ -490,7 +530,10 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       foundDone.set(item.id, readChange(read, item))
       return { success: false, errorCode: FOUND_DONE }
     }
-    if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+    if (state === 'changed') {
+      foundChanged.set(item.id, readSeen(read, item))
+      return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+    }
     return null
   }
 
@@ -545,7 +588,7 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       continue
     }
     if (result.errorCode === FOUND_CHANGED) {
-      fail(item, CHANGED_ERROR, false)
+      failChanged(item, foundChanged.get(item.id) ?? null)
       continue
     }
     if (closedKeySheet(result.errorCode)) {

@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, RUN_CHANGE_TTL_MS, bulkCostLine, closedKeySheet, idsWithin, nextRunChangeExpiry, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -35,6 +35,9 @@ const NO_COUNTS: Record<BulkMode, number | null> = { hide: null, unhide: null }
 
 /** How long after a run the lists are read again, so a node a block behind does not show what just changed. */
 const SETTLE_MS = 4000
+
+/** How many times in a row the lists are read again while a read still predates a run change. */
+const MAX_STALE_REREADS = 5
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
@@ -85,10 +88,11 @@ export function BulkHideModal() {
   const [authorName, setAuthorName] = useState<string | null>(null)
   const stopRef = useRef(false)
   const readRef = useRef(0)
-  /** What runs in this opening just hid or unhid, listed where each now belongs while a read may still lag. */
+  /** What runs in this opening changed or found changed, listed where each now belongs over a read proved before it. */
   const runChangesRef = useRef(new Map<string, RunChange>())
-  /** Reads both tabs again once the first recent run change stops outranking the read. */
-  const expiryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Reads both tabs again a little later while a read still predates a run change. */
+  const staleReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const staleReadsRef = useRef(0)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
@@ -107,6 +111,7 @@ export function BulkHideModal() {
     setSummary(null)
     setCounts(NO_COUNTS)
     runChangesRef.current = new Map()
+    staleReadsRef.current = 0
     setAuthorName(target.authorName ?? null)
     if (!target.authorName) {
       // Only for this opening: a lookup that answers after the dialog was opened for someone else is dropped.
@@ -117,20 +122,25 @@ export function BulkHideModal() {
     }
   }, [isOpen, target])
 
-  const scheduleExpiryRead = useCallback(() => {
-    if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current)
-    expiryTimerRef.current = null
-    const expiry = nextRunChangeExpiry(runChangesRef.current)
-    if (expiry === null) return
+  /** A read proved at `readAt` predates a run change: the chain will show more, so read again (a few times at most). */
+  const scheduleStaleRead = useCallback((readAt: number) => {
+    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
+    staleReadTimerRef.current = null
+    if (!readPredatesRun(runChangesRef.current, readAt)) {
+      staleReadsRef.current = 0
+      return
+    }
+    if (staleReadsRef.current >= MAX_STALE_REREADS) return
+    staleReadsRef.current++
     const opening = openingRef.current
-    expiryTimerRef.current = setTimeout(() => {
-      expiryTimerRef.current = null
+    staleReadTimerRef.current = setTimeout(() => {
+      staleReadTimerRef.current = null
       if (openingRef.current === opening) setReadEpoch((epoch) => epoch + 1)
-    }, expiry - Date.now() + 1)
+    }, SETTLE_MS)
   }, [])
 
   useEffect(() => () => {
-    if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current)
+    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
   }, [isOpen])
 
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
@@ -140,10 +150,10 @@ export function BulkHideModal() {
     setList({ status: 'loading', count: 0 })
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read) setList({ status: 'loading', count })
-    }).then(({ items: fresh, truncated }) => {
+    }).then(({ items: fresh, truncated, at }) => {
       if (readRef.current !== read) return
-      const items = withRunChanges(fresh, which, runChangesRef.current)
-      scheduleExpiryRead()
+      const items = withRunChanges(fresh, which, runChangesRef.current, at)
+      scheduleStaleRead(at)
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
@@ -151,7 +161,7 @@ export function BulkHideModal() {
     }).catch(() => {
       if (readRef.current === read) setList({ status: 'failed' })
     })
-  }, [authorId, scheduleExpiryRead])
+  }, [authorId, scheduleStaleRead])
 
   useEffect(() => {
     if (isOpen && authorId) load(mode)
@@ -163,14 +173,17 @@ export function BulkHideModal() {
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
     const changes = runChangesRef.current
-    // While a run change is recent the count comes from the overlaid list; a
-    // list too long to read whole has no count until the change is no longer recent.
-    const counted: Promise<number | null> = nextRunChangeExpiry(changes) === null
+    // Once a run changed something the count comes from the list, with the
+    // changes its read predates; a list too long to read whole has no count.
+    const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated }) => (truncated ? null : withRunChanges(items, other, changes).length))
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => (truncated ? null : withRunChanges(items, other, changes, at).length))
     counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
-    }).catch(() => { /* the tab shows no count */ })
+    }).catch(() => {
+      // No count is better than one from before the run.
+      if (!cancelled) setCounts((current) => ({ ...current, [other]: null }))
+    })
     return () => {
       cancelled = true
     }
@@ -266,11 +279,16 @@ export function BulkHideModal() {
       // this run's own as it asked, one settled by a read as the read holds it.
       onDone: (item, change) => {
         if (sameOpening()) {
-          runChangesRef.current.set(item.id, { item, tab: tabAfter(mode, change), until: Date.now() + SETTLE_MS + RUN_CHANGE_TTL_MS })
+          // Known as of its own block time, or the proved read that settled it.
+          runChangesRef.current.set(item.id, { item, tab: tabAfter(mode, change), at: change.marks === undefined ? change.at : change.seenAt })
         }
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
         recordMarks(item.id, change.marks === undefined ? asked : change.marks, { at: change.marks === undefined ? at : change.marks?.moderatedAt })
+      },
+      // One that changed some other way (a tombstone, a legal hold) is not done, but is listed where the read found it.
+      onSeen: (item, seen) => {
+        if (sameOpening()) runChangesRef.current.set(item.id, { item, tab: seen.tab, at: seen.seenAt })
       },
       onProgress: (next) => {
         if (current()) setProgress(next)
