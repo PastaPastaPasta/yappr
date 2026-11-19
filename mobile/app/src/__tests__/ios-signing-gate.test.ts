@@ -52,7 +52,7 @@ describe('ios-signing-gate.sh cert (TestFlight signing gate)', () => {
     expect(gate(pem, { SIGNING_NAME_DENYLIST: ' , ' }).status).toBe(0);
     const denied = gate(pem, { SIGNING_NAME_DENYLIST: 'nobody, dash FOUNDATION' });
     expect(denied.status).toBe(1);
-    expect(denied.stdout).toContain('contains a denylisted name (value withheld)');
+    expect(denied.stdout).toContain('contains a denylisted name');
     expect(denied.stdout.toLowerCase()).not.toContain('dash foundation');
     expect(denied.stderr.toLowerCase()).not.toContain('dash foundation');
   });

@@ -80,13 +80,17 @@ check_cert() {
   unit="$(subject_field "$pem" organizationalUnitName)"
   cn="$(subject_field "$pem" commonName)"
   echo '### Distribution certificate'
+  # The unescaped UTF-8 subject is screened before any part of it is printed.
+  if denied "$(openssl x509 -in "$pem" -noout -subject -nameopt multiline,utf8,-esc_msb)"; then
+    fail 'certificate subject contains a denylisted name (certificate evidence withheld)'
+    return
+  fi
   evidence 'Subject' "$(openssl x509 -in "$pem" -noout -subject -nameopt RFC2253 | sed 's/^subject= *//')"
   expect 'O' "$org" "$APPLE_EXPECTED_ORG_NAME"
   expect 'OU' "$unit" "$APPLE_TEAM_ID"
   expect 'CN' "$cn" "Apple Distribution: $APPLE_EXPECTED_ORG_NAME ($APPLE_TEAM_ID)"
   evidence 'Not after' "$(openssl x509 -in "$pem" -noout -enddate | sed 's/^notAfter=//')"
   openssl x509 -in "$pem" -noout -checkend 0 >/dev/null || fail 'certificate has expired'
-  deny_check 'certificate subject' "$(openssl x509 -in "$pem" -noout -subject -nameopt multiline,utf8,-esc_msb)"
 }
 
 check_profile() {

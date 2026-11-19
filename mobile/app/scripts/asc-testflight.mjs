@@ -151,7 +151,6 @@ const COMPLIANCE_MANUAL = [
 // truthful answers are known except one: availability on the French store is the owner's call
 // (COMPLIANCE.md C8). So a declaration is only reused, never created: the approved ones with the
 // standard-algorithm answers, and only when they all give the same French-store answer.
-// Returns 'attached', 'missing' (confirmed none to attach) or 'unknown' (the API can't tell).
 async function exportCompliance(appId, buildId) {
   out('### Export compliance');
   let current = null;
@@ -162,7 +161,7 @@ async function exportCompliance(appId, buildId) {
   }
   if (current) {
     field('Declaration', `${current.id} (${current.attributes?.appEncryptionDeclarationState ?? 'attached'})`);
-    return 'attached';
+    return;
   }
   const all = [];
   try {
@@ -175,7 +174,7 @@ async function exportCompliance(appId, buildId) {
     if (error.status !== 403 && error.status !== 404) throw error;
     out(`- The API can't list declarations with this key (${error.status}). The build stays in **Missing Compliance**. In App Store Connect:`);
     for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
-    return 'unknown';
+    return;
   }
   const candidates = all.filter(
     (d) =>
@@ -192,7 +191,7 @@ async function exportCompliance(appId, buildId) {
     });
     field('Declaration', `${declaration.id} (APPROVED, attached)`);
     field('Answers', `standard third-party algorithms, no proprietary crypto, French store: ${declaration.attributes.availableOnFrenchStore}`);
-    return 'attached';
+    return;
   }
   out(
     candidates.length > 0
@@ -200,7 +199,6 @@ async function exportCompliance(appId, buildId) {
       : '- No approved declaration with the standard-algorithm answers exists, so the build stays in **Missing Compliance** (owner\'s call). In App Store Connect:',
   );
   for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
-  return 'missing';
 }
 
 async function whatToTest(buildId, text) {
@@ -222,7 +220,7 @@ async function whatToTest(buildId, text) {
   field('What to Test', 'set (en-US)');
 }
 
-async function betaGroup(appId, buildId, groupName, compliance) {
+async function betaGroup(appId, buildId, groupName) {
   out('### Internal testing');
   const groups = await api('GET', `/v1/apps/${appId}/betaGroups?limit=200`);
   let group = groups.data?.find((g) => g.attributes.name === groupName);
@@ -249,9 +247,11 @@ async function betaGroup(appId, buildId, groupName, compliance) {
     await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: buildId }] });
     field('Build in group', 'yes');
   } catch (error) {
-    // A build confirmed to lack export compliance can be refused as a state conflict; that waits on the owner.
-    if (compliance !== 'missing' || ![409, 422].includes(error.status)) throw error;
-    out(`- Build in group: not yet, pending export compliance (HTTP ${error.status})`);
+    // A refusal waits on the owner only when App Store Connect says the build lacks export compliance.
+    if (![409, 422].includes(error.status)) throw error;
+    const detail = await api('GET', `/v1/builds/${buildId}/buildBetaDetail`);
+    if (detail.data?.attributes?.internalBuildState !== 'MISSING_EXPORT_COMPLIANCE') throw error;
+    out(`- Build in group: not yet, pending export compliance (HTTP ${error.status}, MISSING_EXPORT_COMPLIANCE)`);
   }
 }
 
@@ -274,9 +274,9 @@ async function post() {
     fail(`the build finished processing as ${build.attributes.processingState}`);
     return;
   }
-  const compliance = await exportCompliance(app.id, build.id);
+  await exportCompliance(app.id, build.id);
   if (process.env.WHAT_TO_TEST) await whatToTest(build.id, process.env.WHAT_TO_TEST);
-  await betaGroup(app.id, build.id, groupName, compliance);
+  await betaGroup(app.id, build.id, groupName);
 }
 
 try {
