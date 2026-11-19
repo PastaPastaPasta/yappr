@@ -254,13 +254,15 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
     } catch {
       // Unreadable: drop the raw value below all the same.
     }
+    // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
+    // Released before the slot goes: a page that dies in between leaves the signed create stored, never a reservation
+    // without one, which the next write would take for one never sent (releaseOrphanedReservations).
+    if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
     try {
       localStorage.removeItem(PENDING_PREFIX + key)
     } catch {
       // Storage blocked: nothing was stored there.
     }
-    // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
-    if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
   })
 }
 
@@ -269,14 +271,18 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
 ])
 
 /**
- * Under the charters write lock: frees each create reservation whose slot no
- * longer holds a signed create under it. That is left when a page died
- * between reserving a nonce and storing the create (never sent), or between
- * clearing a slot and releasing its nonce. The nonce is counted spent, so a
+ * Under the charters write lock, held across tabs (none without Web Locks):
+ * frees each create reservation whose slot no longer holds a signed create
+ * under it. That is left only when a page died between reserving a nonce and
+ * storing the create, so it was never sent; a slot is cleared only once its
+ * reservation is released ({@link abandonSlot}), or once its create is
+ * refused or landed. The nonce is counted spent, so a
  * transition that may still take it late can never settle a later SDK-signed
  * write.
  */
 function releaseOrphanedReservations(ownerId: string): void {
+  // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
+  if (!(typeof navigator === 'undefined' ? undefined : navigator.locks)) return
   let pending: PendingTransition[]
   try {
     pending = loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []
@@ -652,7 +658,7 @@ class CharterService {
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
-      if (!onChain) await this.addCharterKey(identityId, role, readPrivateKeyInput(input), key, generation)
+      if (!onChain) await this.addCharterKey(identityId, role, readPrivateKeyInput(input), key, generation, identity.revision)
       // Now on the account: kept for the sign-in it was added in while this page lasts, even when the view
       // that asked has moved on.
       if (this.keysGeneration === keysGeneration && this.signInHolds(generation, identityId)) holdCharterKey(identityId, role, key)
@@ -670,14 +676,16 @@ class CharterService {
     master: Uint8Array,
     charterKey: Uint8Array,
     generation: CharterSession,
+    seenRevision: bigint | number | undefined,
   ): Promise<void> {
     // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
       await withIdentityUpdateLock(identityId, async () => {
         const sdk = await getEvoSdk()
         const w = await wasmModule()
-        // Read under the lock, at least as fresh as the last update proved here: this one picks the next key id and revision.
-        const identity = await identityForUpdate(identityId).catch((error: unknown) => {
+        // Read under the lock, at least as fresh as the last update proved here and the read the prompt was built on:
+        // this one picks the next key id and revision.
+        const identity = await identityForUpdate(identityId, seenRevision).catch((error: unknown) => {
           if (error instanceof Error && error.message === STALE_IDENTITY_ERROR) throw new CharterActionError(STALE_IDENTITY_ERROR, 'refused')
           throw error
         })

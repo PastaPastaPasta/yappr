@@ -11,11 +11,15 @@ import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 import { withIdentityUpdateLock } from '@/lib/identity-write-lock'
-import { scopedKey } from '@/lib/storage-scope'
 import { sleep } from '@/lib/retry-utils'
 import { Identifier } from '@dashevo/wasm-sdk'
 
-const PROVED_REVISION_PREFIX = 'yappr:identity-revision:'
+/**
+ * Where the revision floor is kept: by network and identity, never under a
+ * deployment's storage scope. The identity update lock is one per origin, so
+ * every build on it (root, /staging, /testing) must read the same floor.
+ */
+const provedRevisionKey = (identityId: string) => `yappr:identity-revision:${keyNetwork()}:${identityId}`
 const FRESH_READS = 5
 const FRESH_READ_PAUSE_MS = 1500
 export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached the network yet. Try again in a moment."
@@ -24,7 +28,7 @@ export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached
 function provedIdentityRevision(identityId: string): number | null {
   let raw: string | null = null
   try {
-    raw = localStorage.getItem(scopedKey(PROVED_REVISION_PREFIX + identityId))
+    raw = localStorage.getItem(provedRevisionKey(identityId))
   } catch {
     // Storage blocked: nothing was noted.
   }
@@ -37,7 +41,7 @@ export function noteProvedIdentityRevision(identityId: string, revision: unknown
   const value = Number(revision)
   if (!Number.isSafeInteger(value) || value <= (provedIdentityRevision(identityId) ?? -1)) return
   try {
-    localStorage.setItem(scopedKey(PROVED_REVISION_PREFIX + identityId), String(value))
+    localStorage.setItem(provedRevisionKey(identityId), String(value))
   } catch {
     // Storage blocked: the next update reads without a floor.
   }
@@ -45,16 +49,19 @@ export function noteProvedIdentityRevision(identityId: string, revision: unknown
 
 /**
  * Under {@link withIdentityUpdateLock}: the identity to build an update on,
- * read at least as fresh as the last update this browser proved (a node a
- * block behind would hand back the key id and revision that update took),
- * with the SDK's cached identity nonce refreshed (another tab may have used
- * it). Null when there is no such identity; rejects with
- * {@link STALE_IDENTITY_ERROR} when no read catches up.
+ * read at least as fresh as the last update this browser proved and as
+ * `seenRevision`, a revision the caller already read (a node a block behind
+ * would hand back a key id and revision already taken), with the SDK's cached
+ * identity nonce refreshed (another tab may have used it). Null when there is
+ * no such identity; rejects with {@link STALE_IDENTITY_ERROR} when no read
+ * catches up.
  */
-export async function identityForUpdate(identityId: string) {
+export async function identityForUpdate(identityId: string, seenRevision?: bigint | number) {
   const sdk = await getEvoSdk()
   try { await sdk.wasm.refreshIdentityNonce(new Identifier(identityId)) } catch { /* best effort */ }
-  const floor = provedIdentityRevision(identityId)
+  const proved = provedIdentityRevision(identityId)
+  const seen = seenRevision !== undefined && Number.isSafeInteger(Number(seenRevision)) ? Number(seenRevision) : null
+  const floor = proved === null ? seen : seen === null ? proved : Math.max(proved, seen)
   for (let attempt = 0; ; attempt++) {
     const identity = await sdk.identities.fetch(identityId)
     if (!identity || floor === null || Number(identity.revision ?? 0) >= floor) return identity

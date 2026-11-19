@@ -99,6 +99,8 @@ const { charterService } = await import('./charter-service')
 const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
 const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
 const sharedKeys = await import('@/lib/auth/critical-key')
+const { noteProvedIdentityRevision } = await import('./identity-service')
+const { keyNetwork } = await import('@/lib/constants')
 sharedKeys.bindCriticalKeySession(() => auth.epoch)
 
 /** The app-wide CRITICAL-key sheet, mounted: records each request and answers it as told (null closes it). */
@@ -1031,6 +1033,24 @@ describe("the leader's way out of a proposal stuck uncertain", () => {
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(builders.sign).toHaveBeenCalledTimes(2)
   })
+
+  it('releases the old reservation before it clears the slot, so a page dying in between leaves no reservation without its create', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    nonces.release.mockClear()
+    const removes = vi.spyOn(storage, 'removeItem')
+    try {
+      await charterService.abandonProposal(OWNER, TERMS.targetContractId)
+      const slotRemoved = removes.mock.calls.findIndex(([key]) => key === slotKey('submittedCharter', TERMS.targetContractId))
+      expect(slotRemoved).toBeGreaterThanOrEqual(0)
+      expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+      expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(removes.mock.invocationCallOrder[slotRemoved])
+    } finally {
+      removes.mockRestore()
+    }
+  })
 })
 
 describe("the leader's way out of an application stuck uncertain", () => {
@@ -1060,6 +1080,7 @@ describe("the leader's way out of an application stuck uncertain", () => {
 })
 
 describe('a charter key added from two tabs at once', () => {
+  const revisionKey = `yappr:identity-revision:${keyNetwork()}:${OWNER}`
   const masterHex = Buffer.from(new Uint8Array(32).fill(5)).toString('hex')
   const charterKeyOnChain = (keyId: number, data: Uint8Array, role: 'leader' | 'member') => ({
     keyId, purpose: role === 'leader' ? 'DECRYPTION' : 'ENCRYPTION', securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', data,
@@ -1109,7 +1130,7 @@ describe('a charter key added from two tabs at once', () => {
 
   it('waits for a read as fresh as the last key update proved here before picking a key id', async () => {
     const { key, publicKey } = await leaderKey()
-    localStorage.setItem(`yappr:identity-revision:${OWNER}`, '3')
+    localStorage.setItem(revisionKey, '3')
     const proved = { revision: 3, publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'member')] }
     sdk.identities.fetch
       .mockResolvedValueOnce({ revision: 2, publicKeys: [{ keyId: 2 }] })
@@ -1120,7 +1141,27 @@ describe('a charter key added from two tabs at once', () => {
     await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
     expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: proved }))
     expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 4 }))
-    expect(localStorage.getItem(`yappr:identity-revision:${OWNER}`)).toBe('4')
+    expect(localStorage.getItem(revisionKey)).toBe('4')
+  })
+
+  it('never builds on a locked read older than the one the prompt was built on', async () => {
+    const { key, publicKey } = await leaderKey()
+    const seen = { revision: 5n, publicKeys: [{ keyId: 2 }, charterKeyOnChain(5, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ revision: 4n, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValue({ revision: 6n, publicKeys: [...seen.publicKeys, charterKeyOnChain(6, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: seen }))
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 6 }))
+  })
+
+  it('keeps the floor by network and identity, where every build on this origin reads it', () => {
+    noteProvedIdentityRevision(OWNER, 9)
+    expect(localStorage.getItem(revisionKey)).toBe('9')
+    expect(revisionKey).toBe(`yappr:identity-revision:${keyNetwork()}:${OWNER}`)
   })
 
   it('adds no second charter key of the role when another one appeared meanwhile', async () => {
@@ -1163,6 +1204,18 @@ describe('a create reservation left without its stored create (the page died bet
     await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
     const before = released().filter(([id]) => id !== 'r1')
     expect(before).toEqual([['r-orphan', 9n], ['r-landed', 7n]])
+  })
+
+  it('is left alone where no lock reaches the other tabs: one may be about to store its create', async () => {
+    vi.stubGlobal('navigator', {})
+    try {
+      nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:reason:spam`)] })
+      builders.exists.mockResolvedValue(true)
+      await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
+      expect(released().filter(([id]) => id === 'r-orphan')).toEqual([])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('is released before a team-change delete waits on it', async () => {
