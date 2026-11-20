@@ -59,16 +59,7 @@ export interface PendingTransition {
    * touch what it is about to do. Absent means unknown: it may touch anything.
    */
   scope?: string;
-  /**
-   * {@link RESERVATION_FORMAT} on every entry this build reserves; absent on
-   * one an earlier build stored, whose callers may have dropped what it signed
-   * before recording its nonce spent.
-   */
-  format?: number;
 }
-
-/** The format of entries this build reserves (see {@link PendingTransition.format}). */
-export const RESERVATION_FORMAT = 2;
 
 export interface NonceReservation {
   /** The highest nonce this browser signed, or that the SDK may have signed for it, for the identity on the contract. */
@@ -158,7 +149,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     const parsed = JSON.parse(raw) as {
       mark: string;
       floor?: unknown;
-      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown; format?: unknown }[];
+      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
     };
     return {
       mark: BigInt(parsed.mark),
@@ -175,7 +166,6 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
             // Both, or neither: one without its range only expires.
             ...(signedAfter !== undefined && signedAtMost !== undefined ? { signedAfter, signedAtMost } : {}),
             ...(typeof p.scope === 'string' ? { scope: p.scope } : {}),
-            ...(typeof p.format === 'number' ? { format: p.format } : {}),
           };
         }),
     };
@@ -196,7 +186,6 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
         ? { signedAfter: p.signedAfter.toString(), signedAtMost: p.signedAtMost.toString() }
         : {}),
       ...(p.scope !== undefined ? { scope: p.scope } : {}),
-      ...(p.format !== undefined ? { format: p.format } : {}),
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
@@ -290,7 +279,6 @@ export function reserveNonce(
     ? { id, nonce, signedAfter: floor, signedAtMost: max(floor, mark) + BigInt(1), expiresAt: Date.now() + PENDING_LIFETIME_MS }
     : { id, nonce, expiresAt: null };
   if (scope !== undefined) entry.scope = scope;
-  entry.format = RESERVATION_FORMAT;
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
@@ -339,28 +327,6 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
       const key = reservationKey(ownerId, contractId);
       raisedFloors.set(key, max(raisedFloors.get(key) ?? BigInt(0), spentThrough));
     }
-  }
-}
-
-/**
- * Raise the floor to `spentThrough`, a nonce Platform has executed or may
- * have, settling nothing: a caller records a spent nonce first, then drops
- * what it stored, then releases the entry, so a page that dies at any step
- * leaves the floor already raised. False when localStorage did not store it:
- * the caller must then keep what it stored.
- */
-export function raiseNonceFloor(ownerId: string, contractId: string, spentThrough: bigint): boolean {
-  const key = reservationKey(ownerId, contractId);
-  try {
-    const reservation = loadReservation(ownerId, contractId);
-    saveReservation(ownerId, contractId, reservation
-      ? { ...reservation, floor: max(reservation.floor, spentThrough) }
-      : { mark: spentThrough, floor: spentThrough, pending: [] });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    raisedFloors.set(key, max(raisedFloors.get(key) ?? BigInt(0), spentThrough));
   }
 }
 
@@ -453,20 +419,15 @@ function isVerdict(error: unknown): boolean {
  * nonce is reserved, so nothing this browser signs can land between the check
  * and the write. When it resolves false the write fails with
  * {@link WRITE_PRECONDITION_FAILED} and nothing is reserved or sent.
- *
- * `beforeNonce`, when given, runs under the same lock before the wait for
- * earlier transitions (to free reservations the caller knows are orphaned).
  */
 export async function withSdkSignedWrite<T>(
   ownerId: string,
   contractId: string,
   write: () => Promise<T>,
   scope?: string,
-  precondition?: () => Promise<boolean>,
-  beforeNonce?: () => void
+  precondition?: () => Promise<boolean>
 ): Promise<T> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
-    beforeNonce?.()
     const { current } = await awaitNonce(ownerId, contractId, (tip, reservation) => (stillPending(tip, reservation).length === 0 ? true : null));
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
     const sdk = await getEvoSdk();

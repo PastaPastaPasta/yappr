@@ -249,10 +249,7 @@ export function ProposalView({ contract, proposalId, election }: {
         setError(null)
         recheckPending()
       })
-      .catch((abandonError: unknown) => {
-        logger.warn('Moderation teams: the application could not be cleared', abandonError)
-        setError(abandonError instanceof CharterActionError ? `Nothing was cleared. ${abandonError.message}` : "Nothing was cleared. Try again in a moment.")
-      })
+      .catch((abandonError: unknown) => logger.warn('Moderation teams: the application could not be cleared', abandonError))
   }
 
   const link = typeof window === 'undefined' ? '' : inviteUrl(contract, proposal.id, window.location.origin)

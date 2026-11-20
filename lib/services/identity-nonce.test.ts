@@ -29,7 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, raiseNonceFloor, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -438,52 +438,6 @@ describe('settlePendingWrites', () => {
   it('reads nothing when nothing is pending', async () => {
     expect(await settle(settlePendingWrites(OWNER, CONTRACT))).toEqual({ ok: true, value: 0 })
     expect(sdk.identities.contractNonce).not.toHaveBeenCalled()
-  })
-})
-
-describe('the reservation format', () => {
-  it('marks every entry this build reserves and reads it back; an entry stored without it reads as an earlier build\'s', () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100), 'scope')
-    reserveNonce(OWNER, CONTRACT, null, n(100))
-    expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.format)).toEqual([2, 2])
-    const key = `yappr:nonce-reservation:${OWNER}:${CONTRACT}`
-    storage.set(key, JSON.stringify({ mark: '5', floor: '4', pending: [{ id: 'old', nonce: '5', expiresAt: null }] }))
-    expect(loadReservation(OWNER, CONTRACT)?.pending[0].format).toBeUndefined()
-  })
-
-  it('settles a lost SDK answer at the nonce of a create reservation released unspent (an orphan this build reserved)', async () => {
-    // A create reserved 101 with Platform at 100; its page died before storing it, and the sweep freed it unspent.
-    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(101), n(100), 'owner:reason:spam'))
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
-    // A fresh SDK signs the delete at 101 and its answer is lost: Platform showing 101 settles it.
-    await lostAnswer(100)
-    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(100), signedAtMost: n(102) })
-    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toEqual([])
-  })
-})
-
-describe('raiseNonceFloor', () => {
-  it('stores the floor and leaves the entry pending, so its later release keeps the floor', () => {
-    const entry = reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    raiseNonceFloor(OWNER, CONTRACT, n(101))
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [{ id: entry.id }] })
-    releaseNonce(OWNER, CONTRACT, entry)
-    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
-    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}').floor).toBe('101')
-  })
-
-  it('stores the floor even when this tab already holds a higher one storage never took, and says when storage refuses', () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100))
-    storageFull.value = true
-    expect(raiseNonceFloor(OWNER, CONTRACT, n(105))).toBe(false)
-    storageFull.value = false
-    expect(raiseNonceFloor(OWNER, CONTRACT, n(103))).toBe(true)
-    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}').floor).toBe('105')
-  })
-
-  it('stores a floor where nothing was reserved yet', () => {
-    expect(raiseNonceFloor(OWNER, CONTRACT, n(7))).toBe(true)
-    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}')).toMatchObject({ mark: '7', floor: '7' })
   })
 })
 
