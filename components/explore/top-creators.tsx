@@ -49,7 +49,7 @@ async function hydrateRankedUsers(rankings: RankedGroupCount[][]): Promise<Ranke
 function RankedUserListSkeleton() {
   const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
   return (
-    <div aria-busy="true" aria-label="Loading creators">
+    <div aria-hidden="true">
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
         <div className="flex h-5 items-center"><div className={`h-3.5 w-36 ${bar}`} /></div>
       </div>
@@ -121,7 +121,7 @@ function RankedUserList({
  *
  * Render-gated by the caller on `prefixRankingsAvailable()`.
  */
-export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {}) {
+export function TopCreators({ window = 'all', onLoadingChange }: { window?: RankingWindow; onLoadingChange?: (loading: boolean) => void } = {}) {
   // Kept per window: switching back shows the last leaderboard at once.
   const [byWindow, setByWindow] = useState<Partial<Record<RankingWindow, { creators: RankedUser[]; mostFollowed: RankedUser[] }>>>({})
 
@@ -150,9 +150,14 @@ export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {})
   }, [window])
 
   const current = byWindow[window]
-  if (!current) return <RankedUserListSkeleton />
-  const { creators, mostFollowed } = current
+  const loading = !current
+  useEffect(() => {
+    onLoadingChange?.(loading)
+  }, [loading, onLoadingChange])
+  return current ? <CreatorLists {...current} /> : <RankedUserListSkeleton />
+}
 
+function CreatorLists({ creators, mostFollowed }: { creators: RankedUser[]; mostFollowed: RankedUser[] }) {
   if (creators.length === 0 && mostFollowed.length === 0) {
     return (
       <div className="p-8 text-center" data-testid="explore-top-creators-empty">

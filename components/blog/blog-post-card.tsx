@@ -12,7 +12,7 @@ interface BlogPostCardProps {
 export function BlogPostCardSkeleton({ count = 4 }: { count?: number }) {
   const bar = 'rounded bg-gray-200 dark:bg-gray-800 animate-pulse'
   return (
-    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-busy="true" aria-label="Loading posts">
+    <div className="divide-y divide-gray-200 dark:divide-gray-800" aria-hidden="true">
       {Array.from({ length: count }, (_, i) => (
         <div key={i} className="flex gap-3 p-4">
           <div className={`h-20 w-20 shrink-0 rounded-lg ${bar}`} />

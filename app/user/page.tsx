@@ -27,6 +27,7 @@ import { useModerationRole } from '@/hooks/use-is-moderator'
 import { useAuthorRestricted } from '@/hooks/use-author-restriction'
 import type { ModeratorHideOutcome } from '@/hooks/use-moderator-hide-modal'
 import { HiddenContentStub, ModerationLabel } from '@/components/moderation/moderation-label'
+import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { ModeratorContentMenu } from '@/components/moderation/moderator-content-menu'
 import { isHidden, moderationViewAll, type ModerationMarks } from '@/lib/moderation-view'
 import { moderationService } from '@/lib/services/moderation-service'
@@ -620,6 +621,7 @@ function UserProfileView({ requestedUserId, userId }: { requestedUserId: string 
           </div>
         </PageHeader>
 
+        <LoadingAnnouncement loading={isLoading || awaitingProfileModeration} label="Loading profile" />
         {isLoading || awaitingProfileModeration ? (
           <ProfileSkeleton userId={userId} />
         ) : showNsfwInterstitial ? (
@@ -809,7 +811,7 @@ const BAR = 'bg-gray-200 dark:bg-gray-800 rounded animate-pulse'
 /** The header's shape while it loads: banner, avatar, action button, name, handle, meta and counts. */
 function ProfileSkeleton({ userId }: { userId?: string }) {
   return (
-    <div aria-busy="true" aria-label="Loading profile">
+    <div aria-hidden="true">
       <div className="h-32 sm:h-48 overflow-hidden">
         {userId ? (
           <div className="h-full w-full blur-sm opacity-60">
@@ -843,6 +845,7 @@ function ProfileSkeleton({ userId }: { userId?: string }) {
 function LoadingFallback() {
   return (
     <PageShell>
+      <LoadingAnnouncement loading label="Loading profile" />
       <ProfileSkeleton />
     </PageShell>
   )
