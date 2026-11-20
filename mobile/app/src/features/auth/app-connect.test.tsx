@@ -208,6 +208,19 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
   });
 
+  it('loads it again once when the engine announced the reload before the accept timed out', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockImplementation(async () => {
+      fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true });
+      throw Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' });
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
+    expect(screen.queryByTestId('kx-try-again')).toBeNull();
+  });
+
   it('loads it again when the sign-in lands after its accept timed out, keeping the interrupted state', async () => {
     await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
     fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }));

@@ -1,4 +1,4 @@
-import type { AppConnectFlowDTO } from '@engine/api';
+import type { AppConnectFlowDTO, SessionDTO } from '@engine/api';
 import { create } from 'zustand';
 
 import { config } from '~/config';
@@ -147,13 +147,12 @@ function listen(): void {
     if (flow.flow <= floor || (current && flow.flow < current.flow) || flow.renew !== renew) return;
     receive(flow);
   });
-  // A sign-in the engine cannot finish loading whose accept reply never came (it timed out): restart into it.
-  // While the accept is still waiting, its reply does that, before any restart could cut it off.
+  // A sign-in the engine cannot finish loading: restart into it. While the accept still waits, it is kept for
+  // the accept to settle, so no restart cuts its reply off; a reply that never comes (it timed out) still reloads.
   onEngineEvent('session.changed', ({ session, reload }) => {
-    if (!reload || !session || get().step.name === 'accepting') return;
-    loadSignedInAgain(session).catch((error: unknown) =>
-      appendLog('warn', 'host', `Reloading the signed-in account failed: ${errorMessage(error)}`),
-    );
+    if (!reload || !session) return;
+    if (get().step.name === 'accepting') announcedReload = session;
+    else reloadInto(session);
   });
   engineSupervisor.subscribeStatus(() => {
     const { state, epoch } = engineSupervisor.getStatus();
@@ -169,6 +168,15 @@ function listen(): void {
       startAppConnect(mode, { renew, reauth, resume }).catch(() => undefined);
     }
   });
+}
+
+/** A reload the engine announced while the accept waited for its reply. */
+let announcedReload: SessionDTO | null = null;
+
+function reloadInto(session: SessionDTO): void {
+  loadSignedInAgain(session).catch((error: unknown) =>
+    appendLog('warn', 'host', `Reloading the signed-in account failed: ${errorMessage(error)}`),
+  );
 }
 
 function receive(flow: AppConnectFlowDTO): void {
@@ -269,13 +277,18 @@ export async function acceptAccount(identityId: string): Promise<void> {
   if (get().step.name === 'accepting' || get().flow?.phase !== 'confirm') return;
   const gen = next();
   const { renew } = get();
+  announcedReload = null;
   set({ step: { name: 'accepting' } });
   try {
     const result = await engine.api.session.appConnectAccept({ identityId });
+    announcedReload = null;
     if (result.status === 'signed-in' && result.reload) await loadSignedInAgain(result.session);
     if (stale(gen)) return;
     set({ step: { name: 'done' } });
   } catch (error) {
+    // The engine announced a reload before the reply was lost: it still has to happen.
+    if (announcedReload) reloadInto(announcedReload);
+    announcedReload = null;
     if (stale(gen)) return;
     // The engine restarted or timed out while it took the answer: whether the grant landed is unknown here, so claim neither.
     const code = errorCode(error);
