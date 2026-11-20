@@ -11,13 +11,11 @@ import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
-import { HeldPaymentRequest } from '@/components/token/held-payment-request'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
 import { identityService } from '@/lib/services/identity-service'
-import { checkPurchaseRequest, clearShownRequest, loadShownRequest, saveShownRequest, type ShownPaymentRequest } from '@/lib/services/wallet-payment-request'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
 import { repostsAreQuotes } from '@/lib/contract-topology'
@@ -83,10 +81,6 @@ export function BuyYappModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletBaselineRef = useRef<bigint | null>(null)
-  // An unpaid wallet request holding this purchase back.
-  const [heldRequest, setHeldRequest] = useState<ShownPaymentRequest | null>(null)
-  // This purchase's earlier request can no longer execute and its balance doesn't prove it paid.
-  const [maybePaidKey, setMaybePaidKey] = useState<string | null>(null)
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
   // baseline after its awaits resolve.
@@ -112,8 +106,6 @@ export function BuyYappModal() {
       setWalletUri(null)
       setWalletExpired(false)
       walletBaselineRef.current = null
-      setHeldRequest(null)
-      setMaybePaidKey(null)
       walletSessionRef.current++
     }
   }, [isOpen])
@@ -123,9 +115,6 @@ export function BuyYappModal() {
   const amountBig = /^\d+$/.test(amount) ? BigInt(amount) : BigInt(0)
   const costCredits = pricePerToken !== null ? pricePerToken * amountBig : null
   const costDashLabel = costCredits !== null ? formatCreditsAsDash(costCredits) : '—'
-  // Names this purchase's stored wallet request (`lib/services/wallet-payment-request.ts`).
-  const requestKey = `purchase:${amountBig}:${costCredits}`
-  const maybePaid = maybePaidKey === requestKey
 
   const handleAmountChange = (value: string) => {
     if (/^\d*$/.test(value)) {
@@ -155,38 +144,15 @@ export function BuyYappModal() {
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
   const finishPurchase = useCallback(() => {
-    // Done: an earlier request for the same purchase must never count as this one's proof.
-    if (user) clearShownRequest(user.identityId, requestKey)
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
-  }, [user, requestKey, refreshBalance])
+  }, [refreshBalance])
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
-    const ownerId = user.identityId
-    const screen = state
     setState('processing')
     setError(null)
-    setHeldRequest(null)
-    setMaybePaidKey(null)
-    // A wallet request for this purchase that may have paid stops a second one here too.
-    const shown = await checkPurchaseRequest(ownerId, requestKey, () => tokenService.getBalance(ownerId)).catch((err: unknown) => {
-      logger.error('Failed to check the wallet purchase request:', err)
-      return null
-    })
-    if (shown?.kind === 'paid') {
-      setYappBalance(shown.balance)
-      finishPurchase()
-      return
-    }
-    if (!shown || shown.kind === 'unproven' || shown.kind === 'held') {
-      if (!shown) setError('Could not check your earlier purchase — please try again')
-      if (shown?.kind === 'unproven') setMaybePaidKey(requestKey)
-      if (shown?.kind === 'held') setHeldRequest(shown.request)
-      setState(screen)
-      return
-    }
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
     const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
@@ -200,11 +166,6 @@ export function BuyYappModal() {
       // Purchases must be signed with the CRITICAL key and none is usable here.
       setError("That key can't approve this. Use your wallet instead.")
       setState('needKey')
-    } else if (result.error === PAYMENT_PENDING_ERROR) {
-      const held = loadShownRequest(user.identityId)
-      setError(held ? null : result.error)
-      setHeldRequest(held)
-      setState('confirming')
     } else {
       // Sent, but not confirmed: no "Try Again", which could buy twice.
       setState(result.errorCode === 'UNCONFIRMED' ? 'unconfirmed' : 'error')
@@ -237,37 +198,10 @@ export function BuyYappModal() {
     setError(null)
     setWalletUri(null)
     setWalletExpired(false)
-    setHeldRequest(null)
-    setMaybePaidKey(null)
-    const ownerId = user.identityId
     try {
-      // The same purchase's QR, while it may still be paid, is shown again with its own baseline.
-      const shown = await checkPurchaseRequest(ownerId, requestKey, () => tokenService.getBalance(ownerId))
-      if (walletSessionRef.current !== session) return
-      if (shown.kind === 'held') {
-        exitWalletSign(null)
-        setHeldRequest(shown.request)
-        return
-      }
-      if (shown.kind === 'same') {
-        walletBaselineRef.current = shown.request.purchase?.balanceBefore ?? null
-        setWalletUri(shown.request.uri)
-        return
-      }
-      if (shown.kind === 'paid') {
-        setYappBalance(shown.balance)
-        finishPurchase()
-        return
-      }
-      if (shown.kind === 'unproven') {
-        // It may have gone through: only "Buy again" builds a new request.
-        exitWalletSign(null)
-        setMaybePaidKey(requestKey)
-        return
-      }
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
-      const baseline = await tokenService.getBalance(ownerId)
+      const baseline = await tokenService.getBalance(user.identityId)
       if (walletSessionRef.current !== session) return
       walletBaselineRef.current = baseline
       const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
@@ -276,35 +210,16 @@ export function BuyYappModal() {
         await request.discard()
         return
       }
-      const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
-      saveShownRequest(ownerId, {
-        key: requestKey,
-        uri,
-        nonce: request.nonce,
-        description: `${costDashLabel} to buy ${amountBig.toString()} YAPP`,
-        purchase: { balanceBefore: baseline, amount: amountBig },
-      })
-      setWalletUri(uri)
+      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
-      if (err instanceof Error && err.message === PAYMENT_PENDING_ERROR) {
-        const held = loadShownRequest(ownerId)
-        exitWalletSign(held ? null : err.message)
-        setHeldRequest(held)
-        return
-      }
-      exitWalletSign('Could not prepare the wallet signing request — please try again')
+      exitWalletSign(err instanceof Error && err.message === PAYMENT_PENDING_ERROR ? err.message : 'Could not prepare the wallet signing request — please try again')
     }
   }
 
   const startWalletSign = () => {
     handleWalletSign().catch(err => logger.error('Failed to start wallet signing:', err))
-  }
-
-  const buyAgain = () => {
-    if (user) clearShownRequest(user.identityId, requestKey)
-    startWalletSign()
   }
 
   // While the dash-st: QR is up, poll the YAPP balance until the wallet's
@@ -348,15 +263,6 @@ export function BuyYappModal() {
       clearInterval(poll)
     }
   }, [state, walletUri, user, amountBig, finishPurchase])
-
-  const maybePaidNotice = (
-    <div className="space-y-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 px-3 py-3">
-      <p className="text-sm text-amber-800 dark:text-amber-200">
-        This purchase may already have gone through. Check your YAPP balance before buying again.
-      </p>
-      <Button onClick={buyAgain} variant="outline" className="w-full">Buy again</Button>
-    </div>
-  )
 
   const handleClose = () => {
     if (state === 'processing') return
@@ -489,8 +395,6 @@ export function BuyYappModal() {
                           <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
                         </div>
                         {error && <p className="text-red-500 text-sm">{error}</p>}
-                        {heldRequest && <HeldPaymentRequest key={heldRequest.key} request={heldRequest} />}
-                        {maybePaid && maybePaidNotice}
                         <div className="flex gap-3">
                           <Button onClick={() => { setState('input'); setError(null) }} variant="outline" className="flex-1">Back</Button>
                           {preferWallet ? (
@@ -501,7 +405,7 @@ export function BuyYappModal() {
                               Approve in wallet
                             </Button>
                           ) : (
-                            <Button onClick={handleBuy} className="flex-1" disabled={maybePaid}>Confirm &amp; Buy</Button>
+                            <Button onClick={handleBuy} className="flex-1">Confirm &amp; Buy</Button>
                           )}
                         </div>
                         {preferWallet && (
@@ -525,8 +429,6 @@ export function BuyYappModal() {
                           <span className="font-medium">{costDashLabel}</span>
                         </div>
                         {error && <p className="text-red-500 text-sm">{error}</p>}
-                        {heldRequest && <HeldPaymentRequest key={heldRequest.key} request={heldRequest} />}
-                        {maybePaid && maybePaidNotice}
                         <div className="flex gap-3">
                           <Button
                             onClick={() => { setState('confirming'); setError(null) }}
@@ -543,7 +445,7 @@ export function BuyYappModal() {
                           </Button>
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
-                          <Button onClick={handleBuy} variant="outline" className="w-full" disabled={maybePaid}>
+                          <Button onClick={handleBuy} variant="outline" className="w-full">
                             Use your highest-security key instead
                           </Button>
                         </div>
