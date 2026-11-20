@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false
 
       - name: Check Xcode
-        run: scripts/check-xcode.sh 27 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: scripts/check-xcode.sh 27 27B52 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node.js
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0

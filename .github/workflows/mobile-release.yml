@@ -127,7 +127,7 @@ jobs:
 
       - name: Check Xcode
         shell: bash
-        run: scripts/check-xcode.sh 27 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: scripts/check-xcode.sh 27 27B52 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Install dependencies
         run: |
