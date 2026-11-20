@@ -83,7 +83,16 @@ export function BuyYappModal() {
   const [walletExpired, setWalletExpired] = useState(false)
   const walletBaselineRef = useRef<bigint | null>(null)
   // The QR this modal session built, shown again by "Check again" while it may still execute.
-  const shownRequestRef = useRef<{ key: string; uri: string; nonce: bigint; baseline: bigint } | null>(null)
+  const shownRequestRef = useRef<{ ownerId: string; key: string; uri: string; nonce: bigint; baseline: bigint } | null>(null)
+
+  // An account switch ends the modal session: the QR and any wallet work in flight belong to the old identity.
+  const sessionIdentity = user?.identityId
+  const identityRef = useRef(sessionIdentity)
+  useEffect(() => {
+    if (identityRef.current === sessionIdentity) return
+    identityRef.current = sessionIdentity
+    close()
+  }, [sessionIdentity, close])
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
   // baseline after its awaits resolve.
@@ -205,15 +214,23 @@ export function BuyYappModal() {
     setWalletExpired(false)
     const key = `${amountBig}:${costCredits}`
     try {
-      // This session's QR for the same purchase, while it may still execute, is shown again with its own baseline.
-      const shown = shownRequestRef.current
-      if (shown?.key === key && await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)) {
+      // This session's QR, while it may still execute, is shown again for the same purchase with its own
+      // baseline and holds any other back; it is kept until a new one replaces it or it is proved retired.
+      const shown = shownRequestRef.current?.ownerId === user.identityId ? shownRequestRef.current : null
+      if (shown) {
+        const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
         if (walletSessionRef.current !== session) return
-        walletBaselineRef.current = shown.baseline
-        setWalletUri(shown.uri)
-        return
+        if (live && shown.key !== key) {
+          exitWalletSign(PAYMENT_PENDING_ERROR)
+          return
+        }
+        if (live) {
+          walletBaselineRef.current = shown.baseline
+          setWalletUri(shown.uri)
+          return
+        }
+        if (shownRequestRef.current === shown) shownRequestRef.current = null
       }
-      shownRequestRef.current = null
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
       const baseline = await tokenService.getBalance(user.identityId)
@@ -226,7 +243,7 @@ export function BuyYappModal() {
         return
       }
       const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
-      shownRequestRef.current = { key, uri, nonce: request.nonce, baseline }
+      shownRequestRef.current = { ownerId: user.identityId, key, uri, nonce: request.nonce, baseline }
       setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
