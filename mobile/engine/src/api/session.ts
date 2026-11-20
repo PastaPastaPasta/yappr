@@ -83,7 +83,7 @@ export interface AppConnectStatusDTO {
 /** One key a wallet granted Yappr for this account (Settings): what it may do, its allowance and expiry. */
 export type WalletConnectionDTO = WalletKeyRow
 
-/** How accepting a wallet's answer ended. `reload`: the account was parked here, and the host restarts the engine into it. */
+/** How accepting a wallet's answer ended. `reload`: this boot did not load the account's secrets, and the host restarts the engine into it. */
 export type AppConnectAcceptDTO =
   | { status: 'signed-in'; session: SessionDTO; reload: boolean }
   | { status: 'renewed'; session: SessionDTO }
@@ -260,7 +260,7 @@ export function createSessionModule(options: SessionModuleOptions) {
   }
 
   let restoring: Promise<SessionDTO | null> | null = null
-  /** The account whose secrets the host loaded for this boot (with the shared ones), if any. */
+  /** The account whose secrets the host loaded for this boot (with the shared ones) and still binds to, if any. */
   let hydratedIdentity: string | null = null
   /** Restores lib's saved session once per engine boot; every session call waits for it. */
   function restored(): Promise<SessionDTO | null> {
@@ -500,8 +500,9 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
     // A renewal whose account was signed out meanwhile (the wallet disabled the old keys first) signs it back in.
     assertSlotFree(identityId)
-    // An account known here whose secrets this boot did not load (parked, or signed out to sign in again).
-    const unloaded = registry.get(identityId) !== undefined && identityId !== hydratedIdentity
+    // An account known here whose secrets this boot did not load (parked, or signed out to sign in again), or any
+    // account while the host is still bound to another one's bucket (its restore failed).
+    const unloaded = identityId !== hydratedIdentity && (hydratedIdentity !== null || registry.get(identityId) !== undefined)
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
     const hold = unloaded ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
@@ -583,7 +584,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     // account the user signed out. A parked account's renewal is in its own bucket, which this boot did not load.
     const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }]
     for (const kind of kinds) await appConnect.forget(kind)
-    if (identityId !== hydratedIdentity) appConnect.drop({ identityHint: identityId, renew: true })
+    if (identityId !== hydratedIdentity) await appConnect.drop({ identityHint: identityId, renew: true })
     await options.secureDurable?.()
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.
@@ -605,6 +606,8 @@ export function createSessionModule(options: SessionModuleOptions) {
     if (appConnect.renewing() === identityId) appConnect.cancel()
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
+    // Its auth key is gone, so the host no longer binds this boot to its bucket.
+    if (identityId === hydratedIdentity) hydratedIdentity = null
     if (isActive) announce('signed-out')
   }
 

@@ -16,7 +16,6 @@ import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { RpcError } from '../protocol/envelope'
-import { removeEngineSecret } from './app-connect-store'
 
 /**
  * Wallet sign-in through App Connect (docs/APP_CONNECT_PROFILE.md), the
@@ -269,9 +268,9 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     },
 
     /** Deletes the stored request of this kind by name, unread: one in an account bucket this boot did not load. */
-    drop(kind: AppConnectRequestKind): void {
+    async drop(kind: AppConnectRequestKind): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
-      removeEngineSecret(localStorage, appConnectSessions.network(), slotName(kind))
+      await appConnectSessions.keyStore().deleteSecret(appConnectSessions.network(), slotName(kind))
     },
 
     /**

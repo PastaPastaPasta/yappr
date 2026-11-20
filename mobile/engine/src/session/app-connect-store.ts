@@ -90,11 +90,6 @@ export function forgetEngineRing(storage: Pick<Storage, 'removeItem'>, network: 
   storage.removeItem(ringPrefix(network) + identityId)
 }
 
-/** Deletes the key ring's secret `name` as stored, without reading it. */
-export function removeEngineSecret(storage: Pick<Storage, 'removeItem'>, network: string, name: string): void {
-  storage.removeItem(secretKey(network, name))
-}
-
 export function engineKeyRingBackend(storage: Storage): KeyRingBackend {
   let deviceKey: Promise<CryptoKey> | null = null
 

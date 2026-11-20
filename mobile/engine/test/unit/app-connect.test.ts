@@ -58,6 +58,7 @@ const { evoSdkService } = await import('@/lib/services/evo-sdk-service')
 const { bytesToHex, hexToBytes } = await import('@/lib/bytes')
 const { privateKeyToWif } = await import('@/lib/crypto/wif')
 const { YAPPR_CONTRACT_ID, DASHPAY_CONTRACT_ID, keyNetwork } = await import('@/lib/constants')
+const { SESSION_STORAGE_KEY } = await import('@/lib/storage-scope')
 
 type Session = ReturnType<typeof createSessionModule>
 type ChainKey = import('platform-auth').AppConnectIdentityKey
@@ -670,6 +671,42 @@ describe('App Connect requests across kills and engine restarts', () => {
     session = reloaded
     expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
     await reloaded.signOut()
+  })
+
+  /** A launch whose session slot names a new account that does not restore: the host stays bound to its bucket. */
+  async function failedRestore(): Promise<{ engine: Session; alice: string }> {
+    await signedOut()
+    const alice = bs58.encode(crypto.getRandomValues(new Uint8Array(32)))
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: { identityId: alice } }))
+    const controller = createMobileAuthController()
+    vi.spyOn(controller, 'restoreSession').mockResolvedValueOnce(null)
+    const engine = boot(controller)
+    session = engine
+    expect(await engine.restore()).toBeNull()
+    return { engine, alice }
+  }
+
+  it('reloads a new account signed in on a launch still bound to another account whose session did not restore', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [60, 61])
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: true })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
+  it('signs a new account in without a reload on a launch bound to nobody, or whose account signed out', async () => {
+    const engine = await signedOut()
+    await answered(engine, [62, 63])
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    await engine.signOut()
+
+    const { engine: next, alice } = await failedRestore()
+    await next.signOut({ identityId: alice })
+    await answered(next, [64, 65])
+    expect(await next.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    await next.signOut()
   })
 
   it('keeps "Sign in again" where a signed-out launch finds it, and a cancel of the resumed request forgets it', async () => {
