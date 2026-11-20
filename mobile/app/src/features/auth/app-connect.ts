@@ -295,14 +295,15 @@ function walletReported(status: string): void {
 }
 
 /** "Cancel", or leaving the flow: the engine forgets the request and any answer. */
-export function cancelAppConnect(): void {
+export async function cancelAppConnect(): Promise<void> {
   const { step } = get();
   next();
   set(initial);
-  if (step.name !== 'idle' && step.name !== 'done') {
-    engine.api.session.appConnectCancel().catch((error: unknown) => {
-      appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
-    });
+  if (step.name === 'idle' || step.name === 'done') return;
+  try {
+    await engine.api.session.appConnectCancel();
+  } catch (error) {
+    appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
   }
 }
 

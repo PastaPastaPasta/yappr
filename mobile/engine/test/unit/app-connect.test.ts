@@ -7,7 +7,7 @@
  * profile's own crypto (`sealAppConnectPayload`); the first sign-in answers
  * the request of the test vectors (vendor/platform-auth/src/app-connect/vectors.json).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import bs58 from 'bs58'
@@ -88,10 +88,10 @@ let emitted: { event: string; payload: unknown }[] = []
 const emit = (event: string, payload: unknown) => { emitted.push({ event, payload }) }
 const flows = () => emitted.filter(e => e.event === 'session.appConnect').map(e => e.payload as Flow)
 
-function boot(): Session {
+function boot(controller = createMobileAuthController()): Session {
   return createSessionModule({
     emit,
-    controller: createMobileAuthController(),
+    controller,
     secureDurable: () => engineStorage.secureDurable(),
     holdSecure: matches => engineStorage.holdSecure(matches),
   })
@@ -585,6 +585,23 @@ describe('App Connect requests across kills and engine restarts', () => {
   const REAUTH_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_reauth'
   const RENEWAL_SLOT = `yappr_secure_ac_secret_testnet_pending_request_${OWNER}`
   const stored = () => Object.keys(engineStorage.snapshot().secure)
+  const settle = () => new Promise(resolve => setTimeout(resolve, 50))
+
+  afterEach(() => {
+    releaseAcks()
+  })
+
+  /** A launch with nobody signed in and no request stored: only the shared bucket is loaded. */
+  async function signedOut(): Promise<Session> {
+    const before = boot()
+    if (await before.restore()) await before.signOut()
+    for (const slot of [LOGIN_SLOT, REAUTH_SLOT, RENEWAL_SLOT]) localStorage.removeItem(slot)
+    await engineStorage.secureDurable()
+    const engine = boot()
+    session = engine
+    await engine.restore()
+    return engine
+  }
 
   async function untilPhase(engine: Session, phase: Flow['phase']): Promise<Flow> {
     for (let i = 0; i < 500; i++) {
@@ -607,35 +624,86 @@ describe('App Connect requests across kills and engine restarts', () => {
     await walletAnswers(uri, OWNER, granted)
   }
 
-  /** Signs OWNER in through the wallet, with fresh key ids. */
-  async function walletSignIn(on: Session, ids: [number, number]): Promise<void> {
-    const started = await on.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+  /** Starts a request on `on` and has the wallet answer it for OWNER, up to "Continue as". */
+  async function answered(on: Session, ids: [number, number], start: { reauth?: string; renew?: boolean } = {}): Promise<void> {
+    const started = await on.appConnectStart({ returnTo: RETURN_TO, fresh: true, ...start })
     if (started.phase !== 'waiting') throw new Error('not waiting')
     await walletGrants(started.uri, ids)
     await on.appConnectPollNow()
     await untilPhase(on, 'confirm')
-    expect(await on.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+  }
+
+  /** Signs OWNER in through the wallet, with fresh key ids; the engine the host restarts into, if it must. */
+  async function walletSignIn(on: Session, ids: [number, number]): Promise<Session> {
+    await answered(on, ids)
+    const result = await on.appConnectAccept({ identityId: OWNER })
+    if (result.status !== 'signed-in') throw new Error('not signed in')
+    if (!result.reload) return on
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    return next
+  }
+
+  /** A request in the slot of `kind`, as one saved before the app was killed. */
+  async function savedRequest(identityHint?: string): Promise<void> {
+    await requestRecordsFor(identityHint).save({
+      ephemeralPrivateKey: bytesToHex(randomKey()),
+      createdAt: Date.now(),
+      connectionId: await appConnectSessions.connectionId(),
+      ...(identityHint ? { identityHint } : {}),
+    })
   }
 
   it('reports a cancel only once its stored request is gone from the device', async () => {
-    const fresh = boot()
-    session = fresh
-    expect(await fresh.restore()).toBeNull()
-    await fresh.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    const engine = await signedOut()
+    await engine.appConnectStart({ returnTo: RETURN_TO, fresh: true })
     expect(stored()).toContain(LOGIN_SLOT)
     secureDeletes.length = 0
-    await fresh.appConnectCancel()
+    await engine.appConnectCancel()
     expect(secureDeletes).toContain(LOGIN_SLOT)
     expect(stored()).not.toContain(LOGIN_SLOT)
   })
 
+  it('a cancel during a start\'s restore wait replies only once that start has deleted the request', async () => {
+    await signedOut()
+    await savedRequest()
+    // Killed with the request stored: the next launch's restore holds until released.
+    const controller = createMobileAuthController()
+    const restore = controller.restoreSession.bind(controller)
+    const hold: { release?: () => void } = {}
+    vi.spyOn(controller, 'restoreSession').mockImplementationOnce(async () => {
+      await new Promise<void>(resolve => { hold.release = resolve })
+      return restore()
+    })
+    const next = boot(controller)
+    session = next
+    const starting = next.appConnectStart({ returnTo: RETURN_TO })
+    await until(() => hold.release, 'the restore')
+    let replied = false
+    const cancelling = next.appConnectCancel().then(() => { replied = true })
+    await settle()
+    expect(replied).toBe(false)
+    secureDeletes.length = 0
+    heldAcks = []
+    hold.release?.()
+    await until(() => secureDeletes.includes(LOGIN_SLOT), 'the request deletion on its way to the host')
+    await settle()
+    expect(replied).toBe(false)
+    releaseAcks()
+    await cancelling
+    expect(await starting).toMatchObject({ phase: 'idle' })
+    expect(stored()).not.toContain(LOGIN_SLOT)
+  })
+
   it('a cancel deletes its stored request even when it cannot be read', async () => {
-    await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    const engine = await signedOut()
+    await engine.appConnectStart({ returnTo: RETURN_TO, fresh: true })
     expect(stored()).toContain(LOGIN_SLOT)
     const reads = vi.spyOn(appConnectSessions.keyStore(), 'loadSecret').mockResolvedValue(null)
     try {
       secureDeletes.length = 0
-      await session.appConnectCancel()
+      await engine.appConnectCancel()
     } finally {
       reads.mockRestore()
     }
@@ -644,22 +712,96 @@ describe('App Connect requests across kills and engine restarts', () => {
   })
 
   it('reports a sign-in only once its request is gone from the device', async () => {
-    const started = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
-    if (started.phase !== 'waiting') throw new Error('not waiting')
-    await walletGrants(started.uri, [20, 21])
-    await session.appConnectPollNow()
-    await untilPhase(session, 'confirm')
+    const engine = await signedOut()
+    await answered(engine, [40, 41])
     secureDeletes.length = 0
-    expect(await session.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
     expect(secureDeletes).toContain(LOGIN_SLOT)
   })
 
+  it('installs nothing from a sign-in until the host has deleted its request', async () => {
+    const engine = await signedOut()
+    await answered(engine, [42, 43])
+    secureDeletes.length = 0
+    emitted = []
+    heldAcks = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => secureDeletes.includes(LOGIN_SLOT), 'the request deletion on its way to the host')
+    await settle()
+    expect(appConnectSessions.current(OWNER)).toBeNull()
+    expect(emitted.some(e => e.event === 'session.changed')).toBe(false)
+    releaseAcks()
+    expect(await accepting).toMatchObject({ status: 'signed-in' })
+    expect(appConnectSessions.current(OWNER)).not.toBeNull()
+  })
+
+  it('reloads the account\'s secrets after "Sign in again" on a launch that loaded only the shared ones', async () => {
+    await walletSignIn(await signedOut(), [44, 45])
+    // Its session no longer restores: the slot is freed and the account kept, to be signed in again.
+    const controller = createMobileAuthController()
+    vi.spyOn(controller, 'restoreSession').mockResolvedValueOnce(null)
+    const failed = boot(controller)
+    expect(await failed.restore()).toBeNull()
+    expect((await failed.accounts()).map(account => account.identityId)).toContain(OWNER)
+    // Killed while the wallet was open: the next launch has nobody signed in, so it loads only the shared bucket.
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    await answered(next, [46, 47], { reauth: OWNER })
+    expect(await next.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: true })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
+  it('a renewal deletes only the request it accepted: one saved while the ring is stored stays', async () => {
+    const engine = await walletSignIn(await signedOut(), [48, 49])
+    await answered(engine, [50, 51], { renew: true })
+    heldAcks = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the new ring on its way to the host')
+    await savedRequest(OWNER)
+    const replacement = localStorage.getItem(RENEWAL_SLOT)
+    releaseAcks()
+    expect(await accepting).toMatchObject({ status: 'renewed' })
+    expect(localStorage.getItem(RENEWAL_SLOT)).toBe(replacement)
+    expect(await engine.appConnectPending({ renew: true })).toBe(true)
+    await engine.signOut()
+  })
+
+  it('a renewal deletes its request when it can be read once but not again', async () => {
+    const engine = await walletSignIn(await signedOut(), [52, 53])
+    await answered(engine, [54, 55], { renew: true })
+    heldAcks = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the new ring on its way to the host')
+    const keyStore = appConnectSessions.keyStore()
+    const read = keyStore.loadSecret.bind(keyStore)
+    let readOnce = false
+    const reads = vi.spyOn(keyStore, 'loadSecret').mockImplementation(async (network, name) => {
+      if (!name.startsWith('pending-request:')) return read(network, name)
+      if (readOnce) return null
+      readOnce = true
+      return read(network, name)
+    })
+    try {
+      secureDeletes.length = 0
+      releaseAcks()
+      expect(await accepting).toMatchObject({ status: 'renewed' })
+    } finally {
+      reads.mockRestore()
+    }
+    expect(readOnce).toBe(true)
+    expect(secureDeletes).toContain(RENEWAL_SLOT)
+    expect(stored()).not.toContain(RENEWAL_SLOT)
+    await engine.signOut()
+  })
+
   it('keeps "Sign in again" where a signed-out launch finds it, and a cancel of the resumed request forgets it', async () => {
-    const restarted = boot()
-    session = restarted
-    await restarted.restore()
-    await restarted.signOut()
-    const started = await restarted.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const engine = await walletSignIn(await signedOut(), [56, 57])
+    await engine.signOut()
+    const started = await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
     if (started.phase !== 'waiting') throw new Error('not waiting')
     expect(stored()).toContain(REAUTH_SLOT)
     expect(stored()).not.toContain(RENEWAL_SLOT)
@@ -675,23 +817,21 @@ describe('App Connect requests across kills and engine restarts', () => {
   })
 
   it('a sign-in whose request cannot be deleted fails before it signs in', async () => {
-    const started = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
-    if (started.phase !== 'waiting') throw new Error('not waiting')
-    await walletGrants(started.uri, [26, 27])
-    await session.appConnectPollNow()
-    await untilPhase(session, 'confirm')
+    const engine = await signedOut()
+    await answered(engine, [26, 27])
     const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
     try {
-      await expect(session.appConnectAccept({ identityId: OWNER })).rejects.toThrow('storage failed')
+      await expect(engine.appConnectAccept({ identityId: OWNER })).rejects.toThrow('storage failed')
     } finally {
       deletes.mockRestore()
     }
-    expect(await session.current()).toBeNull()
+    expect(await engine.current()).toBeNull()
     expect(appConnectSessions.current(OWNER)).toBeNull()
   })
 
   it('a cancel forgets the request of a resumed start that never took it up (offline)', async () => {
-    await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    const engine = await signedOut()
+    await engine.appConnectStart({ returnTo: RETURN_TO, fresh: true })
     const next = boot()
     session = next
     vi.mocked(appConnectPlatformPort.chainStatus).mockRejectedValueOnce(new Error('offline'))
@@ -702,36 +842,33 @@ describe('App Connect requests across kills and engine restarts', () => {
   })
 
   it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
-    await walletSignIn(session, [32, 33])
-    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    const engine = await walletSignIn(await signedOut(), [32, 33])
+    const renewal = await engine.appConnectStart({ renew: true, returnTo: RETURN_TO })
     if (renewal.phase !== 'waiting') throw new Error('not waiting')
     const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
     try {
-      await expect(session.signOut()).rejects.toThrow('storage failed')
+      await expect(engine.signOut()).rejects.toThrow('storage failed')
     } finally {
       deletes.mockRestore()
     }
-    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    expect(await engine.current()).toMatchObject({ identityId: OWNER })
     expect(stored()).toContain(RENEWAL_SLOT)
     // Signed out only once the host has deleted the request.
     heldAcks = []
-    const signingOut = session.signOut()
+    const signingOut = engine.signOut()
     await until(() => heldAcks?.length, 'the request deletion on its way to the host')
-    await new Promise(resolve => setTimeout(resolve, 50))
-    expect(await session.current()).toMatchObject({ identityId: OWNER })
+    await settle()
+    expect(await engine.current()).toMatchObject({ identityId: OWNER })
     releaseAcks()
     await signingOut
-    expect(await session.current()).toBeNull()
+    expect(await engine.current()).toBeNull()
     expect(stored()).not.toContain(RENEWAL_SLOT)
   })
 
   it('restores a wallet session killed before it recorded its method as a wallet session', async () => {
-    const started = await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
-    if (started.phase !== 'waiting') throw new Error('not waiting')
-    await walletGrants(started.uri, [24, 25])
-    await session.appConnectPollNow()
-    await untilPhase(session, 'confirm')
-    expect(await session.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+    const engine = await signedOut()
+    await answered(engine, [24, 25])
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
     // Killed after the session and its ring were stored, before the registry heard how it signed in.
     localStorage.removeItem('yappr_engine_accounts')
     const next = boot()
@@ -739,5 +876,4 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await next.restore()).toMatchObject({ identityId: OWNER, method: 'app-connect' })
     await next.signOut()
   })
-
 })

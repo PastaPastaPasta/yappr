@@ -86,7 +86,7 @@ function useSignInExit(pathname: string): void {
     const inside = inSignIn(pathname);
     if (wasInSignIn.current && !inside && pathname !== '/terms-gate') {
       if (useKeyExchange.getState().phase.name !== 'idle') cancelKeyExchange();
-      if (useAppConnect.getState().step.name !== 'idle') cancelAppConnect();
+      if (useAppConnect.getState().step.name !== 'idle') cancelAppConnect().catch(() => undefined);
       returnFromAddAccount();
     }
     wasInSignIn.current = inside;

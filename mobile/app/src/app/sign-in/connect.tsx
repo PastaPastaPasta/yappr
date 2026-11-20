@@ -1,6 +1,6 @@
 import type { AppConnectCandidateDTO } from '@engine/api';
 import { Stack, useLocalSearchParams, useNavigation, useRoute } from 'expo-router';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -97,7 +97,7 @@ export default function ConnectScreen() {
     startAppConnect(params.mode === 'qr' ? 'qr' : 'wallet', { renew, reauth, resume: params.resume === '1' }).catch(() => undefined);
     // Leaving the screen any way but by finishing abandons the request.
     return () => {
-      if (useAppConnect.getState().step.name !== 'done') cancelAppConnect();
+      if (useAppConnect.getState().step.name !== 'done') cancelAppConnect().catch(() => undefined);
     };
   }, [params.mode, params.resume, renew]);
 
@@ -126,9 +126,24 @@ export default function ConnectScreen() {
     if (renewalAnswer) acceptAccount(renewalAnswer).catch(() => undefined);
   }, [renewalAnswer]);
 
+  // The screen closes once the engine has answered the cancel, so a cancel still on its way cannot overtake a later start.
+  const [cancelling, setCancelling] = useState(false);
+  const cancelSent = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const cancel = () => {
-    cancelAppConnect();
-    close();
+    if (cancelSent.current) return;
+    cancelSent.current = true;
+    setCancelling(true);
+    const closeIfShown = () => {
+      if (mounted.current) closeRef.current();
+    };
+    cancelAppConnect().then(closeIfShown, closeIfShown);
   };
   const startOver = () => {
     startAppConnect(mode, { renew, reauth: useAppConnect.getState().reauth, fresh: true }).catch(() => undefined);
@@ -139,7 +154,9 @@ export default function ConnectScreen() {
   const uri = flowUri(flow);
   const tryAgain = <Button label={copy.signin.tryAgain} size="block" onPress={startOver} testID="kx-try-again" />;
 
-  if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
+  if (cancelling) {
+    body = <StatusBlock tone="busy" title={copy.signin.cancelling} testID="ac-cancelling" />;
+  } else if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
     body = <StatusBlock tone="busy" title={copy.signin.starting} />;
   } else if (step.name === 'accepting' || renewalAnswer) {
     body = <StatusBlock tone="busy" title={renew ? copy.renew.renewing : copy.signin.signingIn} />;

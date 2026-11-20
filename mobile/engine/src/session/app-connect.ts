@@ -83,6 +83,10 @@ function slotOf({ identityHint, renew }: AppConnectRequestKind): string | undefi
   return identityHint === undefined ? undefined : REAUTH_SLOT
 }
 
+function slotName(kind: AppConnectRequestKind): string {
+  return `pending-request:${slotOf(kind) ?? 'login'}`
+}
+
 function recordsFor(kind: AppConnectRequestKind): RequestRecordStore {
   return requestRecordsFor(slotOf(kind))
 }
@@ -262,22 +266,32 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
+    /** The stored request of this kind as stored (wrapped), to forget only that one later (`forget`'s `only`). */
+    stored(kind: AppConnectRequestKind): string | null {
+      if (!isAppConnectBuild() || !appConnectPins()) return null
+      return engineSecretRaw(localStorage, appConnectSessions.network(), slotName(kind))
+    },
+
     /**
      * Forgets the stored request of this kind (see `pending`), if there is
-     * one. `strict`: one stored but unreadable goes too (lib's load reads a
-     * failure as no request and leaves it), unless a save replaced it meanwhile.
+     * one, or only the one `stored` returned (`only`). `strict`: one stored
+     * but unreadable goes too (lib's load and clear read a failure as no
+     * request and leave it), unless a save replaced it meanwhile.
      */
-    async forget(kind: AppConnectRequestKind, { strict = false }: { strict?: boolean } = {}): Promise<void> {
+    async forget(kind: AppConnectRequestKind, { strict = false, only }: { strict?: boolean; only?: string | null } = {}): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
       const network = appConnectSessions.network()
-      const name = `pending-request:${slotOf(kind) ?? 'login'}`
+      const name = slotName(kind)
       const before = engineSecretRaw(localStorage, network, name)
+      if (before === null || (only !== undefined && before !== only)) return
       const record = await recordsFor(kind).load()
+      // The load waited behind any save already issued: one that replaced the request meant here keeps its own.
+      if (only !== undefined && engineSecretRaw(localStorage, network, name) !== before) return
       if (record) {
-        if (record.identityHint === kind.identityHint) await recordsFor(kind).clear(record)
-        return
+        if (record.identityHint !== kind.identityHint) return
+        await recordsFor(kind).clear(record)
       }
-      if (strict && before !== null && engineSecretRaw(localStorage, network, name) === before) removeEngineSecret(localStorage, network, name)
+      if (strict && engineSecretRaw(localStorage, network, name) === before) removeEngineSecret(localStorage, network, name)
     },
 
     /**
