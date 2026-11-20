@@ -333,7 +333,7 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
   });
 
-  it('drops a renewal whose lookup answers after an account switch started', async () => {
+  it('drops a renewal whose lookup answers after an account switch started, and offers it once the switch fails', async () => {
     useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
     let answer: (pending: boolean) => void = () => undefined;
     fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
@@ -342,6 +342,11 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     act(() => useAccounts.setState({ transition: { kind: 'switch', label: 'Switching to @bob' } }));
     await act(async () => answer(true));
     expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    act(() => useAccounts.setState({ transition: null }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
   });
 
   it('looks again once the engine is back when a restart cut the lookup short', async () => {
@@ -440,6 +445,12 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     await flush();
     expect(router.push).not.toHaveBeenCalled();
     expect(useAccounts.getState().reauth).toBeNull();
+
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'alice' });
+    act(() => useAccounts.setState({ transition: null }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
   });
 
   it('goes back to the parked account when no sign-in is stored', async () => {
