@@ -177,8 +177,10 @@ xcrun simctl install <udid> build/release/yappr-devnet-1.0.0-1-simulator.app
 APP_VARIANT=devnet npm run release:ios -- archive     # unsigned device archive + unsigned .ipa
 ```
 
-The unsigned `.ipa` shows the upload size; it can't be installed. To sign and
-upload, see [TestFlight](#testflight).
+The unsigned `.ipa` shows the upload size; it can't be installed. With
+`YAPPR_IOS_TEAM_ID` and `YAPPR_IOS_PROFILE_SPECIFIER` set, `archive` signs
+instead (the app target only, "Apple Distribution" from the keychain); the
+[TestFlight](#testflight) workflow does that.
 
 ## CI: `Mobile release` workflow
 
@@ -231,41 +233,111 @@ release validator needs those root dependencies even before an engine exists.
 
 ## TestFlight
 
-**Needs:** an Apple Developer **organization** account (COMPLIANCE C1), and an
-App Store Connect app record per variant: `pr.yap.app.dev`,
-`pr.yap.app.beta`, and later `pr.yap.app`.
+**Needs:** the Dash Foundation's Apple Developer **organization** account
+(COMPLIANCE C1), team `44RJ69WHFF`, "The Dash Foundation, Inc.", never a
+personal account, and an App Store Connect app record per bundle id
+(`pr.yap.app.beta` is "Yappr Beta").
 
-1. In App Store Connect → Users and Access → Integrations, create an **App
-   Store Connect API key** with the App Manager role. Keep the `.p8`, the key
-   id and the issuer id out of git (`*.p8` is gitignored).
-2. Create an **Apple Distribution** certificate. Create an **App Store**
-   provisioning profile for each bundle id. Xcode automatic signing with the
-   API key can do both.
-3. Archive with signing, then export and upload in one step:
+### `iOS TestFlight` workflow
 
-   ```bash
-   # The archive re-evaluates app.config.ts (expo-constants), so APP_VARIANT must reach both steps.
-   export APP_VARIANT=devnet YAPPR_BUILD_NUMBER=<n>
-   npm run release:ios -- archive   # makes the project; the unsigned archive is not uploaded
-   cd ios && xcodebuild -workspace YapprDev.xcworkspace -scheme YapprDev -configuration Release \
-     -destination 'generic/platform=iOS' -archivePath ../build/release/YapprDev.xcarchive \
-     -allowProvisioningUpdates DEVELOPMENT_TEAM=<TEAM_ID> \
-     -authenticationKeyPath <AuthKey.p8> -authenticationKeyID <KEY_ID> -authenticationKeyIssuerID <ISSUER_ID> \
-     archive
-   xcodebuild -exportArchive -archivePath ../build/release/YapprDev.xcarchive \
-     -exportOptionsPlist <ExportOptions.plist> -exportPath ../build/release/export \
-     -allowProvisioningUpdates \
-     -authenticationKeyPath <AuthKey.p8> -authenticationKeyID <KEY_ID> -authenticationKeyIssuerID <ISSUER_ID>
-   ```
+`.github/workflows/ios-testflight.yml` runs on manual dispatch only, on
+macos-26, in the `testflight` environment. Inputs:
 
-   `ExportOptions.plist` contains `method` = `app-store-connect`,
-   `destination` = `upload`, `teamID` = `<TEAM_ID>`, and
-   `manageAppVersionAndBuildNumber` = `false`. For testnet, export
-   `APP_VARIANT=testnet` and use `YapprBeta.xcworkspace` and the `YapprBeta` scheme.
-4. In App Store Connect, answer the export compliance question: standard
-   algorithms not provided by Apple (COMPLIANCE, Encryption export). Then add
-   the build to the internal testing group. The first external build goes
-   through Beta App Review.
+| Input | Default | What |
+| --- | --- | --- |
+| `variant` | `testnet` | `testnet`, `devnet` or `staging-testnet` |
+| `build_number` | the run number | `CFBundleVersion`; must be new for the app record |
+| `dry_run` | `true` | build, sign, export and run the signing gate, but don't upload |
+| `what_to_test` | `New beta build.` | TestFlight "What to Test" |
+
+It prebuilds and archives with `scripts/release-ios.sh archive`, signing the
+app target only (`CODE_SIGN_STYLE=Manual`, `DEVELOPMENT_TEAM`, `CODE_SIGN_IDENTITY
+= Apple Distribution`, `PROVISIONING_PROFILE_SPECIFIER` = the profile's UUID)
+from a temporary keychain with a random password. It exports an `.ipa` with a
+generated `ExportOptions.plist` (`app-store-connect`, manual signing, the
+profile mapped to the bundle id, `manageAppVersionAndBuildNumber` false), runs
+the signing gate, and then, unless `dry_run`:
+
+1. after a read-only App Store Connect check (also on dry runs), uploads that exact `.ipa` with `xcrun altool` and the App Store Connect API
+   key (never an Apple ID or an Xcode account);
+2. waits up to 45 minutes for processing (`scripts/asc-testflight.mjs`, the
+   API key's JWT);
+3. attaches an existing **approved** export compliance declaration with the
+   standard-algorithm answers. It never answers "no encryption" and never
+   creates one, because the French store answer is the owner's call
+   (COMPLIANCE C8). If approved declarations disagree on the French store,
+   none is picked. Without one the build stays in Missing Compliance and the
+   summary lists the clicks;
+4. sets What to Test and adds the build to the internal group **Yappr
+   Internal**, creating it if missing.
+
+The keychain, profile, certificate and key files are removed at the end, pass
+or fail.
+
+**Signing gate.** It runs on every run, dry runs included, before any upload,
+and fails the job on any mismatch:
+
+- the certificate's subject `O` is `APPLE_EXPECTED_ORG_NAME`, `OU` is
+  `APPLE_TEAM_ID`, and `CN` is `Apple Distribution: <org> (<team>)`;
+- the profile's `TeamName` and `TeamIdentifier[0]` match, its
+  `application-identifier` is `<team>.<bundle id>`, it is an App Store profile
+  (no devices, `get-task-allow` false) and it hasn't expired;
+- the exported `.ipa` verifies, its first `codesign -dvv` `Authority` is
+  `Apple Distribution: <org> (<team>)`, and it embeds the installed profile;
+- the archived and exported `Info.plist` bundle id, version and build match the plan;
+- no entry of `SIGNING_NAME_DENYLIST` appears in the certificate subject, the
+  decoded profile, the `Authority` lines or the App Store Connect app, bundle id
+  and certificate records (read-only, before the upload).
+
+All of it goes to the run summary. Every value is checked against the
+denylist before it is printed, and a hit prints the field's label only. Secret
+values are never printed.
+
+### The `testflight` environment
+
+Restrict it to protected branches (`staging`) and add a required reviewer.
+Values are never committed.
+
+| Name | Kind | What goes in it |
+| --- | --- | --- |
+| `APP_STORE_CONNECT_API_KEY_ID` | secret | the API key's id (App Manager role) |
+| `APP_STORE_CONNECT_API_ISSUER_ID` | secret | the issuer id |
+| `APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64` | secret | `base64 -i AuthKey_<id>.p8` |
+| `APPLE_DISTRIBUTION_CERTIFICATE_BASE64` | secret | `base64 -i distribution.p12`: the team's Apple Distribution certificate and key |
+| `APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD` | secret | the `.p12` password |
+| `IOS_APPSTORE_PROFILE_BASE64` | secret | `base64 -i <profile>.mobileprovision`: the App Store profile for the `testnet` bundle id |
+| `IOS_APPSTORE_PROFILE_BASE64_DEVNET`, `IOS_APPSTORE_PROFILE_BASE64_STAGING_TESTNET` | secret | the same for the `devnet` and `staging-testnet` records, needed only to run those variants |
+| `APPLE_TEAM_ID` | variable | `44RJ69WHFF` |
+| `APPLE_EXPECTED_ORG_NAME` | variable | `The Dash Foundation, Inc.` |
+| `SIGNING_NAME_DENYLIST` | secret | optional; comma-separated names that must never appear in signing metadata. A secret, not a variable: run logs print variables unmasked, and the run refuses a variable-only denylist |
+| `YAPPR_IOS_BUNDLE_ID` | variable | optional, `testnet` runs only; see below |
+
+**Bundle id fallback.** If the App Store record has to live under another id
+(for example `org.dashfoundation.yappr.beta`), set `YAPPR_IOS_BUNDLE_ID` and
+upload a profile for that id. The workflow applies it to `testnet` runs only. It changes the iOS bundle id only (Android keeps
+the variant's package), must be reverse-DNS and may not be another variant's
+id. The build records it in `extra.iosBundleId`, and `src/config.ts` accepts
+that native id for the variant it was built for; the scheme, web links,
+wallet return and engine stay the variant's.
+
+### Running it
+
+1. Dispatch from `staging` with `dry_run` on, approve the deployment, and
+   read the gate's evidence in the run summary.
+2. Dispatch again with `dry_run` off. If the build failed before the upload,
+   start a new run rather than re-running it: a re-run keeps the run number,
+   which is fine only if nothing was uploaded.
+3. If the summary says Missing Compliance, answer it in App Store Connect as
+   listed there: the app uses encryption, standard algorithms not provided by
+   Apple (COMPLIANCE, Encryption export).
+4. If the upload succeeded but a later step didn't (the summary shows the
+   build id), don't upload again. In App Store Connect → TestFlight, open the
+   build by version and build number, answer compliance if asked, add the What
+   to Test notes, and add it to **Yappr Internal** (Internal Testing → the
+   group → Builds → +).
+
+The workflow file must also exist on the default branch for GitHub to offer
+the dispatch; the run uses the `staging` copy.
 
 ## Google Play internal testing
 
@@ -292,8 +364,8 @@ verification of the package (COMPLIANCE C1), and an app per package.
 | --- | --- | --- |
 | Apple Developer organization account, team id | All iOS distribution | Apple |
 | App Store Connect app records (3 bundle ids) | TestFlight | App Store Connect |
-| App Store Connect API key (`.p8`, key id, issuer id) | Signing with `-allowProvisioningUpdates`, upload, `eas submit` | Password manager or EAS |
-| Apple Distribution certificate and App Store profiles | Signing | Keychain or EAS |
+| App Store Connect API key (`.p8`, key id, issuer id) | Upload and TestFlight setup, `eas submit` | `testflight` environment secrets, or EAS |
+| Apple Distribution certificate and App Store profiles | Signing | `testflight` environment secrets, or EAS |
 | Play Console organization account, developer verification | All Android distribution | Google |
 | Android upload keystore and passwords | Signing AABs | Password manager; optionally GitHub secrets `ANDROID_UPLOAD_*` or EAS |
 | Play service account JSON | Automated uploads | Password manager or EAS |

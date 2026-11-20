@@ -4,7 +4,7 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
 import brand from '../../public/brand/brand.json';
 import pkg from './package.json';
 import { engineExtra } from './plugins/engine-assets';
-import { isVariant, VARIANTS, type Variant } from './src/variants.ts';
+import { isVariant, resolveIosBundleId, VARIANTS, type Variant } from './src/variants.ts';
 
 /**
  * APP_VARIANT picks the build variant at prebuild/start/export time; the
@@ -121,6 +121,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
   const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
+  const iosBundleId = resolveIosBundleId(variant, process.env.YAPPR_IOS_BUNDLE_ID);
   // Per-variant icons from scripts/brand-assets.mjs at the repo root: devnet and testnet carry a DEV / BETA badge.
   const icons = `./assets/images/icons/${variant === 'staging-testnet' ? 'testnet' : variant}`;
 
@@ -134,7 +135,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     scheme: v.scheme,
     userInterfaceStyle: 'automatic',
     ios: {
-      bundleIdentifier: v.applicationId,
+      bundleIdentifier: iosBundleId,
       buildNumber: String(buildNumber),
       supportsTablet: false,
       icon: {
@@ -204,6 +205,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     extra: {
       variant,
+      // src/config.ts accepts this id for the variant when YAPPR_IOS_BUNDLE_ID overrides it.
+      iosBundleId,
       network: v.network,
       engine: engineExtra(variant),
       commit: resolveCommit(),

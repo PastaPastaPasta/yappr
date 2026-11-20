@@ -100,6 +100,42 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
   });
 });
 
+describe('YAPPR_IOS_BUNDLE_ID (TestFlight fallback record)', () => {
+  it.each((Object.keys(VARIANTS) as Variant[]).filter((v) => v !== 'testnet'))('refuses an override for %s', (variant) => {
+    expect(() => configFor(variant, { YAPPR_IOS_BUNDLE_ID: 'org.dashfoundation.yappr.beta' })).toThrow(/testnet variant only/);
+  });
+
+  it.each(Object.keys(VARIANTS) as Variant[])('keeps the %s id when unset or empty', (variant) => {
+    for (const env of [{}, { YAPPR_IOS_BUNDLE_ID: '' }] as Record<string, string>[]) {
+      const config = configFor(variant, env);
+      expect(config.ios?.bundleIdentifier).toBe(VARIANTS[variant].applicationId);
+      expect(config.extra?.iosBundleId).toBe(VARIANTS[variant].applicationId);
+    }
+  });
+
+  it('overrides the iOS bundle id only, and records it for the run-time check', () => {
+    const config = configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'org.dashfoundation.yappr.beta' });
+    expect(config.ios?.bundleIdentifier).toBe('org.dashfoundation.yappr.beta');
+    expect(config.extra?.iosBundleId).toBe('org.dashfoundation.yappr.beta');
+    expect(config.extra?.variant).toBe('testnet');
+    expect(config.android?.package).toBe('pr.yap.app.beta');
+    expect(config.scheme).toBe('yappr-beta');
+  });
+
+  it.each(['yappr', 'org..yappr', 'org.yappr.', '.org.yappr', 'org.yappr beta', 'org/yappr.beta', '1org.yappr', 'org.yappr_beta'])(
+    'refuses %p',
+    (id) => {
+      expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: id })).toThrow(/reverse-DNS/);
+    },
+  );
+
+  it("refuses another variant's id, in any case", () => {
+    expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.dev' })).toThrow(/devnet variant's id/);
+    expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'PR.YAP.APP.DEV' })).toThrow(/devnet variant's id/);
+    expect(configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.beta' }).ios?.bundleIdentifier).toBe('pr.yap.app.beta');
+  });
+});
+
 describe('iOS App Transport Security (SR-46)', () => {
   it('keeps the template ATS (local networking for the dev client) outside release builds', () => {
     expect(configFor('devnet').ios?.infoPlist).toBeUndefined();

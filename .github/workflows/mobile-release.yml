@@ -4,8 +4,8 @@ name: Mobile release
 # Runs without secrets: Android signs with the debug key and iOS is archived
 # unsigned. Add the ANDROID_UPLOAD_* secrets to the `mobile-release`
 # environment (restrict it to protected branches) to sign the AAB with the
-# upload key. Uploading to TestFlight and Play needs the owner's credentials
-# and is a manual step (RELEASE.md).
+# upload key. Signed TestFlight builds come from ios-testflight.yml; uploading
+# to Play is a manual step (RELEASE.md).
 on:
   workflow_dispatch:
     inputs:
