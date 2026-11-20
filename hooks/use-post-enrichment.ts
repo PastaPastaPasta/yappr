@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger';
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
+import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 
 interface UsePostEnrichmentOptions {
   /** Callback when enrichment completes with enriched posts */
@@ -60,8 +61,9 @@ export function usePostEnrichment(
       return posts
     }
 
-    // Generate batch ID from sorted post IDs
-    const batchId = posts.map(p => p.id).sort().join(',')
+    // Batch ID: the viewer (their likes and reposts are in the result) and the sorted post IDs
+    const viewer = getCurrentUserId()
+    const batchId = `${viewer ?? ''}:${posts.map(p => p.id).sort().join(',')}`
 
     // If there's already a pending enrichment for this batch, wait for it
     // This handles React Strict Mode double-renders and concurrent calls
@@ -83,7 +85,8 @@ export function usePostEnrichment(
     const enrichmentPromise = (async () => {
       try {
         const enriched = await postService.enrichPostsBatch(posts)
-        onEnrichedRef.current?.(enriched)
+        // A batch for a viewer who has since signed in or out is dropped; the new viewer's batch replaces it.
+        if (getCurrentUserId() === viewer) onEnrichedRef.current?.(enriched)
         return enriched
       } catch (error) {
         logger.error('usePostEnrichment: Failed to enrich posts:', error)
