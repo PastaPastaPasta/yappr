@@ -115,6 +115,7 @@ class BulkHideService {
     const sdk = await getEvoSdk()
     const found = new Map<string, Record<string, unknown>>()
     const times: number[] = []
+    const ats = new Map<string, number>()
     for (const kind of KINDS) {
       const ids = items.filter((item) => item.kind === kind).map((item) => item.id)
       for (let start = 0; start < ids.length; start += MAX_IN_CLAUSE_VALUES) {
@@ -126,13 +127,14 @@ class BulkHideService {
           limit: batch.length,
         })
         times.push(blockTimeMs)
+        for (const id of batch) ats.set(id, blockTimeMs)
         for (const doc of documents) {
           const id = docId(doc)
           if (id) found.set(id, doc)
         }
       }
     }
-    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map(), lanes: new Map(), at: oldestBlockTime(times) }
+    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map(), lanes: new Map(), at: oldestBlockTime(times), ats }
     for (const item of items) {
       const doc = found.get(item.id)
       const state = chainState(doc, mode)

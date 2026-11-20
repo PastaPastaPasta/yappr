@@ -299,6 +299,13 @@ export interface BulkChainRead {
   lanes?: Map<string, BulkMode | null>
   /** The block time the read was proved at (the oldest of its answers). */
   at?: number
+  /** The block time of the answer that covered each document, where it differs from `at`. */
+  ats?: Map<string, number>
+}
+
+/** The block time the answer covering `id` in `read` was proved at. */
+export function provedAt(read: BulkChainRead, id: string): number | undefined {
+  return read.ats?.get(id) ?? read.at
 }
 
 /** Where `item` stands in a chain read ({@link BulkRunDeps.pending}): an id in neither set is done. */
@@ -451,18 +458,21 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const fail = (item: BulkItem, error: string, retryable = true) => {
     progress.failures.push({ item, error, retryable })
   }
-  const seenAt = (read: BulkChainRead) => (read.at !== undefined ? { seenAt: read.at } : {})
+  const seenAt = (read: BulkChainRead, item: BulkItem) => {
+    const at = provedAt(read, item.id)
+    return at !== undefined ? { seenAt: at } : {}
+  }
   /** What a read that found `item` done holds for it; null when it did not find it (gone). */
   const readChange = (read: BulkChainRead, item: BulkItem): BulkChange | null => {
     const marks = read.marks?.get(item.id)
     if (marks === undefined) return null
     const tab = read.lanes?.get(item.id)
-    return tab === undefined ? { marks, ...seenAt(read) } : { marks, tab, ...seenAt(read) }
+    return tab === undefined ? { marks, ...seenAt(read, item) } : { marks, tab, ...seenAt(read, item) }
   }
   /** Where a read that found `item` changed some other way lists it, if the read says. */
   const readSeen = (read: BulkChainRead, item: BulkItem): BulkSeen | null => {
     const tab = read.lanes?.get(item.id)
-    return tab === undefined ? null : { tab, ...seenAt(read) }
+    return tab === undefined ? null : { tab, ...seenAt(read, item) }
   }
   /** Fails `item` as changed some other way, and says where the read lists it now. */
   const failChanged = (item: BulkItem, seen: BulkSeen | null) => {
