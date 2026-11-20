@@ -14,10 +14,9 @@ import bs58 from 'bs58'
 import * as secp256k1 from '@noble/secp256k1'
 
 // Post-login tasks read the network; they are covered by web.
+const syncFollowedFeeds = vi.hoisted(() => vi.fn<(identityId: string) => Promise<{ synced: string[]; failed: string[]; upToDate: string[] }>>(async () => ({ synced: [], failed: [], upToDate: [] })))
 vi.mock('@/lib/services/block-service', () => ({ blockService: { initializeBlockData: async () => undefined } }))
-vi.mock('@/lib/services/private-feed-follower-service', () => ({
-  privateFeedFollowerService: { syncFollowedFeeds: async () => ({ synced: [], failed: [], upToDate: [] }) },
-}))
+vi.mock('@/lib/services/private-feed-follower-service', () => ({ privateFeedFollowerService: { syncFollowedFeeds } }))
 vi.mock('@/lib/services/dashpay-contacts-service', () => ({ dashPayContactsService: { getUnfollowedContacts: async () => ({ contacts: [] }) } }))
 
 const { createEngineStorage, installEngineStorage, isSecureStorageKey } = await import('../../src/shims/storage')
@@ -89,10 +88,11 @@ let emitted: { event: string; payload: unknown }[] = []
 const emit = (event: string, payload: unknown) => { emitted.push({ event, payload }) }
 const flows = () => emitted.filter(e => e.event === 'session.appConnect').map(e => e.payload as Flow)
 
-function boot(controller = createMobileAuthController()): Session {
+function boot(controller?: ReturnType<typeof createMobileAuthController>, awaitingReload?: Set<string>): Session {
   return createSessionModule({
     emit,
     controller,
+    awaitingReload,
     secureDurable: () => engineStorage.secureDurable(),
     holdSecure: matches => engineStorage.holdSecure(matches),
   })
@@ -678,9 +678,10 @@ describe('App Connect requests across kills and engine restarts', () => {
     await signedOut()
     const alice = bs58.encode(crypto.getRandomValues(new Uint8Array(32)))
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: { identityId: alice } }))
-    const controller = createMobileAuthController()
+    const awaitingReload = new Set<string>()
+    const controller = createMobileAuthController({ awaitingReload })
     vi.spyOn(controller, 'restoreSession').mockResolvedValueOnce(null)
-    const engine = boot(controller)
+    const engine = boot(controller, awaitingReload)
     session = engine
     expect(await engine.restore()).toBeNull()
     return { engine, alice }
@@ -696,10 +697,31 @@ describe('App Connect requests across kills and engine restarts', () => {
     await reloaded.signOut()
   })
 
+  it('leaves the post-login tasks of an account it must reload into to the reloaded engine', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [66, 67])
+    syncFollowedFeeds.mockClear()
+    heldAcks = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the sign-in on its way to the host')
+    await settle()
+    releaseAcks()
+    expect(await accepting).toMatchObject({ status: 'signed-in', reload: true })
+    await settle()
+    expect(syncFollowedFeeds).not.toHaveBeenCalled()
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await until(() => syncFollowedFeeds.mock.calls.some(([id]) => id === OWNER), 'the private-feed sync on restore')
+    await reloaded.signOut()
+  })
+
   it('signs a new account in without a reload on a launch bound to nobody, or whose account signed out', async () => {
     const engine = await signedOut()
     await answered(engine, [62, 63])
+    syncFollowedFeeds.mockClear()
     expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    await until(() => syncFollowedFeeds.mock.calls.some(([id]) => id === OWNER), 'the private-feed sync after sign-in')
     await engine.signOut()
 
     const { engine: next, alice } = await failedRestore()

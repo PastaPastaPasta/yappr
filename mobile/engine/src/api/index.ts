@@ -33,7 +33,9 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable, unhydrated })
   // Session changes reach notifications and direct messages too: what they hold belongs to one account.
   const notifications = createNotificationsModule(emit)
-  const controller = createMobileAuthController({ unhydrated })
+  /** Shared by the session module and its controller (`SessionModuleOptions.awaitingReload`). */
+  const awaitingReload = new Set<string>()
+  const controller = createMobileAuthController({ unhydrated, awaitingReload })
   const balance = foregroundBalanceRefresh(controller)
   const sessionEmit: typeof emit = (event, payload) => {
     if (event === 'session.changed') {
@@ -63,6 +65,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
       emit: sessionEmit,
       controller,
       unhydrated,
+      awaitingReload,
       tickets,
       secureDurable: runtime.secureDurable,
       holdSecure: runtime.holdSecure,
