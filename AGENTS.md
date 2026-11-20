@@ -154,7 +154,7 @@ Singleton service classes handle all Dash Platform operations:
 
 ### Data Contract Structure
 
-The release set `/staging` runs is social **v19**, blocks,
+The release set `/staging` runs is social **v20**, blocks,
 **DM v5**, **blog v11**, **storefront v12**, **pollr v8** and the passkey vault
 (`contracts/yappr-passkey-vault-contract.json`, [docs/PASSKEY_VAULT.md](docs/PASSKEY_VAULT.md)),
 all members of one App Connect anchor's permanent contract group (D45/D46).
@@ -162,7 +162,8 @@ A fresh registration, mainnet's included, takes the same set with social **v20**
 v19 whose reply removal record also keeps `replyToReplyId`, and whose follow
 requests, reports and embeds must name an identity or contract that exists
 ([docs/SOCIAL_V20.md](docs/SOCIAL_V20.md)). Kept fields and references are fixed at
-registration, so the registered v19 set keeps its schema until a set is registered again.
+registration, so testnet appended v20 to the 2026-11-12 group on 2026-11-20 (nonce 9,
+`63JuBhMj…`) and keeps v19 there as an unused member.
 Social v19, blog v11 and storefront v12 extend the deletion cuts
 with required and kept times and the last signed transition height for every
 recoverable removal ([docs/SOCIAL_V19.md](docs/SOCIAL_V19.md)). `scripts/app-connect-set.mjs` owns the files, hashes and
@@ -210,7 +211,7 @@ them. Never add system ownership fields to document content.
 
 Superseded topology designs and deployment experiments live in
 [docs/archive](docs/archive/README.md). Current `/devnet` v16, the registered
-v17, experimental v18, registered release v19 and planned v20 documentation remain outside that archive.
+v17, experimental v18, registered release v19 and v20 documentation remain outside that archive.
 
 ### DPNS Integration
 - Usernames managed through Dash Platform Name Service

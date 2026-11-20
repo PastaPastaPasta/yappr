@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { bundleKey, bundledContractsFor, staleContractIds } from './bundled-contracts';
 
@@ -78,8 +80,10 @@ describe('the registered thread index shape the bundles seed', () => {
     expect(await leadOf((await bundledContractsFor('testnet'))?.contracts['2qvaZNJJU2KQxSn7SB7eTyyWtjvGD8wx3cpVHZSPC4mn']?.bytes)).toBeUndefined();
   });
 
-  it('root and /staging: the bundled registered release social contract keys repliesOf on live', async () => {
-    expect(await leadOf((await bundledContractsFor('testnet'))?.contracts['3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG']?.bytes)).toBe('live');
+  it('root and /staging: the bundled social contract .env.testnet names keys repliesOf on live', async () => {
+    const socialId = parseEnv(readFileSync('.env.testnet', 'utf8')).NEXT_PUBLIC_YAPPR_CONTRACT_ID;
+    expect(socialId).toBe('63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D');
+    expect(await leadOf((await bundledContractsFor('testnet'))?.contracts[socialId ?? '']?.bytes)).toBe('live');
   });
 
   it('/staging-old: the substituted rehearsal snapshot keys repliesOf on rootPostId', async () => {

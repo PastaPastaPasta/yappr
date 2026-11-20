@@ -7,7 +7,7 @@ and DM v5, behind an App Connect anchor and group) was registered on
 (D46). Fresh release registrations take social v20, which also keeps
 `replyToReplyId` in a reply's removal record and checks that a follow request's
 target, a report's target and an embed's contract exist ([SOCIAL_V20.md](../docs/SOCIAL_V20.md));
-it is not registered on any network. The "hide,
+it was appended to the 2026-11-12 testnet group on 2026-11-20 and is what `.env.testnet` names. The "hide,
 don't delete" re-cuts (social v18, blog v10 and storefront v11, D42–D44,
 [SOCIAL_V18.md](../docs/SOCIAL_V18.md)) were an experiment: a rehearsal copy
 runs at `/beta`, and they are not registered on mainnet. `.env.testnet` pins
@@ -45,7 +45,8 @@ cuts (D46). They were registered on testnet on 2026-11-12 as a fresh eight-membe
 Social v20 replaces v19 in this table for the next registration. The registered
 v19 file ([yappr-social-contract-v19.json](yappr-social-contract-v19.json),
 `bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971`) stays
-byte-identical, and `.env.testnet` keeps naming the set registered from it.
+byte-identical; on testnet it stays a pinned, unused member of the 2026-11-12
+group, and `.env.testnet` names social v20, appended to that group on 2026-11-20.
 The publisher
 restores every member's env key and completes the journal at `passkeyVault`.
 
