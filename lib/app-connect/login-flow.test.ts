@@ -414,11 +414,13 @@ describe('the page a sign-in returns to', () => {
     const post = harness({ returnTo: '/post/?id=x' })
     await post.login.start()
     expect(post.records.value?.returnTo).toBe('/post/?id=x')
+    expect(post.login.returnToHere()).toBe('/post/?id=x')
     const settings = harness({ returnTo: '/settings/' })
     settings.records.value = post.records.value
     await settings.login.start()
     expect(settings.login.requestHashHex()).toBe(post.login.requestHashHex())
     expect(settings.records.value?.returnTo).toBe('/post/?id=x')
+    expect(settings.login.returnToHere()).toBe('/post/?id=x')
 
     settings.clock.now += 10 * 60_000
     await settings.login.checkAgain()

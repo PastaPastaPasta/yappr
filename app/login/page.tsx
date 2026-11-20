@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Lockup } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
 import { useLoginModal } from '@/hooks/use-login-modal'
-import { acceptedRequest } from '@/lib/app-connect/pending-request'
+import { releaseWalletSignInReturn } from '@/lib/app-connect/pending-request'
 import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function LoginPage() {
@@ -20,13 +20,12 @@ export default function LoginPage() {
     }
   }, [user, isAuthRestoring, open])
 
-  // Signed in: on to the page that sent the visitor here, or the feed. A wallet's
-  // return names its request (`r`), and its page is followed only after a sign-in with it.
+  // Signed in: on to the page that sent the visitor here, or the feed. A wallet
+  // sign-in goes to the page its own request started from.
   useEffect(() => {
     if (!user) return
-    const request = new URLSearchParams(window.location.search).get('r')
-    const next = request && request !== acceptedRequest() ? null : currentReturnToParam()
-    router.replace(returnToOrDefault(next))
+    const wallet = releaseWalletSignInReturn()
+    router.replace(returnToOrDefault(wallet ? wallet.returnTo : currentReturnToParam()))
   }, [user, router])
 
   // This page just renders the background - the modal is global

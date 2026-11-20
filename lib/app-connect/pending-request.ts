@@ -98,28 +98,35 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
 }
 
 /**
- * The live pending request in `identityHint`'s slot (`undefined`: sign-in)
- * that the wallet just returned for (its hash, hex), or null when it expired,
- * finished or was replaced.
+ * Whether the request the wallet just returned for (its hash, hex) is the
+ * pending renewal for `identityId`, so /connect can resume that renewal
+ * rather than start a sign-in.
  */
-export async function pendingRequest(identityHint: string | undefined, requestHash: string): Promise<StoredAppConnectRequest | null> {
-  const record = await requestRecordsFor(identityHint).load()
-  if (!record) return null
+export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
+  const record = await requestRecordsFor(identityId).load()
+  if (!record) return false
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
-    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash ? record : null
+    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
   } finally {
     clearSensitiveBytes(privateKey)
   }
 }
 
-let acceptedRequestHash: string | null = null
+let walletSignIn: { returnTo: string | null } | null = null
 
-/** Notes the request (its hash, hex) this tab signs in with, so /login follows a callback's `next` only for that request. */
-export function noteAcceptedRequest(requestHash: string | null): void {
-  acceptedRequestHash = requestHash
+/**
+ * The page the wallet sign-in this tab is finishing started from (`null`:
+ * none), held from its grant until /login follows it or the sign-in fails,
+ * so /login sends a wallet sign-in to its own request's page and every other
+ * sign-in to its `next`.
+ */
+export function holdWalletSignInReturn(returnTo: string | null): void {
+  walletSignIn = { returnTo }
 }
 
-export function acceptedRequest(): string | null {
-  return acceptedRequestHash
+export function releaseWalletSignInReturn(): { returnTo: string | null } | null {
+  const held = walletSignIn
+  walletSignIn = null
+  return held
 }

@@ -7,8 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
-import { pendingRequest } from '@/lib/app-connect/pending-request'
-import { loginRoute } from '@/lib/auth/return-to'
+import { isPendingRenewal } from '@/lib/app-connect/pending-request'
 import {
   APP_CONNECT_CHANNEL,
   appReturnLink,
@@ -31,23 +30,9 @@ const STATUS_COPY: Record<string, { title: string; description: string }> = {
 type View =
   | { kind: 'waiting' }
   | { kind: 'other-tab' }
-  | { kind: 'status'; title: string; description: string; retry: string }
+  | { kind: 'status'; title: string; description: string }
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
-
-/**
- * Sign-in, carrying as `next` the page the still-pending request `requestHash`
- * started from, and the request as `r`: /login follows `next` only after a
- * sign-in with that request.
- */
-function signInRetry(requestHash: string): Promise<string> {
-  return pendingRequest(undefined, requestHash)
-    .catch(() => null)
-    .then((record) => {
-      const route = loginRoute(record?.returnTo ?? '')
-      return route.includes('?') ? `${route}&r=${requestHash}` : route
-    })
-}
 
 /**
  * Where a wallet returns after an App Connect sign-in (`cb` in the request).
@@ -69,15 +54,18 @@ export default function ConnectPage() {
     const requestHash = continueHere
     const identityId = user?.identityId
     // A renewal of the signed-in account resumes in its renew dialog; anything else is a sign-in.
-    const pendingRenewal = identityId ? pendingRequest(identityId, requestHash).then(Boolean) : Promise.resolve(false)
+    const pendingRenewal = identityId ? isPendingRenewal(identityId, requestHash) : Promise.resolve(false)
     pendingRenewal
       .catch(() => false)
       .then((renewal) => {
-        if (!renewal) return signInRetry(requestHash)
-        useRenewModal.getState().open()
-        return '/feed/'
+        if (renewal) {
+          useRenewModal.getState().open()
+          router.replace('/feed/')
+        } else {
+          router.replace('/login/')
+        }
       })
-      .then((route) => router.replace(route), () => router.replace('/login/'))
+      .catch(() => router.replace('/login/'))
   }, [continueHere, isAuthRestoring, router, user?.identityId])
 
   useEffect(() => {
@@ -95,10 +83,7 @@ export default function ConnectPage() {
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
     if (failure) {
-      signInRetry(callback.requestHash).then(
-        (retry) => setView({ kind: 'status', ...failure, retry }),
-        () => setView({ kind: 'status', ...failure, retry: '/login/' }),
-      )
+      setView({ kind: 'status', ...failure })
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
@@ -153,7 +138,7 @@ export default function ConnectPage() {
             <p className="font-medium text-gray-900 dark:text-white">{view.title}</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">{view.description}</p>
             <Button asChild>
-              <Link href={view.retry}>Back to Yappr</Link>
+              <Link href="/login/">Back to Yappr</Link>
             </Button>
           </>
         )}

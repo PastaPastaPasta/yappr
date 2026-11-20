@@ -290,6 +290,11 @@ export class AppConnectLogin {
     this.set({ phase: 'waiting', uri: first.uri, uris })
   }
 
+  /** The page the request on show started from, if any. */
+  returnToHere(): string | undefined {
+    return this.active?.record.returnTo
+  }
+
   /** The request hash the QR code carries (hex), for matching the wallet's return link. */
   requestHashHex(): string | null {
     return this.active ? bytesToHex(this.active.hash) : null
