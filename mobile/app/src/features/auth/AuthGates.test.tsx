@@ -415,6 +415,22 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
   });
 
+  it('drops a lookup that answers after an account switch started', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.appConnectPendingSignIn').mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    mount('/');
+    await flush();
+    act(() => useAccounts.setState({ transition: { kind: 'switch', label: 'Switching to @bob' } }));
+    answer({ reauth: 'alice' });
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(useAccounts.getState().reauth).toBeNull();
+  });
+
   it('goes back to the parked account when no sign-in is stored', async () => {
     syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
     fakeEngine

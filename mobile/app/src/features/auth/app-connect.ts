@@ -37,7 +37,7 @@ export type AppConnectStep =
   | { name: 'flow' }
   | { name: 'accepting' }
   | { name: 'done' }
-  | { name: 'error'; title: string; message: string };
+  | { name: 'error'; title: string; message: string; interrupted?: boolean };
 
 interface AppConnectState {
   mode: AppConnectMode;
@@ -272,7 +272,7 @@ export async function acceptAccount(identityId: string): Promise<void> {
     // The engine restarted while it took the answer: whether the grant landed is unknown here, so claim neither.
     if (errorCode(error) === 'ENGINE_RESTARTED') {
       const text = renew ? copy.renew.interrupted : copy.signin.interrupted;
-      set({ step: { name: 'error', title: text.title, message: text.body } });
+      set({ step: { name: 'error', title: text.title, message: text.body, interrupted: true } });
       return;
     }
     appendLog('warn', 'host', `Wallet sign-in failed: ${errorMessage(error)}`);
