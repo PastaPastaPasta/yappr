@@ -22,10 +22,12 @@ export default function LoginPage() {
 
   // Signed in: on to the page that sent the visitor here; without one, a wallet
   // sign-in goes to the page its own request started from, else the feed.
+  // Once per signed-in identity, so a later profile update can't redirect again.
+  const identityId = user?.identityId
   useEffect(() => {
-    if (!user) return
-    router.replace(afterSignInRoute(currentReturnToParam(), user.identityId, releaseWalletSignInReturn()))
-  }, [user, router])
+    if (!identityId) return
+    router.replace(afterSignInRoute(currentReturnToParam(), identityId, releaseWalletSignInReturn()))
+  }, [identityId, router])
 
   // This page just renders the background - the modal is global
   return (
