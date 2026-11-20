@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
-  afterSignInRoute,
   loginRoute,
   onRegistrationPage,
   returnToOrDefault,
@@ -140,21 +139,5 @@ describe('where a sign-in started here returns to', () => {
     expect(onRegistrationPage()).toBe(true)
     at('/settings/')
     expect(onRegistrationPage()).toBe(false)
-  })
-})
-
-describe('afterSignInRoute', () => {
-  const wallet = { identityId: 'alice', returnTo: '/post/?id=x' }
-
-  it('follows the page\'s own next for any sign-in, a wallet one included', () => {
-    expect(afterSignInRoute('/messages/', 'alice', wallet, '')).toBe('/messages/')
-    expect(afterSignInRoute('/messages/', 'alice', null, '')).toBe('/messages/')
-  })
-
-  it('without next, sends a wallet sign-in to its request\'s page, only for that identity', () => {
-    expect(afterSignInRoute(null, 'alice', wallet, '')).toBe('/post/?id=x')
-    expect(afterSignInRoute(null, 'bob', wallet, '')).toBe(DEFAULT_RETURN_TO)
-    expect(afterSignInRoute(null, 'alice', { identityId: 'alice', returnTo: null }, '')).toBe(DEFAULT_RETURN_TO)
-    expect(afterSignInRoute('//evil.example', 'alice', { identityId: 'alice', returnTo: '//evil.example' }, '')).toBe(DEFAULT_RETURN_TO)
   })
 })

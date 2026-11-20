@@ -3,7 +3,6 @@ import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { parseStoredRequest, type RequestRecordStore, type StoredAppConnectRequest } from './login-flow'
-import type { WalletSignInReturn } from '@/lib/auth/return-to'
 import { appConnectSessions } from './session-manager'
 
 /**
@@ -98,45 +97,18 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
   }
 }
 
-/** The live request in `identityHint`'s slot that the wallet just returned for (its hash, hex), if any. */
-async function pendingRecord(identityHint: string | undefined, requestHash: string): Promise<StoredAppConnectRequest | null> {
-  const record = await requestRecordsFor(identityHint).load()
-  if (!record) return null
+/**
+ * Whether the request the wallet just returned for (its hash, hex) is the
+ * pending renewal for `identityId`, so /connect can resume that renewal
+ * rather than start a sign-in.
+ */
+export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
+  const record = await requestRecordsFor(identityId).load()
+  if (!record) return false
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
-    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash ? record : null
+    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
   } finally {
     clearSensitiveBytes(privateKey)
   }
-}
-
-/**
- * Whether the request the wallet just returned for is the pending renewal
- * for `identityId`, so /connect can resume that renewal rather than start a
- * sign-in.
- */
-export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
-  return (await pendingRecord(identityId, requestHash)) !== null
-}
-
-/** The page the still-pending sign-in request `requestHash` started from; null once it expired, finished or was replaced. */
-export async function pendingSignInReturn(requestHash: string): Promise<string | null> {
-  return (await pendingRecord(undefined, requestHash))?.returnTo ?? null
-}
-
-let walletSignIn: WalletSignInReturn | null = null
-
-/**
- * The page the wallet sign-in of `identityId` this tab is finishing started
- * from (`null`: none), held from its grant until /login takes it or the
- * sign-in settles. /login follows it only for that identity.
- */
-export function holdWalletSignInReturn(identityId: string, returnTo: string | null): void {
-  walletSignIn = { identityId, returnTo }
-}
-
-export function releaseWalletSignInReturn(): WalletSignInReturn | null {
-  const held = walletSignIn
-  walletSignIn = null
-  return held
 }

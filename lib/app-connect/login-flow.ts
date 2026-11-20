@@ -58,8 +58,6 @@ export interface StoredAppConnectRequest {
   createdAt: number
   connectionId: string
   identityHint?: string
-  /** The page a sign-in started from, set when the request is made and never on resume. */
-  returnTo?: string
 }
 
 /**
@@ -83,8 +81,6 @@ export interface AppConnectLoginDeps {
   trust: () => Promise<AppConnectTrust>
   connectionId: () => Promise<string>
   records: RequestRecordStore
-  /** The page a new request starts from, kept with it for the wallet's return tab. */
-  returnTo?: () => string | null
   /** Origin and base path for the wallet's return link. */
   origin: string
   basePath: string
@@ -109,17 +105,13 @@ const MAX_VERIFY_ATTEMPTS = 3
 export function parseStoredRequest(raw: unknown, now: number): StoredAppConnectRequest | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  const { ephemeralPrivateKey, createdAt, connectionId, identityHint, returnTo } = record
+  const { ephemeralPrivateKey, createdAt, connectionId, identityHint } = record
   if (typeof ephemeralPrivateKey !== 'string' || !/^[0-9a-f]{64}$/.test(ephemeralPrivateKey)) return null
   if (typeof connectionId !== 'string' || !/^[0-9a-f]{32}$/.test(connectionId)) return null
   if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt)) return null
   if (now - createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS || createdAt - now > 60_000) return null
   if (identityHint !== undefined && typeof identityHint !== 'string') return null
-  return {
-    ephemeralPrivateKey, createdAt, connectionId,
-    ...(identityHint ? { identityHint } : {}),
-    ...(typeof returnTo === 'string' && returnTo ? { returnTo } : {}),
-  }
+  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}) }
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -159,8 +151,6 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
-  /** The last request made or resumed here: every request that replaces it keeps its page, or its lack of one. */
-  private replaced: { returnTo?: string } | null = null
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -242,13 +232,11 @@ export class AppConnectLogin {
    */
   private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
-    const returnTo = this.replaced ? this.replaced.returnTo : this.deps.returnTo?.() ?? undefined
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
       connectionId: await this.deps.connectionId(),
       ...(identityHint ? { identityHint } : {}),
-      ...(returnTo ? { returnTo } : {}),
     }
     clearSensitiveBytes(privateKey)
     if (!current()) return null
@@ -263,7 +251,6 @@ export class AppConnectLogin {
   }
 
   private activate(record: StoredAppConnectRequest): void {
-    this.replaced = { returnTo: record.returnTo }
     // A new request replaces the old one: its ephemeral key is no longer needed.
     if (this.active) clearSensitiveBytes(this.active.privateKey)
     const privateKey = hexToBytes(record.ephemeralPrivateKey)
@@ -288,11 +275,6 @@ export class AppConnectLogin {
     this.progress = new Map()
     this.discardVerified()
     this.set({ phase: 'waiting', uri: first.uri, uris })
-  }
-
-  /** The page the request on show started from, if any. */
-  returnToHere(): string | undefined {
-    return this.active?.record.returnTo
   }
 
   /** The request hash the QR code carries (hex), for matching the wallet's return link. */

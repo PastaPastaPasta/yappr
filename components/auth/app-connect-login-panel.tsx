@@ -6,7 +6,6 @@ import type { AppConnectCarrier, AppConnectGrant } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { useAppConnectLogin } from '@/hooks/use-app-connect-login'
 import { selectCarrierUri } from '@/lib/app-connect/carrier'
-import { holdWalletSignInReturn, releaseWalletSignInReturn } from '@/lib/app-connect/pending-request'
 import type { AppConnectUnavailableReason, VerifiedCandidate } from '@/lib/app-connect/login-flow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -75,22 +74,19 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   }, [])
 
   const accept = useCallback((identityId: string) => {
-    const returnTo = login?.returnToHere() ?? null
     const grant = login?.accept(identityId)
     if (!grant) return
-    if (!identityHint) holdWalletSignInReturn(identityId, returnTo)
     setSigning('running')
     setSignInError(null)
     onGrant(grant)
       .then(() => {
+        if (!mounted.current) return
+        setSigning('done')
         setTimeout(() => {
-          if (!identityHint) releaseWalletSignInReturn()
           if (mounted.current) onComplete()
         }, 900)
-        if (mounted.current) setSigning('done')
       })
       .catch((error: unknown) => {
-        if (!identityHint) releaseWalletSignInReturn()
         logger.error('App Connect sign-in failed:', error)
         if (!mounted.current) return
         setSigning('idle')
