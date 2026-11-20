@@ -629,24 +629,17 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(stored()).not.toContain(LOGIN_SLOT)
   })
 
-  it('fails a cancel whose stored request could not be read, and a second cancel deletes it', async () => {
+  it('a cancel deletes its stored request even when it cannot be read', async () => {
     await session.appConnectStart({ returnTo: RETURN_TO, fresh: true })
     expect(stored()).toContain(LOGIN_SLOT)
-    const store = appConnectSessions.keyStore()
-    const loadSecret = store.loadSecret.bind(store)
-    let failing = true
-    const reads = vi.spyOn(store, 'loadSecret').mockImplementation(async (...args) => {
-      if (failing) throw new Error('read failed')
-      return loadSecret(...args)
-    })
+    const reads = vi.spyOn(appConnectSessions.keyStore(), 'loadSecret').mockResolvedValue(null)
     try {
-      await expect(session.appConnectCancel()).rejects.toThrow('could not be read')
-      expect(stored()).toContain(LOGIN_SLOT)
-      failing = false
+      secureDeletes.length = 0
       await session.appConnectCancel()
     } finally {
       reads.mockRestore()
     }
+    expect(secureDeletes).toContain(LOGIN_SLOT)
     expect(stored()).not.toContain(LOGIN_SLOT)
   })
 

@@ -289,7 +289,9 @@ function walletReported(status: string): void {
   const text = copy.connect.returned[status as keyof typeof copy.connect.returned] ?? copy.connect.returned.failed;
   next();
   set({ step: { name: 'error', title: text.title, message: text.body } });
-  engine.api.session.appConnectCancel().catch(() => undefined);
+  engine.api.session.appConnectCancel().catch((error: unknown) => {
+    appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
+  });
 }
 
 /** "Cancel", or leaving the flow: the engine forgets the request and any answer. */

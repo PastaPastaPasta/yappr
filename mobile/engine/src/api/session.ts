@@ -400,8 +400,6 @@ export function createSessionModule(options: SessionModuleOptions) {
   const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
   /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
   let appConnectStarts = 0
-  /** A cancelled request whose deletion failed: a cancel with no flow running tries it again. */
-  let unforgotten: AppConnectRequestKind | null = null
   /** The generation the last cancel took. */
   let cancelledStart = -1
 
@@ -789,20 +787,11 @@ export function createSessionModule(options: SessionModuleOptions) {
     async appConnectCancel(): Promise<void> {
       const cancelled = cancelledStart = ++appConnectStarts
       // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
-      // With none running, the request an earlier cancel here failed to forget.
-      const running = appConnect.runningKind() ?? unforgotten
+      const running = appConnect.runningKind()
       appConnect.cancel()
       settleDeferredRevoke()
       // Unless a start since then has made the request this would find.
-      if (running && appConnectStarts === cancelled) {
-        try {
-          await appConnect.forget(running, { strict: true })
-          unforgotten = null
-        } catch (error) {
-          unforgotten = running
-          throw error
-        }
-      }
+      if (running && appConnectStarts === cancelled) await appConnect.forget(running, { strict: true })
       await options.secureDurable?.()
     },
 
