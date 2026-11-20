@@ -90,6 +90,11 @@ export function forgetEngineRing(storage: Pick<Storage, 'removeItem'>, network: 
   storage.removeItem(ringPrefix(network) + identityId)
 }
 
+/** Whether the key ring's secret `name` (`pending-request:login`, …) is in `storage` at all, readable or not. */
+export function engineSecretStored(storage: Pick<Storage, 'getItem'>, network: string, name: string): boolean {
+  return storage.getItem(secretKey(network, name)) !== null
+}
+
 export function engineKeyRingBackend(storage: Storage): KeyRingBackend {
   let deviceKey: Promise<CryptoKey> | null = null
 

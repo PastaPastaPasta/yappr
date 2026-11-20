@@ -16,6 +16,7 @@ import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { RpcError } from '../protocol/envelope'
+import { engineSecretStored } from './app-connect-store'
 
 /**
  * Wallet sign-in through App Connect (docs/APP_CONNECT_PROFILE.md), the
@@ -77,9 +78,13 @@ export interface AppConnectRequestKind {
 
 const REAUTH_SLOT = 'reauth'
 
-function recordsFor({ identityHint, renew }: AppConnectRequestKind): RequestRecordStore {
-  if (renew) return requestRecordsFor(identityHint)
-  return requestRecordsFor(identityHint === undefined ? undefined : REAUTH_SLOT)
+function slotOf({ identityHint, renew }: AppConnectRequestKind): string | undefined {
+  if (renew) return identityHint
+  return identityHint === undefined ? undefined : REAUTH_SLOT
+}
+
+function recordsFor(kind: AppConnectRequestKind): RequestRecordStore {
+  return requestRecordsFor(slotOf(kind))
 }
 
 /** The stored request of this kind, if it is still answerable. A "Sign in again" slot holds one account's at a time. */
@@ -257,11 +262,22 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
-    /** Forgets the stored request of this kind (see `pending`), if there is one. */
-    async forget(kind: AppConnectRequestKind): Promise<void> {
+    /**
+     * Forgets the stored request of this kind (see `pending`), if there is
+     * one. `strict`: a stored request that could not be read fails, rather
+     * than pass for one that is not there (lib's load reads a failure as
+     * none, and deletes only what it read as stale).
+     */
+    async forget(kind: AppConnectRequestKind, { strict = false }: { strict?: boolean } = {}): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
-      const record = await loadRequest(kind)
-      if (record) await recordsFor(kind).clear(record)
+      const record = await recordsFor(kind).load()
+      if (!record) {
+        if (strict && engineSecretStored(localStorage, appConnectSessions.network(), `pending-request:${slotOf(kind) ?? 'login'}`)) {
+          throw new Error('The stored App Connect request could not be read')
+        }
+        return
+      }
+      if (record.identityHint === kind.identityHint) await recordsFor(kind).clear(record)
     },
 
     /**
