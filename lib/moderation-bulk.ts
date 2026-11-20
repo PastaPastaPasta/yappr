@@ -50,6 +50,8 @@ export interface BulkItem {
   createdAt: number
   /** The first of its text, for the moderator to recognise it by. */
   preview: string
+  /** The block time the listing page it came from was proved at. */
+  provedAt?: number
 }
 
 /**
@@ -163,7 +165,7 @@ export async function readEveryPage(
     for (const item of page.items) {
       if (seen.has(item.id)) continue
       seen.add(item.id)
-      items.push(item)
+      items.push(page.at !== undefined && Number.isFinite(page.at) ? { ...item, provedAt: page.at } : item)
     }
     onPage?.(items)
     // A cursor that does not move would read the same page forever; the
@@ -227,6 +229,8 @@ export interface BulkApplyResult {
   errorCode?: string
   /** The change's own block time, from the proved answer. */
   moderatedAt?: number
+  /** The changed document as the proved answer gave it. */
+  document?: Readonly<Record<string, unknown>>
 }
 
 /** One document that did not change, and why, in words. */
@@ -244,7 +248,7 @@ export interface BulkFailure {
  */
 export interface BulkChange {
   marks?: ModerationMarks | null
-  /** For one settled by a chain read: the tab the read lists it in (null: neither). */
+  /** For one settled by a chain read or this run's proved write: the tab the proved document is listed in (null: neither). */
   tab?: BulkMode | null
   at?: number
   /** For one settled by a chain read: the block time the read was proved at. */
@@ -306,18 +310,18 @@ export function provedAt(read: BulkChainRead, id: string): number | undefined {
 
 /**
  * A run's guard on its by-ID reads ({@link BulkRunDeps.pending}, `recheck`):
- * a read answering an asked document from before `listedAt` (the newest list
- * read the dialog showed), what a run proved of it, or an earlier read this
+ * a read answering an asked document from before `listedAt()` (the newest list
+ * read the dialog showed, as of the read), the listing page it came from, what a run proved of it, or an earlier read this
  * run accepted for it cannot settle it, and rejects, so nothing is counted,
  * announced or sent on it.
  */
-export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: number) {
+export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: () => number) {
   const accepted = new Map<string, number>()
   const known = (time: number | undefined) => (time !== undefined && Number.isFinite(time) ? time : -Infinity)
-  const floor = (id: string) => Math.max(known(listedAt), known(changes.get(id)?.at), known(accepted.get(id)))
+  const floor = (item: BulkItem) => Math.max(known(listedAt()), known(item.provedAt), known(changes.get(item.id)?.at), known(accepted.get(item.id)))
   return (asked: readonly BulkItem[]) => (read: BulkChainRead): BulkChainRead => {
     const behind = asked.some((item) => {
-      const min = floor(item.id)
+      const min = floor(item)
       const at = provedAt(read, item.id)
       return min !== -Infinity && !(at !== undefined && at >= min)
     })
@@ -606,7 +610,10 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     const result = await send(item)
     if (result.success) {
       // As this run asked; ordered by its own block time when the answer gave it.
-      markDone(item, result.moderatedAt !== undefined ? { at: result.moderatedAt } : {})
+      markDone(item, {
+        ...(result.moderatedAt !== undefined ? { at: result.moderatedAt } : {}),
+        ...(result.document ? { tab: laneOf(result.document) } : {}),
+      })
       streakCode = null
       continue
     }

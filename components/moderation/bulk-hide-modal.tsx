@@ -293,7 +293,7 @@ export function BulkHideModal() {
       return
     }
     const { batch } = opened
-    const settles = freshReads(runChangesRef.current, listedAtRef.current)
+    const settles = freshReads(runChangesRef.current, () => listedAtRef.current)
     const hideLabel = chosen?.label ?? 0
     const result = await runBulk(batchItems, {
       apply: (item, guard) => mode === 'hide'

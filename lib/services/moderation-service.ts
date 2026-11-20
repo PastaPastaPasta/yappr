@@ -105,6 +105,8 @@ export interface ModerationResult {
   snapshotSaved?: boolean;
   /** A field change only: the changed document's `$moderatedAt` (block time, ms), as the proved answer gave it. */
   moderatedAt?: number;
+  /** A field change only: the changed document as the proved answer gave it. */
+  document?: Record<string, unknown>;
   error?: string;
   /**
    * `MAYBE_APPLIED`: the broadcast went out but its confirmation timed out (the
@@ -1458,7 +1460,8 @@ class ModerationService {
       : answer;
     // The change's own block time orders it against any later moderator change a read brings.
     const moderatedAt = changed ? moderationMarksOf(changed).moderatedAt : undefined;
-    return result.success && moderatedAt !== undefined ? { ...result, moderatedAt } : result;
+    if (!result.success || !changed) return result;
+    return { ...result, document: changed, ...(moderatedAt !== undefined ? { moderatedAt } : {}) };
   }
 
   /**

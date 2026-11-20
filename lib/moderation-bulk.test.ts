@@ -193,22 +193,41 @@ describe("a run's changes over a lagging read", () => {
     const a = doc('a', 1)
     const b = doc('b', 2)
     // The row came from a list proved at NOW: an older answer cannot settle it.
-    const listed = freshReads(new Map(), NOW)
+    const listed = freshReads(new Map(), () => NOW)
     expect(() => listed([a])(at(NOW - 20))).toThrow()
     expect(listed([a])(at(NOW))).toEqual(at(NOW))
     // ...nor one older than an answer this run already accepted for it.
     expect(() => listed([a])(at(NOW + 10, [['a', NOW + 5]]))).not.toThrow()
     expect(() => listed([a])(at(NOW + 1))).toThrow()
     // A run change to b at NOW + 20 is a floor for b only; each is judged by its own answer.
-    const run = freshReads(changes([b, 'hide', NOW + 20]), -Infinity)
+    const run = freshReads(changes([b, 'hide', NOW + 20]), () => -Infinity)
     expect(() => run([a, b])(at(NOW, [['b', NOW + 20]]))).not.toThrow()
     expect(() => run([b])(at(NOW + 19))).toThrow()
     // Nothing known of a document: even an answer of unknown age is taken.
-    expect(() => freshReads(new Map(), -Infinity)([a])(at(NaN))).not.toThrow()
+    expect(() => freshReads(new Map(), () => -Infinity)([a])(at(NaN))).not.toThrow()
     // A change or list of unknown proof time sets no floor; the list's still does.
-    expect(() => freshReads(changes([a, 'hide', NaN]), -Infinity)([a])(at(NOW))).not.toThrow()
-    expect(() => freshReads(changes([a, 'hide', NaN]), NaN)([a])(at(NOW))).not.toThrow()
-    expect(() => freshReads(changes([a, 'hide', NaN]), NOW)([a])(at(NOW - 1))).toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => -Infinity)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => NaN)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => NOW)([a])(at(NOW - 1))).toThrow()
+    // The floor is the newest list read as of each answer, not as of the run's start.
+    let newest = NOW
+    const live = freshReads(new Map(), () => newest)
+    expect(() => live([b])(at(NOW))).not.toThrow()
+    newest = NOW + 30
+    expect(() => live([a])(at(NOW + 10))).toThrow()
+  })
+
+  it("floors each listed row by its own page's proof, not the listing's oldest page", async () => {
+    const pages: Record<string, BulkPage> = { post: { items: [doc('p', 2)], at: NOW + 50 }, reply: { items: [], at: NOW } }
+    const posts = await readEveryPage(async () => pages.post)
+    const replies = await readEveryPage(async () => pages.reply)
+    const [row] = newestFirst(posts.items, replies.items)
+    expect(oldestBlockTime([posts.at, replies.at])).toBe(NOW)
+    expect(row.provedAt).toBe(NOW + 50)
+    const at = (time: number): BulkChainRead => ({ todo: new Set(), changed: new Set(), at: time })
+    const guard = freshReads(new Map(), () => oldestBlockTime([posts.at, replies.at]))
+    expect(() => guard([row])(at(NOW + 49))).toThrow()
+    expect(() => guard([row])(at(NOW + 50))).not.toThrow()
   })
 
   it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
@@ -307,13 +326,24 @@ describe('runBulk', () => {
 
   it('settles, announces and sends nothing on a first read the guard refuses as older than the row', async () => {
     const d = deps()
-    const guard = freshReads(new Map(), NOW)
+    const guard = freshReads(new Map(), () => NOW)
     const stale = d.pending
     const pending = vi.fn(async (asked: readonly BulkItem[]) => guard(asked)({ ...(await stale(asked)), todo: new Set(), at: NOW - 1 }))
     const summary = await runBulk(items, { ...d, pending })
     expect(summary).toMatchObject({ done: 0, stopped: 'fatal' })
     expect(d.apply).not.toHaveBeenCalled()
     expect(d.onDone).not.toHaveBeenCalled()
+  })
+
+  it('places a proved write by the lane of the document it proved: an unhide over a fresh tombstone lists it in neither tab', async () => {
+    const results: Record<string, BulkApplyResult> = {
+      a: { success: true, moderatedAt: NOW, document: { live: 1 } },
+      b: { success: true, moderatedAt: NOW, document: { mod: 1 } },
+    }
+    const d = deps({ apply: async (i) => results[i.id] ?? ok })
+    await runBulk(items, d)
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { at: NOW, tab: 'hide' }], ['b', { at: NOW, tab: null }], ['c', {}]])
+    expect(tabAfter('unhide', { at: NOW, tab: null })).toBeNull()
   })
 
   it('counts a document the read no longer finds, without announcing it', async () => {
