@@ -75,15 +75,13 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
   const tried = new Set<string>();
   const proved = new Set<string>();
   const unplaced = new Map<string, Reply>();
-  // A stub placed under a parent this page lacks (live, on a later page) would drop out of the thread with
-  // its replies: it keeps its place at the top, and its kept parent, until that parent is loaded.
-  const settled = () => {
-    const present = new Set([...all.map((reply) => reply.id), ...loaded]);
-    return all.map((reply) => {
-      const original = unplaced.get(reply.id);
-      return original && reply.replyToReplyId && !present.has(reply.replyToReplyId) ? { ...original, keptParentId: reply.replyToReplyId } : reply;
-    });
-  };
+  // A stub's parent from its removal record is placed while the reads run (so a parent missing in turn is
+  // resolved too), then handed back as `keptParentId` alone: where the stub shows is the assembler's call,
+  // from the merged thread (`threadParentOf`), so page order never decides it.
+  const settled = () => all.map((reply) => {
+    const original = unplaced.get(reply.id);
+    return original && reply.replyToReplyId ? { ...original, keptParentId: reply.replyToReplyId } : reply;
+  });
   // One round unless a stub is placed under a parent that is missing too.
   for (;;) {
     if (replyThreadsCarryLiveMarker()) {

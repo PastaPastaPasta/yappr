@@ -34,19 +34,20 @@ export function withoutHiddenTombstones<T extends { deleted?: boolean }>(posts: 
  * anywhere in the tree, and a revived tombstone is placed exactly as one of
  * them would be.
  */
-export function pruneHiddenTombstones<T extends { id: string; deleted?: boolean; deletedStub?: boolean; hiddenStub?: boolean; replyToReplyId?: string }>(replies: readonly T[]): T[] {
+export function pruneHiddenTombstones<T extends { id: string; deleted?: boolean; deletedStub?: boolean; hiddenStub?: boolean; replyToReplyId?: string; keptParentId?: string }>(replies: readonly T[]): T[] {
   if (!tombstonesAreHidden() || !replies.some((reply) => reply.deleted === true)) return [...replies]
   // A stub standing in for a moderator-removed (or, v18, hidden) parent is as
   // dead as a tombstone: it stays only above a live reply, never over
   // tombstones alone.
   const dead = (reply: T) => reply.deleted === true || reply.deletedStub === true || reply.hiddenStub === true
-  const parentOf = new Map(replies.map((reply) => [reply.id, reply.replyToReplyId]))
+  // A removed reply's stub hangs under the parent its removal record kept (v20, `keptParentId`).
+  const parentOf = new Map(replies.map((reply) => [reply.id, reply.replyToReplyId ?? reply.keptParentId]))
   // Every ancestor of a live reply has a live descendant. Each walk stops at
   // the first ancestor already marked, so every reply is visited once.
   const aboveLive = new Set<string>()
   for (const reply of replies) {
     if (dead(reply)) continue
-    for (let id = reply.replyToReplyId; id !== undefined && !aboveLive.has(id); id = parentOf.get(id)) aboveLive.add(id)
+    for (let id = parentOf.get(reply.id); id !== undefined && !aboveLive.has(id); id = parentOf.get(id)) aboveLive.add(id)
   }
   return replies.filter((reply) => !dead(reply) || aboveLive.has(reply.id))
 }

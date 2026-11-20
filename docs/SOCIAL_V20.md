@@ -168,8 +168,14 @@ no rollback to the eight-member build, and a failed cut-over is fixed forward.
 Keep the window between the create and the redeploy short:
 
 1. Before registering, prepare the cut-over branch. `.env.testnet` gets the
-   planned id, topology `v20`, all nine pins (`id:1`) and YAPP
-   `tokens.calculateId(<v20 id>, 0)`. The build gate already accepts social
+   planned id, topology `v20`, all nine pins (`id:1`), YAPP
+   `tokens.calculateId(<v20 id>, 0)` and `STORAGE_EPOCH=testnet-release-3`
+   (D21). The group stays the same, but the social contract and YAPP token
+   change, and browser state is kept per identity, not per contract. For
+   example, the starter-grant marker (`lib/starter-grant.ts`) would hide a
+   v20 grant from someone who claimed v19 YAPP in the same browser. A clean
+   start drops all of it, and people sign in again. Set
+   `E2E_STORAGE_SCOPE` to match (`testnet-release-3:staging`). The build gate already accepts social
    v19 as an unused pin of this group when the build names another social
    contract (`unusedMembersOf` in `scripts/release-config.cjs`).
 2. Run `--signed-dry-run` and confirm the maker's nonce is still 8.

@@ -165,8 +165,8 @@ export interface Reply {
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
   deletedStub?: boolean
   /**
-   * v20: on a `deletedStub` held at the top because its parent is not loaded yet, the reply its removal
-   * record says it answered. `assembleFlatThread` nests the stub under it once that reply is in the thread.
+   * v20: on a `deletedStub`, the reply its removal record says it answered. The thread assemblers nest the
+   * stub under it once that reply connects to the thread (`threadParentOf`), and keep it at the top until then.
    */
   keptParentId?: string
   /**

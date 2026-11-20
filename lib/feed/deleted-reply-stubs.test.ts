@@ -171,7 +171,7 @@ describe('withMissingReplyParents', () => {
       const r = removed({ gone: 'top' })
       const replies = await withMissingReplyParents([reply('top', undefined, 5), reply('c3', 'gone', 12)], r)
       expect(r.removedReplyParents.mock.calls).toEqual([[['gone']]])
-      expect(replies.find((x) => x.id === 'gone')).toMatchObject({ deletedStub: true, replyToReplyId: 'top', parentId: 'top' })
+      expect(replies.find((x) => x.id === 'gone')).toMatchObject({ deletedStub: true, keptParentId: 'top' })
       expect(shown(assembleFlatThread(root, replies))).toEqual([['top', [['gone', [['c3', []]]]]]])
     })
 
@@ -183,7 +183,7 @@ describe('withMissingReplyParents', () => {
       expect(r.getMany.mock.calls).toEqual([[['gone2']], [['gone1']], [['tomb2']], [['tomb1']]])
       // The whole chain is linked: tomb1 > tomb2 > gone1 > gone2 > leaf. A placeholder cannot be opened,
       // so the depth cap never ends a branch on one: the replies below it render.
-      expect(Object.fromEntries(replies.map((x) => [x.id, x.replyToReplyId]))).toEqual({ tomb1: undefined, tomb2: 'tomb1', gone1: 'tomb2', gone2: 'gone1', leaf: 'gone2' })
+      expect(Object.fromEntries(replies.map((x) => [x.id, x.replyToReplyId ?? x.keptParentId]))).toEqual({ tomb1: undefined, tomb2: 'tomb1', gone1: 'tomb2', gone2: 'gone1', leaf: 'gone2' })
       expect(shown(assembleFlatThread(root, replies))).toEqual([['tomb1', [['tomb2', [['gone1', [['gone2', [['leaf', []]]]]]]]]]])
     })
 
@@ -198,7 +198,7 @@ describe('withMissingReplyParents', () => {
       const focus = { ...root, id: 'live', parentId: 'ROOT', replyToReplyId: undefined, rootPostId: 'ROOT' }
       expect(shown(assembleFlatThread(focus as unknown as typeof root, replies))).toEqual([['gone', [['c3', []]]]])
       const later = await withMissingReplyParents([reply('c3', 'gone', 12)], r, new Set(['live']))
-      expect(later.find((x) => x.id === 'gone')?.replyToReplyId).toBe('live')
+      expect(later.find((x) => x.id === 'gone')?.keptParentId).toBe('live')
     })
 
     it('keeps a hole at the top while its kept parent is loaded but not yet connected, and renders a branch through it past the cap', async () => {
@@ -209,6 +209,16 @@ describe('withMissingReplyParents', () => {
       // With x loaded, x > live > gone > c3: gone sits at the cap, and the branch through it still renders.
       const linked = assembleFlatThread(root, [...replies, reply('live', 'x', 3), reply('x', undefined, 2)])
       expect(shown(linked)).toEqual([['x', [['live', [['gone', [['c3', []]]]]]]]])
+    })
+
+    it('keeps a newly found hole visible when its kept parent is already loaded but not yet connected', async () => {
+      // live sits on this page under x, which a later page brings; c3 reveals the removed gone under live.
+      const r = removed({ gone: 'live' })
+      const replies = await withMissingReplyParents([reply('live', 'x', 3), reply('c3', 'gone', 12)], r, new Set())
+      expect(replies.find((x) => x.id === 'gone')).toMatchObject({ keptParentId: 'live' })
+      expect(replies.find((x) => x.id === 'gone')?.replyToReplyId).toBeUndefined()
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['gone', [['c3', []]]]])
+      expect(shown(assembleFlatThread(root, [...replies, reply('x', undefined, 2)]))).toEqual([['x', [['live', [['gone', [['c3', []]]]]]]]])
     })
 
     it('leaves a hole at the top when its record names no parent: a direct reply, or a reply with no record', async () => {
