@@ -808,13 +808,25 @@ class CharterService {
     const lock = <T>(work: () => Promise<T>) => withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, work)
     // True when proved there, false when proved absent, null when the read failed (which proves nothing).
     const exists = (signed: SignedCharterCreate) => charterStepExists(w, sdk, signed, targetContractId).catch(() => null)
+    /**
+     * Whether the nonce coordinator still holds the entry's reservation. Once it is released (a verdict, or
+     * abandoned) a later SDK-signed write may take the same nonce, so the stored bytes are never sent again.
+     */
+    const held = (entry: PendingCreate) => {
+      try {
+        return loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending.some((p) => p.id === entry.reservation.id) === true
+      } catch {
+        return false
+      }
+    }
     /** Landed, proved dead, or still unknown. An application is never proved dead here. */
-    const settle = async (signed: SignedCharterCreate): Promise<'landed' | 'dead' | null> => {
+    const settle = async (entry: PendingCreate): Promise<'landed' | 'dead' | null> => {
+      const { signed } = entry
       if (await exists(signed) === true) return 'landed'
       if (type === 'electedCharter') return null
       const outcome = await stateTransitionService.settleCreate({
         contractId: CHARTERS_CONTRACT_ID, documentType: type, ownerId, documentId: signed.id, nonce: BigInt(signed.nonce), transition: signed.bytes,
-      }, { mayResend: () => this.isLive(generation, ownerId) }) // proof only once the session is over
+      }, { mayResend: () => this.isLive(generation, ownerId) && held(entry) }) // proof only once the session is over or the reservation is gone
       return outcome === 'landed' ? 'landed' : outcome === 'not-recorded' ? 'dead' : null
     }
     const uncertain = () => new CharterActionError(type === 'electedCharter' ? APPLICATION_MAY_STILL_LAND : CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
@@ -850,7 +862,7 @@ class CharterService {
         // or refused must leave the earlier one's marker for its own retry.
         return { kind: 'empty' }
       }
-      const outcome = await settle(stored.signed)
+      const outcome = await settle(stored)
       if (outcome === 'landed') {
         const id = this.proved(ownerId, key, stored)
         if (stored.fingerprint !== fingerprint) throw new CharterActionError(EARLIER_VERSION_FILED, 'refused')
@@ -860,7 +872,7 @@ class CharterService {
         this.release(ownerId, key, stored, true)
         return { kind: 'dead', entry: stored }
       }
-      if (stored.fingerprint !== fingerprint) throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
+      if (stored.fingerprint !== fingerprint || !held(stored)) throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
       return { kind: 'pending', entry: stored }
     }
 

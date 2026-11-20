@@ -26,7 +26,7 @@ const storage = vi.hoisted(() => {
   return local
 })
 const settle = vi.hoisted(() => vi.fn())
-const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n }))
+const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
 const webLocks = vi.hoisted(() => ({ available: true }))
@@ -154,11 +154,17 @@ beforeEach(() => {
   storage.clear()
   builders.consumed.mockResolvedValue(false)
   nonces.next = 1n
-  nonces.load.mockReturnValue(null)
+  nonces.held = []
+  nonces.load.mockImplementation(() => ({ mark: 0n, floor: 0n, pending: nonces.held }))
+  nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => { nonces.held = nonces.held.filter((p) => p.id !== entry.id) })
   sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
     { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: `h${nonce}` }))
-  nonces.reserve.mockImplementation((_o: string, _c: string, nonce: bigint) => ({ id: `r${nonce}`, nonce, expiresAt: null }))
+  nonces.reserve.mockImplementation((_o: string, _c: string, nonce: bigint, _tip: unknown, scope?: string) => {
+    const entry = { id: `r${nonce}`, nonce, expiresAt: null, ...(scope ? { scope } : {}) }
+    nonces.held = [...nonces.held, entry]
+    return entry
+  })
   charterService.forgetKeys()
   TERMS = { ...TERMS, targetContractId: `target${++targets}` }
 })
@@ -234,7 +240,10 @@ describe('a refusal', () => {
 
   it('records a verdict with the nonce coordinator before the slot gives up the create: a page that dies in between leaves it stored', async () => {
     const slotAtRelease: unknown[] = []
-    nonces.release.mockImplementation(() => { slotAtRelease.push(stored('addedModerator', 'e5:m1')) })
+    nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => {
+      slotAtRelease.push(stored('addedModerator', 'e5:m1'))
+      nonces.held = nonces.held.filter((p) => p.id !== entry.id)
+    })
     sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
     builders.consumed.mockResolvedValue(true)
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
@@ -247,6 +256,24 @@ describe('a refusal', () => {
       expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) }),
     ])
     expect(stored('addedModerator', 'e5:m1')).toMatchObject({ landed: 'doc-2' })
+  })
+
+  it('never sends stored bytes again once their reservation is released: a delete may have taken that nonce since', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
+    builders.exists.mockResolvedValue(null)
+    const resends: boolean[] = []
+    settle.mockImplementation(async (_receipt: unknown, { mayResend }: { mayResend: () => boolean }) => { resends.push(mayResend()); return null })
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
+    const sent = sdk.stateTransitions.broadcastAndWait.mock.calls.length
+    // A page that died between releasing r1 and clearing its slot; a team-change delete then signed at r1's nonce.
+    nonces.held = []
+    resends.length = 0
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(resends.length).toBeGreaterThan(0)
+    expect(resends.every((resend) => !resend)).toBe(true)
+    expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent)
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    expect(stored('addedModerator', 'e5:m1')?.reservation?.id).toBe('r1')
   })
 
   it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
