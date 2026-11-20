@@ -453,6 +453,50 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
   });
 
+  it('looks again after a lookup that timed out, rather than going back to the parked account', async () => {
+    jest.useFakeTimers();
+    try {
+      syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+      fakeEngine
+        .method('session.appConnectPendingSignIn')
+        .mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }))
+        .mockResolvedValueOnce({ reauth: 'bob' });
+      mount('/');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(1);
+      expect(router.push).not.toHaveBeenCalled();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2_000);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(2);
+      expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+      expect(useAccounts.getState().reauth).toBe('bob');
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stays put, keeping the Add account marker, when every lookup fails', async () => {
+    jest.useFakeTimers();
+    try {
+      syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+      fakeEngine.method('session.appConnectPendingSignIn').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }));
+      mount('/');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(10_000);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(3);
+      expect(router.push).not.toHaveBeenCalled();
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+      expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('goes back to the parked account when no sign-in is stored', async () => {
     syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
     fakeEngine
