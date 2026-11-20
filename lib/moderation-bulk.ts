@@ -78,19 +78,25 @@ export function tabAfter(mode: BulkMode, change: BulkChange): BulkMode | null {
   return mod === laneMod('unhide') ? 'unhide' : null
 }
 
+/** When a read was proved: one block time for all of it, or one per type, as posts and replies are separate listings. */
+export type ReadAt = number | undefined | Readonly<Record<BulkKind, number>>
+
 /**
  * The run changes a read proved at block time `readAt` (NaN or undefined:
  * unknown) predates. Each came back proved, but the read can reach a node a
  * block behind them; a read at or after one already shows it, and whatever
  * changed since (an author's tombstone).
  */
-function newerThan(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): RunChange[] {
-  const known = readAt !== undefined && Number.isFinite(readAt)
-  return [...changes.values()].filter((change) => change.at !== undefined && (!known || change.at > readAt))
+function newerThan(changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): RunChange[] {
+  return [...changes.values()].filter((change) => {
+    if (change.at === undefined) return false
+    const at = typeof readAt === 'object' ? readAt[change.item.kind] : readAt
+    return at === undefined || !Number.isFinite(at) || change.at > at
+  })
 }
 
 /** `tab`'s list as a read proved it at block time `readAt`, with the run changes it predates where they now belong. */
-export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): BulkItem[] {
+export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): BulkItem[] {
   const recent = newerThan(changes, readAt)
   if (recent.length === 0) return [...items]
   const moved = new Map(recent.map((change) => [change.item.id, change]))
@@ -101,7 +107,7 @@ export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, change
 }
 
 /** Whether a read proved at block time `readAt` predates a run change: the lists are read again a little later. */
-export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): boolean {
+export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): boolean {
   return newerThan(changes, readAt).length > 0
 }
 
