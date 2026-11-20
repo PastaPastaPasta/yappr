@@ -14,6 +14,7 @@ import {
   nextReadVersion,
   outcomeWhenAlready,
   readSupersedes,
+  recordOutranks,
   setModeratorViewContracts,
   shownMarks,
   viewerChangeReloads,
@@ -96,6 +97,21 @@ describe('moderationMarksOf', () => {
 
   it('ignores a moderator that is not an identifier string', () => {
     expect(moderationMarksOf({ mod: 1, $moderatedBy: new Uint8Array(32) }).moderatedBy).toBeUndefined()
+  })
+})
+
+describe('recordOutranks', () => {
+  const hidden = { marks: { mod: 1, moderatedAt: 3_000 }, at: 3_000, proved: true }
+
+  it('keeps a newer proved change over an older observation', () => {
+    expect(recordOutranks(hidden, 2_000)).toBe(true)
+    expect(recordOutranks(hidden, 3_000)).toBe(false)
+    expect(recordOutranks(hidden, 4_000)).toBe(false)
+  })
+
+  it('never holds on to an unproved change, or to nothing', () => {
+    expect(recordOutranks(undefined, 1)).toBe(false)
+    expect(recordOutranks({ ...hidden, proved: false }, 2_000)).toBe(false)
   })
 })
 

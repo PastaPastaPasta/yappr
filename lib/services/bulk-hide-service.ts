@@ -1,12 +1,12 @@
 import { listingsCarryModLane } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import { moderatedContract } from '@/lib/moderated-contracts'
-import { chainState, inLane, laneMod, newestFirst, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
+import { chainState, inLane, laneMod, laneOf, newestFirst, oldestBlockTime, readEveryPage, type BulkChainRead, type BulkItem, type BulkKind, type BulkMode, type BulkPage } from '@/lib/moderation-bulk'
 import { getEvoSdk } from './evo-sdk-service'
 import { moderationService } from './moderation-service'
 import { moderationMarksOf, moderationViewAll } from '@/lib/moderation-view'
 import { MAX_IN_CLAUSE_VALUES, documentCount } from './pagination-utils'
-import { identifierToBase58, normalizeSDKResponse } from './sdk-helpers'
+import { identifierToBase58, queryDocumentsWithBlockTime } from './sdk-helpers'
 
 /**
  * The reads behind the bulk hide (lib/moderation-bulk.ts) on social v18: one
@@ -48,10 +48,10 @@ class BulkHideService {
     return moderatedContract('social').contractId
   }
 
-  /** One page of `authorId`'s `kind` documents in `mode`'s lane, newest first. */
+  /** One page of `authorId`'s `kind` documents in `mode`'s lane, newest first, proved, with the block time it was proved at. */
   async readPage(kind: BulkKind, authorId: string, mode: BulkMode, startAfter?: string): Promise<BulkPage> {
     const sdk = await getEvoSdk()
-    const response = await sdk.documents.query({
+    const { documents: docs, blockTimeMs } = await queryDocumentsWithBlockTime(sdk, {
       dataContractId: this.contractId,
       documentTypeName: kind,
       where: [['live', '==', 1], ['mod', '==', laneMod(mode)], ['$ownerId', '==', authorId], ['$createdAt', '>', 0]],
@@ -59,29 +59,31 @@ class BulkHideService {
       limit: PAGE_SIZE,
       ...(startAfter ? { startAfter } : {}),
     })
-    const docs = normalizeSDKResponse(response)
     const last = docs.length > 0 ? docId(docs[docs.length - 1]) : null
     const items = docs.filter((doc) => inLane(doc, mode)).map((doc) => toItem(doc, kind)).filter((item): item is BulkItem => item !== null)
-    return { items, ...(docs.length >= PAGE_SIZE && last ? { next: last } : {}) }
+    return { items, at: blockTimeMs, ...(docs.length >= PAGE_SIZE && last ? { next: last } : {}) }
   }
 
   /**
    * Every post and reply of `authorId` in `mode`'s lane, newest first, read
-   * page by page; `onProgress` sees how many so far. `truncated` when one type
-   * holds more than the dialog reads (lib/moderation-bulk.ts MAX_ITEMS_PER_KIND).
+   * page by page; `onProgress` sees how many so far, `onProof` each page's type
+   * and block time as it lands. `truncated` when one type
+   * holds more than the dialog reads (lib/moderation-bulk.ts MAX_ITEMS_PER_KIND);
+   * `ats` the block time of each type's oldest page.
    */
-  async readAll(authorId: string, mode: BulkMode, onProgress?: (count: number) => void): Promise<{ items: BulkItem[]; truncated: boolean }> {
+  async readAll(authorId: string, mode: BulkMode, { onProgress, onProof }: { onProgress?: (count: number) => void; onProof?: (kind: BulkKind, at: number | undefined) => void } = {}): Promise<{ items: BulkItem[]; truncated: boolean; ats: Record<BulkKind, number> }> {
     const counts = new Map<BulkKind, number>()
     const [posts, replies] = await Promise.all(KINDS.map((kind) => readEveryPage(
       (startAfter) => this.readPage(kind, authorId, mode, startAfter),
       {
-        onPage: (items) => {
+        onPage: (items, at) => {
+          onProof?.(kind, at)
           counts.set(kind, items.length)
           onProgress?.([...counts.values()].reduce((sum, n) => sum + n, 0))
         },
       }
     )))
-    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated }
+    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated, ats: { post: posts.at, reply: replies.at } }
   }
 
   /**
@@ -108,33 +110,41 @@ class BulkHideService {
    * Where each of `items` stands against `mode`, read from the chain (`$id in`,
    * at most 100 per read; lib/moderation-bulk.ts `chainState`): still to do,
    * changed some other way (an unhide target put under legal hold, or gone),
-   * or, in neither set, done. Rejects when a read fails.
+   * or, in neither set, done; with the tab each one no longer to do is listed
+   * in, and the block time of the oldest answer. Rejects when a read fails.
    */
   async pending(items: readonly BulkItem[], mode: BulkMode): Promise<BulkChainRead> {
     const sdk = await getEvoSdk()
     const found = new Map<string, Record<string, unknown>>()
+    const times: number[] = []
+    const ats = new Map<string, number>()
     for (const kind of KINDS) {
       const ids = items.filter((item) => item.kind === kind).map((item) => item.id)
       for (let start = 0; start < ids.length; start += MAX_IN_CLAUSE_VALUES) {
         const batch = ids.slice(start, start + MAX_IN_CLAUSE_VALUES)
-        const response = await sdk.documents.query({
+        const { documents, blockTimeMs } = await queryDocumentsWithBlockTime(sdk, {
           dataContractId: this.contractId,
           documentTypeName: kind,
           where: [['$id', 'in', batch]],
           limit: batch.length,
         })
-        for (const doc of normalizeSDKResponse(response)) {
+        times.push(blockTimeMs)
+        for (const id of batch) ats.set(id, blockTimeMs)
+        for (const doc of documents) {
           const id = docId(doc)
           if (id) found.set(id, doc)
         }
       }
     }
-    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map() }
+    const read: BulkChainRead = { todo: new Set(), changed: new Set(), marks: new Map(), lanes: new Map(), at: oldestBlockTime(times), ats }
     for (const item of items) {
       const doc = found.get(item.id)
       const state = chainState(doc, mode)
       if (state !== 'done') read[state].add(item.id)
-      else if (doc) read.marks?.set(item.id, moderationMarksOf(doc))
+      if (state === 'todo') continue
+      // A document changed some other way is listed where it is now too: a tombstone in neither tab.
+      read.lanes?.set(item.id, doc ? laneOf(doc) : null)
+      if (state === 'done' && doc) read.marks?.set(item.id, moderationMarksOf(doc))
     }
     logger.info(`bulkHide: ${read.todo.size} of ${items.length} still to ${mode}, ${read.changed.size} changed`)
     return read
