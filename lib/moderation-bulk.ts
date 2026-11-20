@@ -98,13 +98,9 @@ export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, change
   return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
 }
 
-/**
- * Whether a read proved at block time `readAt` predates a run change (of one
- * of `ids`, when given): the lists are read again a little later, and a run
- * does not settle on it.
- */
-export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined, ids?: readonly string[]): boolean {
-  return newerThan(changes, readAt).some((change) => !ids || ids.includes(change.item.id))
+/** Whether a read proved at block time `readAt` predates a run change: the lists are read again a little later. */
+export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: number | undefined): boolean {
+  return newerThan(changes, readAt).length > 0
 }
 
 /** How far back "select by time" reaches. */
@@ -306,6 +302,31 @@ export interface BulkChainRead {
 /** The block time the answer covering `id` in `read` was proved at. */
 export function provedAt(read: BulkChainRead, id: string): number | undefined {
   return read.ats?.get(id) ?? read.at
+}
+
+/**
+ * A run's guard on its by-ID reads ({@link BulkRunDeps.pending}, `recheck`):
+ * a read answering an asked document from before `listedAt` (the newest list
+ * read the dialog showed), what a run proved of it, or an earlier read this
+ * run accepted for it cannot settle it, and rejects, so nothing is counted,
+ * announced or sent on it.
+ */
+export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: number) {
+  const accepted = new Map<string, number>()
+  const floor = (id: string) => Math.max(listedAt, changes.get(id)?.at ?? -Infinity, accepted.get(id) ?? -Infinity)
+  return (asked: readonly BulkItem[]) => (read: BulkChainRead): BulkChainRead => {
+    const behind = asked.some((item) => {
+      const min = floor(item.id)
+      const at = provedAt(read, item.id)
+      return min !== -Infinity && !(at !== undefined && at >= min)
+    })
+    if (behind) throw new Error('read behind what the dialog already showed')
+    for (const item of asked) {
+      const at = provedAt(read, item.id)
+      if (at !== undefined && Number.isFinite(at)) accepted.set(item.id, Math.max(at, accepted.get(item.id) ?? -Infinity))
+    }
+    return read
+  }
 }
 
 /** Where `item` stands in a chain read ({@link BulkRunDeps.pending}): an id in neither set is done. */
