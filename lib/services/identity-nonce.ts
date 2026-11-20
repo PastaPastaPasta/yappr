@@ -235,14 +235,14 @@ export function storeWalletPayments(ownerId: string, contractId: string, scope: 
 /**
  * The pending transitions that may still execute, given the raw value
  * `identities.contractNonce` returned: not one whose nonce (or, SDK-signed,
- * any nonce it may carry) is consumed, and not an SDK-signed one past its
+ * any nonce it may carry) is consumed, and not an app write past its
  * lifetime. Consumption is final, so a node that is behind only keeps one
  * pending longer.
  */
 export function stillPending(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
   return (reservation?.pending ?? []).filter((p) => {
-    if (p.nonce !== null) return !identityContractNonceConsumed(current, p.nonce);
     if (p.expiresAt !== null && p.expiresAt <= now) return false;
+    if (p.nonce !== null) return !identityContractNonceConsumed(current, p.nonce);
     if (p.signedAfter === undefined || p.signedAtMost === undefined) return true;
     return !anyConsumed(current, p.signedAfter + BigInt(1), p.signedAtMost);
   });
@@ -302,7 +302,8 @@ export function reserveNonce(
   contractId: string,
   nonce: bigint | null,
   current: bigint | undefined | null,
-  scope?: string
+  scope?: string,
+  lifetime = false
 ): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   const mark = previous?.mark ?? BigInt(0);
@@ -312,7 +313,7 @@ export function reserveNonce(
   const id = crypto.randomUUID();
   const entry: PendingTransition = nonce === null
     ? { id, nonce, signedAfter: floor, signedAtMost: max(floor, mark) + BigInt(1), expiresAt: Date.now() + PENDING_LIFETIME_MS }
-    : { id, nonce, expiresAt: null };
+    : { id, nonce, expiresAt: lifetime ? Date.now() + PENDING_LIFETIME_MS : null };
   if (scope !== undefined) entry.scope = scope;
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
@@ -333,8 +334,10 @@ export function reserveNonce(
 function floorAfterSettling(current: bigint | undefined | null, reservation: NonceReservation | null, live: PendingTransition[]): bigint | null {
   if (!reservation) return null;
   return reservation.pending
-    .filter((p) => !live.includes(p) && p.nonce === null && p.signedAtMost !== undefined && !anyConsumed(current, (p.signedAfter ?? BigInt(0)) + BigInt(1), p.signedAtMost))
-    .reduce((floor, p) => max(floor, p.signedAtMost ?? floor), max(reservation.floor, tipOf(current)));
+    .filter((p) => !live.includes(p) && (p.nonce === null
+      ? p.signedAtMost !== undefined && !anyConsumed(current, (p.signedAfter ?? BigInt(0)) + BigInt(1), p.signedAtMost)
+      : !identityContractNonceConsumed(current, p.nonce)))
+    .reduce((floor, p) => max(floor, p.nonce ?? p.signedAtMost ?? floor), max(reservation.floor, tipOf(current)));
 }
 
 /**
@@ -499,20 +502,27 @@ export async function withSdkSignedWrite<T>(
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
     if (value.nonce !== null && writeWithNonce) {
       const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
-      const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope);
+      // Like an SDK-signed write's, its lifetime keeps starting over while this page works on it: a page that dies
+      // mid-write (in preparation, before anything was signed) leaves nothing that holds writes back for good.
+      const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
+      const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
       try {
         const result = await writeWithNonce(value.nonce);
+        clearInterval(alive);
+        renewPending(ownerId, contractId, entry);
         // An affected-state answer can be a snapshot rather than execution proof.
         // Keep the chosen nonce until a nonce read proves it can no longer execute.
         await settleChosenNonce(ownerId, contractId, entry);
         return result;
       } catch (error) {
+        clearInterval(alive);
         if (error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError) {
           releaseNonce(ownerId, contractId, entry);
           // No bytes left this lock, so this allocation never became a signed nonce.
           const reservation = loadReservation(ownerId, contractId);
           if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
         } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
+        else renewPending(ownerId, contractId, entry);
         throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
       }
     }

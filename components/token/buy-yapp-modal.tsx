@@ -13,7 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { holdWalletRequest, sendPastWalletRequest, type HeldWalletRequest, buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -82,7 +82,7 @@ export function BuyYappModal() {
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation cannot overwrite a fresh QR.
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, { payment: WalletPayment; foreign: boolean }>())
+  const walletRequestsRef = useRef(new Map<string, HeldWalletRequest>())
   const allowedPaymentsRef = useRef(new Set<string>())
 
   useEffect(() => {
@@ -165,7 +165,7 @@ export function BuyYappModal() {
       allowAnother: allowedPaymentsRef.current,
       onPrepared: prepared => {
         payment = prepared
-        if (payment) walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
+        if (payment) walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'purchase'))
         else walletRequestsRef.current.delete(walletPaymentKey)
       },
     })
@@ -231,7 +231,7 @@ export function BuyYappModal() {
       if (walletSessionRef.current !== session) {
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
+      walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'purchase'))
       if (prepared.unresolved) {
         setError(prepared.different
           ? "An earlier payment may still go through. Check your wallet's activity before trying again."
@@ -545,9 +545,10 @@ export function BuyYappModal() {
                           <div className="space-y-2">
                             <p className="text-xs text-gray-500">Starting another purchase could charge you again.</p>
                             <Button onClick={() => {
-                              const earlier = walletRequestsRef.current.get(walletPaymentKey)?.payment
-                              if (earlier) allowedPaymentsRef.current.add(earlier.request.reservationId)
-                              walletRequestsRef.current.delete(walletPaymentKey)
+                              const { past, keep } = sendPastWalletRequest(walletRequestsRef.current.get(walletPaymentKey))
+                              if (past) allowedPaymentsRef.current.add(past)
+                              if (keep) walletRequestsRef.current.set(walletPaymentKey, keep)
+                              else walletRequestsRef.current.delete(walletPaymentKey)
                               setError(null)
                               setState('input')
                             }} variant="outline" className="w-full">
