@@ -695,7 +695,43 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([blocked.payment.request.reservationId]) }))
       .toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: shown.payment.request.reservationId } } })
     expect(storedPayments().map(record => record.reservationId)).toEqual([shown.payment.request.reservationId])
-    expect([...storage.entries()].some(([name, value]) => name !== key && name.startsWith('yappr:wallet-payments:') && value === raw)).toBe(true)
+    expect([...storage.entries()].some(([name, value]) => name !== key && name.startsWith('yappr:wallet-payments:') && value === JSON.stringify([raw]))).toBe(true)
+  })
+
+  it('keeps unreadable stored requests one confirmation sent past holding back every other confirmation', async () => {
+    const { key } = await corruptStoredRequest()
+    storage.set(key, '{')
+    const otherContext = { ...context, key: 'different payment' }
+    const blocked = await prepareLocalWalletPayment(undefined, otherContext)
+    if (blocked.completed || !blocked.payment) throw new Error('Not held back')
+    expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([blocked.payment.request.reservationId]) })).toEqual({ completed: false })
+    // This payment's confirmation never sent past them: it still is held back by them.
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true, different: true })
+    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, unresolved: true, different: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  it('reports a QR paid after its tab closed once its payment is tried again, even after a different payment checked it', async () => {
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    // The tab closes; the wallet pays the QR later.
+    expect(execute(shown.payment.request.nonce, true)).toBe(true)
+    recordReceipt(shown.payment)
+    reportedNonce = chainNonce()
+    const otherContext = { ...context, key: 'different payment' }
+    const buildOther = vi.fn((lockHeld = false) => action === 'tip'
+      ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld)
+      : buildWalletPurchase(OWNER, BigInt(200), BigInt(2000), lockHeld))
+    const other = await prepareWalletPayment(undefined, buildOther, otherContext)
+    if (other.completed || other.unresolved) throw new Error('The different payment was held back')
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false })
+    // After a reload, with nothing cached, trying the first payment again reports it paid instead of a new QR.
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(storedPayments().map(record => record.reservationId)).toEqual([other.payment.request.reservationId])
+    expect(payments).toBe(1)
   })
 
   it('keeps the QR a modal showed when a different payment holds its confirmation back', async () => {
@@ -714,17 +750,18 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     if (blocked.completed || !blocked.different) throw new Error('Not held back by the other payment')
     held = holdWalletRequest(held, blocked.payment, true)
     expect(held.payment.request.reservationId).toBe(shown.payment.request.reservationId)
-    // Both land, and tab B's next check clears both records.
+    // Both land, and tab B's next check clears its own record, keeping the one tab A showed.
     for (const payment of [shown.payment, other.payment]) {
       expect(execute(payment.request.nonce, true)).toBe(true)
       recordReceipt(payment)
     }
     reportedNonce = chainNonce()
     await prepareWalletPayment(undefined, buildOther, otherContext)
-    expect(storedPayments()).toEqual([])
+    expect(storedPayments().map(record => record.reservationId)).toEqual([shown.payment.request.reservationId])
     const buildFresh = vi.fn(buildCachedPayment)
     expect(await prepareWalletPayment(held.payment, buildFresh, context)).toEqual({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
+    expect(storedPayments()).toEqual([])
     // "Send another" goes past the payment holding it back, and keeps what it showed.
     const past = sendPastWalletRequest({ ...held, blocker: other.payment })
     expect(past).toEqual({ past: other.payment.request.reservationId, keep: { payment: held.payment, foreign: false } })
