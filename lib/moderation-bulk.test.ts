@@ -459,13 +459,24 @@ describe('runBulk', () => {
     expect(summary).toMatchObject({ done: 0, stopped: 'fatal', failures: [] })
   })
 
-  it('counts "already that way" as done', async () => {
-    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)) })
+  it('settles "already that way" by the proved read at the end, with what it holds', async () => {
+    const reads = [async (asked: readonly BulkItem[]) => new Set(asked.map((i) => i.id)), async () => new Set<string>()]
+    const d = deps({
+      apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)),
+      pending: (asked) => (reads.shift() ?? reads[0])(asked),
+    })
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(3)
-    expect(summary.done).toBe(3)
-    // Already that way by no change of this run's: nothing is said of its marks or when.
-    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['b', 'c'])
+    expect(summary).toMatchObject({ done: 3, failures: [] })
+    expect(d.pending.mock.calls.map(([asked]) => asked.map((i) => i.id))).toEqual([['a', 'b', 'c'], ['a']])
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['b', {}], ['c', {}], ['a', { marks: null }]])
+  })
+
+  it('does not count "already that way" when the read at the end still finds it to do', async () => {
+    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)) })
+    const summary = await runBulk(items, d)
+    expect(summary.done).toBe(2)
+    expect(summary.failures.map((f) => [f.item.id, f.retryable])).toEqual([['a', true]])
   })
 
   it('reports progress, counting only confirmed changes', async () => {

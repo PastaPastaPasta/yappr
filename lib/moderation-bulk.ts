@@ -618,8 +618,8 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
       continue
     }
     if (result.errorCode === ALREADY) {
-      // Already that way on chain, by no change of this run's: counted, nothing said of when.
-      progress.done++
+      // Already that way on chain, by no change of this run's: settled by the proved read at the end, like an unconfirmed one.
+      unconfirmed.push(item)
       streakCode = null
       continue
     }
