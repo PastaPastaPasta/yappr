@@ -38,7 +38,6 @@ async function load() {
 
 beforeEach(() => {
   stubBrowserStorage()
-  vi.stubGlobal('navigator', { locks: {} })
   stubAppConnectBuild(ANCHOR, id(3))
   vi.clearAllMocks()
 })
@@ -120,16 +119,6 @@ describe('messaging key setup', () => {
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, cancelled: true })
     await expect(s.addMessagingKeyWithLoginKey(draft, cancelled)).rejects.toBeInstanceOf(s.MessagingSetupCancelledError)
     expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled })
-  })
-
-  it('signs nothing where no lock reaches the other tabs, and says the wallet is the way', async () => {
-    vi.stubGlobal('navigator', {})
-    const s = await load()
-    s.storePrivateKey(IDENTITY, LOGIN_WIF)
-    const draft = s.draftMessagingKey(IDENTITY)
-    expect(s.canAddMessagingKeyHere()).toBe(false)
-    await expect(s.addMessagingKeyWithLoginKey(draft)).rejects.toBeInstanceOf(s.MessagingSetupUnsupportedError)
-    expect(mocks.addEncryptionKey).not.toHaveBeenCalled()
   })
 
   it('accepts a hex master key, signing with its WIF', async () => {

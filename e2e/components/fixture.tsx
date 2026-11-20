@@ -7,6 +7,7 @@ import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fi
 import { BlogManagementFixture } from './blog-management-fixture'
 import { BlogEditorFixture } from './blog-editor-fixture'
 import { PasskeyEnrolFixture } from './passkey-enrol-fixture'
+import { EncryptionKeyModalFixture } from './encryption-key-modal-fixture'
 
 declare global {
   interface Window {
@@ -23,6 +24,8 @@ const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.len
 createRoot(root).render(
   fixture === 'passkey-enrol' ? (
     <PasskeyEnrolFixture />
+  ) : fixture === 'encryption-key-modal' ? (
+    <EncryptionKeyModalFixture />
   ) : fixture === 'blog-management' ? (
     <BlogManagementFixture />
   ) : fixture === 'blog-editor' ? (

@@ -10,6 +10,7 @@ const updateLock = vi.hoisted(() => ({ held: Promise.resolve() }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch, update } }) }))
 vi.mock('@/lib/identity-write-lock', () => ({
   withIdentityUpdateLock: async (_identityId: string, run: () => Promise<unknown>) => { await updateLock.held; return run() },
+  crossTabLocks: () => ({}),
 }))
 vi.mock('./signer-service', () => ({ signerService: {} }))
 

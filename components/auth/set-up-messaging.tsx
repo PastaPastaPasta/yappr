@@ -14,17 +14,14 @@ import {
   addMessagingKeyWithMasterKey,
   adoptMessagingKey,
   anchorKeyState,
-  canAddMessagingKeyHere,
   draftMessagingKey,
   loginKeyIsMaster,
   messagingKeyHandOffUri,
   MessagingAlreadySetUpError,
   MessagingSetupCancelledError,
-  MessagingSetupUnsupportedError,
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
 import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
-import { IDENTITY_UPDATE_UNLOCKED } from '@/lib/identity-write-lock'
 import { KeyExchangeQR } from './key-exchange-qr'
 
 export type MessagingSetupContext = 'private-feed' | 'store' | 'generic'
@@ -74,6 +71,8 @@ function masterKeyFailure(error: unknown): string {
  * and the adopted key's WIF once Platform shows it as the current key.
  * `onAlreadySetUp` runs instead when the account has another messaging key
  * (made elsewhere, or by another device meanwhile): it is never replaced here.
+ * `beginAttempt` comes from the dialog that owns Close: each update takes a
+ * signal from it, aborted the moment the dialog closes or a newer attempt starts.
  */
 export function SetUpMessaging({
   identityId,
@@ -81,12 +80,14 @@ export function SetUpMessaging({
   onDone,
   onAlreadySetUp,
   onCancel,
+  beginAttempt,
 }: {
   identityId: string
   context: MessagingSetupContext
   onDone: (identityId: string, encryptionKeyWif: string) => void
   onAlreadySetUp: () => void
   onCancel: () => void
+  beginAttempt: () => AbortSignal
 }) {
   const masterKeyInputId = useId()
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
@@ -98,11 +99,7 @@ export function SetUpMessaging({
   const [loadAttempt, setLoadAttempt] = useState(0)
   /** Whether the session's login key is the MASTER key, which signs the update here. */
   const [loginIsMaster, setLoginIsMaster] = useState(false)
-  /** This browser can't sign the update itself, so only the wallet can. */
-  const [localUnsupported, setLocalUnsupported] = useState(() => !canAddMessagingKeyHere())
   const finishedRef = useRef(false)
-  /** Moved on by every new attempt, a closed dialog and another account: an update still waiting to be signed is dropped. */
-  const attemptRef = useRef(0)
   const aliveRef = useRef(true)
   const onDoneRef = useRef(onDone)
   onDoneRef.current = onDone
@@ -143,7 +140,6 @@ export function SetUpMessaging({
   useEffect(() => {
     let cancelled = false
     finishedRef.current = false
-    attemptRef.current++
     setPhase({ kind: 'loading' })
     let next: MessagingKeyDraft
     try {
@@ -218,10 +214,10 @@ export function SetUpMessaging({
 
   /** A MASTER-signed update (`add`), then wait for Platform to show the key as current. */
   const signWithMaster = useCallback(async (ready: MessagingKeyDraft, add: (cancelled: () => boolean) => Promise<void>, fromMasterKeyForm: boolean) => {
-    const attempt = ++attemptRef.current
+    const signal = beginAttempt()
     const session = criticalKeySession()
     // Asked once the update lock is held (it may wait behind another tab) and right before the broadcast.
-    const cancelled = () => !aliveRef.current || attemptRef.current !== attempt || !sessionIsLive(ready.identityId, session)
+    const cancelled = () => signal.aborted || !aliveRef.current || !sessionIsLive(ready.identityId, session)
     setPhase({ kind: 'working' })
     setMasterKeyError(null)
     let failure: unknown = null
@@ -231,13 +227,7 @@ export function SetUpMessaging({
       failure = error
     }
     if (failure instanceof MessagingSetupCancelledError) {
-      if (aliveRef.current && attemptRef.current === attempt) setPhase({ kind: 'choose' })
-      return
-    }
-    if (failure instanceof MessagingSetupUnsupportedError) {
-      if (!aliveRef.current) return
-      setLocalUnsupported(true)
-      setPhase({ kind: 'choose' })
+      if (aliveRef.current && !signal.aborted) setPhase({ kind: 'choose' })
       return
     }
     // A broadcast whose answer timed out may still land, so only a refusal before broadcast skips the wait.
@@ -265,7 +255,7 @@ export function SetUpMessaging({
     } else {
       setPhase({ kind: 'failed', message: 'Your change was sent but hasn\'t shown up yet. Try again in a minute.' })
     }
-  }, [finish, alreadySetUp])
+  }, [beginAttempt, finish, alreadySetUp])
 
   const signWithLoginKey = () => {
     if (!draft) return
@@ -332,13 +322,8 @@ export function SetUpMessaging({
             This adds a messaging key to your Dash account. It can only encrypt messages to you: it can&apos;t spend your
             credits or post for you.
           </p>
-          {localUnsupported && (
-            <p role="alert" className="text-sm text-amber-700 dark:text-amber-400 mb-4">
-              {IDENTITY_UPDATE_UNLOCKED} You can still approve it in your Dash wallet.
-            </p>
-          )}
           <div className="flex flex-col gap-3">
-            {loginIsMaster && !localUnsupported ? (
+            {loginIsMaster ? (
               <Button onClick={signWithLoginKey} className="w-full">
                 <ChatBubbleLeftRightIcon className="h-4 w-4 mr-2" />
                 Set up messaging
@@ -349,12 +334,10 @@ export function SetUpMessaging({
                   <DevicePhoneMobileIcon className="h-4 w-4 mr-2" />
                   Approve in your wallet
                 </Button>
-                {!localUnsupported && (
-                  <Button onClick={() => setPhase({ kind: 'master-key' })} variant="outline" className="w-full">
-                    <KeyIcon className="h-4 w-4 mr-2" />
-                    Use your master key instead
-                  </Button>
-                )}
+                <Button onClick={() => setPhase({ kind: 'master-key' })} variant="outline" className="w-full">
+                  <KeyIcon className="h-4 w-4 mr-2" />
+                  Use your master key instead
+                </Button>
               </>
             )}
             <Button onClick={onCancel} variant="ghost" className="w-full">Not now</Button>
@@ -386,11 +369,9 @@ export function SetUpMessaging({
             <div role="status" className="flex justify-center py-8"><Spinner size="lg" /></div>
           )}
           <div className="mt-4 flex flex-col gap-2">
-            {!localUnsupported && (
-              <Button onClick={() => setPhase({ kind: 'master-key' })} variant="ghost" className="w-full text-sm">
-                Use your master key instead
-              </Button>
-            )}
+            <Button onClick={() => setPhase({ kind: 'master-key' })} variant="ghost" className="w-full text-sm">
+              Use your master key instead
+            </Button>
             <Button onClick={onCancel} variant="outline" className="w-full">Cancel</Button>
           </div>
         </>

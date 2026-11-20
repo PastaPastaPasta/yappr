@@ -73,7 +73,7 @@ export const privateFeedService = {
 }
 export const adoptUnfinishedMove = async () => 0
 export const usePrivateFeedMove = () => null
-export const identityService = { hasEncryptionKey: async () => true }
+export { identityService } from './encryption-key-modal-mocks'
 export const validateEncryptionKey = async () => ({
   isValid: true,
   privateKey: Uint8Array.from({ length: 32 }, (_, index) => index === 31 ? 1 : 0),

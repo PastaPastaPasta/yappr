@@ -133,15 +133,23 @@ function KeyEntryAddEncryptionKeyModal({
   // Track open state in a ref so async callbacks can bail out if the modal closes
   // while a network call (validateDerivedKeyMatchesIdentity, validateEncryptionKey) is in flight.
   const isOpenRef = useRef(isOpen)
-  /** Moved on by every add and every close: an add still waiting for the identity update lock is then dropped. */
-  const attemptRef = useRef(0)
   useEffect(() => {
     isOpenRef.current = isOpen
-    attemptRef.current++
   }, [isOpen])
-  useEffect(() => () => {
-    attemptRef.current++
+
+  /**
+   * The key update in progress, taken when it is submitted: aborted by Close (at once, not after the exit
+   * animation), by a newer submission and on unmount, so an update still waiting for the identity update
+   * lock sends nothing.
+   */
+  const attemptRef = useRef<AbortController | null>(null)
+  const beginAttempt = useCallback(() => {
+    attemptRef.current?.abort()
+    const attempt = new AbortController()
+    attemptRef.current = attempt
+    return attempt.signal
   }, [])
+  useEffect(() => () => attemptRef.current?.abort(), [])
 
   // App Connect setup finished: the key is the anchor's current one and stored for this session.
   const handleMessagingReady = useCallback((identityId: string) => {
@@ -298,15 +306,11 @@ function KeyEntryAddEncryptionKeyModal({
   }, [privateKeyWif])
 
   // Add the encryption key to identity
-  const addKeyToIdentity = useCallback(async () => {
+  const addKeyToIdentity = useCallback(async (cancelled: () => boolean) => {
     if (!user || !privateKeyWif || !privateKeyBytes || !criticalKeyWif.trim()) return
 
     setStep('adding')
     setError(null)
-    const attempt = ++attemptRef.current
-    const session = criticalKeySession()
-    const identityId = user.identityId
-    const cancelled = () => !isOpenRef.current || attemptRef.current !== attempt || !sessionIsLive(identityId, session)
 
     try {
       const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
@@ -358,6 +362,10 @@ function KeyEntryAddEncryptionKeyModal({
       return
     }
 
+    const signal = beginAttempt()
+    const session = criticalKeySession()
+    const identityId = user.identityId
+    const cancelled = () => signal.aborted || !sessionIsLive(identityId, session)
     setIsValidatingKey(true)
     setKeyValidationError(null)
 
@@ -374,15 +382,16 @@ function KeyEntryAddEncryptionKeyModal({
         return
       }
 
-      // Key is valid, proceed to add the encryption key
       setIsValidatingKey(false)
-      await addKeyToIdentity()
+      if (cancelled()) return
+      // Key is valid, proceed to add the encryption key
+      await addKeyToIdentity(cancelled)
     } catch (err) {
       logger.error('Error validating key:', err)
       setKeyValidationError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingKey(false)
     }
-  }, [user, criticalKeyWif, addKeyToIdentity])
+  }, [user, criticalKeyWif, addKeyToIdentity, beginAttempt])
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -402,7 +411,7 @@ function KeyEntryAddEncryptionKeyModal({
     setExistingKeyError(null)
     setIsValidatingExistingKey(false)
     setIsEnterExistingPath(false)
-    attemptRef.current++
+    attemptRef.current?.abort()
     onClose()
   }, [onClose])
 
@@ -599,6 +608,7 @@ function KeyEntryAddEncryptionKeyModal({
             onDone={handleMessagingReady}
             onAlreadySetUp={() => setStep('existing-key')}
             onCancel={handleClose}
+            beginAttempt={beginAttempt}
           />
         ) : null
 
