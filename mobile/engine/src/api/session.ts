@@ -286,14 +286,15 @@ export function createSessionModule(options: SessionModuleOptions) {
               logger.warn('App Connect: could not keep the interrupted renewal:', error)
             })
           }
-          storage.removeItem(CARRY_MARKER_KEY)
           // This slot belongs to one native engine, unlike shared browser metadata.
           // Keep the account and its secrets available for reauthentication, but free the unusable slot.
           if (!controller.getState().user && registry.activeIdentityId() === storedIdentity) storage.removeItem(SESSION_STORAGE_KEY)
           announce('key-invalid')
         }
+        storage.removeItem(CARRY_MARKER_KEY)
         return null
       }
+      storage.removeItem(CARRY_MARKER_KEY)
       // A session restored from its key ring is a wallet session, even when a sign-in was killed before it recorded that.
       const entry = registry.get(user.identityId)
       const wallet = appConnectSessions.current(user.identityId) !== null
