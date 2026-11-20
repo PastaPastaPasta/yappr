@@ -9,7 +9,7 @@ interface RecordOptions {
   at?: number
   /** For an unproved change: the `readVersion` of the read on screen when it was made, which only another read supersedes. */
   basis?: number
-  /** A chain read's observation, not this tab's own change: it never replaces a newer proved record. */
+  /** A chain read's observation, not this tab's own change: ignored without a proved `at`, and never replaces a newer record. */
   observed?: boolean
 }
 
@@ -29,10 +29,12 @@ interface RecentModeration {
  */
 export const useRecentModeration = create<RecentModeration>((set) => ({
   marks: {},
-  record: (documentId, marks, { proved = true, at = Date.now(), basis, observed = false } = {}) =>
-    set((state) => (observed && recordOutranks(state.marks[documentId], at)
-      ? state
-      : { marks: { ...state.marks, [documentId]: { marks, at, proved, ...(proved ? {} : { basis }) } } })),
+  record: (documentId, marks, { proved = true, at, basis, observed = false } = {}) =>
+    set((state) => {
+      // An observation counts only with the chain time it was proved at.
+      if (observed && (at === undefined || !Number.isFinite(at) || recordOutranks(state.marks[documentId], at))) return state
+      return { marks: { ...state.marks, [documentId]: { marks, at: at ?? Date.now(), proved, ...(proved ? {} : { basis }) } } }
+    }),
   retire: (documentId, recorded) =>
     set((state) => {
       if (state.marks[documentId] !== recorded) return state
