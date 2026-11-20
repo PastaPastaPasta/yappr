@@ -254,14 +254,15 @@ async function betaGroup(appId, buildId, groupName) {
   } else {
     field('Group', `${groupName} (${group.id})`);
   }
-  if (group.attributes.hasAccessToAllBuilds) {
-    field('Build in group', 'yes (the group gets every build)');
+  // A build still waiting on export compliance waits on the owner; it is reported, not added.
+  const detail = await api('GET', `/v1/builds/${buildId}/buildBetaDetail`);
+  const state = detail.data?.attributes?.internalBuildState;
+  if (['MISSING_EXPORT_COMPLIANCE', 'IN_EXPORT_COMPLIANCE_REVIEW'].includes(state)) {
+    out(`- Build in group: not yet, pending export compliance (${state}); add it to the group once compliance is done (RELEASE.md)`);
     return;
   }
-  // A build without export compliance waits on the owner; it is reported, not added.
-  const detail = await api('GET', `/v1/builds/${buildId}/buildBetaDetail`);
-  if (detail.data?.attributes?.internalBuildState === 'MISSING_EXPORT_COMPLIANCE') {
-    out('- Build in group: not yet, pending export compliance (MISSING_EXPORT_COMPLIANCE); add it once compliance is answered');
+  if (group.attributes.hasAccessToAllBuilds) {
+    field('Build in group', 'yes (the group gets every build)');
     return;
   }
   await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: buildId }] });

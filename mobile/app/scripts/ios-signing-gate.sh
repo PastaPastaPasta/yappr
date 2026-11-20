@@ -51,8 +51,8 @@ evidence() { # <label> <value>
 expect() { # <label> <actual> <expected>
   if [[ "$2" == "$3" ]]; then
     evidence "$1" "$2"
-  elif denied "$2"; then
-    fail "$1 contains a denylisted name (value withheld) and is not the expected value"
+  elif denied "$2" || denied "$3"; then
+    fail "$1 does not match the expected value (values withheld: a denylisted name)"
   else
     fail "$1 is '$2', expected '$3'"
   fi
