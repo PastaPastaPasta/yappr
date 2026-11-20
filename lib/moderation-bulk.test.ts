@@ -16,7 +16,6 @@ import {
   readEveryPage,
   runBulk,
   laneOf,
-  newestBlockTime,
   oldestBlockTime,
   provedAt,
   freshReads,
@@ -90,7 +89,10 @@ describe('paging', () => {
     const all = Array.from({ length: 250 }, (_, n) => item(`i${n}`, n))
     const readPage = pages(all, 100)
     const seen: number[] = []
-    const result = await readEveryPage(readPage, { onPage: (items) => seen.push(items.length) })
+    const proofs: (number | undefined)[] = []
+    const result = await readEveryPage(readPage, { onPage: (items, at) => { seen.push(items.length); proofs.push(at) } })
+    // Each page's proof is handed on as it lands, before the listing completes.
+    expect(proofs).toEqual([1000, 900, 800])
     expect(result.items).toHaveLength(250)
     expect(result.truncated).toBe(false)
     expect(readPage).toHaveBeenCalledTimes(3)
@@ -98,19 +100,12 @@ describe('paging', () => {
     expect(seen).toEqual([100, 200, 250])
     // As fresh as its oldest page.
     expect(result.at).toBe(800)
-    // A guard floors a by-ID read at its newest page, which may have dropped a queued document.
-    expect(result.newest).toBe(1000)
   })
 
   it('dates a read made of several answers by the oldest, and by none when one carries no block time', () => {
     expect(oldestBlockTime([30, 10, 20])).toBe(10)
     expect(oldestBlockTime([30, undefined])).toBeNaN()
     expect(oldestBlockTime([30, NaN])).toBeNaN()
-  })
-
-  it('finds the newest of several answers, skipping those with no block time', () => {
-    expect(newestBlockTime([10, 30, undefined, NaN])).toBe(30)
-    expect(newestBlockTime([undefined])).toBeNaN()
   })
 
   it("dates each document by the answer that covered it, else the read's oldest", () => {

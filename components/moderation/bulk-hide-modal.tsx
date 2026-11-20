@@ -164,10 +164,9 @@ export function BulkHideModal() {
     staleReadTimerRef.current = null
   }, [isOpen])
 
-  const listedAt = useCallback((ats: Record<BulkKind, number>) => {
-    for (const kind of ['post', 'reply'] as const) {
-      if (Number.isFinite(ats[kind])) listedAtRef.current[kind] = Math.max(listedAtRef.current[kind], ats[kind])
-    }
+  /** Raises `kind`'s signing floor as soon as a listing page of it lands proved. */
+  const listedAt = useCallback((kind: BulkKind, at: number | undefined) => {
+    if (at !== undefined && Number.isFinite(at)) listedAtRef.current[kind] = Math.max(listedAtRef.current[kind], at)
   }, [])
 
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
@@ -181,12 +180,16 @@ export function BulkHideModal() {
       shownKeyRef.current = ''
       setList({ status: 'loading', count: 0 })
     }
-    bulkHideService.readAll(authorId, which, (count) => {
-      if (readRef.current === read && !background) setList({ status: 'loading', count })
-    }).then(({ items: fresh, truncated, ats, newest }) => {
+    bulkHideService.readAll(authorId, which, {
+      onProgress: (count) => {
+        if (readRef.current === read && !background) setList({ status: 'loading', count })
+      },
+      onProof: (kind, at) => {
+        if (readRef.current === read) listedAt(kind, at)
+      },
+    }).then(({ items: fresh, truncated, ats }) => {
       if (readRef.current !== read) return
       settledReadRef.current = read
-      listedAt(newest)
       const items = withRunChanges(fresh, which, runChangesRef.current, ats)
       scheduleStaleRead(ats)
       shownKeyRef.current = key
@@ -227,11 +230,12 @@ export function BulkHideModal() {
     countingRef.current = changes.size > 0
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated, ats, newest }) => {
-        if (!cancelled) {
-          listedAt(newest)
-          scheduleStaleRead(ats)
-        }
+      : bulkHideService.readAll(authorId, other, {
+        onProof: (kind, at) => {
+          if (!cancelled) listedAt(kind, at)
+        },
+      }).then(({ items, truncated, ats }) => {
+        if (!cancelled) scheduleStaleRead(ats)
         return truncated ? null : withRunChanges(items, other, changes, ats).length
       })
     counted.then((count) => {

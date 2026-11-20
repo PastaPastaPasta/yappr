@@ -66,22 +66,24 @@ class BulkHideService {
 
   /**
    * Every post and reply of `authorId` in `mode`'s lane, newest first, read
-   * page by page; `onProgress` sees how many so far. `truncated` when one type
+   * page by page; `onProgress` sees how many so far, `onProof` each page's type
+   * and block time as it lands. `truncated` when one type
    * holds more than the dialog reads (lib/moderation-bulk.ts MAX_ITEMS_PER_KIND);
-   * `ats` the block time of each type's oldest page, `newest` of its newest.
+   * `ats` the block time of each type's oldest page.
    */
-  async readAll(authorId: string, mode: BulkMode, onProgress?: (count: number) => void): Promise<{ items: BulkItem[]; truncated: boolean; ats: Record<BulkKind, number>; newest: Record<BulkKind, number> }> {
+  async readAll(authorId: string, mode: BulkMode, { onProgress, onProof }: { onProgress?: (count: number) => void; onProof?: (kind: BulkKind, at: number | undefined) => void } = {}): Promise<{ items: BulkItem[]; truncated: boolean; ats: Record<BulkKind, number> }> {
     const counts = new Map<BulkKind, number>()
     const [posts, replies] = await Promise.all(KINDS.map((kind) => readEveryPage(
       (startAfter) => this.readPage(kind, authorId, mode, startAfter),
       {
-        onPage: (items) => {
+        onPage: (items, at) => {
+          onProof?.(kind, at)
           counts.set(kind, items.length)
           onProgress?.([...counts.values()].reduce((sum, n) => sum + n, 0))
         },
       }
     )))
-    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated, ats: { post: posts.at, reply: replies.at }, newest: { post: posts.newest, reply: replies.newest } }
+    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated, ats: { post: posts.at, reply: replies.at } }
   }
 
   /**
