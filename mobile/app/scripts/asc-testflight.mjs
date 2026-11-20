@@ -243,16 +243,14 @@ async function betaGroup(appId, buildId, groupName) {
     field('Build in group', 'yes (the group gets every build)');
     return;
   }
-  try {
-    await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: buildId }] });
-    field('Build in group', 'yes');
-  } catch (error) {
-    // A refusal waits on the owner only when App Store Connect says the build lacks export compliance.
-    if (![409, 422].includes(error.status)) throw error;
-    const detail = await api('GET', `/v1/builds/${buildId}/buildBetaDetail`);
-    if (detail.data?.attributes?.internalBuildState !== 'MISSING_EXPORT_COMPLIANCE') throw error;
-    out(`- Build in group: not yet, pending export compliance (HTTP ${error.status}, MISSING_EXPORT_COMPLIANCE)`);
+  // A build without export compliance waits on the owner; it is reported, not added.
+  const detail = await api('GET', `/v1/builds/${buildId}/buildBetaDetail`);
+  if (detail.data?.attributes?.internalBuildState === 'MISSING_EXPORT_COMPLIANCE') {
+    out('- Build in group: not yet, pending export compliance (MISSING_EXPORT_COMPLIANCE); add it once compliance is answered');
+    return;
   }
+  await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: buildId }] });
+  field('Build in group', 'yes');
 }
 
 async function post() {
