@@ -26,7 +26,7 @@ const storage = vi.hoisted(() => {
   return local
 })
 const settle = vi.hoisted(() => vi.fn())
-const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n, floor: 0n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
+const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), raise: vi.fn(), load: vi.fn(), next: 1n, floor: 0n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
 const webLocks = vi.hoisted(() => ({ available: true }))
@@ -68,6 +68,7 @@ vi.mock('./identity-nonce', () => ({
   reserveNonce: nonces.reserve,
   loadReservation: nonces.load,
   releaseNonce: nonces.release,
+  raiseNonceFloor: nonces.raise,
   WRITE_PRECONDITION_FAILED: 'This was not sent: what it depended on changed.',
   withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>, beforeNonce?: () => void) => {
     sdkPreconditions.push(precondition)
@@ -157,6 +158,7 @@ beforeEach(() => {
   nonces.held = []
   nonces.floor = 0n
   nonces.load.mockImplementation(() => ({ mark: 0n, floor: nonces.floor, pending: nonces.held }))
+  nonces.raise.mockImplementation((_o: string, _c: string, spent: bigint) => { if (spent > nonces.floor) nonces.floor = spent })
   nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }, spent?: bigint) => {
     nonces.held = nonces.held.filter((p) => p.id !== entry.id)
     if (spent !== undefined && spent > nonces.floor) nonces.floor = spent
@@ -242,34 +244,38 @@ describe('a refusal', () => {
 
   const seatedE5 = { electedCharterId: 'e5', submittedCharterId: 'p1' }
 
-  it('records a verdict with the nonce coordinator before the slot gives up the create: a page that dies in between leaves it stored', async () => {
-    const slotAtRelease: unknown[] = []
-    nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => {
-      slotAtRelease.push(stored('addedModerator', 'e5:m1'))
-      nonces.held = nonces.held.filter((p) => p.id !== entry.id)
+  it('records a spent nonce in the floor before the slot changes, and releases the reservation only after it', async () => {
+    const slotAt: Array<[string, unknown]> = []
+    const raise = nonces.raise.getMockImplementation()
+    nonces.raise.mockImplementation((...args: [string, string, bigint]) => {
+      slotAt.push(['raise', stored('addedModerator', 'e5:m1')])
+      raise?.(...args)
+    })
+    const release = nonces.release.getMockImplementation()
+    nonces.release.mockImplementation((...args: [string, string, { id: string }, bigint?]) => {
+      slotAt.push(['release', stored('addedModerator', 'e5:m1')])
+      release?.(...args)
     })
     sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
-    builders.consumed.mockResolvedValue(true)
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
     builders.exists.mockResolvedValue(true)
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).resolves.toBe('doc-2')
-    expect(nonces.release).toHaveBeenLastCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r2' }), 2n)
-    expect(slotAtRelease).toEqual([
-      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r1' }) }),
-      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) }),
+    expect(slotAt).toEqual([
+      ['raise', expect.objectContaining({ reservation: expect.objectContaining({ id: 'r1' }) })],
+      ['release', null],
+      ['raise', expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) })],
+      ['release', expect.objectContaining({ landed: 'doc-2' })],
     ])
-    expect(stored('addedModerator', 'e5:m1')).toMatchObject({ landed: 'doc-2' })
   })
 
   it.each([
-    ['after its spent nonce was recorded', true],
-    ['before that, its reservation since pruned by another write that saw the nonce consumed', false],
+    ['its spent nonce recorded, its reservation still held', true],
+    ['its reservation since pruned by another write that saw the nonce consumed', false],
   ])('signs no second proposal when the page died before the landed marker (%s), however behind the next reads are', async (_when, recorded) => {
     builders.exists.mockResolvedValue(true)
-    const release = nonces.release.getMockImplementation()
-    nonces.release.mockImplementationOnce((...args: unknown[]) => {
-      if (recorded) release?.(...args)
+    nonces.raise.mockImplementationOnce((_o: string, _c: string, spent: bigint) => {
+      if (recorded) nonces.floor = spent
       else {
         nonces.held = []
         nonces.floor = 1n
@@ -278,7 +284,7 @@ describe('a refusal', () => {
     })
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toThrow()
     expect(stored('submittedCharter', TERMS.targetContractId)?.reservation?.id).toBe('r1')
-    expect(nonces.held).toEqual([])
+    expect(nonces.held.map((p) => p.id)).toEqual(recorded ? ['r1'] : [])
     // Reopened: every read lags, showing neither the proposal nor its nonce.
     builders.exists.mockResolvedValue(false)
     builders.consumed.mockResolvedValue(false)
@@ -328,7 +334,7 @@ describe('a refusal', () => {
   })
 
   it('recovers a team change refused with its nonce free when the page died as it released it, however far later writes moved the floor', async () => {
-    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('insufficient balance'), { code: 40120 }))
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 10421 }))
     builders.consumed.mockResolvedValue(false)
     const release = nonces.release.getMockImplementation()
     nonces.release.mockImplementationOnce((...args: unknown[]) => {
@@ -366,11 +372,47 @@ describe('a refusal', () => {
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
   })
 
-  it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
-    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
-    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
+  it('drops the bytes of a unique write on a refusal for what its bytes are, freeing the nonce reservation unspent', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 10421 }))
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 10421 })
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), undefined)
+    expect(nonces.raise).not.toHaveBeenCalled()
     expect(stored('addedModerator', 'e5:m1')).toBeNull()
+  })
+
+  it('counts a state refusal spent even when a read says its nonce is unused: the read may be behind a paid one', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
+    builders.consumed.mockResolvedValue(false)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
+    expect(nonces.raise).toHaveBeenCalledWith(OWNER, expect.any(String), 1n)
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+    expect(stored('addedModerator', 'e5:m1')).toBeNull()
+  })
+
+  it.each([
+    ['after recording its spent nonce', 'raise'],
+    ['after clearing its slot', 'release'],
+  ])('leaves a spent refusal recoverable when the page dies %s', async (_when, step) => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
+    const mock = step === 'raise' ? nonces.raise : nonces.release
+    const real = mock.getMockImplementation()
+    mock.mockImplementationOnce((...args: unknown[]) => {
+      if (step === 'raise') real?.(...args)
+      throw new Error('the page closed')
+    })
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toThrow()
+    expect(nonces.floor).toBe(1n)
+    builders.exists.mockImplementation(async (_w: unknown, _sdk: unknown, signed: { id: string }) => signed.id === 'doc-2')
+    settle.mockResolvedValue(null)
+    sdk.stateTransitions.broadcastAndWait.mockReset().mockResolvedValue(undefined)
+    if (step === 'raise') {
+      // The create and its reservation are both still there: the next try resends it, and its refusal settles it.
+      sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
+      await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+    }
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).resolves.toBe('doc-2')
+    expect(nonces.held).toEqual([])
+    expect(nonces.floor).toBeGreaterThanOrEqual(1n)
   })
 
   it('keeps a proposal through a refusal of its first send: the SDK may have retried after a dispatch that landed', async () => {
@@ -1207,7 +1249,7 @@ describe("the leader's way out of a proposal stuck uncertain", () => {
     })
   })
 
-  it('releases the old reservation before it clears the slot, so a page dying in between leaves no reservation without its create', async () => {
+  it('records the old nonce spent before it clears the slot, and releases the reservation after: a page dying between leaves nothing unsettleable', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
     settle.mockResolvedValue(null)
@@ -1218,8 +1260,10 @@ describe("the leader's way out of a proposal stuck uncertain", () => {
       await charterService.abandonProposal(OWNER, TERMS.targetContractId)
       const slotRemoved = removes.mock.calls.findIndex(([key]) => key === slotKey('submittedCharter', TERMS.targetContractId))
       expect(slotRemoved).toBeGreaterThanOrEqual(0)
+      expect(nonces.raise).toHaveBeenCalledWith(OWNER, expect.any(String), 1n)
       expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
-      expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(removes.mock.invocationCallOrder[slotRemoved])
+      expect(nonces.raise.mock.invocationCallOrder[0]).toBeLessThan(removes.mock.invocationCallOrder[slotRemoved])
+      expect(removes.mock.invocationCallOrder[slotRemoved]).toBeLessThan(nonces.release.mock.invocationCallOrder[0])
     } finally {
       removes.mockRestore()
     }

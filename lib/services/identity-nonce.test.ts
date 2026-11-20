@@ -29,7 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, raiseNonceFloor, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -438,6 +438,17 @@ describe('settlePendingWrites', () => {
   it('reads nothing when nothing is pending', async () => {
     expect(await settle(settlePendingWrites(OWNER, CONTRACT))).toEqual({ ok: true, value: 0 })
     expect(sdk.identities.contractNonce).not.toHaveBeenCalled()
+  })
+})
+
+describe('raiseNonceFloor', () => {
+  it('stores the floor and leaves the entry pending, so its later release keeps the floor', () => {
+    const entry = reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    raiseNonceFloor(OWNER, CONTRACT, n(101))
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [{ id: entry.id }] })
+    releaseNonce(OWNER, CONTRACT, entry)
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
+    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}').floor).toBe('101')
   })
 })
 

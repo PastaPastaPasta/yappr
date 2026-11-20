@@ -331,6 +331,25 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 }
 
 /**
+ * Raise the floor to `spentThrough`, a nonce Platform has executed or may
+ * have, settling nothing: a caller records a spent nonce first, then drops
+ * what it stored, then releases the entry, so a page that dies at any step
+ * leaves the floor already raised. Best effort past this tab, like
+ * {@link releaseNonce}.
+ */
+export function raiseNonceFloor(ownerId: string, contractId: string, spentThrough: bigint): void {
+  try {
+    const reservation = loadReservation(ownerId, contractId);
+    if (reservation && spentThrough > reservation.floor) saveReservation(ownerId, contractId, { ...reservation, floor: spentThrough });
+  } catch {
+    // Already logged; this tab keeps the raised floor.
+  } finally {
+    const key = reservationKey(ownerId, contractId);
+    raisedFloors.set(key, max(raisedFloors.get(key) ?? BigInt(0), spentThrough));
+  }
+}
+
+/**
  * Start an SDK-signed transition's lifetime over: the page is still waiting on
  * the SDK, or has just lost the answer. Best effort: when localStorage
  * refuses, it expires a little sooner.
