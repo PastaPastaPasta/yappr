@@ -254,9 +254,13 @@ holds the plan, ordering, cost estimate and resumable cursor.
 
 ## Encryption export
 
-- Set `ITSAppUsesNonExemptEncryption = YES`. The app uses standard algorithms
-  that iOS does not provide: secp256k1 ECDH/ECDSA, XChaCha20-Poly1305, and
-  AES-GCM through libraries.
+- The app uses non-exempt encryption: standard algorithms that iOS does not
+  provide (secp256k1 ECDH/ECDSA, XChaCha20-Poly1305, AES-GCM) through
+  libraries. Never declare it exempt. App Store Connect refuses
+  `ITSAppUsesNonExemptEncryption = YES` without an Apple-issued
+  `ITSEncryptionExportComplianceCode` (ITMS-90592), so the build writes the
+  two together once the approved documentation's code is configured
+  (mobile/RELEASE.md), and otherwise omits both and answers per build.
 - **App Store Connect:** answer "standard algorithms, not provided by Apple".
   No CCATS is needed.
 - **France:** file the French encryption declaration (ANSSI, about one month),

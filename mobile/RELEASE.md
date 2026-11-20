@@ -105,8 +105,14 @@ dark surface (`#171717`) in dark mode.
     modules as precompiled frameworks with empty privacy bundles, so the app
     manifest declares their reasons. Check the first TestFlight upload's
     email for ITMS-91053/91061.
-  - `ITSAppUsesNonExemptEncryption = YES` (COMPLIANCE C8). Before launch in
-    France, file the French encryption declaration, or leave France out.
+  - Export compliance (COMPLIANCE C8): `ITSAppUsesNonExemptEncryption = YES`
+    is written only together with the app record's approved documentation
+    code (`YAPPR_IOS_EXPORT_COMPLIANCE_CODE`), since App Store Connect refuses
+    YES without it (ITMS-90592). Without the code neither key is written and
+    each build asks the compliance question in App Store Connect; the plist
+    never claims exemption. The signing gate refuses YES without a code.
+    Before launch in France, file the French encryption declaration, or
+    leave France out.
   - Face ID is the only usage description. expo-dev-launcher's local-network
     keys (`NSLocalNetworkUsageDescription`, `NSBonjourServices`) are removed
     from Release builds by its own script phase. That phase can be skipped on
@@ -311,7 +317,7 @@ Values are never committed.
 | `APPLE_EXPECTED_ORG_NAME` | variable | `The Dash Foundation, Inc.` |
 | `SIGNING_NAME_DENYLIST` | secret | optional; comma-separated names that must never appear in signing metadata. A secret, not a variable: run logs print variables unmasked, and the run refuses a variable-only denylist |
 | `YAPPR_IOS_BUNDLE_ID` | variable | optional, `testnet` runs only; see below |
-| `YAPPR_IOS_EXPORT_COMPLIANCE_CODE` | variable | `testnet` runs only; required once the app record has approved export compliance documentation: its code from App Store Connect → App Information → App Encryption Documentation. Uploads without it fail with ITMS-90592 |
+| `YAPPR_IOS_EXPORT_COMPLIANCE_CODE` | variable | optional, `testnet` runs only: the code of the app record's approved export compliance documentation (App Store Connect → App Information → App Encryption Documentation). Set, the build declares non-exempt encryption with that code; unset, each build answers compliance in App Store Connect |
 
 **Bundle id fallback.** If the App Store record has to live under another id
 (for example `org.dashfoundation.yappr.beta`), set `YAPPR_IOS_BUNDLE_ID` and

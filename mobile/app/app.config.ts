@@ -118,11 +118,13 @@ const BLOCKED_ANDROID_PERMISSIONS = [
 const RELEASE_ATS = { NSAppTransportSecurity: { NSAllowsArbitraryLoads: false } };
 
 /**
- * `ITSEncryptionExportComplianceCode`: the code of the app record's approved
- * export compliance documentation (App Store Connect → App Information → App
- * Encryption Documentation). Once a record has that documentation, App Store
- * Connect refuses uploads whose Info.plist lacks the matching code (ITMS-90592).
- * It never changes `ITSAppUsesNonExemptEncryption`, which stays YES.
+ * Export compliance (COMPLIANCE.md, Encryption export). The app uses
+ * non-exempt standard encryption, but `ITSAppUsesNonExemptEncryption = YES`
+ * without an Apple-issued `ITSEncryptionExportComplianceCode` is refused at
+ * upload (ITMS-90592). So both keys are written together, only once the app
+ * record's approved documentation code is configured; until then neither is,
+ * and App Store Connect asks the compliance question for each build. The
+ * plist never says the app is exempt.
  */
 export function resolveExportComplianceCode(raw: string | undefined): string | undefined {
   if (raw === undefined || raw === '') return undefined;
@@ -163,8 +165,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         dark: `${icons}/ios-dark.png`,
         tinted: `${icons}/ios-tinted.png`,
       },
-      // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (COMPLIANCE.md, Encryption export).
-      config: { usesNonExemptEncryption: true },
+      // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (resolveExportComplianceCode above).
+      ...(exportComplianceCode ? { config: { usesNonExemptEncryption: true } } : null),
       privacyManifests: PRIVACY_MANIFEST,
       ...(Object.keys(infoPlist).length > 0 ? { infoPlist } : null),
     },
