@@ -253,10 +253,7 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
     let abandoned: PendingCreate | null = null
     try {
       const stored = loadSlot(key)
-      if (stored && !isLanded(stored)) {
-        abandoned = stored
-        raiseNonceFloor(ownerId, CHARTERS_CONTRACT_ID, BigInt(stored.signed.nonce))
-      }
+      if (stored && !isLanded(stored)) abandoned = stored
     } catch {
       // Unreadable: it may be the create of any reservation for this slot. Each stays pending, and the slot with
       // it, until Platform shows its nonce consumed; the slot is cleared only then, or when none is left.
@@ -266,6 +263,9 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
         if (await charterNonceConsumed(sdk, ownerId, String(entry.nonce)).catch(() => null) !== true) throw new CharterActionError(MAY_STILL_LAND, 'uncertain')
         releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
       }
+    }
+    if (abandoned && !raiseNonceFloor(ownerId, CHARTERS_CONTRACT_ID, BigInt(abandoned.signed.nonce))) {
+      throw new CharterActionError(NONCE_STORE_ERROR, 'refused')
     }
     try {
       localStorage.removeItem(PENDING_PREFIX + key)
@@ -1068,7 +1068,8 @@ class CharterService {
    * reservation, which the next try settles again, or the reservation alone above a floor that already counts it.
    */
   private release(ownerId: string, key: string, entry: PendingCreate, spent: boolean): void {
-    if (spent) raiseNonceFloor(ownerId, CHARTERS_CONTRACT_ID, BigInt(entry.signed.nonce))
+    // A floor storage refused: both stay, for the next try to settle again.
+    if (spent && !raiseNonceFloor(ownerId, CHARTERS_CONTRACT_ID, BigInt(entry.signed.nonce))) return
     forgetPendingCreate(key, entry)
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
   }

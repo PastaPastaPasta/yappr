@@ -158,7 +158,10 @@ beforeEach(() => {
   nonces.held = []
   nonces.floor = 0n
   nonces.load.mockImplementation(() => ({ mark: 0n, floor: nonces.floor, pending: nonces.held }))
-  nonces.raise.mockImplementation((_o: string, _c: string, spent: bigint) => { if (spent > nonces.floor) nonces.floor = spent })
+  nonces.raise.mockImplementation((_o: string, _c: string, spent: bigint) => {
+    if (spent > nonces.floor) nonces.floor = spent
+    return true
+  })
   nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }, spent?: bigint) => {
     nonces.held = nonces.held.filter((p) => p.id !== entry.id)
     if (spent !== undefined && spent > nonces.floor) nonces.floor = spent
@@ -249,7 +252,7 @@ describe('a refusal', () => {
     const raise = nonces.raise.getMockImplementation()
     nonces.raise.mockImplementation((...args: [string, string, bigint]) => {
       slotAt.push(['raise', stored('addedModerator', 'e5:m1')])
-      raise?.(...args)
+      return raise?.(...args)
     })
     const release = nonces.release.getMockImplementation()
     nonces.release.mockImplementation((...args: [string, string, { id: string }, bigint?]) => {
@@ -387,6 +390,15 @@ describe('a refusal', () => {
     expect(nonces.raise).toHaveBeenCalledWith(OWNER, expect.any(String), 1n)
     expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
     expect(stored('addedModerator', 'e5:m1')).toBeNull()
+  })
+
+  it('keeps a spent refusal\'s create and reservation when storage refuses its floor, for the next try to settle', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
+    nonces.raise.mockReturnValueOnce(false)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+    expect(stored('addedModerator', 'e5:m1')?.reservation?.id).toBe('r1')
+    expect(nonces.held.map((p) => p.id)).toEqual(['r1'])
+    expect(nonces.release).not.toHaveBeenCalled()
   })
 
   it.each([

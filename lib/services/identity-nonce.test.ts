@@ -450,6 +450,20 @@ describe('raiseNonceFloor', () => {
     expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ floor: n(101), pending: [] })
     expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}').floor).toBe('101')
   })
+
+  it('stores the floor even when this tab already holds a higher one storage never took, and says when storage refuses', () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    storageFull.value = true
+    expect(raiseNonceFloor(OWNER, CONTRACT, n(105))).toBe(false)
+    storageFull.value = false
+    expect(raiseNonceFloor(OWNER, CONTRACT, n(103))).toBe(true)
+    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}').floor).toBe('105')
+  })
+
+  it('stores a floor where nothing was reserved yet', () => {
+    expect(raiseNonceFloor(OWNER, CONTRACT, n(7))).toBe(true)
+    expect(JSON.parse(storage.get(`yappr:nonce-reservation:${OWNER}:${CONTRACT}`) ?? '{}')).toMatchObject({ mark: '7', floor: '7' })
+  })
 })
 
 describe('a transition whose nonce is known (a create, a wallet request)', () => {
