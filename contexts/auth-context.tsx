@@ -6,6 +6,7 @@ import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
+import { bumpSessionGeneration } from '@/lib/auth/session-generation'
 import { currentPagePath, currentReturnToParam, loginRoute, onLoginPage, returnToOrDefault, signInReturnRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
@@ -114,15 +115,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // ...and no CRITICAL key held for the tab outlives the session it was given in.
     const unwatchCriticalKeys = forgetCriticalKeysOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
     const unbindCriticalKeySession = bindCriticalKeySession(() => controller.sessionEpoch())
-    // ...and a post card's hand-off to the thread page, which carries that viewer's marks, is dropped.
-    let handOffIdentity = controller.getState().user?.identityId ?? null
-    const unwatchHandOff = controller.subscribe((state) => {
+    // ...and the session generation moves on, and a post card's hand-off to the thread page, which carries that viewer's marks, is dropped.
+    let sessionIdentity = controller.getState().user?.identityId ?? null
+    const unwatchSession = controller.subscribe((state) => {
       const next = state.user?.identityId ?? null
-      if (next === handOffIdentity) return
-      handOffIdentity = next
+      if (next === sessionIdentity) return
+      sessionIdentity = next
+      bumpSessionGeneration()
       useAppStore.setState({ pendingPostNavigation: null })
     })
-    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession(); unwatchHandOff() }
+    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession(); unwatchSession() }
   }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
