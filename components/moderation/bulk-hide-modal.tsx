@@ -96,6 +96,8 @@ export function BulkHideModal() {
   /** The last list read that came back, and whether the other tab's count is still being read: a re-read waits for both. */
   const settledReadRef = useRef(0)
   const countingRef = useRef(false)
+  /** The next list read is an automatic re-read: the rows on screen stay until it lands, and stay if it fails. */
+  const backgroundReadRef = useRef(false)
   /** Drops the other tab's count read still out, so it cannot repaint a badge cleared since. */
   const dropCountRef = useRef(() => {})
   /** The newest block time a list read this opening was proved at: a run's by-ID reads are no older. */
@@ -142,7 +144,9 @@ export function BulkHideModal() {
         return
       }
       staleReadTimerRef.current = null
-      if (openingRef.current === opening) setReadEpoch((epoch) => epoch + 1)
+      if (openingRef.current !== opening) return
+      backgroundReadRef.current = true
+      setReadEpoch((epoch) => epoch + 1)
     }
     staleReadTimerRef.current = setTimeout(reread, SETTLE_MS)
   }, [])
@@ -160,9 +164,11 @@ export function BulkHideModal() {
   const load = useCallback((which: BulkMode) => {
     if (!authorId) return
     const read = ++readRef.current
-    setList({ status: 'loading', count: 0 })
+    const background = backgroundReadRef.current
+    backgroundReadRef.current = false
+    if (!background) setList({ status: 'loading', count: 0 })
     bulkHideService.readAll(authorId, which, (count) => {
-      if (readRef.current === read) setList({ status: 'loading', count })
+      if (readRef.current === read && !background) setList({ status: 'loading', count })
     }).then(({ items: fresh, truncated, at }) => {
       if (readRef.current !== read) return
       settledReadRef.current = read
@@ -176,7 +182,7 @@ export function BulkHideModal() {
     }).catch(() => {
       if (readRef.current !== read) return
       settledReadRef.current = read
-      setList({ status: 'failed' })
+      if (!background) setList({ status: 'failed' })
     })
   }, [authorId, scheduleStaleRead, listedAt])
 
