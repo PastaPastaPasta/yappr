@@ -369,7 +369,9 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     recordReceipt(first.payment)
     reportedNonce = BigInt(127)
     await clearPersistedWalletPayment(OWNER, second.payment.request.reservationId)
-    expect(await prepareLocalWalletPayment(second.payment, context)).toEqual({ completed: false })
+    // Not completed by the older receipt, and with nothing stored to settle it by, never replaced without "send another".
+    expect(await prepareLocalWalletPayment(second.payment, context)).toEqual({ completed: false, payment: second.payment, unresolved: true })
+    expect(await prepareLocalWalletPayment(second.payment, { ...context, allowAnother: new Set([first.payment.request.reservationId, second.payment.request.reservationId]) })).toEqual({ completed: false })
     expect(storedPayments()).toEqual([])
   })
 
@@ -555,6 +557,81 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     const buildFresh = vi.fn(buildCachedPayment)
     expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  it('keeps a confirmation bound to the QR it showed when another tab shows a new request of the same payment', async () => {
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed) throw new Error('No QR payment')
+    // Tab B chose to send another past it and left its new QR unpaid.
+    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, allowAnother: new Set([shown.payment.request.reservationId]) })
+    if (other.completed) throw new Error('No second QR payment')
+    expect(storedPayments()).toHaveLength(2)
+    const buildFresh = vi.fn(buildCachedPayment)
+    const again = await prepareWalletPayment(shown.payment, buildFresh, context)
+    if (again.completed) throw new Error('Reported completed')
+    expect(again.payment.request.reservationId).toBe(shown.payment.request.reservationId)
+    const local = await prepareLocalWalletPayment(shown.payment, context)
+    if (local.completed) throw new Error('Reported completed')
+    expect(local.payment?.request.reservationId).toBe(shown.payment.request.reservationId)
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
+  it('pays nothing more for a shown QR an unrelated payment cleared before a local retry', async () => {
+    const original = await shownThenRetired()
+    // A third tab prepares a different payment, clearing the request proved absent.
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false })
+    expect(storedPayments()).toEqual([])
+    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(broadcast).not.toHaveBeenCalled()
+    expect(sdk.tokens.transfer).not.toHaveBeenCalled()
+    expect(sdk.tokens.directPurchase).not.toHaveBeenCalled()
+  })
+
+  it('pays nothing more for a shown QR whose replacement QR another tab paid and cleared', async () => {
+    const original = await shownThenRetired()
+    // Tab B opens the same payment: the request proved absent is dropped and a new QR shown, paid and cleared.
+    const inB = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (inB.completed || inB.unresolved) throw new Error('No QR in tab B')
+    expect(execute(inB.payment.request.nonce, true)).toBe(true)
+    recordReceipt(inB.payment)
+    reportedNonce = chainNonce()
+    await clearPersistedWalletPayment(OWNER, inB.payment.request.reservationId)
+    // Tab A, still showing the original, checks again or confirms locally.
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(payments).toBe(1)
+  })
+
+  it('keeps a shown QR unresolved once the mark of the local payment that replaced it has expired', async () => {
+    const original = await shownThenRetired()
+    const sends = () => broadcast.mock.calls.length + sdk.tokens.transfer.mock.calls.length + sdk.tokens.directPurchase.mock.calls.length
+    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
+    expect(sends()).toBe(1)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60_000 + 1000)
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
+    expect(sends()).toBe(1)
+  })
+
+  it('sets aside unreadable stored requests instead of refusing every payment', async () => {
+    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (first.completed) throw new Error('No QR payment')
+    const key = [...storage.keys()].find(item => item.startsWith('yappr:wallet-payments:'))
+    if (!key) throw new Error('No stored requests')
+    const records = JSON.parse(storage.get(key) ?? '[]') as { bytes: string }[]
+    records[0].bytes = 'AAAA'
+    storage.set(key, JSON.stringify(records))
+    const otherContext = { ...context, key: 'different payment' }
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
+    storage.set(key, '{')
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
   })
 
   it('never takes a payment the user chose to send past as the completion of the new one', async () => {

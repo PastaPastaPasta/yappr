@@ -158,9 +158,14 @@ function attemptSettled(context: PaymentContext): 'settled' | 'gone' | null {
 function readPersisted(ownerId: string): PersistedWalletPayment[] {
   const raw = loadWalletPayments(ownerId, YAPPR_CONTRACT_ID, STORAGE_KEY);
   if (!raw) return [];
-  const parsed = JSON.parse(raw) as PersistedWalletPayment[];
-  if (!Array.isArray(parsed)) throw new Error('Could not read earlier wallet payments');
-  return parsed;
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  // Unreadable: read as none, so it is overwritten. A confirmation still showing one of its requests then finds it unstored and stays unresolved.
+  if (!Array.isArray(parsed)) {
+    logger.warn('Setting aside unreadable wallet payment requests');
+    return [];
+  }
+  return (parsed as PersistedWalletPayment[]).filter(record => typeof record?.reservationId === 'string');
 }
 
 function writePersisted(ownerId: string, records: PersistedWalletPayment[]): void {
@@ -328,6 +333,8 @@ async function preparePayment(
   const prepare = async (): Promise<LocalPreparedPayment> => {
     let candidate = cached;
     let cachedAbsent = false;
+    /** Shown here, proved absent and no longer stored: what replaced it elsewhere can't be told. */
+    let unlinked = false;
     let reconciliation: Awaited<ReturnType<typeof reconcilePayment>> | undefined;
     if (context) {
       // Under the lock, before anything else: another tab may have completed this very payment while the signer was asked for.
@@ -340,6 +347,7 @@ async function preparePayment(
           const result = await reconcilePayment(cached);
           if (result.outcome === 'completed' && cached.key === context.key) return { completed: true };
           cachedAbsent = result.outcome === 'absent';
+          unlinked = cachedAbsent && cached.key === context.key && !context.allowAnother?.has(cached.request.reservationId);
           if (result.outcome === 'unknown' && !context.allowAnother?.has(cached.request.reservationId)) {
             return { completed: false, payment: cached, unresolved: true, ...(cached.key !== context.key ? { different: true } : {}) };
           }
@@ -355,8 +363,16 @@ async function preparePayment(
       const attributable = (record: PersistedWalletPayment, payment: WalletPayment, excluded: boolean) => !excluded && record.key === context.key
         && (!cached || cached.key !== context.key || cached.request.reservationId === record.reservationId
           || (cachedAbsent && payment.request.nonce > cached.request.nonce));
+      // The WASM module restoring them must be up, so a request is set aside only for what it holds.
+      if (records.length > 0) await getEvoSdk();
       for (const record of records) {
-        const payment = restorePayment(context.ownerId, record);
+        let payment: WalletPayment;
+        try { payment = restorePayment(context.ownerId, record); }
+        catch (error) {
+          logger.warn('Setting aside an unreadable wallet payment request:', error);
+          drop(record);
+          continue;
+        }
         let result: PaymentObservation;
         // Only a request proved absent is ever marked replaced, and that proof is final.
         if (record.replacedBy) result = { outcome: 'absent', executable: false };
@@ -379,6 +395,10 @@ async function preparePayment(
           if (excluded) continue;
           return settle({ completed: false, payment, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
         }
+        if (record.replacedBy && replacement === undefined && !excluded && cached?.request.reservationId === record.reservationId) {
+          // Its replacement's outcome has expired: the confirmation that showed it can no longer tell.
+          return settle({ completed: false, payment, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
+        }
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           if (result.outcome === 'completed') settleAttempts(context.ownerId, record);
           // A local payment of this one goes ahead at a fresh nonce: the request stays, to be marked replaced by it.
@@ -392,6 +412,8 @@ async function preparePayment(
         }
         if (excluded) continue;
         if (record.key !== context.key) return settle({ completed: false, payment, unresolved: true, different: true });
+        // The request this confirmation showed stays its own: another tab's new request of the same payment never takes its place.
+        if (candidate && candidate.request.reservationId === cached?.request.reservationId) continue;
         candidate = payment;
         reconciliation = result;
       }
@@ -411,6 +433,10 @@ async function preparePayment(
       }
       return { completed: false, payment };
     };
+    if (!candidate && unlinked && cached) {
+      // Nothing stored to settle it by: only "send another" goes past it.
+      return settle({ completed: false, payment: cached, unresolved: true });
+    }
     if (!candidate) return settle(await create());
     try {
       const result = reconciliation ?? await reconcilePayment(candidate);
