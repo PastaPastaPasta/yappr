@@ -872,7 +872,16 @@ class CharterService {
         this.release(ownerId, key, stored, true)
         return { kind: 'dead', entry: stored }
       }
-      if (stored.fingerprint !== fingerprint || !held(stored)) throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
+      if (!held(stored)) {
+        // Released on a verdict that left its nonce free (the page died before clearing the slot): never sent
+        // again, so once the nonce is proved unused it can no longer execute and the slot is free.
+        if (await charterNonceConsumed(sdk, ownerId, stored.signed.nonce).catch(() => null) === false) {
+          forgetPendingCreate(key, stored)
+          return { kind: 'empty' }
+        }
+        throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
+      }
+      if (stored.fingerprint !== fingerprint) throw type === 'electedCharter' ? uncertain() : new CharterActionError(MAY_STILL_LAND, 'uncertain')
       return { kind: 'pending', entry: stored }
     }
 

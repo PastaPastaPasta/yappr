@@ -267,6 +267,7 @@ describe('a refusal', () => {
     const sent = sdk.stateTransitions.broadcastAndWait.mock.calls.length
     // A page that died between releasing r1 and clearing its slot; a team-change delete then signed at r1's nonce.
     nonces.held = []
+    builders.consumed.mockResolvedValue(true)
     resends.length = 0
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
     expect(resends.length).toBeGreaterThan(0)
@@ -274,6 +275,22 @@ describe('a refusal', () => {
     expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent)
     expect(builders.sign).toHaveBeenCalledTimes(1)
     expect(stored('addedModerator', 'e5:m1')?.reservation?.id).toBe('r1')
+  })
+
+  it('frees a refused write\'s slot left behind its released reservation once its nonce is proved unused, and signs afresh', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
+    const sent = sdk.stateTransitions.broadcastAndWait.mock.calls.length
+    // Refused with its nonce free; the page died after releasing r1, before clearing its slot.
+    nonces.held = []
+    builders.consumed.mockResolvedValue(false)
+    builders.exists.mockResolvedValueOnce(null).mockResolvedValue(true)
+    sdk.stateTransitions.broadcastAndWait.mockResolvedValue(undefined)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).resolves.toBe('doc-2')
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+    expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent + 1)
   })
 
   it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
