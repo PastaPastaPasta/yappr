@@ -86,6 +86,29 @@ function slotName(kind: AppConnectRequestKind): string {
   return `pending-request:${slotOf(kind) ?? 'login'}`
 }
 
+/** Which signed-out request (`login` or `reauth`) was opened last: the one a killed launch was answering. */
+const ACTIVE_SIGN_IN = 'pending-request:active-sign-in'
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+async function markActiveSignIn(slot: string): Promise<void> {
+  const bytes = encoder.encode(slot)
+  try {
+    await appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, bytes)
+  } catch (error) {
+    logger.warn('App Connect: could not record the sign-in in progress:', error)
+  }
+}
+
+async function activeSignIn(): Promise<string | null> {
+  try {
+    const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), ACTIVE_SIGN_IN)
+    return bytes ? decoder.decode(bytes) : null
+  } catch {
+    return null
+  }
+}
+
 function recordsFor(kind: AppConnectRequestKind): RequestRecordStore {
   return requestRecordsFor(slotOf(kind))
 }
@@ -224,6 +247,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))
+      if (!input.renew) await markActiveSignIn(slotOf(input) ?? 'login')
       await instance.start({ identityHint: input.identityHint, fresh: input.fresh })
       return state
     },
@@ -284,16 +308,19 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /**
      * The sign-in a signed-out launch should resume, if one is stored: a
-     * plain one (`reauth: null`), or signing `reauth` in again. The newer one
-     * when both are.
+     * plain one (`reauth: null`), or signing `reauth` in again. When both
+     * are, the one opened last (the newer one if that is unknown).
      */
     async pendingSignIn(): Promise<{ reauth: string | null } | null> {
       if (!isAppConnectBuild() || !appConnectPins()) return null
       const plain = await loadRequest({})
       const again = await requestRecordsFor(REAUTH_SLOT).load()
       const reauth = again?.identityHint
-      if (again && reauth !== undefined && (!plain || again.createdAt > plain.createdAt)) return { reauth }
-      return plain ? { reauth: null } : null
+      if (!again || reauth === undefined) return plain ? { reauth: null } : null
+      if (!plain) return { reauth }
+      const active = await activeSignIn()
+      const againLast = active === null ? again.createdAt > plain.createdAt : active === REAUTH_SLOT
+      return againLast ? { reauth } : { reauth: null }
     },
   }
 }

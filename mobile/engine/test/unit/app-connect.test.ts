@@ -575,6 +575,7 @@ describe('App Connect requests across kills and engine restarts', () => {
   const LOGIN_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_login'
   const REAUTH_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_reauth'
   const RENEWAL_SLOT = `yappr_secure_ac_secret_testnet_pending_request_${OWNER}`
+  const ACTIVE_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_active_sign_in'
   const stored = () => Object.keys(engineStorage.snapshot().secure)
   const settle = () => new Promise(resolve => setTimeout(resolve, 50))
 
@@ -586,7 +587,7 @@ describe('App Connect requests across kills and engine restarts', () => {
   async function signedOut(): Promise<Session> {
     const before = boot()
     if (await before.restore()) await before.signOut()
-    for (const slot of [LOGIN_SLOT, REAUTH_SLOT, RENEWAL_SLOT]) localStorage.removeItem(slot)
+    for (const slot of [LOGIN_SLOT, REAUTH_SLOT, RENEWAL_SLOT, ACTIVE_SLOT]) localStorage.removeItem(slot)
     await engineStorage.secureDurable()
     const engine = boot()
     session = engine
@@ -766,6 +767,26 @@ describe('App Connect requests across kills and engine restarts', () => {
     await next.appConnectCancel()
     expect(await next.appConnectPendingSignIn()).toBeNull()
     expect(stored()).not.toContain(REAUTH_SLOT)
+  })
+
+  it('resumes the signed-out request opened last, not the one made last', async () => {
+    const engine = await signedOut()
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    const again = await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    if (again.phase !== 'waiting') throw new Error('not waiting')
+    const reopened = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (reopened.phase !== 'waiting') throw new Error('not waiting')
+    expect(reopened.requestHash).toBe(plain.requestHash)
+    expect(stored()).toEqual(expect.arrayContaining([LOGIN_SLOT, REAUTH_SLOT]))
+
+    // Killed while the wallet answered the reopened plain request.
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+    const resumed = await next.appConnectStart({ returnTo: RETURN_TO })
+    if (resumed.phase !== 'waiting') throw new Error('not waiting')
+    expect(resumed.requestHash).toBe(plain.requestHash)
   })
 
   it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
