@@ -80,7 +80,7 @@ describe('messaging key setup', () => {
     expect(mocks.recordKeyRevision).toHaveBeenCalledWith(IDENTITY, getPublicKey(EXPECTED))
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
     mocks.recordKeyRevision.mockResolvedValueOnce(false)
-    await expect(s.anchorKeyState(draft)).resolves.toBe('none')
+    await expect(s.anchorKeyState(draft)).resolves.toBe('pending')
     mocks.currentKey.mockRejectedValueOnce(new Error('DAPI down'))
     await expect(s.anchorKeyState(draft)).rejects.toThrow('DAPI down')
   })

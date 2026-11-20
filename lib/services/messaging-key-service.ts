@@ -68,21 +68,24 @@ export class MessagingSetupCancelledError extends Error {
   }
 }
 
-/** The anchor's current key compared with the draft: this key, another key, or none. */
-export type AnchorKeyState = 'this-key' | 'other-key' | 'none'
+/**
+ * The anchor's current key compared with the draft: this key, another key, or none. "pending": the anchor
+ * shows this key but no identity read has confirmed it yet, so it must not be added again.
+ */
+export type AnchorKeyState = 'this-key' | 'pending' | 'other-key' | 'none'
 
 /**
  * Where the draft stands against the anchor's current key (a fresh read;
  * throws when it fails, so a network error never reads as "not set up").
  * "this-key" only once an identity read with the key has recorded its
  * revision, so a later identity update never reuses its key id; until then
- * it is "none".
+ * it is "pending".
  */
 export async function anchorKeyState(draft: MessagingKeyDraft): Promise<AnchorKeyState> {
   const current = await resolveEncryptionPublicKey(draft.identityId, async () => null)
   if (current === null) return 'none'
   if (!bytesEqual(current, draft.publicKey)) return 'other-key'
-  return await identityService.recordKeyRevision(draft.identityId, draft.publicKey) ? 'this-key' : 'none'
+  return await identityService.recordKeyRevision(draft.identityId, draft.publicKey) ? 'this-key' : 'pending'
 }
 
 /**

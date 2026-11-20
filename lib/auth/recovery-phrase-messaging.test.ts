@@ -30,11 +30,14 @@ const state = vi.hoisted(() => ({
   /** The identity update lock, held by another update until it resolves. */
   lock: null as Promise<void> | null,
   waiting: 0,
+  recorded: true,
 }))
 
 vi.mock('@/lib/services/identity-service', () => ({
-  identityService: { getIdentity: async () => ({ id: IDENTITY, balance: 0, revision: 0, publicKeys: state.publicKeys }) },
-  noteProvedIdentityRevision: () => {},
+  identityService: {
+    getIdentity: async () => ({ id: IDENTITY, balance: 0, revision: 0, publicKeys: state.publicKeys }),
+    recordKeyRevision: async () => state.recorded,
+  },
 }))
 vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: {} }))
 vi.mock('@/lib/app-connect/config', () => ({ messagingAnchorId: () => ANCHOR }))
@@ -102,6 +105,7 @@ beforeEach(() => {
   state.afterAdd = null
   state.lock = null
   state.waiting = 0
+  state.recorded = true
 })
 
 describe('preparePhraseSession messaging key', () => {
@@ -112,6 +116,21 @@ describe('preparePhraseSession messaging key', () => {
     expect(state.added.map(bytesToHex)).toEqual([bytesToHex(rotationKey(0).publicKey)])
     expect(bytesToHex(messagingKeyOf(session).publicKey)).toBe(bytesToHex(rotationKey(0).publicKey))
     expect(bytesToHex(messagingKeyOf(session).privateKey)).toBe(bytesToHex(rotationKey(0).privateKey))
+  })
+
+  it('is ready once a locked identity read records the added key the anchor read still lags on', async () => {
+    state.afterAdd = (publicKey) => { state.publicKeys = [...state.publicKeys, anchorKey(3, publicKey)] }
+    const session = await preparePhraseSession(wallet, account)
+    expect(session.messaging).toBe('ready')
+    expect(state.added).toHaveLength(1)
+  })
+
+  it('is not set up, adding nothing more, while no locked identity read has recorded the added key', async () => {
+    state.recorded = false
+    state.afterAdd = (publicKey) => { state.publicKeys = [...state.publicKeys, anchorKey(3, publicKey)] }
+    const session = await preparePhraseSession(wallet, account)
+    expect(session).toMatchObject({ messaging: 'not-set-up', messagingKey: null })
+    expect(state.added).toHaveLength(1)
   })
 
   it('signs in without messaging, adding nothing, where this browser has no Web Locks', async () => {

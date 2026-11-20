@@ -40,6 +40,7 @@ const HAND_OFF_POLL_MS = 3_000
 /** After a MASTER-signed update: how long to wait for Platform to show the key as current. */
 const CONFIRM_ATTEMPTS = 6
 const CONFIRM_DELAY_MS = 2_000
+const SENT_NOT_SHOWN = 'Your change was sent but hasn\'t shown up yet. Try again in a minute.'
 
 /** A dialog attempt: its Close signal and the session it started in. */
 type Attempt = { signal: AbortSignal; session: number }
@@ -161,12 +162,22 @@ export function SetUpMessaging({
     }
     setDraft(next)
     const attempt = startAttempt()
-    Promise.all([anchorKeyState(next), loginKeyIsMaster(identityId)])
+    // The anchor already shows this key while the identity read lags: wait for it, never offer to add it again.
+    const settled = async () => {
+      let state = await anchorKeyState(next)
+      for (let check = 1; state === 'pending' && check < CONFIRM_ATTEMPTS && !cancelled; check++) {
+        await sleep(CONFIRM_DELAY_MS)
+        state = await anchorKeyState(next)
+      }
+      return state
+    }
+    Promise.all([settled(), loginKeyIsMaster(identityId)])
       .then(([state, master]) => {
         if (cancelled) return
         setLoginIsMaster(master)
         if (state === 'this-key') finish(next, attempt)
         else if (state === 'other-key') alreadySetUp()
+        else if (state === 'pending') setPhase({ kind: 'failed', message: SENT_NOT_SHOWN })
         else setPhase({ kind: 'choose' })
       })
       .catch((error) => {
@@ -253,11 +264,13 @@ export function SetUpMessaging({
     const message = failure instanceof Error ? failure.message : ''
     const refused = failure !== null && (message === IDENTITY_UPDATE_UNLOCKED || message === STALE_IDENTITY_ERROR || REFUSED_BEFORE_BROADCAST.test(message))
     const checks = refused ? 1 : CONFIRM_ATTEMPTS
-    for (let check = 0; check < checks; check++) {
+    let pending = false
+    for (let check = 0; check < checks || (pending && check < CONFIRM_ATTEMPTS); check++) {
       if (check > 0) await sleep(CONFIRM_DELAY_MS)
       if (stopped()) return
       const state = await anchorKeyState(ready).catch(() => null)
       if (stopped()) return
+      if (state === 'pending') pending = true
       if (state === 'this-key') {
         finish(ready, attempt)
         return
@@ -268,13 +281,15 @@ export function SetUpMessaging({
       }
     }
     logger.warn('Messaging setup: the master-signed update did not land:', failure)
-    if (failure && fromMasterKeyForm) {
+    if (pending) {
+      setPhase({ kind: 'failed', message: SENT_NOT_SHOWN })
+    } else if (failure && fromMasterKeyForm) {
       setMasterKeyError(masterKeyFailure(failure))
       setPhase({ kind: 'master-key' })
     } else if (failure) {
       setPhase({ kind: 'failed', message: masterKeyFailure(failure) })
     } else {
-      setPhase({ kind: 'failed', message: 'Your change was sent but hasn\'t shown up yet. Try again in a minute.' })
+      setPhase({ kind: 'failed', message: SENT_NOT_SHOWN })
     }
   }, [startAttempt, finish, alreadySetUp])
 

@@ -17,6 +17,7 @@ const storage = vi.hoisted(() => {
 })
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch, update } }) }))
 vi.mock('@/lib/identity-write-lock', () => ({
+  crossTabLocks: () => (updateLock.refused ? undefined : {}),
   withIdentityUpdateLock: async (_identityId: string, run: () => Promise<unknown>) => {
     if (updateLock.refused) throw new Error('no cross-tab lock')
     await updateLock.held
@@ -137,5 +138,46 @@ describe('identityService.addEncryptionKey', () => {
     fetch.mockResolvedValue(after)
     await expect(identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))).resolves.toBe(true)
     expect(localStorage.getItem(revisionKey)).toBe('4')
+  })
+})
+
+describe('identityService.recordKeyRevision', () => {
+  const encryptionKey = new Uint8Array(32).fill(1)
+  const withKey = (revision: bigint) => ({
+    revision,
+    publicKeys: [{ keyId: 1, purpose: 1, securityLevel: 2, keyType: 0, data: getPublicKey(encryptionKey) }],
+  })
+  const revisionKey = () => `yappr:identity-revision:${getConfiguredNetwork()}:${IDENTITY}`
+
+  it('reads and records only once it holds the update lock', async () => {
+    let release!: () => void
+    updateLock.held = new Promise<void>((resolve) => { release = resolve })
+    fetch.mockResolvedValue(withKey(4n))
+    const recorded = identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(fetch).not.toHaveBeenCalled()
+    expect(localStorage.getItem(revisionKey())).toBeNull()
+    release()
+    await expect(recorded).resolves.toBe(true)
+    expect(localStorage.getItem(revisionKey())).toBe('4')
+    updateLock.held = Promise.resolve()
+  })
+
+  it('never lowers a floor another update recorded meanwhile', async () => {
+    localStorage.setItem(revisionKey(), '9')
+    fetch.mockResolvedValue(withKey(8n))
+    await expect(identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))).resolves.toBe(true)
+    expect(localStorage.getItem(revisionKey())).toBe('9')
+  })
+
+  it('records nothing where the update lock is unavailable, but still answers whether the read had the key', async () => {
+    updateLock.refused = true
+    try {
+      fetch.mockResolvedValue(withKey(4n))
+      await expect(identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))).resolves.toBe(true)
+    } finally {
+      updateLock.refused = false
+    }
+    expect(localStorage.getItem(revisionKey())).toBeNull()
   })
 })

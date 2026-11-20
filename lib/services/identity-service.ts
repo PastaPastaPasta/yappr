@@ -10,7 +10,7 @@ import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
-import { withIdentityUpdateLock } from '@/lib/identity-write-lock'
+import { crossTabLocks, withIdentityUpdateLock } from '@/lib/identity-write-lock'
 import { sleep } from '@/lib/retry-utils'
 import { Identifier } from '@dashevo/wasm-sdk'
 
@@ -345,14 +345,18 @@ class IdentityService {
   }
 
   /**
-   * For a key confirmed outside the update lock: one fresh identity read, and when it has the key, its
-   * revision is recorded so the next update (any tab) builds on it. Returns whether the read had the key.
+   * For a key confirmed outside the update lock: under the lock, one fresh identity read, and when it has
+   * the key, its revision is recorded so the next update (any tab) builds on it. Returns whether the read
+   * had the key. Where the lock is unavailable nothing is recorded: no update is signed here to read it.
    */
   async recordKeyRevision(identityId: string, data: Uint8Array): Promise<boolean> {
-    const revision = await this.keyRevision(identityId, data);
-    if (revision === null) return false;
-    noteProvedIdentityRevision(identityId, revision);
-    return true;
+    if (!crossTabLocks()) return await this.keyRevision(identityId, data) !== null;
+    return await withIdentityUpdateLock(identityId, async () => {
+      const revision = await this.keyRevision(identityId, data);
+      if (revision === null) return false;
+      noteProvedIdentityRevision(identityId, revision);
+      return true;
+    });
   }
 
   /**
