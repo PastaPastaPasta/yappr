@@ -507,13 +507,12 @@ export async function withSdkSignedWrite<T>(
         await settleChosenNonce(ownerId, contractId, entry);
         return result;
       } catch (error) {
-        const unsent = error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError;
-        if (unsent || isVerdict(error)) {
+        if (error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError) {
           releaseNonce(ownerId, contractId, entry);
-          // Unsent, or refused so it never executes: its slot is free again (a paid refusal moved Platform past it instead).
+          // No bytes left this lock, so this allocation never became a signed nonce.
           const reservation = loadReservation(ownerId, contractId);
-          if (reservation && (unsent || !isIdentityNonceConflictError(error))) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
-        }
+          if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
+        } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
         throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
       }
     }

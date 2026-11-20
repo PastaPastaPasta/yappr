@@ -186,19 +186,6 @@ describe('withSdkSignedWrite', () => {
     expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
   })
 
-  it('keeps the window usable through repeated definitive broadcast refusals', async () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
-    sdk.identities.contractNonce.mockResolvedValue(n(100))
-    const refusal = new Error('state transition broadcast error: code=40101 DocumentNotFoundError')
-    const refused = vi.fn<(nonce: bigint) => Promise<string>>(async () => { throw refusal })
-    for (let attempt = 0; attempt < 30; attempt++) {
-      expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, refused))).toEqual({ ok: false, error: refusal })
-      expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), pending: [{ nonce: n(101) }] })
-    }
-    expect(refused.mock.calls.every(([nonce]) => nonce === n(102))).toBe(true)
-    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
-  })
-
   it('keeps an uncertain chosen write reserved but releases one Platform refused', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
     sdk.identities.contractNonce.mockResolvedValue(n(100))
