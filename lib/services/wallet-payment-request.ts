@@ -101,3 +101,36 @@ export async function checkShownRequest(ownerId: string, key: string): Promise<S
   clearShownRequest(ownerId, request.key);
   return { kind: 'none' };
 }
+
+export type PurchaseRequestCheck =
+  | Exclude<ShownRequestCheck, { kind: 'settled' }>
+  | { kind: 'paid'; balance: bigint }
+  | { kind: 'unproven' };
+
+/**
+ * {@link checkShownRequest} for a purchase, settling a request whose nonce can
+ * no longer execute: `paid` once the YAPP balance shows it (read a few times,
+ * so a node that is behind can't hide it), otherwise `unproven`, which keeps
+ * the request stored: YAPP spent since can hide a purchase that went through,
+ * so nothing new is built until the user clears it.
+ */
+export async function checkPurchaseRequest(
+  ownerId: string,
+  key: string,
+  readBalance: () => Promise<bigint>,
+  { attempts = 5, delayMs = 3000 } = {}
+): Promise<PurchaseRequestCheck> {
+  const shown = await checkShownRequest(ownerId, key);
+  if (shown.kind !== 'settled') return shown;
+  const paid = shown.request.purchase;
+  for (let attempt = 0; paid && attempt < attempts; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    try {
+      const balance = await readBalance();
+      if (balance >= paid.balanceBefore + paid.amount) return { kind: 'paid', balance };
+    } catch (error) {
+      logger.debug('Could not read the balance a purchase would show, retrying', error);
+    }
+  }
+  return { kind: 'unproven' };
+}
