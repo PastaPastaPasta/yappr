@@ -479,7 +479,7 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
     }
   });
 
-  it('stays put, keeping the Add account marker, when every lookup fails', async () => {
+  it('stays put, keeping the Add account marker, when every lookup fails, and asks the next engine', async () => {
     jest.useFakeTimers();
     try {
       syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
@@ -492,6 +492,17 @@ describe('a wallet sign-in the last launch was killed in, on App Connect builds'
       expect(router.push).not.toHaveBeenCalled();
       expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
       expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+
+      // The next engine is asked again, and the request reopens with the parked account to go back to.
+      fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+      act(() => fakeEngine.setStatus({ state: 'starting', epoch: 1 }));
+      act(() => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+      expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'bob' });
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
