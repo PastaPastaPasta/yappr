@@ -16,7 +16,7 @@ import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { RpcError } from '../protocol/envelope'
-import { engineSecretRaw, removeEngineSecret } from './app-connect-store'
+import { removeEngineSecret } from './app-connect-store'
 
 /**
  * Wallet sign-in through App Connect (docs/APP_CONNECT_PROFILE.md), the
@@ -191,9 +191,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     /** The only identity the running flow accepts, if it names one. */
     hint: (): string | undefined => hint,
 
-    /** The kind of request the running flow makes or resumes, if one is running. */
-    runningKind: (): AppConnectRequestKind | null => (login ? { identityHint: hint, renew: renewFor !== undefined } : null),
-
     /**
      * Starts a sign-in, resuming the stored request of the same kind unless
      * `fresh`. With `identityHint` only that identity may answer: a renewal
@@ -248,7 +245,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       await login?.reject()
     },
 
-    /** Abandons the flow and forgets its request and any verified answer (`forget` then confirms the request is gone). */
+    /** Abandons the flow and forgets its request and any verified answer. */
     cancel(): void {
       login?.finish()
       reset()
@@ -256,41 +253,19 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /**
      * Takes the verified grant of `identityId`; the flow ends and forgets
-     * everything else. With `keepRequest` its stored request stays for the
-     * caller to forget once the grant is stored (`forget`). The caller adopts
-     * the grant, which wipes its keys.
+     * everything else. The caller adopts the grant, which wipes its keys.
      */
-    accept(identityId: string, { keepRequest = false }: { keepRequest?: boolean } = {}): AppConnectGrant | null {
-      const grant = login?.accept(identityId, { keepRequest }) ?? null
+    accept(identityId: string): AppConnectGrant | null {
+      const grant = login?.accept(identityId) ?? null
       reset()
       return grant
     },
 
-    /** The stored request of this kind as stored (wrapped), to forget only that one later (`forget`'s `only`). */
-    stored(kind: AppConnectRequestKind): string | null {
-      if (!isAppConnectBuild() || !appConnectPins()) return null
-      return engineSecretRaw(localStorage, appConnectSessions.network(), slotName(kind))
-    },
-
-    /**
-     * Forgets the stored request of this kind (see `pending`), if there is
-     * one, or only the one `stored` returned (`only`). `strict`: one stored
-     * but unreadable goes too (lib's load and clear read a failure as no
-     * request and leave it), unless a save replaced it meanwhile.
-     */
-    async forget(kind: AppConnectRequestKind, { strict = false, only }: { strict?: boolean; only?: string | null } = {}): Promise<void> {
+    /** Forgets the stored request of this kind (see `pending`) without a running flow. */
+    async forget(kind: AppConnectRequestKind): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
-      const network = appConnectSessions.network()
-      const name = slotName(kind)
-      // The load runs in the record queue, after any save already issued (a request still being wrapped) has landed.
-      const record = await recordsFor(kind).load()
-      const before = engineSecretRaw(localStorage, network, name)
-      if (before === null || (only !== undefined && before !== only)) return
-      if (record) {
-        if (record.identityHint !== kind.identityHint) return
-        await recordsFor(kind).clear(record)
-      }
-      if (strict && engineSecretRaw(localStorage, network, name) === before) removeEngineSecret(localStorage, network, name)
+      const record = await loadRequest(kind)
+      if (record) await recordsFor(kind).clear(record)
     },
 
     /** Deletes the stored request of this kind by name, unread: one in an account bucket this boot did not load. */

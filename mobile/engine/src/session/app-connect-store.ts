@@ -90,11 +90,6 @@ export function forgetEngineRing(storage: Pick<Storage, 'removeItem'>, network: 
   storage.removeItem(ringPrefix(network) + identityId)
 }
 
-/** The key ring's secret `name` (`pending-request:login`, …) as stored, readable or not. */
-export function engineSecretRaw(storage: Pick<Storage, 'getItem'>, network: string, name: string): string | null {
-  return storage.getItem(secretKey(network, name))
-}
-
 /** Deletes the key ring's secret `name` as stored, without reading it. */
 export function removeEngineSecret(storage: Pick<Storage, 'removeItem'>, network: string, name: string): void {
   storage.removeItem(secretKey(network, name))

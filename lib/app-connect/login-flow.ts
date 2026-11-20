@@ -301,19 +301,12 @@ export class AppConnectLogin {
   /**
    * The user picked `identityId`: hands back its grant and forgets the
    * request and every other candidate. The caller signs in with the grant
-   * (which wipes its keys). `keepRequest` leaves the stored request for the
-   * caller to clear once the grant is safely stored, so an app killed in
-   * between can still find the wallet's answer again.
+   * (which wipes its keys).
    */
-  accept(identityId: string, { keepRequest = false }: { keepRequest?: boolean } = {}): AppConnectGrant | null {
+  accept(identityId: string): AppConnectGrant | null {
     const chosen = this.verified.find((candidate) => candidate.identityId === identityId) ?? null
     this.verified = this.verified.filter((candidate) => candidate !== chosen)
-    if (keepRequest) {
-      this.generation += 1
-      this.teardown()
-    } else {
-      this.finish()
-    }
+    this.finish()
     return chosen?.grant ?? null
   }
 

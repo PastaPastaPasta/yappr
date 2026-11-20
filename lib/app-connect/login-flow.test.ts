@@ -158,19 +158,6 @@ describe('AppConnectLogin', () => {
     expect(h.records.value).toBeNull()
   })
 
-  it('leaves the stored request for the caller when asked to, and stops all the same', async () => {
-    const h = harness()
-    h.setCandidates([candidate(ALICE)])
-    await h.login.start()
-    await h.flush()
-    const stored = h.records.value
-    const chosen = h.login.accept(ALICE, { keepRequest: true })
-    expect(chosen?.identityId).toBe(ALICE)
-    await h.flush()
-    expect(h.records.value).toBe(stored)
-    expect(h.login.requestHashHex()).toBeNull()
-  })
-
   it('keeps polling while confirming, so a later second answer turns into the chooser', async () => {
     const h = harness()
     h.setCandidates([candidate(ALICE)])

@@ -19,12 +19,6 @@ export const copy = {
     /** AUTH-14: the flow opened for an account whose stored key no longer signs. */
     reauth: (name: string) => `Sign in again as ${name} with its wallet or key.`,
     openWallet: 'Open wallet',
-    cancelling: 'Cancelling…',
-    cancelUnconfirmed: {
-      title: "We couldn't confirm the cancel.",
-      body: 'The sign-in request may still be saved.',
-    },
-    closeAnyway: 'Close anyway',
     interrupted: {
       title: 'Sign-in was interrupted',
       body: "You may already be signed in. If you're not, try again.",
