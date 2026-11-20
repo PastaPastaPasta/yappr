@@ -191,7 +191,10 @@ export function markReplacedWalletPayments(ownerId: string, reservationIds: read
   if (reservationIds.length === 0) return;
   const ids = new Set(reservationIds);
   const at = Date.now();
-  writePersisted(ownerId, readPersisted(ownerId).map(record => (ids.has(record.reservationId) ? { ...record, replacedBy: { state, at } } : record)));
+  const records = readPersisted(ownerId);
+  // A paid replacement settles the confirmations of the same payment still under way, as a paid QR does.
+  if (state === 'completed') records.filter(record => ids.has(record.reservationId)).forEach(record => settleAttempts(ownerId, record));
+  writePersisted(ownerId, records.map(record => (ids.has(record.reservationId) ? { ...record, replacedBy: { state, at } } : record)));
 }
 
 const replacementOf = (record: PersistedWalletPayment) =>
@@ -379,7 +382,7 @@ async function preparePayment(
         if (result.outcome === 'completed' || result.outcome === 'absent') {
           if (result.outcome === 'completed') settleAttempts(context.ownerId, record);
           // A local payment of this one goes ahead at a fresh nonce: the request stays, to be marked replaced by it.
-          if (result.outcome === 'absent' && !record.replacedBy && !build && !excluded && record.key === context.key) {
+          if (result.outcome === 'absent' && (!record.replacedBy || replacement === 'failed') && !build && !excluded && record.key === context.key) {
             replaceable.push(record.reservationId);
             continue;
           }

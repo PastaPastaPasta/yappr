@@ -538,6 +538,25 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(payments).toBe(1)
   })
 
+  it('settles a local confirmation already waiting when another tab pays the same payment as a local replacement', async () => {
+    const original = await shownThenRetired()
+    const waiting = await beginLocalWalletPayment(OWNER, context.key)
+    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: waiting })).toEqual({ completed: true })
+    const later = await beginLocalWalletPayment(OWNER, context.key)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: later })).toEqual({ completed: false })
+  })
+
+  it('keeps the original QR linked when a refused local replacement is retried locally', async () => {
+    const original = await shownThenRetired()
+    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'failed')
+    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
+    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'completed' } }])
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+  })
+
   it('never takes a payment the user chose to send past as the completion of the new one', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
     if (first.completed) throw new Error('No QR payment')
