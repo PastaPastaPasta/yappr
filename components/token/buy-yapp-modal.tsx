@@ -164,8 +164,29 @@ export function BuyYappModal() {
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
+    const ownerId = user.identityId
+    const screen = state
     setState('processing')
     setError(null)
+    setHeldRequest(null)
+    setMaybePaidKey(null)
+    // A wallet request for this purchase that may have paid stops a second one here too.
+    const shown = await checkPurchaseRequest(ownerId, requestKey, () => tokenService.getBalance(ownerId)).catch((err: unknown) => {
+      logger.error('Failed to check the wallet purchase request:', err)
+      return null
+    })
+    if (shown?.kind === 'paid') {
+      setYappBalance(shown.balance)
+      finishPurchase()
+      return
+    }
+    if (!shown || shown.kind === 'unproven' || shown.kind === 'held') {
+      if (!shown) setError('Could not check your earlier purchase — please try again')
+      if (shown?.kind === 'unproven') setMaybePaidKey(requestKey)
+      if (shown?.kind === 'held') setHeldRequest(shown.request)
+      setState(screen)
+      return
+    }
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
     const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits)
