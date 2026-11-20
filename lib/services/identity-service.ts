@@ -318,23 +318,41 @@ class IdentityService {
     }
   }
 
+  /** The revision of one fresh read whose identity has a key with exactly `data` (and id `keyId` when given), or null. */
+  private async keyRevision(identityId: string, data: Uint8Array, keyId?: number): Promise<number | null> {
+    const sdk = await getEvoSdk();
+    const identity = await sdk.identities.fetch(identityId);
+    const key = identity?.publicKeys.find((candidate) =>
+      (keyId === undefined || candidate.keyId === keyId) && bytesEqual(requireBytes(candidate.data, 'identity key data'), data));
+    return identity && key ? Number(identity.revision ?? 0) : null;
+  }
+
   /**
    * The revision of the first fresh read (a few, paced) whose identity has key `keyId` with exactly `data`,
    * or null when none does.
    */
   private async keyReadBackRevision(identityId: string, keyId: number, data: Uint8Array): Promise<number | null> {
-    const sdk = await getEvoSdk();
     for (let read = 0; read < FRESH_READS; read++) {
       if (read > 0) await sleep(FRESH_READ_PAUSE_MS);
       try {
-        const identity = await sdk.identities.fetch(identityId);
-        const key = identity?.publicKeys.find((candidate) => candidate.keyId === keyId);
-        if (identity && key && bytesEqual(requireBytes(key.data, 'identity key data'), data)) return Number(identity.revision ?? 0);
+        const revision = await this.keyRevision(identityId, data, keyId);
+        if (revision !== null) return revision;
       } catch (error) {
         logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
       }
     }
     return null;
+  }
+
+  /**
+   * For a key confirmed outside the update lock: one fresh identity read, and when it has the key, its
+   * revision is recorded so the next update (any tab) builds on it. Returns whether the read had the key.
+   */
+  async recordKeyRevision(identityId: string, data: Uint8Array): Promise<boolean> {
+    const revision = await this.keyRevision(identityId, data);
+    if (revision === null) return false;
+    noteProvedIdentityRevision(identityId, revision);
+    return true;
   }
 
   /**

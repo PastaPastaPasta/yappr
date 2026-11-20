@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   addEncryptionKey: vi.fn(),
   validateKeySecurityLevel: vi.fn(),
   clearCache: vi.fn(),
+  recordKeyRevision: vi.fn<() => Promise<boolean>>(),
 }))
 
 vi.mock('@/lib/crypto/encryption-key-lookup', () => ({ resolveEncryptionPublicKey: () => mocks.currentKey() }))
@@ -19,6 +20,7 @@ vi.mock('./identity-service', () => ({
     addEncryptionKey: mocks.addEncryptionKey,
     validateKeySecurityLevel: mocks.validateKeySecurityLevel,
     clearCache: mocks.clearCache,
+    recordKeyRevision: mocks.recordKeyRevision,
   },
 }))
 
@@ -73,7 +75,12 @@ describe('messaging key setup', () => {
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(sha256(new TextEncoder().encode('a wallet-made key'))))
     await expect(s.anchorKeyState(draft)).resolves.toBe('other-key')
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
+    mocks.recordKeyRevision.mockResolvedValueOnce(true)
     await expect(s.anchorKeyState(draft)).resolves.toBe('this-key')
+    expect(mocks.recordKeyRevision).toHaveBeenCalledWith(IDENTITY, getPublicKey(EXPECTED))
+    mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
+    mocks.recordKeyRevision.mockResolvedValueOnce(false)
+    await expect(s.anchorKeyState(draft)).resolves.toBe('none')
     mocks.currentKey.mockRejectedValueOnce(new Error('DAPI down'))
     await expect(s.anchorKeyState(draft)).rejects.toThrow('DAPI down')
   })

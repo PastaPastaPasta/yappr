@@ -119,4 +119,23 @@ describe('identityService.addEncryptionKey', () => {
     expect(fetch).toHaveBeenCalledTimes(3)
     expect(floorAtRelease).toBe('4')
   })
+
+  it('records the revision of a later read that confirms a key every locked read missed', async () => {
+    const encryptionKey = new Uint8Array(32).fill(1)
+    const master = { keyId: 0, purpose: 0, securityLevel: 0, keyType: 0, data: new Uint8Array(33) }
+    const before = { revision: 3n, publicKeys: [master], toJSON: () => ({ revision: 3 }) }
+    const after = { revision: 4n, publicKeys: [master, { keyId: 1, purpose: 1, securityLevel: 2, keyType: 0, data: getPublicKey(encryptionKey) }] }
+    fetch.mockResolvedValue(before)
+    update.mockRejectedValue(new Error('Request timed out'))
+    vi.spyOn(identityService, 'validateKeySecurityLevel').mockResolvedValueOnce({ isValid: true, keyId: 0, securityLevel: 0 })
+    const revisionKey = `yappr:identity-revision:${getConfiguredNetwork()}:${IDENTITY}`
+    await expect(identityService.addEncryptionKey(IDENTITY, encryptionKey, 'master-wif')).resolves.toMatchObject({ success: false })
+    expect(fetch).toHaveBeenCalledTimes(6)
+    expect(localStorage.getItem(revisionKey)).toBeNull()
+    await expect(identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))).resolves.toBe(false)
+    expect(localStorage.getItem(revisionKey)).toBeNull()
+    fetch.mockResolvedValue(after)
+    await expect(identityService.recordKeyRevision(IDENTITY, getPublicKey(encryptionKey))).resolves.toBe(true)
+    expect(localStorage.getItem(revisionKey)).toBe('4')
+  })
 })

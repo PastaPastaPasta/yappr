@@ -74,11 +74,15 @@ export type AnchorKeyState = 'this-key' | 'other-key' | 'none'
 /**
  * Where the draft stands against the anchor's current key (a fresh read;
  * throws when it fails, so a network error never reads as "not set up").
+ * "this-key" only once an identity read with the key has recorded its
+ * revision, so a later identity update never reuses its key id; until then
+ * it is "none".
  */
 export async function anchorKeyState(draft: MessagingKeyDraft): Promise<AnchorKeyState> {
   const current = await resolveEncryptionPublicKey(draft.identityId, async () => null)
   if (current === null) return 'none'
-  return bytesEqual(current, draft.publicKey) ? 'this-key' : 'other-key'
+  if (!bytesEqual(current, draft.publicKey)) return 'other-key'
+  return await identityService.recordKeyRevision(draft.identityId, draft.publicKey) ? 'this-key' : 'none'
 }
 
 /**

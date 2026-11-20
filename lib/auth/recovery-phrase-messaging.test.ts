@@ -34,6 +34,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock('@/lib/services/identity-service', () => ({
   identityService: { getIdentity: async () => ({ id: IDENTITY, balance: 0, revision: 0, publicKeys: state.publicKeys }) },
+  noteProvedIdentityRevision: () => {},
 }))
 vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: {} }))
 vi.mock('@/lib/app-connect/config', () => ({ messagingAnchorId: () => ANCHOR }))

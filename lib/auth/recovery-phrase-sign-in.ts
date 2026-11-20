@@ -43,7 +43,7 @@ import { privateKeyToWif } from '@/lib/crypto/wif'
 import { logger } from '@/lib/logger'
 import { sleep } from '@/lib/retry-utils'
 import { dpnsService } from '@/lib/services/dpns-service'
-import { identityService } from '@/lib/services/identity-service'
+import { identityService, noteProvedIdentityRevision } from '@/lib/services/identity-service'
 import {
   addMessagingKeyWithMasterKey,
   anchorKeyState,
@@ -168,7 +168,9 @@ async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey, canc
   if (refused) return state
   // Added, but the current-key read still lags: the identity's own newest anchor key decides.
   const identity = await identityService.getIdentity(draft.identityId, { fresh: true }).catch(() => null)
-  return identity && phraseMessagingState([draft.publicKey], null, identity.publicKeys, draft.anchorId).state === 'current' ? 'this-key' : state
+  if (!identity || phraseMessagingState([draft.publicKey], null, identity.publicKeys, draft.anchorId).state !== 'current') return state
+  noteProvedIdentityRevision(draft.identityId, identity.revision)
+  return 'this-key'
 }
 
 /**
