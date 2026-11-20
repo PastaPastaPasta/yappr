@@ -170,7 +170,12 @@ async function exportCompliance(appId, buildId) {
     if (error.status !== 404) throw error;
   }
   if (current) {
-    field('Declaration', `${current.id} (${current.attributes?.appEncryptionDeclarationState ?? 'attached'})`);
+    const state = current.attributes?.appEncryptionDeclarationState ?? 'unknown';
+    field('Declaration', `${current.id} (${state}, already attached)`);
+    if (state === 'APPROVED') return;
+    // An attached declaration that isn't approved yet leaves compliance to App Store Connect and the owner.
+    out('- The attached declaration is not approved yet, so the build may stay in **Missing Compliance**. In App Store Connect:');
+    for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
     return;
   }
   const all = [];
