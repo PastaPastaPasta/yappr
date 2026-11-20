@@ -80,7 +80,7 @@ import { signerService } from './signer-service';
  *   what it was;
  * - **settled documents** (`deleteWithin` + `deleteSettled`): one moderator
  *   deletes a post or reply alone for its window after it was written (a
- *   day on v17 and v19 since D39, a week on v11–v16; 41116 past that); after that
+ *   day on v17, v19 and v20 since D39, a week on v11–v16; 41116 past that); after that
  *   only the seated team does, together: a member
  *   proposes (`moderatorDeleteSettledDocument`, its own approval) and the
  *   others approve (`moderatorApproveTeamAction`) until the leader and enough
@@ -223,10 +223,13 @@ export interface DocumentRemoval {
  * the record holds it: a post's tags (its one `hashtag` through v15, its
  * `tags` list on v16), a reply's `rootPostId`, and either's `$createdAt` (ms).
  * v19 post/reply/profile records keep both times and `$updatedAtBlockHeight` for recovery.
+ * A v20 reply record also keeps the `replyToReplyId` of a nested reply.
  */
 export interface RemovalKeptFields {
   tags?: string[];
   rootPostId?: string;
+  /** The reply a removed nested reply answered; absent for a direct reply. */
+  replyToReplyId?: string;
   createdAt?: number;
 }
 
@@ -620,11 +623,14 @@ function keptTime(value: unknown): number | undefined {
 export function toKeptFields(keptFields: Readonly<Record<string, unknown>> | undefined): RemovalKeptFields {
   if (!keptFields) return {};
   const kept: RemovalKeptFields = {};
-  const { hashtag, tags, rootPostId, $createdAt: createdAt } = keptFields;
+  const { hashtag, tags, rootPostId, replyToReplyId, $createdAt: createdAt } = keptFields;
   const keptTags = storedTags(tags ?? hashtag);
   if (keptTags && keptTags.length > 0) kept.tags = keptTags;
-  const root = rootPostId === undefined || rootPostId === null ? null : identifierToBase58(rootPostId);
+  const keptId = (value: unknown) => (value === undefined || value === null ? null : identifierToBase58(value));
+  const root = keptId(rootPostId);
   if (root) kept.rootPostId = root;
+  const parent = keptId(replyToReplyId);
+  if (parent) kept.replyToReplyId = parent;
   const at = keptTime(createdAt);
   if (at !== undefined) kept.createdAt = at;
   return kept;

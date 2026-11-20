@@ -34,8 +34,8 @@ describe('release configuration', () => {
     const { expectations } = await import('./manifest.mjs');
     const config = await expectations(process.cwd(), name);
     expect(config.network).toBe('testnet');
-    // Eight group members plus the DashPay profile, DPNS and token-history system contracts.
-    expect(config.pins).toHaveLength(11);
+    // Every group member plus the DashPay profile, DPNS and token-history system contracts.
+    expect(config.pins).toHaveLength(config.env.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').length + 3);
     const snapshot = JSON.parse(readFileSync(new URL('../../lib/contracts/bundled/testnet.json', import.meta.url), 'utf8'));
     expect(config.pins.every(pin => snapshot.contracts[pin.id] && !pin.error && pin.schemaHash)).toBe(true);
     expect(config.env.NEXT_PUBLIC_APP_CONNECT_APP_ID).toBe('8mjmcXmfLyFAX6BkawQbiuWUaNXyN3T7cSKTdTXhpDVU');

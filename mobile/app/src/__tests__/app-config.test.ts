@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import appConfig, { resolveBuildNumber, resolveCommit } from '../../app.config';
+import appConfig, { resolveBuildNumber, resolveCommit, resolveExportComplianceCode } from '../../app.config';
 import { withConfigurationHandler, withFontScaleConfigChange } from '../../plugins/font-scale';
 import pkg from '../../package.json';
 import { VARIANTS, type Variant } from '../variants';
@@ -84,7 +84,12 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
       NSPrivacyTrackingDomains: [],
       NSPrivacyCollectedDataTypes: [],
     });
-    expect(config.ios?.config?.usesNonExemptEncryption).toBe(true);
+  });
+
+  it('never declares the encryption exempt, and declares it non-exempt only with a compliance code', () => {
+    expect(config.ios?.config?.usesNonExemptEncryption).toBeUndefined();
+    expect(config.ios?.infoPlist?.ITSAppUsesNonExemptEncryption).toBeUndefined();
+    expect(config.ios?.infoPlist?.ITSEncryptionExportComplianceCode).toBeUndefined();
   });
 
   it('keeps app data on the device and drops unused Android permissions', () => {
@@ -97,6 +102,63 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
       ]),
     );
     expect(config.plugins).toContain('./plugins/release-hardening');
+  });
+});
+
+describe('YAPPR_IOS_BUNDLE_ID (TestFlight fallback record)', () => {
+  it.each((Object.keys(VARIANTS) as Variant[]).filter((v) => v !== 'testnet'))('refuses an override for %s', (variant) => {
+    expect(() => configFor(variant, { YAPPR_IOS_BUNDLE_ID: 'org.dashfoundation.yappr.beta' })).toThrow(/testnet variant only/);
+  });
+
+  it.each(Object.keys(VARIANTS) as Variant[])('keeps the %s id when unset or empty', (variant) => {
+    for (const env of [{}, { YAPPR_IOS_BUNDLE_ID: '' }] as Record<string, string>[]) {
+      const config = configFor(variant, env);
+      expect(config.ios?.bundleIdentifier).toBe(VARIANTS[variant].applicationId);
+      expect(config.extra?.iosBundleId).toBe(VARIANTS[variant].applicationId);
+    }
+  });
+
+  it('overrides the iOS bundle id only, and records it for the run-time check', () => {
+    const config = configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'org.dashfoundation.yappr.beta' });
+    expect(config.ios?.bundleIdentifier).toBe('org.dashfoundation.yappr.beta');
+    expect(config.extra?.iosBundleId).toBe('org.dashfoundation.yappr.beta');
+    expect(config.extra?.variant).toBe('testnet');
+    expect(config.android?.package).toBe('pr.yap.app.beta');
+    expect(config.scheme).toBe('yappr-beta');
+  });
+
+  it.each(['yappr', 'org..yappr', 'org.yappr.', '.org.yappr', 'org.yappr beta', 'org/yappr.beta', '1org.yappr', 'org.yappr_beta'])(
+    'refuses %p',
+    (id) => {
+      expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: id })).toThrow(/reverse-DNS/);
+    },
+  );
+
+  it("refuses another variant's id, in any case", () => {
+    expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.dev' })).toThrow(/devnet variant's id/);
+    expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'PR.YAP.APP.DEV' })).toThrow(/devnet variant's id/);
+    expect(configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.beta' }).ios?.bundleIdentifier).toBe('pr.yap.app.beta');
+  });
+});
+
+describe('YAPPR_IOS_EXPORT_COMPLIANCE_CODE (ITMS-90592)', () => {
+  it('adds the documentation code next to the release ATS, together with non-exempt encryption', () => {
+    const config = configFor('testnet', { YAPPR_RELEASE: '1', YAPPR_IOS_EXPORT_COMPLIANCE_CODE: 'abc-123' });
+    expect(config.ios?.infoPlist).toEqual({
+      NSAppTransportSecurity: { NSAllowsArbitraryLoads: false },
+      ITSEncryptionExportComplianceCode: 'abc-123',
+    });
+    expect(config.ios?.config?.usesNonExemptEncryption).toBe(true);
+  });
+
+  it('leaves Info.plist alone when unset or empty', () => {
+    expect(resolveExportComplianceCode(undefined)).toBeUndefined();
+    expect(resolveExportComplianceCode('')).toBeUndefined();
+    expect(configFor('testnet').ios?.infoPlist).toBeUndefined();
+  });
+
+  it.each(['a b', 'x;y', '<code>'])('refuses %p', (code) => {
+    expect(() => resolveExportComplianceCode(code)).toThrow(/YAPPR_IOS_EXPORT_COMPLIANCE_CODE/);
   });
 });
 

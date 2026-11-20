@@ -34,6 +34,41 @@ describe('resolveAppConfig', () => {
     expect(() => resolveAppConfig(null, { variant: 'devnet' }, '1.0.0')).toThrow();
   });
 
+  describe('an iOS build signed under YAPPR_IOS_BUNDLE_ID', () => {
+    const extra = { variant: 'testnet', iosBundleId: 'org.dashfoundation.yappr.beta' };
+
+    it('takes the variant from the bundle that was built for that id', () => {
+      expect(resolveAppConfig('org.dashfoundation.yappr.beta', extra, '1.0.0')).toMatchObject({
+        variant: 'testnet',
+        network: 'testnet',
+        scheme: 'yappr-beta',
+        webBaseUrl: 'https://yap.pr',
+        applicationId: 'org.dashfoundation.yappr.beta',
+      });
+    });
+
+    it('refuses a bundle built for no override or another one', () => {
+      expect(() => resolveAppConfig('org.dashfoundation.yappr.beta', { variant: 'testnet' }, '1.0.0')).toThrow(
+        /Unknown application id/,
+      );
+      expect(() =>
+        resolveAppConfig('org.dashfoundation.yappr.beta', { ...extra, iosBundleId: 'org.example.other' }, '1.0.0'),
+      ).toThrow(/Unknown application id/);
+    });
+
+    it('is the testnet variant only, so a bundle built for another variant is refused', () => {
+      expect(() =>
+        resolveAppConfig('org.dashfoundation.yappr.beta', { ...extra, variant: 'devnet' }, '1.0.0'),
+      ).toThrow(/Rebuild with APP_VARIANT=testnet/);
+    });
+
+    it('still lets a variant id decide its own variant', () => {
+      expect(() => resolveAppConfig('pr.yap.app.dev', { ...extra, iosBundleId: 'pr.yap.app.dev' }, '1.0.0')).toThrow(
+        /Rebuild with APP_VARIANT=devnet/,
+      );
+    });
+  });
+
   it('agrees with app.config.ts for the default (devnet) build', () => {
     expect(config.variant).toBe('devnet');
     expect(config.network).toBe('devnet');

@@ -17,9 +17,9 @@
  * material is created and .devnet-locks.local already covers recovery.
  *
  * Run:
- *   NETWORK=devnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
+ *   NETWORK=devnet|testnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
  * then (NETWORK is process-local — repeat it, or provisioning targets testnet):
- *   NETWORK=devnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
+ *   NETWORK=devnet|testnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
  *     --funding-outpoint <printedTxid>:0 [--chain-lock <height>]
  */
 import { readFileSync } from 'node:fs';

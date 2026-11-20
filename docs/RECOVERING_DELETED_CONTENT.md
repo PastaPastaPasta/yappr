@@ -1,7 +1,7 @@
 # Recovering moderator-deleted content
 
 The read-only CLI recovers a verified copy of content removed by a moderator
-from social v17/v19, blog v9/v11 and storefront v10/v12 contracts. It never signs,
+from social v17/v19/v20, blog v9/v11 and storefront v10/v12 contracts. It never signs,
 broadcasts, spends DASH, or restores a document on-chain. No secrets are needed.
 The official app's recovery UI is outside this tool. The CLI source is
 MIT-licensed; see [the scoped license](../scripts/recovery/LICENSE).
@@ -91,6 +91,10 @@ only when the document type requires it. The height names the document's last
 signed transition (creation for immutable types). The signed transition supplies
 the content and `$revision` (implicitly 1 on create); `$contractVersion` is found
 by trying versions until the serialized document matches the record's hash.
+Social v20 also keeps a nested reply's `replyToReplyId` ([SOCIAL_V20.md](SOCIAL_V20.md)).
+That is content, which the signed transition supplies and the hash commits to:
+the kept copy lets a reader place the removed reply without recovering it, and
+the tool does not use it.
 
 The unchanged registered social v17, blog v9 and storefront v10 files keep
 their historical behavior. The new cuts were registered on testnet on 2026-11-12
@@ -99,7 +103,7 @@ regressions rebuild captured post, blog, blogComment and storeItem transitions
 under the new schemas using synthetic kept system values, and reject wrong
 heights or times. These tests do not claim new live registration evidence.
 The signed replace transition supplies its revision. Transfer and price-update
-transitions are not supported; no moderated v17 or v19 content type is transferable. No edited-then-deleted
+transitions are not supported; no moderated v17, v19 or v20 content type is transferable. No edited-then-deleted
 live fixture was available for this read-only validation; replacement handling
 has an offline synthetic regression test.
 

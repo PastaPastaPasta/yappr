@@ -1,0 +1,380 @@
+name: iOS TestFlight
+
+# Builds the Expo app for one variant, signs it with the Dash Foundation's Apple
+# Distribution certificate, checks who signed it, and (unless dry_run) uploads it
+# to TestFlight and adds it to the internal group. mobile/RELEASE.md, TestFlight.
+# The `testflight` environment holds the credentials; restrict it to protected
+# branches with a required reviewer.
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'APP_VARIANT'
+        type: choice
+        options: [testnet, devnet, staging-testnet]
+        default: testnet
+      build_number:
+        description: 'CFBundleVersion; empty = this run number'
+        type: string
+        required: false
+      dry_run:
+        description: 'Build, sign, export and run the signing gate, but do not upload'
+        type: boolean
+        default: true
+      what_to_test:
+        description: "TestFlight 'What to Test' notes"
+        type: string
+        required: false
+        default: 'New beta build.'
+
+run-name: >-
+  iOS TestFlight ${{ inputs.variant }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-${{ inputs.variant }}
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Build, sign and upload
+    runs-on: macos-26
+    timeout-minutes: 150
+    environment: testflight
+    defaults:
+      run:
+        shell: bash
+        working-directory: mobile/app
+    env:
+      APP_VARIANT: ${{ inputs.variant }}
+      YAPPR_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+      # The override is for the testnet (Yappr Beta) record only; other variants keep their ids.
+      YAPPR_IOS_BUNDLE_ID: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_BUNDLE_ID || '' }}
+      # The Yappr Beta record's export compliance documentation code (ITMS-90592); testnet only.
+      YAPPR_IOS_EXPORT_COMPLIANCE_CODE: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_EXPORT_COMPLIANCE_CODE || '' }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPLE_EXPECTED_ORG_NAME: ${{ vars.APPLE_EXPECTED_ORG_NAME }}
+      YAPPR_COMMIT: ${{ github.sha }}
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+    steps:
+      # Presence only: the secret values reach the steps below that use them, after npm ci.
+      - name: Check configuration
+        working-directory: .
+        env:
+          HAS_APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID != '' }}
+          HAS_APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID != '' }}
+          HAS_APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 != '' }}
+          HAS_APPLE_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 != '' }}
+          HAS_APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD != '' }}
+          # Each variant is its own app record and needs its own App Store profile.
+          HAS_IOS_APPSTORE_PROFILE_BASE64: ${{ ((inputs.variant == 'testnet' && secrets.IOS_APPSTORE_PROFILE_BASE64) || (inputs.variant == 'devnet' && secrets.IOS_APPSTORE_PROFILE_BASE64_DEVNET) || (inputs.variant == 'staging-testnet' && secrets.IOS_APPSTORE_PROFILE_BASE64_STAGING_TESTNET) || '') != '' }}
+          # The denylist is read from a secret only: step headers print variables unmasked.
+          DENYLIST_ONLY_AS_VARIABLE: ${{ vars.SIGNING_NAME_DENYLIST != '' && secrets.SIGNING_NAME_DENYLIST == '' }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ "$DENYLIST_ONLY_AS_VARIABLE" == 'true' ]]; then
+            echo '::error::SIGNING_NAME_DENYLIST is set as a variable, which run logs show unmasked; store it as a testflight environment secret instead'
+            missing=1
+          fi
+          for name in APP_STORE_CONNECT_API_KEY_ID APP_STORE_CONNECT_API_ISSUER_ID \
+            APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 APPLE_DISTRIBUTION_CERTIFICATE_BASE64 \
+            APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD IOS_APPSTORE_PROFILE_BASE64; do
+            has="HAS_$name"
+            if [[ "${!has}" != 'true' ]]; then
+              if [[ "$name" == IOS_APPSTORE_PROFILE_BASE64 && "$APP_VARIANT" != testnet ]]; then
+              name="IOS_APPSTORE_PROFILE_BASE64_$(printf '%s' "$APP_VARIANT" | tr '[:lower:]-' '[:upper:]_')"
+            fi
+            echo "::error::Missing secret $name in the testflight environment"
+              missing=1
+            fi
+          done
+          for name in APPLE_TEAM_ID APPLE_EXPECTED_ORG_NAME; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing variable $name in the testflight environment"
+              missing=1
+            fi
+          done
+          if [[ -n "$APPLE_TEAM_ID" && ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APPLE_TEAM_ID must be a 10-character Apple team id"
+            missing=1
+          fi
+          if [[ ! "$YAPPR_BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]]; then
+            echo "::error::build_number must be a positive integer"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/engine/package-lock.json
+            mobile/app/package-lock.json
+
+      - name: Plan the build
+        id: plan
+        env:
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
+        run: |
+          set -euo pipefail
+          bundle_id="$(node -p "require('./src/variants.ts').resolveIosBundleId(process.env.APP_VARIANT, process.env.YAPPR_IOS_BUNDLE_ID)")"
+          # Screened like every other value before it reaches the summary.
+          BUNDLE_ID="$bundle_id" node -e '
+            const names = (process.env.SIGNING_NAME_DENYLIST || "").split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+            if (names.some((n) => process.env.BUNDLE_ID.toLowerCase().includes(n))) {
+              console.log("::error::The bundle id contains a denylisted name");
+              process.exit(1);
+            }'
+          version="$(node -p "require('./package.json').version")"
+          {
+            echo "bundle_id=$bundle_id"
+            echo "version=$version"
+            echo "build=$YAPPR_BUILD_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Yappr iOS ${APP_VARIANT}${{ inputs.dry_run && ' (dry run, no upload)' || '' }}"
+            echo
+            echo "- Bundle id: \`$bundle_id\`"
+            echo "- Version: \`$version\` (build \`$YAPPR_BUILD_NUMBER\`)"
+            echo "- Commit: \`$GITHUB_SHA\` on \`$GITHUB_REF_NAME\`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The engine bundle (built at prebuild) needs the root and engine dependencies.
+      - name: Install dependencies
+        run: |
+          npm ci --prefix ../..
+          npm ci --prefix ../engine
+          npm ci
+
+      - name: Install signing certificate and profile
+        id: signing
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          PROFILE_BASE64: ${{ (inputs.variant == 'testnet' && secrets.IOS_APPSTORE_PROFILE_BASE64) || (inputs.variant == 'devnet' && secrets.IOS_APPSTORE_PROFILE_BASE64_DEVNET) || (inputs.variant == 'staging-testnet' && secrets.IOS_APPSTORE_PROFILE_BASE64_STAGING_TESTNET) || '' }}
+        run: |
+          set -euo pipefail
+          signing="$RUNNER_TEMP/signing"
+          mkdir -m 700 "$signing"
+          keychain="$signing/app-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          echo "::add-mask::$keychain_password"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$signing/distribution.p12"
+          printf '%s' "$PROFILE_BASE64" | base64 --decode > "$signing/profile.mobileprovision"
+          security cms -D -i "$signing/profile.mobileprovision" -o "$signing/profile.plist"
+
+          security list-keychains -d user > "$signing/original-keychains.txt"
+          original_default="$(security default-keychain -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
+          {
+            echo "SIGNING_DIR=$signing"
+            echo "SIGNING_KEYCHAIN_PATH=$keychain"
+            echo "ORIGINAL_DEFAULT_KEYCHAIN=$original_default"
+          } >> "$GITHUB_ENV"
+          existing=()
+          while IFS= read -r line; do
+            line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
+            [[ -n "$line" ]] && existing+=("$line")
+          done < "$signing/original-keychains.txt"
+          [[ ${#existing[@]} -gt 0 ]] || existing=("$HOME/Library/Keychains/login.keychain-db")
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing/distribution.p12" -P "$CERTIFICATE_PASSWORD" -f pkcs12 -t cert \
+            -T /usr/bin/codesign -T /usr/bin/security -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security default-keychain -d user -s "$keychain"
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+          rm -f "$signing/distribution.p12"
+
+          # The one Apple Distribution identity in the new keychain, as PEM.
+          identities="$(security find-identity -v -p codesigning "$keychain" | grep -E '^ +[0-9]+\) [0-9A-F]{40} "Apple Distribution: ' || true)"
+          if [[ "$(printf '%s' "$identities" | grep -c . || true)" != 1 ]]; then
+            echo "::error::Expected exactly one Apple Distribution identity in the certificate, found: $(printf '%s' "$identities" | grep -c . || true)"
+            exit 1
+          fi
+          sha1="$(printf '%s' "$identities" | awk '{print $2}')"
+          security find-certificate -a -Z -p "$keychain" | awk -v want="$sha1" '
+            /^SHA-1 hash:/ { keep = ($3 == want) }
+            keep && /-----BEGIN CERTIFICATE-----/ { printing = 1 }
+            printing { print }
+            /-----END CERTIFICATE-----/ { printing = 0 }' > "$signing/distribution.pem"
+          openssl x509 -in "$signing/distribution.pem" -noout >/dev/null
+
+          uuid="$(plutil -extract UUID raw -o - "$signing/profile.plist")"
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$signing/profile.mobileprovision" "$dir/$uuid.mobileprovision"
+            echo "$dir/$uuid.mobileprovision" >> "$signing/installed-profiles.txt"
+          done
+          {
+            echo "profile_uuid=$uuid"
+            echo "cert_serial=$(openssl x509 -in "$signing/distribution.pem" -noout -serial | sed 's/^serial=//')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 'Signing gate: certificate and profile'
+        env:
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
+        run: |
+          set -euo pipefail
+          rc=0
+          scripts/ios-signing-gate.sh cert "$SIGNING_DIR/distribution.pem" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          scripts/ios-signing-gate.sh profile "$SIGNING_DIR/profile.plist" "$BUNDLE_ID" | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          exit "$rc"
+
+      - name: Build signed archive
+        env:
+          YAPPR_IOS_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          YAPPR_IOS_PROFILE_SPECIFIER: ${{ steps.signing.outputs.profile_uuid }}
+        run: scripts/release-ios.sh archive
+
+      - name: 'Signing gate: archive'
+        id: archive
+        env:
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          BUILD: ${{ steps.plan.outputs.build }}
+        run: |
+          set -euo pipefail
+          archive="$(find build/release -maxdepth 1 -name '*.xcarchive' -print -quit)"
+          app="$(find "$archive/Products/Applications" -maxdepth 1 -name '*.app' -print -quit)"
+          echo "path=$PWD/$archive" >> "$GITHUB_OUTPUT"
+          scripts/ios-signing-gate.sh app "$app/Info.plist" "$BUNDLE_ID" "$VERSION" "$BUILD" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Export .ipa
+        id: export
+        env:
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: |
+          set -euo pipefail
+          options="$RUNNER_TEMP/ExportOptions.plist"
+          plutil -create xml1 "$options"
+          plutil -insert method -string app-store-connect "$options"
+          plutil -insert destination -string export "$options"
+          plutil -insert teamID -string "$APPLE_TEAM_ID" "$options"
+          plutil -insert signingStyle -string manual "$options"
+          plutil -insert signingCertificate -string 'Apple Distribution' "$options"
+          plutil -insert manageAppVersionAndBuildNumber -bool NO "$options"
+          plutil -insert uploadSymbols -bool YES "$options"
+          plutil -insert provisioningProfiles -dictionary "$options"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_UUID" "$options"
+          export_dir="$RUNNER_TEMP/export"
+          xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportPath "$export_dir" \
+            -exportOptionsPlist "$options" > build/release/export.log 2>&1 || { tail -n 40 build/release/export.log; exit 1; }
+          ipa="$(find "$export_dir" -maxdepth 1 -name '*.ipa' -print -quit)"
+          [[ -n "$ipa" ]] || { echo '::error::xcodebuild exported no .ipa'; exit 1; }
+          echo "ipa=$ipa" >> "$GITHUB_OUTPUT"
+
+      - name: 'Signing gate: exported .ipa'
+        env:
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          BUILD: ${{ steps.plan.outputs.build }}
+          PROFILE_UUID: ${{ steps.signing.outputs.profile_uuid }}
+          IPA: ${{ steps.export.outputs.ipa }}
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
+        run: |
+          set -euo pipefail
+          scripts/ios-signing-gate.sh ipa "$IPA" "$BUNDLE_ID" "$VERSION" "$BUILD" "$PROFILE_UUID" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install App Store Connect API key
+        env:
+          API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$API_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo '::error::APP_STORE_CONNECT_API_KEY_ID is not a 10-character key id'; exit 1; }
+          keys="$RUNNER_TEMP/private_keys"
+          mkdir -m 700 "$keys"
+          printf '%s' "$API_PRIVATE_KEY_BASE64" | base64 --decode > "$keys/AuthKey_$API_KEY_ID.p8"
+          chmod 600 "$keys/AuthKey_$API_KEY_ID.p8"
+          openssl pkey -in "$keys/AuthKey_$API_KEY_ID.p8" -noout 2>/dev/null ||
+            { echo '::error::APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 is not a .p8 private key'; exit 1; }
+          echo "ASC_KEYS_DIR=$keys" >> "$GITHUB_ENV"
+
+      - name: 'Signing gate: App Store Connect metadata (read-only)'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          CERT_SERIAL: ${{ steps.signing.outputs.cert_serial }}
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
+        run: |
+          set -euo pipefail
+          ASC_KEY_PATH="$ASC_KEYS_DIR/AuthKey_$ASC_KEY_ID.p8" node scripts/asc-testflight.mjs preflight | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload to TestFlight
+        if: ${{ !inputs.dry_run }}
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          IPA: ${{ steps.export.outputs.ipa }}
+        run: |
+          set -euo pipefail
+          API_PRIVATE_KEYS_DIR="$ASC_KEYS_DIR" xcrun altool --upload-app --type ios --file "$IPA" \
+            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER_ID" --output-format normal
+          echo '- Uploaded to App Store Connect.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Process, compliance and internal group
+        if: ${{ !inputs.dry_run }}
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          BUNDLE_ID: ${{ steps.plan.outputs.bundle_id }}
+          APP_VERSION: ${{ steps.plan.outputs.version }}
+          BUILD_NUMBER: ${{ steps.plan.outputs.build }}
+          WHAT_TO_TEST: ${{ inputs.what_to_test }}
+          BETA_GROUP: Yappr Internal
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
+        run: |
+          set -euo pipefail
+          ASC_KEY_PATH="$ASC_KEYS_DIR/AuthKey_$ASC_KEY_ID.p8" node scripts/asc-testflight.mjs post | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ios-testflight-${{ inputs.variant }}-${{ env.YAPPR_BUILD_NUMBER }}-log
+          path: mobile/app/build/release/*.log
+          if-no-files-found: ignore
+
+      - name: Remove signing material
+        if: always()
+        working-directory: .
+        run: |
+          set -uo pipefail
+          if [[ -n "${ORIGINAL_DEFAULT_KEYCHAIN:-}" ]]; then
+            security default-keychain -d user -s "$ORIGINAL_DEFAULT_KEYCHAIN" || true
+          fi
+          SIGNING_DIR="$RUNNER_TEMP/signing"
+          if [[ -f "$SIGNING_DIR/original-keychains.txt" ]]; then
+            original=()
+            while IFS= read -r line; do
+              line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
+              [[ -n "$line" ]] && original+=("$line")
+            done < "$SIGNING_DIR/original-keychains.txt"
+            (( ${#original[@]} > 0 )) && security list-keychains -d user -s "${original[@]}" || true
+          fi
+          if [[ -n "${SIGNING_KEYCHAIN_PATH:-}" && -f "$SIGNING_KEYCHAIN_PATH" ]]; then
+            security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true
+          fi
+          if [[ -f "$SIGNING_DIR/installed-profiles.txt" ]]; then
+            while IFS= read -r profile; do rm -f "$profile"; done < "$SIGNING_DIR/installed-profiles.txt"
+          fi
+          rm -rf "$RUNNER_TEMP/signing" "$RUNNER_TEMP/private_keys" "$RUNNER_TEMP/ExportOptions.plist"

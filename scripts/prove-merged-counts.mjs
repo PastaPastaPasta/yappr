@@ -83,8 +83,9 @@
  *          their window (ol-x*)
  *   kf-*   removal records keep the post's hashtag and $createdAt and the
  *          reply's rootPostId and $createdAt (D4; v19 also keeps $updatedAt and
- *          $updatedAtBlockHeight), exactly the type's deleteKeepsFields, read
- *          from the deletion and from documentRemovals
+ *          $updatedAtBlockHeight; v20 the replyToReplyId of a nested reply,
+ *          kf-2n), exactly the type's deleteKeepsFields the document holds,
+ *          read from the deletion and from documentRemovals
  *   tm-0*  before a team is seated: past the window even the interim owner's
  *          delete is refused (41116), and a team proposal is 41205
  *
@@ -1382,15 +1383,20 @@ async function main() {
     const settledFrom = Date.now();
     const Pk = await mustCreate('Pk (D, #kept)', D, 'post', { content: 'kept fields', ...shapes.tags(['kept']) });
     const Rk = await mustCreate('Rk (D replies to SR)', D, 'reply', { content: 'kept reply', rootPostId: id(SR), parentOwnerId: id(D.ownerId) });
-    const [pkDoc, rkDoc] = await Promise.all([requireDocument(contractId, 'post', Pk), requireDocument(contractId, 'reply', Rk)]);
+    // Rn answers Rk: a nested reply, whose record names the reply it answered where the cut keeps it (v20).
+    const Rn = await mustCreate('Rn (D replies to its Rk)', D, 'reply', { content: 'kept nested reply', rootPostId: id(SR), rootOwnerId: id(D.ownerId), replyToReplyId: id(Rk), parentOwnerId: id(D.ownerId) });
+    const [pkDoc, rkDoc, rnDoc] = await Promise.all([requireDocument(contractId, 'post', Pk), requireDocument(contractId, 'reply', Rk), requireDocument(contractId, 'reply', Rn)]);
     const [pkAt, rkAt] = [createdAtOf(pkDoc), createdAtOf(rkDoc)];
-    // A record keeps exactly what its type's deleteKeepsFields declares (two fields through v17; v19 adds
-    // $updatedAt and $updatedAtBlockHeight), each kept system value as the fetched document holds it.
+    // A record keeps exactly the fields of its type's deleteKeepsFields that the document holds (two fields
+    // through v17; v19 adds $updatedAt and $updatedAtBlockHeight; v20 a nested reply's replyToReplyId, which a
+    // direct reply does not hold), each kept system value as the fetched document holds it.
     const declaredKeeps = (docType) => source.documentSchemas[docType].moderatorAbilities.deleteKeepsFields;
+    const keepsReplyParent = declaredKeeps('reply').includes('replyToReplyId');
     const keptAsDeclared = (docType, kept, doc) => {
       const stored = (field) => doc[field.slice(1)] ?? doc[field] ?? doc.toObject?.()[field];
-      return same(Object.keys(kept).sort(), [...declaredKeeps(docType)].sort())
-        && declaredKeeps(docType).filter((field) => field.startsWith('$')).every((field) => kept[field] !== undefined && String(kept[field]) === String(stored(field)));
+      const held = declaredKeeps(docType).filter((field) => field.startsWith('$') || (stored(field) ?? null) !== null);
+      return same(Object.keys(kept).sort(), [...held].sort())
+        && held.filter((field) => field.startsWith('$')).every((field) => kept[field] !== undefined && String(kept[field]) === String(stored(field)));
     };
     const keptJson = (kept) => JSON.stringify(kept, (k, v) => (typeof v === 'bigint' ? String(v) : v));
     const moderatorA = { identity: await sdk.identities.fetch(A.ownerId), signer: A.signer };
@@ -1399,10 +1405,17 @@ async function main() {
       check(`kf-1 the interim owner removes D's post Pk within the window: the record keeps ${tagsNamed(shapes, ['kept'])} and nothing but the declared ${declaredKeeps('post').join(', ')}, with Pk's own values`,
         same(shapes.storedTags(kept), ['kept']) && Number(kept.$createdAt) === pkAt && keptAsDeclared('post', kept, pkDoc), keptJson(kept));
     }, { idempotent: false });
+    // Rn goes first: it refers to Rk, which is removed next.
+    await attempt('kf-2n', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'reply', documentId: Rn, reason: { text: 'kf-2n proof' } }), (record) => {
+      const kept = record?.keptFields ?? {};
+      const parent = kept.replyToReplyId === undefined ? undefined : toBase58(kept.replyToReplyId);
+      check(`kf-2n the interim owner removes D's nested reply Rn: the record keeps rootPostId SR and ${keepsReplyParent ? 'replyToReplyId Rk, the reply it answered' : 'no replyToReplyId (the cut does not declare it)'}`,
+        toBase58(kept.rootPostId) === SR && parent === (keepsReplyParent ? Rk : undefined) && keptAsDeclared('reply', kept, rnDoc), keptJson({ ...kept, rootPostId: toBase58(kept.rootPostId), ...(parent === undefined ? {} : { replyToReplyId: parent }) }));
+    }, { idempotent: false });
     await attempt('kf-2', () => sdk.contracts.moderatorDeleteDocument({ ...moderatorA, contractId, documentTypeName: 'reply', documentId: Rk, reason: { text: 'kf-2 proof' } }), (record) => {
       const kept = record?.keptFields ?? {};
-      check(`kf-2 the same for D's reply Rk: the record keeps rootPostId SR and nothing but the declared ${declaredKeeps('reply').join(', ')}, with Rk's own values`,
-        toBase58(kept.rootPostId) === SR && Number(kept.$createdAt) === rkAt && keptAsDeclared('reply', kept, rkDoc), keptJson({ ...kept, rootPostId: toBase58(kept.rootPostId) }));
+      check(`kf-2 the same for D's direct reply Rk: the record keeps rootPostId SR and nothing but the declared ${declaredKeeps('reply').join(', ')} it holds (no replyToReplyId), with Rk's own values`,
+        toBase58(kept.rootPostId) === SR && Number(kept.$createdAt) === rkAt && !('replyToReplyId' in kept) && keptAsDeclared('reply', kept, rkDoc), keptJson({ ...kept, rootPostId: toBase58(kept.rootPostId) }));
     }, { idempotent: false });
     await attempt('kf-3', () => sdk.contracts.documentRemovals({ contractId, documentTypeName: 'post', documentIds: [Pk] }), (page) => {
       const kept = page.removals[0]?.keptFields ?? {};

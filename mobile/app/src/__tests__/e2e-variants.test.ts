@@ -34,6 +34,13 @@ describe('mobile/e2e/run.sh variants', () => {
     expect(table[variant]).toEqual({ applicationId: entry.applicationId, scheme: entry.scheme });
   });
 
+  it('launches an iOS testnet build under YAPPR_IOS_BUNDLE_ID, and nothing else under it', () => {
+    const script = fs.readFileSync(RUN_SH, 'utf8');
+    expect(script).toContain(
+      'if [ "$platform" = ios ] && [ "$variant" = testnet ] && [ -n "${YAPPR_IOS_BUNDLE_ID:-}" ]; then\n  app_id="$YAPPR_IOS_BUNDLE_ID"\nfi',
+    );
+  });
+
   it('lists every variant in its usage text and its error message', () => {
     const script = fs.readFileSync(RUN_SH, 'utf8');
     const names = Object.keys(VARIANTS).sort();

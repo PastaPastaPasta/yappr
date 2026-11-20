@@ -5,7 +5,7 @@ import storefront from '@/contracts/yappr-storefront-contract.json'
 
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules() })
 describe('schema field limits', () => {
-  it.each(['v17', 'v19'])('follows the configured social topology %s', async (topology) => {
+  it.each(['v17', 'v19', 'v20'])('follows the configured social topology %s', async (topology) => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v16')
     vi.resetModules()
     const older = await import('./field-limits')

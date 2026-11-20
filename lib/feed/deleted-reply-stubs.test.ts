@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Reply } from '@/lib/types'
 
-const shape = vi.hoisted(() => ({ liveThreads: false, outlive: true }))
+const shape = vi.hoisted(() => ({ liveThreads: false, outlive: true, keepParent: false }))
 vi.mock('@/lib/contract-topology', async (load) => ({
   ...await load<object>(),
   replyThreadsCarryLiveMarker: () => shape.liveThreads,
   repliesOutliveTheirParent: () => shape.outlive,
+  removedRepliesKeepTheirParent: () => shape.keepParent,
 }))
 // v17: the thread hides a tombstone unless a live reply nests under it.
 vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v17')
@@ -148,6 +149,93 @@ describe('withMissingReplyParents', () => {
   beforeEach(() => {
     shape.liveThreads = false
     shape.outlive = true
+    shape.keepParent = false
+  })
+
+  describe('where a removal record keeps the reply a removed reply answered (v20)', () => {
+    // A root by someone else, so none of A's replies are hoisted into an author thread.
+    const root = { id: 'ROOT', author: { ...author, id: 'B' }, content: 'root', createdAt: new Date(0), likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 }
+    const shown = (threads: ReturnType<typeof assembleFlatThread>): unknown[] => threads.map((t) => [t.content.id, shown(t.nestedReplies)])
+    const removed = (kept: Record<string, string>, absent = Object.keys(kept)) => ({
+      getMany: vi.fn(async (ids: string[]) => ids.flatMap((id) => stored.get(id) ?? [])),
+      provenAbsent: vi.fn(async (ids: string[]) => new Set(ids.filter((id) => absent.includes(id)))),
+      removedReplyParents: vi.fn(async (ids: string[]) => new Map(ids.flatMap((id) => (kept[id] ? [[id, kept[id]] as [string, string]] : [])))),
+    })
+
+    beforeEach(() => {
+      shape.liveThreads = true
+      shape.keepParent = true
+    })
+
+    it('puts the hole back under its own parent, with the replies under it', async () => {
+      const r = removed({ gone: 'top' })
+      const replies = await withMissingReplyParents([reply('top', undefined, 5), reply('c3', 'gone', 12)], r)
+      expect(r.removedReplyParents.mock.calls).toEqual([[['gone']]])
+      expect(replies.find((x) => x.id === 'gone')).toMatchObject({ deletedStub: true, keptParentId: 'top' })
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['top', [['gone', [['c3', []]]]]]])
+    })
+
+    it('resolves a parent that is missing too: another removed reply, then a tombstone, each read and proved once', async () => {
+      const r = removed({ gone2: 'gone1', gone1: 'tomb2' })
+      const replies = await withMissingReplyParents([reply('leaf', 'gone2', 20)], r)
+      expect(r.provenAbsent.mock.calls).toEqual([[['gone2']], [['gone1']]])
+      expect(r.removedReplyParents.mock.calls).toEqual([[['gone2']], [['gone1']]])
+      expect(r.getMany.mock.calls).toEqual([[['gone2']], [['gone1']], [['tomb2']], [['tomb1']]])
+      // The whole chain is linked: tomb1 > tomb2 > gone1 > gone2 > leaf. A placeholder cannot be opened,
+      // so the depth cap never ends a branch on one: the replies below it render.
+      expect(Object.fromEntries(replies.map((x) => [x.id, x.replyToReplyId ?? x.keptParentId]))).toEqual({ tomb1: undefined, tomb2: 'tomb1', gone1: 'tomb2', gone2: 'gone1', leaf: 'gone2' })
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['tomb1', [['tomb2', [['gone1', [['gone2', [['leaf', []]]]]]]]]]])
+    })
+
+    it('keeps a hole at the top while the live reply its record names is on a later page, then nests it there', async () => {
+      const r = removed({ gone: 'live' })
+      const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
+      expect([replies.find((x) => x.id === 'gone')?.replyToReplyId, replies.find((x) => x.id === 'gone')?.keptParentId]).toEqual([undefined, 'live'])
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['gone', [['c3', []]]]])
+      // A continuation brings the parent without resending the stub or its reply.
+      expect(shown(assembleFlatThread(root, [...replies, reply('live', undefined, 3)]))).toEqual([['live', [['gone', [['c3', []]]]]]])
+      // On the parent's own page, the parent is the focus rather than a listed reply.
+      const focus = { ...root, id: 'live', parentId: 'ROOT', replyToReplyId: undefined, rootPostId: 'ROOT' }
+      expect(shown(assembleFlatThread(focus as unknown as typeof root, replies))).toEqual([['gone', [['c3', []]]]])
+      const later = await withMissingReplyParents([reply('c3', 'gone', 12)], r, new Set(['live']))
+      expect(later.find((x) => x.id === 'gone')?.keptParentId).toBe('live')
+    })
+
+    it('keeps a hole at the top while its kept parent is loaded but not yet connected, and renders a branch through it past the cap', async () => {
+      const r = removed({ gone: 'live' })
+      const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
+      // live arrives on a later page, but its own parent x does not yet: gone and c3 stay visible at the top.
+      expect(shown(assembleFlatThread(root, [...replies, reply('live', 'x', 3)]))).toEqual([['gone', [['c3', []]]]])
+      // With x loaded, x > live > gone > c3: gone sits at the cap, and the branch through it still renders.
+      const linked = assembleFlatThread(root, [...replies, reply('live', 'x', 3), reply('x', undefined, 2)])
+      expect(shown(linked)).toEqual([['x', [['live', [['gone', [['c3', []]]]]]]]])
+    })
+
+    it('keeps a newly found hole visible when its kept parent is already loaded but not yet connected', async () => {
+      // live sits on this page under x, which a later page brings; c3 reveals the removed gone under live.
+      const r = removed({ gone: 'live' })
+      const replies = await withMissingReplyParents([reply('live', 'x', 3), reply('c3', 'gone', 12)], r, new Set())
+      expect(replies.find((x) => x.id === 'gone')).toMatchObject({ keptParentId: 'live' })
+      expect(replies.find((x) => x.id === 'gone')?.replyToReplyId).toBeUndefined()
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['gone', [['c3', []]]]])
+      expect(shown(assembleFlatThread(root, [...replies, reply('x', undefined, 2)]))).toEqual([['x', [['live', [['gone', [['c3', []]]]]]]]])
+    })
+
+    it('leaves a hole at the top when its record names no parent: a direct reply, or a reply with no record', async () => {
+      const r = removed({}, ['gone'])
+      const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
+      expect(r.provenAbsent).toHaveBeenCalledTimes(1)
+      expect(replies.find((x) => x.id === 'gone')?.replyToReplyId).toBeUndefined()
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['gone', [['c3', []]]]])
+    })
+
+    it('reads no record on a cut whose reply records keep no parent', async () => {
+      shape.keepParent = false
+      const r = removed({ gone: 'top' })
+      const replies = await withMissingReplyParents([reply('top', undefined, 5), reply('c3', 'gone', 12)], r)
+      expect(r.removedReplyParents).not.toHaveBeenCalled()
+      expect(shown(assembleFlatThread(root, replies))).toEqual([['top', []], ['gone', [['c3', []]]]])
+    })
   })
 
   it('reads tombstoned parents by id, a chain level by level, and stubs only the parents proved gone, where repliesOf is live-keyed', async () => {

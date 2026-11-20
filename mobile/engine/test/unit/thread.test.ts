@@ -47,6 +47,38 @@ describe('flat thread assembly (use-post-detail.ts port)', () => {
   })
 })
 
+describe('removed-reply placeholders (v20)', () => {
+  const stub = (id: string, under?: string, kept?: string): Reply => ({
+    ...reply(id, '', under), content: '', deletedStub: true, ...(kept ? { keptParentId: kept } : {}),
+  })
+
+  it('nests a placeholder held at the top under its kept parent once a later page brings it, or it is the focus', () => {
+    const page = [stub('gone', undefined, 'a'), reply('c', 'carol', 'gone')]
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, page))).toEqual(['gone@0', 'c@1'])
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, [...page, reply('a', 'bob')])))
+      .toEqual(['a@0', 'gone@1', 'c@1'])
+    expect(rows(assembleFlatThread({ id: 'a', authorId: 'bob', isReply: true }, page))).toEqual(['gone@0', 'c@1'])
+  })
+
+  it('never ends a branch at the depth cap on a placeholder, which cannot be opened', () => {
+    const chain = [reply('a', 'bob'), reply('b', 'carol', 'a'), stub('gone', 'b'), reply('c', 'dan', 'gone'), reply('d', 'erin', 'c')]
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, chain))).toEqual(['a@0', 'b@1', 'gone@1', 'c@1+1'])
+  })
+
+  it('renders a branch through a placeholder past the cap, leaving only listed branches behind Continue thread', () => {
+    const chain = [reply('a', 'bob'), reply('b', 'carol', 'a'), reply('x', 'dan', 'b'), stub('gone', 'x'), reply('c', 'erin', 'gone'), reply('y', 'fay', 'x'), reply('z', 'gus', 'y')]
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, chain))).toEqual(['a@0', 'b@1', 'x@1+2', 'gone@1', 'c@1'])
+  })
+
+  it('keeps a placeholder at the top while its kept parent is loaded but not yet connected to the thread', () => {
+    const page = [stub('gone', undefined, 'a'), reply('c', 'carol', 'gone')]
+    // a arrives, but its own parent x does not: gone and c stay visible at the top.
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, [...page, reply('a', 'bob', 'x')]))).toEqual(['gone@0', 'c@1'])
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, [...page, reply('a', 'bob', 'x'), reply('x', 'dan')])))
+      .toEqual(['x@0', 'a@1', 'gone@1', 'c@1'])
+  })
+})
+
 describe('v2 thread assembly', () => {
   it('walks the author continuation one level at a time, then nests the rest', async () => {
     const direct = [reply('x1', 'op'), reply('y1', 'yan')]
