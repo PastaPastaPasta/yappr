@@ -93,6 +93,9 @@ function useSignInExit(pathname: string): void {
   }, [pathname]);
 }
 
+/** A switch or add started while the engine answered: the switch owns navigation, so a resume is dropped. */
+const switchUnderway = () => useAccounts.getState().transition !== null;
+
 /**
  * A wallet request the engine still holds after the app was killed while
  * waiting (AUTH-03): back to the waiting screen, within its 10 minutes.
@@ -147,7 +150,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           return;
         }
         // A switch started, or the session moved on, while the engine answered: the switch owns navigation.
-        if (!pending || useAccounts.getState().transition || useSessionStore.getState().status !== 'signed-out') {
+        if (!pending || switchUnderway() || useSessionStore.getState().status !== 'signed-out') {
           recover(false);
           return;
         }
@@ -208,7 +211,7 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
           checked.current = false;
           return;
         }
-        if (!pending || inSignIn(path.current) || appConnectInProgress()) return;
+        if (!pending || switchUnderway() || inSignIn(path.current) || appConnectInProgress()) return;
         // The lock came up while the engine answered: try again once it opens (SR-01).
         const lock = useLockState.getState();
         if (lock.locked || lock.covered) {

@@ -333,6 +333,17 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
   });
 
+  it('drops a renewal whose lookup answers after an account switch started', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useAccounts.setState({ transition: { kind: 'switch', label: 'Switching to @bob' } }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
+
   it('looks again once the engine is back when a restart cut the lookup short', async () => {
     useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
     fakeEngine.method('session.appConnectPending').mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
