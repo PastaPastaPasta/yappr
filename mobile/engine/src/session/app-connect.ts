@@ -16,7 +16,7 @@ import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { RpcError } from '../protocol/envelope'
-import { engineSecretStored } from './app-connect-store'
+import { engineSecretRaw, removeEngineSecret } from './app-connect-store'
 
 /**
  * Wallet sign-in through App Connect (docs/APP_CONNECT_PROFILE.md), the
@@ -264,20 +264,20 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /**
      * Forgets the stored request of this kind (see `pending`), if there is
-     * one. `strict`: a stored request that could not be read fails, rather
-     * than pass for one that is not there (lib's load reads a failure as
-     * none, and deletes only what it read as stale).
+     * one. `strict`: one stored but unreadable goes too (lib's load reads a
+     * failure as no request and leaves it), unless a save replaced it meanwhile.
      */
     async forget(kind: AppConnectRequestKind, { strict = false }: { strict?: boolean } = {}): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
+      const network = appConnectSessions.network()
+      const name = `pending-request:${slotOf(kind) ?? 'login'}`
+      const before = engineSecretRaw(localStorage, network, name)
       const record = await recordsFor(kind).load()
-      if (!record) {
-        if (strict && engineSecretStored(localStorage, appConnectSessions.network(), `pending-request:${slotOf(kind) ?? 'login'}`)) {
-          throw new Error('The stored App Connect request could not be read')
-        }
+      if (record) {
+        if (record.identityHint === kind.identityHint) await recordsFor(kind).clear(record)
         return
       }
-      if (record.identityHint === kind.identityHint) await recordsFor(kind).clear(record)
+      if (strict && before !== null && engineSecretRaw(localStorage, network, name) === before) removeEngineSecret(localStorage, network, name)
     },
 
     /**
