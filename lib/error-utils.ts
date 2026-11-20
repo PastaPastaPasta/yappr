@@ -247,7 +247,7 @@ export const CREATE_NOT_RECORDED_ERROR = 'This was not saved: the network used i
 export const PENDING_WRITE_ERROR = 'We couldn’t confirm an earlier change. This change hasn’t been sent. Check your recent activity before trying again.'
 
 /** A payment held back: a wallet payment request shown earlier may still go through, and a second could pay twice. */
-export const PAYMENT_PENDING_ERROR = 'A payment you started is still waiting. Finish it in your wallet, or try again later.'
+export const PAYMENT_PENDING_ERROR = 'An earlier payment request is still open. Pay it in your wallet if you scanned it, or try again later.'
 
 /**
  * Why a write was not sent at all: this browser's storage would not record

@@ -29,7 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, walletRequestLive, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -713,6 +713,16 @@ describe('a transition whose nonce is known (a create, a wallet request)', () =>
     reserveNonce(OWNER, CONTRACT, n(101), n(100))
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
+  })
+
+  it('counts as a live wallet request only while its own nonce may still execute', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
+    reserveNonce(OWNER, CONTRACT, n(102), n(100))
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(true)
+    expect(await walletRequestLive(OWNER, CONTRACT, n(102))).toBe(false)
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(false)
   })
 })
 

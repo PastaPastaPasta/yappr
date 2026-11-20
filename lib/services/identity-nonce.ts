@@ -285,6 +285,13 @@ export async function awaitPaymentNonce<T>(
   }
 }
 
+/** Whether the wallet request reserved at `nonce` may still execute, so its QR can be shown again. */
+export async function walletRequestLive(ownerId: string, contractId: string, nonce: bigint): Promise<boolean> {
+  const sdk = await getEvoSdk();
+  const current = await sdk.identities.contractNonce(ownerId, contractId);
+  return stillPending(current, loadReservation(ownerId, contractId)).some((p) => p.scope === WALLET_TOKEN_SCOPE && p.nonce === nonce);
+}
+
 /**
  * Record a signed transition as pending before its broadcast (one that errors
  * may still have gone out), dropping what `current` shows settled. `nonce` is
