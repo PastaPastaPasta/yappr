@@ -313,7 +313,8 @@ export function provedAt(read: BulkChainRead, id: string): number | undefined {
  */
 export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: number) {
   const accepted = new Map<string, number>()
-  const floor = (id: string) => Math.max(listedAt, changes.get(id)?.at ?? -Infinity, accepted.get(id) ?? -Infinity)
+  const known = (time: number | undefined) => (time !== undefined && Number.isFinite(time) ? time : -Infinity)
+  const floor = (id: string) => Math.max(known(listedAt), known(changes.get(id)?.at), known(accepted.get(id)))
   return (asked: readonly BulkItem[]) => (read: BulkChainRead): BulkChainRead => {
     const behind = asked.some((item) => {
       const min = floor(item.id)
