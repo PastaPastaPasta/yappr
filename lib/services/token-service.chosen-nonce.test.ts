@@ -620,7 +620,8 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(sends()).toBe(1)
   })
 
-  it('sets aside unreadable stored requests instead of refusing every payment', async () => {
+  /** The shown request's stored transition becomes unreadable; its nonce stays readable. */
+  const corruptStoredRequest = async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
     if (first.completed) throw new Error('No QR payment')
     const key = [...storage.keys()].find(item => item.startsWith('yappr:wallet-payments:'))
@@ -628,10 +629,41 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     const records = JSON.parse(storage.get(key) ?? '[]') as { bytes: string }[]
     records[0].bytes = 'AAAA'
     storage.set(key, JSON.stringify(records))
+    return { first: first.payment, key }
+  }
+
+  it('keeps an unreadable stored request as an earlier payment that "send another" gets past', async () => {
+    const { first, key } = await corruptStoredRequest()
     const otherContext = { ...context, key: 'different payment' }
-    expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: first.request.reservationId } } })
+    expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([first.request.reservationId]) })).toEqual({ completed: false })
     storage.set(key, '{')
     expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
+  })
+
+  it('shows no new QR while an unreadable stored request may still execute, and drops it once its nonce is used', async () => {
+    const { first } = await corruptStoredRequest()
+    // The same tab after a reload opens the same payment again.
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
+    reportedNonce = chainNonce()
+    expect(identityContractNonceConsumed(reportedNonce, first.request.nonce)).toBe(true)
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
+    expect(buildFresh).toHaveBeenCalledOnce()
+    expect(storedPayments().map(record => record.reservationId)).not.toContain(first.request.reservationId)
+  })
+
+  it('takes over a stored request of the same payment that can still execute once its own was proved absent', async () => {
+    const original = await shownThenRetired()
+    // Tab B opens the same payment: the request proved absent gives way to a new QR, not yet paid.
+    const inB = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (inB.completed || inB.unresolved) throw new Error('No QR in tab B')
+    const buildFresh = vi.fn(buildCachedPayment)
+    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { reservationId: inB.payment.request.reservationId } } })
+    expect(await prepareLocalWalletPayment(original, context)).toMatchObject({ completed: false, payment: { request: { reservationId: inB.payment.request.reservationId } } })
+    expect(buildFresh).not.toHaveBeenCalled()
   })
 
   it('never takes a payment the user chose to send past as the completion of the new one', async () => {
