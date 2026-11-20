@@ -78,6 +78,12 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
   })
 
   const hasLoadedRef = useRef(false)
+  const activeRef = useRef(false)
+
+  useEffect(() => {
+    activeRef.current = enabled
+    return () => { activeRef.current = false }
+  }, [enabled])
 
   const applySnapshot = useCallback((snapshot: HomepageSnapshot) => {
     setPlatformStats({
@@ -112,7 +118,10 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
         if (stillCurrent()) setFeaturedPosts({ posts, loading: false, error: null })
       })
       // Read across a sign-in, sign-out or account switch: read it again for the session now.
-      if (!stillCurrent()) return load(forceRefresh)
+      if (!stillCurrent()) {
+        if (activeRef.current) return load(forceRefresh)
+        return
+      }
       cache = { data: snapshot, timestamp: Date.now(), allLanes, session }
       applySnapshot(snapshot)
     } catch (error) {
