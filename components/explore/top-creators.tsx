@@ -151,7 +151,9 @@ export function TopCreators({ window = 'all', onLoadingChange }: { window?: Rank
 
   const current = byWindow[window]
   const loading = !current
-  useEffect(() => onLoadingChange?.(loading), [loading, onLoadingChange])
+  useEffect(() => {
+    onLoadingChange?.(loading)
+  }, [loading, onLoadingChange])
   return current ? <CreatorLists {...current} /> : <RankedUserListSkeleton />
 }
 

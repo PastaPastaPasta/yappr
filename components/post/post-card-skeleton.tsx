@@ -15,11 +15,11 @@ export function PostCardSkeleton() {
   )
 }
 
-/** A loading list of post cards, announced once to screen readers. */
-export function PostListSkeleton({ count = 5, label, testId }: { count?: number; label: string; testId?: string }) {
+/** A loading list of post cards, announced once to screen readers; decorative without a `label`, for a view that announces loading itself. */
+export function PostListSkeleton({ count = 5, label, testId }: { count?: number; label?: string; testId?: string }) {
   return (
-    <div role="status" data-testid={testId}>
-      <span className="sr-only">{label}</span>
+    <div {...(label ? { role: 'status' } : { 'aria-hidden': true })} data-testid={testId}>
+      {label && <span className="sr-only">{label}</span>}
       {Array.from({ length: count }, (_, i) => <PostCardSkeleton key={i} />)}
     </div>
   )

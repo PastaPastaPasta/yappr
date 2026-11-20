@@ -61,15 +61,14 @@ export default function ExplorePage() {
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
   const trendingHashtags = trendingByWindow[trendingWindow]
+  const topPosts = topByWindow[topWindow]
   const tabLoadingLabel: Record<ExploreTab, string | null> = {
     hashtags: trendingHashtags ? null : 'Loading trending tags',
-    // The top posts skeleton carries its own status.
-    top: null,
+    top: topPosts ? null : 'Loading top posts',
     creators: creatorsLoading ? 'Loading creators' : null,
     blogs: isLoadingBlogs ? 'Loading posts' : null,
   }
   const loadingLabel = searchQuery ? null : tabLoadingLabel[activeTab]
-  const topPosts = topByWindow[topWindow]
 
   const selectTab = useCallback((tab: ExploreTab) => {
     setActiveTab(tab)
@@ -411,7 +410,7 @@ export default function ExplorePage() {
                 <RankingWindowToggle axis="posts" value={topWindow} onChange={setTopWindow} testIdPrefix="explore-top" />
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
                   {!topPosts ? (
-                    <PostListSkeleton count={8} label="Loading top posts" testId="explore-top-loading" />
+                    <PostListSkeleton count={8} testId="explore-top-loading" />
                   ) : topPosts.length === 0 ? (
                     <div className="p-8 text-center" data-testid="explore-top-empty">
                       <TrophyIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
