@@ -658,15 +658,19 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(stored()).toContain(REAUTH_SLOT)
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
 
-    const resumed = await next.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    // Killed once more: this boot loaded no account's secrets, so the sign-in reloads them.
+    const again = boot()
+    expect(await again.restore()).toBeNull()
+    const resumed = await again.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
     if (resumed.phase !== 'waiting') throw new Error('not waiting')
     expect(resumed.requestHash).toBe(renewal.requestHash)
-    await next.appConnectPollNow()
-    await untilPhase(next, 'confirm')
-    expect(await next.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', session: { identityId: OWNER, method: 'app-connect' } })
+    await again.appConnectPollNow()
+    await untilPhase(again, 'confirm')
+    expect(await again.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: true, session: { identityId: OWNER, method: 'app-connect' } })
     expect(appConnectSessions.current(OWNER)?.authKeys.map(key => key.keyId).sort()).toEqual([22, 23])
-    expect(await next.appConnectPendingSignIn()).toBeNull()
+    expect(await again.appConnectPendingSignIn()).toBeNull()
     expect(stored()).not.toContain(REAUTH_SLOT)
+    session = boot()
   })
 
   it('a renewal cancel sent again after a restart lets the revoke it held back sign the account out', async () => {
@@ -825,6 +829,13 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await next.restore()).toBeNull()
     await expect(next.appConnectCancel({ renew: true, account: OWNER, requestHash: renewal.requestHash })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
     await expect(next.appConnectCancel({ renew: true, account: OWNER })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    // Sent again while the new account's own sign-in runs: that flow and its request stay.
+    const adding = await next.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+    if (adding.phase !== 'waiting') throw new Error('not waiting')
+    await expect(next.appConnectCancel({ renew: true, account: OWNER })).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+    expect(await next.appConnectState()).toMatchObject({ phase: 'waiting', requestHash: adding.requestHash })
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+    await next.appConnectCancel({ requestHash: adding.requestHash })
     await next.signOut({ identityId: OWNER })
   })
 
@@ -865,5 +876,23 @@ describe('App Connect requests across kills and engine restarts', () => {
     session = next
     expect(await next.restore()).toMatchObject({ identityId: OWNER, method: 'app-connect' })
     await next.signOut()
+  })
+
+  it('frees the session slot without the carry-over when the boot before died in it', async () => {
+    session = boot()
+    await walletSignIn(session, [38, 39])
+    const renewal = await session.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    await walletGrants(renewal.uri, [36, 37])
+    await refresh()
+    // The last boot was killed copying this account's renewal (a native write that failed).
+    localStorage.setItem('yappr_engine_carry_pending', OWNER)
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    expect(stored()).not.toContain(REAUTH_SLOT)
+    expect(localStorage.getItem('yappr_engine_carry_pending')).toBeNull()
+    expect(await boot().restore()).toBeNull()
+    session = boot()
   })
 })
