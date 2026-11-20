@@ -334,6 +334,7 @@ export function BulkHideModal() {
     staleReadsRef.current = 0
     readRef.current++
     setList({ status: 'loading', count: 0 })
+    setCounts(NO_COUNTS)
     await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
     if (current()) setReadEpoch((epoch) => epoch + 1)
   }
@@ -356,7 +357,9 @@ export function BulkHideModal() {
   const listed = new Set(items.map((item) => item.id))
   // A failure that changed some other way (a legal hold) stays listed whatever the lists show; one to try again only while it is still listed to do.
   const failures = (summary?.failures ?? []).filter((failure) => !failure.retryable || (list.status === 'ready' && listed.has(failure.item.id)))
-  const retryable = failures.filter((failure) => failure.retryable).map((failure) => failure.item)
+  // Retried as the rows now listed, so a retry is checked against the same proof as the main button.
+  const retryIds = new Set(failures.filter((failure) => failure.retryable).map((failure) => failure.item.id))
+  const retryable = items.filter((item) => retryIds.has(item.id))
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto">
