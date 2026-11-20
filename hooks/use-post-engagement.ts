@@ -83,11 +83,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
-  // The viewer the like state was loaded for: new post data belongs to the
-  // current one, but a sign-in on the page leaves the previous viewer's state.
-  const [likeStateFor, setLikeStateFor] = useState({ post, viewerId })
-  if (likeStateFor.post !== post) setLikeStateFor({ post, viewerId })
-  const likeStateStale = likeStateFor.viewerId !== viewerId
+  // The viewer the like state is known for: after a sign-in on the page, the
+  // first tap reads the new viewer's like before acting on it.
+  const [likeKnownFor, setLikeKnownFor] = useState(viewerId)
+  const likeStateStale = likeKnownFor !== viewerId
 
   // Follow the enrichment snapshot as it fills in.
   useEffect(() => {
@@ -124,7 +123,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (likeStateStale) {
         // Read this viewer's like first: one already there is shown, not sent again.
         wasLiked = await likeService.isLiked(post.id, viewerId, targetKind)
-        setLikeStateFor({ post, viewerId })
+        setLikeKnownFor(viewerId)
         if (wasLiked) {
           setLiked(true)
           return

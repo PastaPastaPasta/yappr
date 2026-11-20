@@ -12,8 +12,8 @@ interface UsePostEnrichmentOptions {
 }
 
 interface UsePostEnrichmentResult {
-  /** Trigger enrichment for the given posts */
-  enrich: (posts: Post[]) => Promise<Post[]>
+  /** Trigger enrichment for the given posts; null when the viewer changed before it finished */
+  enrich: (posts: Post[]) => Promise<Post[] | null>
   /** Whether enrichment is currently in progress */
   isEnriching: boolean
   /** Reset the deduplication tracking (useful for refresh) */
@@ -21,7 +21,7 @@ interface UsePostEnrichmentResult {
 }
 
 // Store pending enrichment promises so concurrent calls can wait
-const pendingEnrichments = new Map<string, Promise<Post[]>>()
+const pendingEnrichments = new Map<string, Promise<Post[] | null>>()
 
 /**
  * Hook for batch enriching posts with deduplication.
@@ -56,7 +56,7 @@ export function usePostEnrichment(
     onEnrichedRef.current = onEnriched
   })
 
-  const enrich = useCallback(async (posts: Post[]): Promise<Post[]> => {
+  const enrich = useCallback(async (posts: Post[]): Promise<Post[] | null> => {
     if (disabled || posts.length === 0) {
       return posts
     }
@@ -86,7 +86,8 @@ export function usePostEnrichment(
       try {
         const enriched = await postService.enrichPostsBatch(posts)
         // A batch for a viewer who has since signed in or out is dropped; the new viewer's batch replaces it.
-        if (getCurrentUserId() === viewer) onEnrichedRef.current?.(enriched)
+        if (getCurrentUserId() !== viewer) return null
+        onEnrichedRef.current?.(enriched)
         return enriched
       } catch (error) {
         logger.error('usePostEnrichment: Failed to enrich posts:', error)
