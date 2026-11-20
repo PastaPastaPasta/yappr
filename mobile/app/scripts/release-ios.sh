@@ -26,6 +26,9 @@ case "$what" in simulator | archive) ;; *) echo "usage: $0 simulator|archive" >&
 export APP_VARIANT="${APP_VARIANT:-devnet}"
 # app.config.ts: the release Info.plist (no ATS local-networking exception).
 export YAPPR_RELEASE=1
+# Release builds take their settings from this environment only, the same values the checks below
+# read, never from a developer's .env files.
+export EXPO_NO_DOTENV=1
 build_number="${YAPPR_BUILD_NUMBER:-1}"
 version="$(node -p "require('./package.json').version")"
 out="$PWD/build/release"
