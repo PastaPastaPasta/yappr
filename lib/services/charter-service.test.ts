@@ -238,7 +238,7 @@ describe('a refusal', () => {
 
   const seatedE5 = { electedCharterId: 'e5', submittedCharterId: 'p1' }
 
-  it('records a verdict with the nonce coordinator before the slot gives up the create: a page that dies in between leaves it stored', async () => {
+  it('records a refusal before the slot gives up the create, and a landing only once the slot holds its marker', async () => {
     const slotAtRelease: unknown[] = []
     nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => {
       slotAtRelease.push(stored('addedModerator', 'e5:m1'))
@@ -253,9 +253,27 @@ describe('a refusal', () => {
     expect(nonces.release).toHaveBeenLastCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r2' }), 2n)
     expect(slotAtRelease).toEqual([
       expect.objectContaining({ reservation: expect.objectContaining({ id: 'r1' }) }),
-      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) }),
+      expect.objectContaining({ landed: 'doc-2' }),
     ])
     expect(stored('addedModerator', 'e5:m1')).toMatchObject({ landed: 'doc-2' })
+  })
+
+  it('signs no second proposal when the page died between its landed marker and the release, however behind the next reads are', async () => {
+    builders.exists.mockResolvedValue(true)
+    nonces.release.mockImplementationOnce(() => { throw new Error('the page closed') })
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toThrow()
+    expect(nonces.held.map((p) => p.id)).toEqual(['r1'])
+    // Reopened: every read now lags, showing neither the proposal nor its nonce.
+    builders.exists.mockResolvedValue(false)
+    builders.consumed.mockResolvedValue(false)
+    settle.mockResolvedValue(null)
+    nonces.release.mockClear()
+    await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    // The next new create's sweep frees its reservation counted spent, never as unsent.
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-2')
+    expect(nonces.release.mock.calls.filter((call) => call[2].id === 'r1').map((call) => call[3])).toEqual([1n])
   })
 
   it('never sends stored bytes again once their reservation is released: a delete may have taken that nonce since', async () => {

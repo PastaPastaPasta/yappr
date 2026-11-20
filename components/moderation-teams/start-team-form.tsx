@@ -190,7 +190,10 @@ export function StartTeamForm({ contract, status }: { contract: ModeratedContrac
         setError(null)
         recheckPending()
       })
-      .catch((abandonError: unknown) => logger.warn('Moderation teams: the proposal could not be cleared', abandonError))
+      .catch((abandonError: unknown) => {
+        logger.warn('Moderation teams: the proposal could not be cleared', abandonError)
+        setError(abandonError instanceof CharterActionError ? `Nothing was cleared. ${abandonError.message}` : "Nothing was cleared. Try again in a moment.")
+      })
   }
 
   const splitTotal = split.leader + split.equal + split.actions

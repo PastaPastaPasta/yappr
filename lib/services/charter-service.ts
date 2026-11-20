@@ -281,11 +281,12 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * frees each create reservation whose slot no longer holds a signed create
  * under it. That is left only when a page died between reserving a nonce and
  * storing the create, so it was never sent: a slot's create is replaced or
- * cleared (refused, landed or abandoned) only once its reservation is
- * released. So its nonce is not counted spent: the next SDK-signed write may
- * sign that very nonce, and must then be settled by it. Beside a landed
- * marker it is counted spent: an earlier version wrote the marker before
- * releasing the reservation of the create that landed.
+ * cleared (refused or abandoned) only once its reservation is released, and
+ * replaced by a landed marker only once it landed. So its nonce is not
+ * counted spent: the next SDK-signed write may sign that very nonce, and must
+ * then be settled by it. Beside a landed marker it is counted spent: that is
+ * left when a page died between writing the marker of the create that landed
+ * and releasing its reservation.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -1056,9 +1057,10 @@ class CharterService {
 
   /** A create proved landed: its slot keeps a landed marker for a while (see {@link LandedCreate}), its nonce is spent. */
   private proved(ownerId: string, key: string, entry: PendingCreate): string {
-    // Spent first, as in release: a marker never stands in a slot beside its own reservation.
-    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, BigInt(entry.signed.nonce))
+    // The marker first: a page that dies in between leaves it beside its reservation, which the sweep counts spent,
+    // never a signed create without its reservation, which a lagging read could clear and sign again.
     markLanded(key, entry)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, BigInt(entry.signed.nonce))
     return entry.signed.id
   }
 
