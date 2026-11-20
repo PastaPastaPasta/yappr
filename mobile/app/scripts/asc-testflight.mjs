@@ -191,15 +191,15 @@ async function exportCompliance(appId, buildId) {
     for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
     return;
   }
-  const candidates = all.filter(
+  const matching = all.filter(
     (d) =>
-      d.attributes.exempt === false &&
       d.attributes.containsProprietaryCryptography === false &&
       d.attributes.containsThirdPartyCryptography === true &&
       d.attributes.appEncryptionDeclarationState === 'APPROVED',
   );
-  const frenchAnswers = new Set(candidates.map((d) => d.attributes.availableOnFrenchStore));
+  const frenchAnswers = new Set(matching.map((d) => d.attributes.availableOnFrenchStore));
   const agreed = frenchAnswers.size === 1 && typeof [...frenchAnswers][0] === 'boolean';
+  const candidates = matching.filter((d) => d.attributes.exempt === false);
   if (candidates.length > 0 && agreed) {
     const declaration = candidates[0];
     await api('PATCH', `/v1/builds/${buildId}/relationships/appEncryptionDeclaration`, {
