@@ -109,6 +109,7 @@ const switchUnderway = () => useAccounts.getState().transition !== null;
 function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   const { status } = useSession();
   const { state } = useEngineStatus();
+  const transition = useAccounts((s) => s.transition);
   const checked = useRef(false);
   const launchChecked = useRef(false);
   const path = useRef(pathname);
@@ -117,7 +118,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   }, [pathname]);
   const engineUp = state === 'ready' || state === 'degraded';
   useEffect(() => {
-    if (!ready || !engineUp || status === 'unknown') return;
+    if (!ready || !engineUp || status === 'unknown' || transition) return;
     const atLaunch = !launchChecked.current;
     launchChecked.current = true;
     const recover = (resume: boolean) => {
@@ -150,7 +151,10 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           return;
         }
         // A switch started, or the session moved on, while the engine answered: the switch owns navigation.
-        if (!pending || switchUnderway() || useSessionStore.getState().status !== 'signed-out') {
+        const switching = switchUnderway();
+        if (!pending || switching || useSessionStore.getState().status !== 'signed-out') {
+          // A switch that fails leaves this sign-in pending: look again once it ends.
+          if (switching) checked.current = false;
           recover(false);
           return;
         }
@@ -178,7 +182,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
         recover(false);
       });
-  }, [ready, engineUp, status]);
+  }, [ready, engineUp, status, transition]);
 }
 
 /**
@@ -191,6 +195,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
 function useResumeRenewal(ready: boolean, pathname: string): void {
   const { status, session } = useSession();
   const { state } = useEngineStatus();
+  const transition = useAccounts((s) => s.transition);
   const checked = useRef(false);
   const path = useRef(pathname);
   useEffect(() => {
@@ -199,7 +204,7 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
   const engineUp = state === 'ready' || state === 'degraded';
   const walletAccount = status === 'signed-in' && session?.method === 'app-connect' ? session.identityId : null;
   useEffect(() => {
-    if (!ready || !engineUp || !walletAccount || checked.current) return;
+    if (!ready || !engineUp || !walletAccount || transition || checked.current) return;
     checked.current = true;
     if (getCapabilities()?.walletSignIn !== 'app-connect') return;
     engine.api.session
@@ -211,7 +216,12 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
           checked.current = false;
           return;
         }
-        if (!pending || switchUnderway() || inSignIn(path.current) || appConnectInProgress()) return;
+        // A switch that fails leaves this renewal pending: look again once it ends.
+        if (switchUnderway()) {
+          checked.current = false;
+          return;
+        }
+        if (!pending || inSignIn(path.current) || appConnectInProgress()) return;
         // The lock came up while the engine answered: try again once it opens (SR-01).
         const lock = useLockState.getState();
         if (lock.locked || lock.covered) {
@@ -225,7 +235,7 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
         checked.current = false;
         appendLog('warn', 'host', `Reading a pending renewal failed: ${errorMessage(error)}`);
       });
-  }, [ready, engineUp, walletAccount]);
+  }, [ready, engineUp, walletAccount, transition]);
 }
 
 /**
