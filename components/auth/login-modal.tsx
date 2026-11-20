@@ -9,6 +9,7 @@ import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-
 import type { AppConnectGrant } from 'platform-auth'
 import { Wordmark } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
+import { currentIdentityId } from '@/lib/auth/active-identity'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { getConfiguredNetwork } from '@/lib/constants'
 import { COMMUNITY_RULES_HREF } from '@/lib/legal'
@@ -171,9 +172,9 @@ export function LoginModal() {
 
   const handleClose = useCallback(() => {
     close()
-    // If we're on /login, navigate away
+    // Cancelling on /login leaves it. Once signed in, closing only dismisses the sheet: /login is already going on.
     // Next's pathname omits the deployment base path; exports add a trailing slash.
-    if (pathname.replace(/\/+$/, '') === '/login') {
+    if (!currentIdentityId() && pathname.replace(/\/+$/, '') === '/login') {
       router.push('/')
     }
   }, [close, pathname, router])

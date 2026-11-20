@@ -20,8 +20,6 @@ export interface ThreadPost {
 // This is NOT a cache - it's set at navigation time and consumed immediately
 export interface PendingPostNavigation {
   post: Post
-  /** The viewer the card showed it to: another viewer reads the thread afresh. */
-  viewerId: string | null
   enrichment?: ProgressiveEnrichment
 }
 
@@ -60,7 +58,7 @@ interface AppState {
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
   // Navigation actions for instant post detail transitions
-  setPendingPostNavigation: (post: Post, viewerId: string | null, enrichment?: ProgressiveEnrichment) => void
+  setPendingPostNavigation: (post: Post, enrichment?: ProgressiveEnrichment) => void
   consumePendingPostNavigation: (postId: string) => PendingPostNavigation | null
 }
 
@@ -157,9 +155,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveThreadPost: (id) => set({ activeThreadPostId: id }),
 
   // Navigation actions for instant feed -> post detail transitions
-  setPendingPostNavigation: (post, viewerId, enrichment) => {
+  setPendingPostNavigation: (post, enrichment) => {
     set({
-      pendingPostNavigation: { post, viewerId, enrichment }
+      pendingPostNavigation: { post, enrichment }
     })
   },
 

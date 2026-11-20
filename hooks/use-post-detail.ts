@@ -12,8 +12,7 @@ import { missingReplyParentReads } from '@/lib/feed/missing-reply-parent-reads'
 import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
-import { useAppStore, type PendingPostNavigation } from '@/lib/store'
-import { getCurrentUserId } from '@/lib/services/sdk-helpers'
+import { useAppStore } from '@/lib/store'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
@@ -122,12 +121,6 @@ function nestUnderReply(
  * } = usePostDetail({ postId, enabled: !!user })
  * ```
  */
-/** The card hand-off for `postId`, when it was made for the current viewer. */
-function pendingNavigationFor(postId: string): PendingPostNavigation | null {
-  const pending = useAppStore.getState().pendingPostNavigation
-  return pending && pending.post.id === postId && pending.viewerId === getCurrentUserId() ? pending : null
-}
-
 export function usePostDetail({
   postId,
   enabled = true
@@ -137,7 +130,11 @@ export function usePostDetail({
   // This must be done outside hooks to capture the value at component mount time
   const getInitialData = () => {
     if (!postId || !enabled) return null
-    return pendingNavigationFor(postId)
+    const pending = useAppStore.getState().pendingPostNavigation
+    if (pending && pending.post.id === postId) {
+      return pending
+    }
+    return null
   }
 
   const [state, setState] = useState<PostDetailState>(() => {
@@ -197,6 +194,8 @@ export function usePostDetail({
 
   // Track if we used navigation data for initial render (computed once at mount)
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
+  // The post id this page has read itself. Until then the post on screen is a card's hand-off.
+  const readPostIdRef = useRef<string | null>(null)
 
   // Enrichment hook with callback to update state
   // Note: enrichment works on posts, replies have their own author resolution
@@ -358,6 +357,7 @@ export function usePostDetail({
         setRemovedChainIds([])
       }
       setRootCheckedFor(postId)
+      readPostIdRef.current = postId
 
       // Show the main post as soon as it's available
       setState(current => {
@@ -379,10 +379,12 @@ export function usePostDetail({
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
       setError('This post could not be loaded. Please try again.')
-      // Keep this thread's last successful data during a failed refresh.
-      setState(current => current.post?.id === postId
+      // Keep this thread's last successful data during a failed refresh, but not a hand-off it never read.
+      const readHere = readPostIdRef.current === postId
+      setState(current => readHere && current.post?.id === postId
         ? current
         : { post: null, replies: [], replyThreads: [], replyChain: [] })
+      if (!readHere) setPostEnrichment(undefined)
       setIsLoading(false)
       setIsLoadingReplies(false)
       return
@@ -608,8 +610,8 @@ export function usePostDetail({
 
     // Check for pending navigation data for the new postId
     const store = useAppStore.getState()
-    const pending = pendingNavigationFor(postId)
-    if (pending) {
+    const pending = store.pendingPostNavigation
+    if (pending && pending.post.id === postId) {
       // Use navigation data immediately, reset stale context
       setState({
         post: pending.post,

@@ -57,7 +57,6 @@ import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from 
 import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderationService } from '@/lib/services/moderation-service'
 import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
-import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -598,16 +597,18 @@ function PostCardView({
   }
 
   const prepareThreadNavigation = () => {
-    // Hand the detail page what this card already shows, so it renders at once.
-    useAppStore.getState().setPendingPostNavigation(enrichedPost, getCurrentUserId(), {
+    // Hand the detail page the public post this card shows, so it renders at once. The viewer's
+    // marks (likes, reposts, bookmarks, blocks, follows) stay behind: the thread reads its own.
+    const publicPost = { ...enrichedPost, liked: undefined, reposted: undefined, bookmarked: undefined, ownQuote: undefined, _enrichment: undefined }
+    useAppStore.getState().setPendingPostNavigation(publicPost, {
       username: usernameState,
       displayName,
       profileLoaded,
       avatarUrl,
       stats: progressiveEnrichment?.stats ?? stats,
-      interactions: progressiveEnrichment?.interactions ?? { liked: engagement.liked, reposted: engagement.reposted, bookmarked: engagement.bookmarked, ownQuote: engagement.ownQuote ?? undefined },
-      isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
-      isFollowing: authorIsFollowing,
+      interactions: undefined,
+      isBlocked: undefined,
+      isFollowing: undefined,
       replyTo: progressiveEnrichment?.replyTo,
     })
   }
