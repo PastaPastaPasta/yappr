@@ -333,10 +333,14 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(screen.queryByText('Renewed')).toBeNull();
     });
 
-    it('offers only Close, never a fresh request, while the outcome is unknown', async () => {
+    it.each([
+      { cause: 'an engine restart', failure: restarted },
+      { cause: 'a timeout', failure: () => Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }) },
+    ])('offers only Close, never a fresh request, after $cause leaves the outcome unknown', async ({ failure }) => {
       await open({ mode: 'qr' }, confirm());
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(failure());
       await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
       expect(screen.queryByTestId('kx-try-again')).toBeNull();
       fireEvent.press(screen.getByTestId('kx-close'));
       expect(mockGoBack).toHaveBeenCalled();

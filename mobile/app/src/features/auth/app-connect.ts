@@ -269,8 +269,9 @@ export async function acceptAccount(identityId: string): Promise<void> {
     set({ step: { name: 'done' } });
   } catch (error) {
     if (stale(gen)) return;
-    // The engine restarted while it took the answer: whether the grant landed is unknown here, so claim neither.
-    if (errorCode(error) === 'ENGINE_RESTARTED') {
+    // The engine restarted or timed out while it took the answer: whether the grant landed is unknown here, so claim neither.
+    const code = errorCode(error);
+    if (code === 'ENGINE_RESTARTED' || code === 'RPC_TIMEOUT') {
       const text = renew ? copy.renew.interrupted : copy.signin.interrupted;
       set({ step: { name: 'error', title: text.title, message: text.body, interrupted: true } });
       return;
