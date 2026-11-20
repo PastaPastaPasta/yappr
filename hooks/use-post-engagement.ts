@@ -83,6 +83,11 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
+  // The viewer the like state was loaded for: new post data belongs to the
+  // current one, but a sign-in on the page leaves the previous viewer's state.
+  const [likeStateFor, setLikeStateFor] = useState({ post, viewerId })
+  if (likeStateFor.post !== post) setLikeStateFor({ post, viewerId })
+  const likeStateStale = likeStateFor.viewerId !== viewerId
 
   // Follow the enrichment snapshot as it fills in.
   useEffect(() => {
@@ -106,14 +111,27 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
 
   const toggleLike = useCallback(async () => {
     if (!viewerId || likeLoading) return
-    const wasLiked = liked
+    let wasLiked = liked
     const prevLikes = likes
-    setLiked(!wasLiked)
-    setLikes(wasLiked ? prevLikes - 1 : prevLikes + 1)
+    const flip = () => {
+      setLiked(!wasLiked)
+      setLikes(wasLiked ? prevLikes - 1 : prevLikes + 1)
+    }
+    if (!likeStateStale) flip()
     setLikeLoading(true)
     try {
-      await settle()
       const { likeService } = await import('@/lib/services/like-service')
+      if (likeStateStale) {
+        // Read this viewer's like first: one already there is shown, not sent again.
+        wasLiked = await likeService.isLiked(post.id, viewerId, targetKind)
+        setLikeStateFor({ post, viewerId })
+        if (wasLiked) {
+          setLiked(true)
+          return
+        }
+        flip()
+      }
+      await settle()
       // On devnet cuts the like repeats the target's author and tags under a
       // consensus-checked agreement; passing them saves the service a fetch.
       const targetInfo = { author: post.author.id, tags: post.tags }
@@ -129,7 +147,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     } finally {
       setLikeLoading(false)
     }
-  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.tags, targetKind])
+  }, [viewerId, likeLoading, liked, likes, likeStateStale, settle, post, targetKind])
 
   /**
    * v10: delete the viewer's quote or repost of the post. Callers confirm a
