@@ -259,7 +259,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         const cacheKey =
           activeTab === 'following'
             ? `feed_following_${user?.identityId}`
-            : `feed_for_you_${feedLanguage || 'all'}`;
+            : `feed_for_you_${feedLanguage || 'all'}_${user?.identityId ?? 'anon'}`;
 
         if (!forceRefresh && !isPaginating) {
           const cached = readCachedFeedPage(

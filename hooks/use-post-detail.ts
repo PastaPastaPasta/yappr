@@ -13,7 +13,6 @@ import { provenAbsent } from '@/lib/feed/prove-absent'
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
-import { useAuth } from '@/contexts/auth-context'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
@@ -288,9 +287,8 @@ export function usePostDetail({
     if (chain.length > 0) {
       try {
         // The chain is not in state yet, so the enrichment callback cannot
-        // update it. Install the returned authors and stats with the chain,
-        // enriched again if the viewer changed meanwhile.
-        return { chain: (await enrich(chain)) ?? (await enrich(chain)) ?? chain, removed }
+        // update it. Install the returned authors and stats with the chain.
+        return { chain: await enrich(chain), removed }
       } catch (err) {
         logger.error('usePostDetail: Failed to enrich reply chain:', err)
       }
@@ -648,19 +646,6 @@ export function usePostDetail({
     loadPost().catch((err) => logger.error('usePostDetail: load failed:', err))
     return cancelRequests
   }, [postId, enabled, loadPost, resetEnrichment, cancelRequests])
-
-  // Signing in (or switching account) on this page: the like, repost and
-  // bookmark state shown belongs to the previous viewer, so enrich again.
-  const viewerId = useAuth().user?.identityId
-  const enrichedForRef = useRef(viewerId)
-  const mainPost = state.post
-  const replyChain = state.replyChain
-  useEffect(() => {
-    if (enrichedForRef.current === viewerId || !mainPost) return
-    enrichedForRef.current = viewerId
-    resetEnrichment()
-    enrich([...replyChain, mainPost]).catch((err) => logger.error('usePostDetail: Failed to enrich for the new viewer:', err))
-  }, [viewerId, mainPost, replyChain, enrich, resetEnrichment])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null

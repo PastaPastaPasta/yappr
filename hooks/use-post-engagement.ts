@@ -83,12 +83,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
-  // The viewer state shown is this viewer's when the post data was read for
-  // them or the like was checked for them. Otherwise (a sign-in on the page)
-  // the first Like tap reads it first, and Repost and Quote wait for it.
-  const [likeKnownFor, setLikeKnownFor] = useState(viewerId)
-  const likeStateStale = likeKnownFor !== viewerId && (post.viewerStateFor ?? undefined) !== viewerId
-  const viewerStateStale = viewerId !== undefined && post.viewerStateFor !== undefined && post.viewerStateFor !== viewerId
 
   // Follow the enrichment snapshot as it fills in.
   useEffect(() => {
@@ -112,27 +106,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
 
   const toggleLike = useCallback(async () => {
     if (!viewerId || likeLoading) return
-    let wasLiked = liked
+    const wasLiked = liked
     const prevLikes = likes
-    const flip = () => {
-      setLiked(!wasLiked)
-      setLikes(wasLiked ? prevLikes - 1 : prevLikes + 1)
-    }
-    if (!likeStateStale) flip()
+    setLiked(!wasLiked)
+    setLikes(wasLiked ? prevLikes - 1 : prevLikes + 1)
     setLikeLoading(true)
     try {
-      const { likeService } = await import('@/lib/services/like-service')
-      if (likeStateStale) {
-        // Read this viewer's like first: one already there is shown, not sent again.
-        wasLiked = await likeService.isLiked(post.id, viewerId, targetKind)
-        setLikeKnownFor(viewerId)
-        if (wasLiked) {
-          setLiked(true)
-          return
-        }
-        flip()
-      }
       await settle()
+      const { likeService } = await import('@/lib/services/like-service')
       // On devnet cuts the like repeats the target's author and tags under a
       // consensus-checked agreement; passing them saves the service a fetch.
       const targetInfo = { author: post.author.id, tags: post.tags }
@@ -148,7 +129,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     } finally {
       setLikeLoading(false)
     }
-  }, [viewerId, likeLoading, liked, likes, likeStateStale, settle, post, targetKind])
+  }, [viewerId, likeLoading, liked, likes, settle, post.id, post.author.id, post.tags, targetKind])
 
   /**
    * v10: delete the viewer's quote or repost of the post. Callers confirm a
@@ -291,8 +272,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     likeLoading,
     repostLoading,
     bookmarkLoading,
-    /** The repost and quote state shown was read for another viewer (a sign-in on this page); it is being read again. */
-    viewerStateStale,
     toggleLike,
     toggleRepost,
     removeOwnQuote,

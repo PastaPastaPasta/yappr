@@ -61,8 +61,6 @@ export interface Post {
   bookmarked?: boolean
   /** v10: the viewer's own quote or bare repost of this post/reply, when `reposted`. */
   ownQuote?: OwnQuote
-  /** Whose `liked`, `reposted`, `bookmarked` and `ownQuote` these are (null: signed out); unset when not known. */
-  viewerStateFor?: string | null
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)

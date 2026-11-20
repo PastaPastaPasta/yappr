@@ -1,6 +1,8 @@
 'use client'
 
+import { Fragment, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import { useAuth } from '@/contexts/auth-context'
 import { NetworkPill } from '@/components/layout/network-pill'
 import { SkipLink } from '@/components/layout/skip-link'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
@@ -10,6 +12,22 @@ import { ElectionBannerFrame } from '@/components/moderation/election-banner'
 import { LinkPreviewModalProvider } from '@/components/post/link-preview'
 import { ModeratorViewBar, ModeratorViewController, ModeratorViewHold } from '@/components/moderation/moderator-view'
 import { useModeratorViewHolding } from '@/hooks/use-moderator-view'
+
+/**
+ * The page, mounted afresh whenever the viewer changes on it (a sign-in, an
+ * account switch or a sign-out that keeps the page), so no card or hook keeps
+ * the previous viewer's likes, reposts or bookmarks. Restoring a saved session
+ * at load is not a change.
+ */
+function ViewerScope({ children }: { children: React.ReactNode }) {
+  const { user, isAuthRestoring } = useAuth()
+  const viewer = user?.identityId ?? null
+  const [scope, setScope] = useState<{ viewer: string | null; key: number } | null>(null)
+  if (!isAuthRestoring && scope?.viewer !== viewer) {
+    setScope({ viewer, key: scope ? scope.key + 1 : 0 })
+  }
+  return <Fragment key={scope?.key ?? 0}>{children}</Fragment>
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -29,7 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <LinkPreviewModalProvider>
           <SkipLink />
           <NetworkPill />
-          <ElectionBannerFrame>{children}</ElectionBannerFrame>
+          <ElectionBannerFrame><ViewerScope>{children}</ViewerScope></ElectionBannerFrame>
           <div className="h-16 md:hidden" />
           <MobileBottomNav />
           <LoginModal />
