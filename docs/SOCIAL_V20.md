@@ -110,17 +110,18 @@ contract cannot gain these checks.
 | File | `contracts/yappr-social-contract-v20.json` |
 | SHA-256 | `40614b818a9acfb75a2323981f3edf5dc1adfa74db28eff2157e18b759662e98` |
 | Signed create estimate | **18,361 B**, testnet and mainnet, rc.4 SDK (v19: 18,261 B; 16 B for the kept field, 84 B for the three references); 1,639 B under the 20,000 B budget |
-| Status | **Not registered on any network.** |
+| Status | **Registered on testnet** 2026-11-20 as `63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D`, the ninth member of the 2026-11-12 group (maker nonce 9, 18,359 B, 91.79e9 credits; [record](TESTNET_RELEASE.md#social-v20-append-2026-11-20)). Not registered on mainnet. |
 
 `deleteKeepsFields` and `refersTo` are fixed once a contract is registered, so no
 update can add the kept field or the three references to a registered contract. The testnet set registered on 2026-11-12
-(social v19 `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`) keeps the v19 schema
-until a set is registered again, and its source file stays byte-identical
+(social v19 `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`) keeps the v19 schema,
+and its source file stays byte-identical
 (SHA-256 `bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971`).
-`.env.testnet` and the bundled testnet snapshot still name that set with
-topology `v19`, and `/staging` keeps building from it: the build gate accepts
-`v19` for exactly that group, owner, anchor and social contract, and requires
-`v20` for every other release build (`scripts/release-config.cjs`).
+Since 2026-11-20 `.env.testnet` and the bundled testnet snapshot name social v20
+in that group with topology `v20`, and `/staging` builds from it; v19 stays a
+pinned, unused member. The build gate still accepts `v19` for exactly that group,
+owner, anchor and v19 social contract, and requires `v20` for every other
+release build (`scripts/release-config.cjs`).
 
 Fresh registrations use v20: it is the social member of the default set in
 `scripts/app-connect-entries.cjs`, and `.env.testnet.template` and
@@ -151,7 +152,8 @@ NETWORK=testnet node scripts/register-app-connect-contracts.mjs --dry-run \
 Then the same command runs with `--signed-dry-run`, and then with `--live --production`. Both also take
 `--maker-key-file <0600 file> --maker-key-id 1`, and `--live` takes `--journal <the 2026-11-12 journal>`.
 
-The read-only dry run passed on 2026-11-19 at height 716436 (proved epoch
+The append ran on 2026-11-20 as planned (nonce 9, the predicted id;
+[record](TESTNET_RELEASE.md#social-v20-append-2026-11-20)). The read-only dry run passed on 2026-11-19 at height 716436 (proved epoch
 20492, PV14, Drive 5.0.0-rc.8). It proved all eight members in the group,
 with the maker at nonce 8 and holding 129.14e9 credits. Social v20 is planned
 at nonce 9 as `63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D`. The estimate is

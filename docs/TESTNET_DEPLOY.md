@@ -252,6 +252,24 @@ release audit pin.
 5. **Deploy.** Merging into staging redeploys `/staging` on the new set with the
    seated teams. Root follows at the owner's next staging→master merge.
 
+## Cut-over record (2026-11-20)
+
+Social v20 joined the 2026-11-12 group at nonce 9 as `63JuBhMj…`
+([TESTNET_RELEASE.md](TESTNET_RELEASE.md#social-v20-append-2026-11-20)).
+
+1. **Pins.** `.env.testnet` names social v20 with topology `v20` and pins the
+   group's nine members (`id:1`), social v19 among them as an unused member
+   (`unusedMembersOf` in `scripts/release-config.cjs`). YAPP is `7iZ3b7VD…`.
+   Every other id, topology and flag is unchanged. `STORAGE_EPOCH` is
+   `testnet-release-3`.
+2. **Snapshot.** `NETWORK=testnet npm run contracts:snapshot -- --prune`, with
+   `CONTRACT_IDS` naming the previous snapshot's 18 contracts (the `/testing`
+   defaults and the unused social v19), wrote 19: those and social v20.
+3. **Order.** New App Connect sign-ins on `/staging` were refused
+   (`unexpected-members`) from the create until this deploy went live.
+4. **Deploy.** Merging into staging redeploys `/staging` on social v20. Root
+   follows at the owner's next staging→master merge.
+
 ## Defaults deliberately retained until cut-over
 
 Removing these would change today's `/testing`, `dev` and unit tests, which
@@ -292,14 +310,15 @@ relocating them into another silent default:
 `STORAGE_EPOCH=testnet-release-1` made root `testnet-release-1` and staging
 `testnet-release-1:staging`. The 2026-11-12 re-registration bumped it to
 `testnet-release-2`: sessions hold App Connect keys bound to the retired group,
-so a new contract set starts clean. Old browser sessions and caches are ignored; there
+so a new contract set starts clean. Social v20 (2026-11-20) bumped it to
+`testnet-release-3`: the social contract and its YAPP token changed. Old browser sessions and caches are ignored; there
 is no migration or notice. Do not set `NEXT_PUBLIC_STORAGE_SCOPE` in an env
 file: Next's generated `env` block overrides it. Keep the epoch stable through
 routine redeploys; bump it only for a deliberate clean start.
 
 E2E fixtures otherwise infer storage scope from the URL path. For tests against
-release root set `E2E_STORAGE_SCOPE=testnet-release-2`; for `/staging` set
-`E2E_STORAGE_SCOPE=testnet-release-2:staging`. `/testing` keeps its own scope.
+release root set `E2E_STORAGE_SCOPE=testnet-release-3`; for `/staging` set
+`E2E_STORAGE_SCOPE=testnet-release-3:staging`. `/testing` keeps its own scope.
 
 ## Preparation validation (2026-10-17)
 
