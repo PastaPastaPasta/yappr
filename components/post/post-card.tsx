@@ -494,6 +494,7 @@ function PostCardView({
     return engagement.toggleLike()
   }
   const handleRepost = async () => {
+    if (engagement.viewerStateStale) return
     if (isTombstoned && !engagement.reposted) return
     if (!requireAuth()) return
     // v10: undoing a quote WITH text deletes that text too, so the hook hands
@@ -514,7 +515,7 @@ function PostCardView({
     return engagement.toggleBookmark()
   }
   const handleQuote = () => {
-    if (isTombstoned || !requireAuth()) return
+    if (isTombstoned || engagement.viewerStateStale || !requireAuth()) return
     // v10 allows one quote or repost per author and target; a second would be
     // refused (40105), so the viewer is taken to their quote (a bare repost
     // hides this item: it is undone from the Repost item instead).
@@ -916,7 +917,7 @@ function PostCardView({
             repost={{
               count: totalReposts,
               active: engagement.reposted,
-              loading: engagement.repostLoading,
+              loading: engagement.repostLoading || engagement.viewerStateStale,
               allowed: repostable,
               unavailableReason: hiddenOnThisBuild ? hiddenActionReason : undefined,
               undoLabel: ownQuote && !ownQuote.bare ? 'Delete your quote' : undefined,

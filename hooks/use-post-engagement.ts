@@ -83,10 +83,12 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
-  // The viewer the like state is known for: after a sign-in on the page, the
-  // first tap reads the new viewer's like before acting on it.
+  // The viewer state shown is this viewer's when the post data was read for
+  // them or the like was checked for them. Otherwise (a sign-in on the page)
+  // the first Like tap reads it first, and Repost and Quote wait for it.
   const [likeKnownFor, setLikeKnownFor] = useState(viewerId)
-  const likeStateStale = likeKnownFor !== viewerId
+  const likeStateStale = likeKnownFor !== viewerId && (post.viewerStateFor ?? undefined) !== viewerId
+  const viewerStateStale = viewerId !== undefined && post.viewerStateFor !== undefined && post.viewerStateFor !== viewerId
 
   // Follow the enrichment snapshot as it fills in.
   useEffect(() => {
@@ -289,6 +291,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     likeLoading,
     repostLoading,
     bookmarkLoading,
+    /** The repost and quote state shown was read for another viewer (a sign-in on this page); it is being read again. */
+    viewerStateStale,
     toggleLike,
     toggleRepost,
     removeOwnQuote,
