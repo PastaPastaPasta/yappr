@@ -132,6 +132,13 @@ export interface SessionModuleOptions {
    * module adds to it; the controller and `dm.unlock` read it.
    */
   unhydrated?: Set<string>
+  /**
+   * Shared with {@link createMobileAuthController}: the identities a wallet
+   * signed in that the host must reload into (an account this boot did not
+   * load). Their post-login tasks wait for the reloaded engine, so none
+   * writes to the bucket the host is still bound to.
+   */
+  awaitingReload?: Set<string>
 }
 
 /** A Platform identity id: 32 bytes in base58. */
@@ -159,15 +166,24 @@ const toCredits = (balance: number): bigint => BigInt(Math.trunc(balance))
  * counts one as stored and never writes its derived key over an imported
  * one. The host restarts the engine after such a sign-in, which loads the
  * stored keys (`dm.unlock` can then derive one if none was stored).
+ * `awaitingReload` (the session module's): those identities skip the
+ * post-login tasks, which the reloaded engine runs on restore.
  */
-export function createMobileAuthController({ unhydrated }: { unhydrated?: ReadonlySet<string> } = {}): PlatformAuthController {
+export function createMobileAuthController(
+  { unhydrated, awaitingReload }: { unhydrated?: ReadonlySet<string>; awaitingReload?: ReadonlySet<string> } = {},
+): PlatformAuthController {
   const deps = createYapprPlatformAuthDependencies()
   const secretStore: typeof deps.secretStore = unhydrated
     ? { ...deps.secretStore, hasEncryptionKey: identityId => unhydrated.has(identityId) || deps.secretStore.hasEncryptionKey(identityId) }
     : deps.secretStore
+  const postLogin = deps.sideEffects
+  const sideEffects: typeof deps.sideEffects = awaitingReload && postLogin
+    ? { ...postLogin, runPostLogin: (identityId, context) => awaitingReload.has(identityId) ? undefined : postLogin.runPostLogin(identityId, context) }
+    : postLogin
   return new PlatformAuthController({
     ...deps,
     secretStore,
+    sideEffects,
     features: {
       ...deps.features,
       usernameGate: false,
@@ -234,12 +250,13 @@ export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
   appConnectSessions.useKeyRingBackend(engineKeyRingBackend(localStorage))
-  const controller = options.controller ?? createMobileAuthController()
+  const unhydrated = options.unhydrated ?? new Set<string>()
+  const awaitingReload = options.awaitingReload ?? new Set<string>()
+  const controller = options.controller ?? createMobileAuthController({ unhydrated, awaitingReload })
   // The engine has no React AuthProvider; services read this controller's live state.
   const releaseIdentity = bindCurrentIdentity(() => controller.getState().user?.identityId ?? null)
   const registry = createAccountRegistry(storage)
   const stopDm = options.stopDm ?? (async () => stopDmEngine())
-  const unhydrated = options.unhydrated ?? new Set<string>()
 
   function toDTO(user: AuthUser | null): SessionDTO | null {
     if (!user) return null
@@ -506,6 +523,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
     const hold = unloaded ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
+    if (unloaded) awaitingReload.add(identityId)
     let succeeded = false
     try {
       const ring = await appConnectSessions.adopt(grant)
@@ -524,6 +542,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       }
       succeeded = true
     } finally {
+      if (!succeeded) awaitingReload.delete(identityId)
       hold?.release(succeeded)
     }
     if (revokedSignOut === identityId) {
