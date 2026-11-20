@@ -26,7 +26,7 @@ const storage = vi.hoisted(() => {
   return local
 })
 const settle = vi.hoisted(() => vi.fn())
-const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
+const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), load: vi.fn(), next: 1n, floor: 0n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
 const webLocks = vi.hoisted(() => ({ available: true }))
@@ -155,8 +155,12 @@ beforeEach(() => {
   builders.consumed.mockResolvedValue(false)
   nonces.next = 1n
   nonces.held = []
-  nonces.load.mockImplementation(() => ({ mark: 0n, floor: 0n, pending: nonces.held }))
-  nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => { nonces.held = nonces.held.filter((p) => p.id !== entry.id) })
+  nonces.floor = 0n
+  nonces.load.mockImplementation(() => ({ mark: 0n, floor: nonces.floor, pending: nonces.held }))
+  nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }, spent?: bigint) => {
+    nonces.held = nonces.held.filter((p) => p.id !== entry.id)
+    if (spent !== undefined && spent > nonces.floor) nonces.floor = spent
+  })
   sdk.identities.fetch.mockResolvedValue({ publicKeys: [] })
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
     { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: `h${nonce}` }))
@@ -238,7 +242,7 @@ describe('a refusal', () => {
 
   const seatedE5 = { electedCharterId: 'e5', submittedCharterId: 'p1' }
 
-  it('records a refusal before the slot gives up the create, and a landing only once the slot holds its marker', async () => {
+  it('records a verdict with the nonce coordinator before the slot gives up the create: a page that dies in between leaves it stored', async () => {
     const slotAtRelease: unknown[] = []
     nonces.release.mockImplementation((_o: string, _c: string, entry: { id: string }) => {
       slotAtRelease.push(stored('addedModerator', 'e5:m1'))
@@ -253,27 +257,39 @@ describe('a refusal', () => {
     expect(nonces.release).toHaveBeenLastCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r2' }), 2n)
     expect(slotAtRelease).toEqual([
       expect.objectContaining({ reservation: expect.objectContaining({ id: 'r1' }) }),
-      expect.objectContaining({ landed: 'doc-2' }),
+      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) }),
     ])
     expect(stored('addedModerator', 'e5:m1')).toMatchObject({ landed: 'doc-2' })
   })
 
-  it('signs no second proposal when the page died between its landed marker and the release, however behind the next reads are', async () => {
+  it.each([
+    ['after its spent nonce was recorded', true],
+    ['before that, its reservation since pruned by another write that saw the nonce consumed', false],
+  ])('signs no second proposal when the page died before the landed marker (%s), however behind the next reads are', async (_when, recorded) => {
     builders.exists.mockResolvedValue(true)
-    nonces.release.mockImplementationOnce(() => { throw new Error('the page closed') })
+    const release = nonces.release.getMockImplementation()
+    nonces.release.mockImplementationOnce((...args: unknown[]) => {
+      if (recorded) release?.(...args)
+      else {
+        nonces.held = []
+        nonces.floor = 1n
+      }
+      throw new Error('the page closed')
+    })
     await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toThrow()
-    expect(nonces.held.map((p) => p.id)).toEqual(['r1'])
-    // Reopened: every read now lags, showing neither the proposal nor its nonce.
+    expect(stored('submittedCharter', TERMS.targetContractId)?.reservation?.id).toBe('r1')
+    expect(nonces.held).toEqual([])
+    // Reopened: every read lags, showing neither the proposal nor its nonce.
     builders.exists.mockResolvedValue(false)
     builders.consumed.mockResolvedValue(false)
     settle.mockResolvedValue(null)
-    nonces.release.mockClear()
+    await expect(charterService.submitProposal(OWNER, TERMS)).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    // A read that shows the proposal proves it landed: its marker is stored, and nothing is signed.
+    builders.exists.mockResolvedValue(true)
     await expect(charterService.submitProposal(OWNER, TERMS)).resolves.toBe('doc-1')
     expect(builders.sign).toHaveBeenCalledTimes(1)
-    // The next new create's sweep frees its reservation counted spent, never as unsent.
-    builders.exists.mockResolvedValue(true)
-    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-2')
-    expect(nonces.release.mock.calls.filter((call) => call[2].id === 'r1').map((call) => call[3])).toEqual([1n])
+    expect(stored('submittedCharter', TERMS.targetContractId)).toMatchObject({ landed: 'doc-1' })
   })
 
   it('never sends stored bytes again once their reservation is released: a delete may have taken that nonce since', async () => {

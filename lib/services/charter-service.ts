@@ -281,12 +281,12 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * frees each create reservation whose slot no longer holds a signed create
  * under it. That is left only when a page died between reserving a nonce and
  * storing the create, so it was never sent: a slot's create is replaced or
- * cleared (refused or abandoned) only once its reservation is released, and
- * replaced by a landed marker only once it landed. So its nonce is not
+ * cleared (refused, landed or abandoned) only once its reservation is
+ * released. So its nonce is not
  * counted spent: the next SDK-signed write may sign that very nonce, and must
- * then be settled by it. Beside a landed marker it is counted spent: that is
- * left when a page died between writing the marker of the create that landed
- * and releasing its reservation.
+ * then be settled by it. Beside a landed marker it is counted spent: earlier
+ * builds wrote the marker of a create that landed before releasing its
+ * reservation.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -824,6 +824,14 @@ class CharterService {
         return false
       }
     }
+    /** Whether the nonce coordinator's floor shows the entry's nonce spent (unreadable storage counts as yes). */
+    const nonceSeenSpent = (entry: PendingCreate) => {
+      try {
+        return (loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.floor ?? BigInt(0)) >= BigInt(entry.signed.nonce)
+      } catch {
+        return true
+      }
+    }
     /** Landed, proved dead, or still unknown. An application is never proved dead here. */
     const settle = async (entry: PendingCreate): Promise<'landed' | 'dead' | null> => {
       const { signed } = entry
@@ -879,8 +887,9 @@ class CharterService {
       }
       if (!held(stored)) {
         // Released on a verdict that left its nonce free (the page died before clearing the slot): never sent
-        // again, so once the nonce is proved unused it can no longer execute and the slot is free.
-        if (await charterNonceConsumed(sdk, ownerId, stored.signed.nonce).catch(() => null) === false) {
+        // again, so once the nonce is proved unused it can no longer execute and the slot is free. Not when this
+        // browser ever saw that nonce spent (the floor): it landed or was paid, and a read saying unused is behind.
+        if (!nonceSeenSpent(stored) && await charterNonceConsumed(sdk, ownerId, stored.signed.nonce).catch(() => null) === false) {
           forgetPendingCreate(key, stored)
           return { kind: 'empty' }
         }
@@ -1057,10 +1066,10 @@ class CharterService {
 
   /** A create proved landed: its slot keeps a landed marker for a while (see {@link LandedCreate}), its nonce is spent. */
   private proved(ownerId: string, key: string, entry: PendingCreate): string {
-    // The marker first: a page that dies in between leaves it beside its reservation, which the sweep counts spent,
-    // never a signed create without its reservation, which a lagging read could clear and sign again.
-    markLanded(key, entry)
+    // Spent first: a page that dies before the marker leaves the signed create with its nonce below the floor,
+    // which recovery never clears on a lagging read; the next try proves it landed again.
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, BigInt(entry.signed.nonce))
+    markLanded(key, entry)
     return entry.signed.id
   }
 
