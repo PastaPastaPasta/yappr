@@ -147,19 +147,25 @@ export function oldestBlockTime(times: readonly (number | undefined)[]): number 
   return times.reduce<number>((oldest, time) => (time === undefined || !Number.isFinite(time) ? NaN : Math.min(oldest, time)), Infinity)
 }
 
+/** The block time of the newest of several proved answers (NaN when none carries one). */
+export function newestBlockTime(times: readonly (number | undefined)[]): number {
+  const known = times.filter((time): time is number => time !== undefined && Number.isFinite(time))
+  return known.length > 0 ? Math.max(...known) : NaN
+}
+
 /** Most documents of one type the dialog reads for an account. */
 export const MAX_ITEMS_PER_KIND = 5000
 
 /**
  * Every page of a listing, from the first, following `next` until a page has
  * none or `max` items are in. `onPage` sees the total so far after each page.
- * Returns the items, whether `max` cut the listing short, and the block time
- * of its oldest page.
+ * Returns the items, whether `max` cut the listing short, and the block times
+ * of its oldest page (`at`) and its newest (`newest`; NaN when none has one).
  */
 export async function readEveryPage(
   readPage: (startAfter?: string) => Promise<BulkPage>,
   { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[]) => void } = {}
-): Promise<{ items: BulkItem[]; truncated: boolean; at: number }> {
+): Promise<{ items: BulkItem[]; truncated: boolean; at: number; newest: number }> {
   const items: BulkItem[] = []
   const seen = new Set<string>()
   const times: (number | undefined)[] = []
@@ -179,7 +185,7 @@ export async function readEveryPage(
     stalled = page.next !== undefined && page.next === cursor
     cursor = page.next && !stalled ? page.next : undefined
   } while (cursor && items.length < max)
-  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times) }
+  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times), newest: newestBlockTime(times) }
 }
 
 /**
