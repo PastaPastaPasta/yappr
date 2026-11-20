@@ -307,8 +307,19 @@ describe('the wallet sign-in on App Connect builds', () => {
     await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
     await act(async () => fireEvent.press(screen.getByTestId('kx-check-again')));
     expect(fakeEngine.method('session.appConnectCheckAgain')).toHaveBeenCalled();
+    // The screen closes only once the engine has deleted the request, so a later start cannot be overtaken by it.
+    let deleted: () => void = () => undefined;
+    fakeEngine.method('session.appConnectCancel').mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          deleted = resolve;
+        }),
+    );
     fireEvent.press(screen.getByText('Cancel'));
     expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
+    expect(screen.getByTestId('ac-cancelling')).toBeTruthy();
+    expect(mockGoBack).not.toHaveBeenCalled();
+    await act(async () => deleted());
     expect(mockGoBack).toHaveBeenCalled();
   });
 
