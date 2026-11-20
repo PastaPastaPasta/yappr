@@ -83,9 +83,7 @@ function AccountCard({ candidate, testID }: { candidate: AppConnectCandidateDTO;
 export default function ConnectScreen() {
   const params = useLocalSearchParams<{ mode?: string; renew?: string; resume?: string }>();
   const renew = params.renew === '1';
-  const { mode, step, flow, walletOpenFailed, rejected, renew: flowRenews } = useAppConnect();
-  // The copy follows the flow once it runs: a renewal resumed on an engine that signed its account out goes on as "Sign in again".
-  const renewing = step.name === 'idle' ? renew : flowRenews;
+  const { mode, step, flow, walletOpenFailed, rejected } = useAppConnect();
   const close = useCloseSignIn();
   const navigation = useNavigation();
   const { key } = useRoute();
@@ -133,9 +131,7 @@ export default function ConnectScreen() {
     close();
   };
   const startOver = () => {
-    // The flow's own kind: a renewal resumed on an engine that signed its account out goes on as "Sign in again".
-    const current = useAppConnect.getState();
-    startAppConnect(mode, { renew: current.renew, reauth: current.reauth, fresh: true }).catch(() => undefined);
+    startAppConnect(mode, { renew, reauth: useAppConnect.getState().reauth, fresh: true }).catch(() => undefined);
   };
 
   let body: ReactNode;
@@ -146,9 +142,9 @@ export default function ConnectScreen() {
   if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
     body = <StatusBlock tone="busy" title={copy.signin.starting} />;
   } else if (step.name === 'accepting' || renewalAnswer) {
-    body = <StatusBlock tone="busy" title={renewing ? copy.renew.renewing : copy.signin.signingIn} />;
+    body = <StatusBlock tone="busy" title={renew ? copy.renew.renewing : copy.signin.signingIn} />;
   } else if (step.name === 'done') {
-    body = <StatusBlock tone="done" title={renewing ? copy.renew.renewed : copy.signin.signedIn} testID="kx-signed-in" />;
+    body = <StatusBlock tone="done" title={renew ? copy.renew.renewed : copy.signin.signedIn} testID="kx-signed-in" />;
   } else if (step.name === 'error') {
     body = <StatusBlock tone="error" title={step.title} body={step.message} testID="kx-error" />;
     footer = tryAgain;
@@ -211,7 +207,7 @@ export default function ConnectScreen() {
       <>
         <View className="gap-2">
           <Text variant="titleLarge" tone="emphasis" accessibilityRole="header">
-            {renewing ? copy.renew.title : copy.signin.qrTitle}
+            {renew ? copy.renew.title : copy.signin.qrTitle}
           </Text>
           <Text variant="body" tone="secondary">
             {copy.signin.qrHint}

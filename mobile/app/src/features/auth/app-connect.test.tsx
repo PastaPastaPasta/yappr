@@ -10,18 +10,10 @@ import ConnectScreen from '~/app/sign-in/connect';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
-import { syncStorage } from '~/state/storage';
 import { useToastStore } from '~/ui/toast';
 
 import { afterSignOut, loadSignedInAgain, reauthenticate, useAccounts } from './accounts';
-import {
-  cancelAppConnect,
-  parseAppConnectReturn,
-  replayInterruptedCancel,
-  startAppConnect,
-  takeAppConnectReturnLink,
-  useAppConnect,
-} from './app-connect';
+import { parseAppConnectReturn, takeAppConnectReturnLink, useAppConnect } from './app-connect';
 import { useRevokedNotice } from './app-connect-status';
 import { AppConnectNotices } from './AppConnectNotices';
 
@@ -315,225 +307,29 @@ describe('the wallet sign-in on App Connect builds', () => {
     await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
     await act(async () => fireEvent.press(screen.getByTestId('kx-check-again')));
     expect(fakeEngine.method('session.appConnectCheckAgain')).toHaveBeenCalled();
-    await act(async () => fireEvent.press(screen.getByText('Cancel')));
-    expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith({ renew: false, requestHash: HASH });
+    fireEvent.press(screen.getByText('Cancel'));
+    expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
     expect(mockGoBack).toHaveBeenCalled();
   });
 
-  describe('cut short by an engine restart', () => {
+  describe('cut short by an engine restart while it takes the answer', () => {
     const restarted = () => Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' });
     const confirm = (extra: Partial<AppConnectFlowDTO> = {}) =>
       flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }], ...extra } as never);
 
-    it('sends a cancel again to the new engine, naming the request to forget', async () => {
-      useAccounts.setState({ reauth: alice.identityId });
-      try {
-        await open({ mode: 'qr' });
-      } finally {
-        useAccounts.setState({ reauth: null });
-      }
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(restarted());
-      await act(async () => cancelAppConnect());
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(2);
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenLastCalledWith({ renew: false, reauth: alice.identityId, requestHash: HASH });
-    });
-
-    it('is not undone by the screen unmounting after its own Cancel', async () => {
-      await open({ mode: 'qr' });
-      let reject: (error: unknown) => void = () => undefined;
-      fakeEngine.method('session.appConnectCancel').mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
-      await act(async () => cancelAppConnect());
-      await act(async () => cancelAppConnect());
-      await act(async () => reject(restarted()));
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(2);
-    });
-
-    it('keeps a cancel on the device until the engine confirms it, and sends it again at the next launch', async () => {
-      const CANCEL_KEY = 'yappr.signin.connect-cancel.devnet-test';
-      await open({ mode: 'wallet', renew: '1' }, flow({ renew: true, phase: 'waiting', uri: URI, requestHash: HASH }));
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('unconfirmed'));
-      await act(async () => cancelAppConnect());
-      const intent = { renew: true, account: alice.identityId, requestHash: HASH };
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith(intent);
-      expect(JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null')).toMatchObject([intent]);
-
-      // Not confirmed (or killed before the reply): the next launch sends it again, and forgets it once confirmed.
-      await act(async () => {
-        await replayInterruptedCancel();
-      });
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenLastCalledWith(intent);
-      expect(syncStorage.getItem(CANCEL_KEY)).toBeNull();
-    });
-
-    it('never takes up a request whose cancel the engine could not confirm: the start sends it again, and stops if it still fails', async () => {
-      const CANCEL_KEY = 'yappr.signin.connect-cancel.devnet-test';
-      await open({ mode: 'qr' });
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('storage failed'));
-      await act(async () => cancelAppConnect());
-      const intent = { renew: false, requestHash: HASH };
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('storage failed'));
-      fakeEngine.method('session.appConnectStart').mockClear();
-      await act(async () => startAppConnect('qr'));
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(2);
-      expect(fakeEngine.method('session.appConnectStart')).not.toHaveBeenCalled();
-      expect(useAppConnect.getState().step).toMatchObject({ name: 'error' });
-      expect(JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null')).toMatchObject([intent]);
-
-      // Confirmed on the next try: the start goes on, and the cancel is forgotten.
-      await act(async () => startAppConnect('qr'));
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(3);
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
-      expect(syncStorage.getItem(CANCEL_KEY)).toBeNull();
-    });
-
-    it("keeps a renewal's cancel until its account is signed in again, beside later cancels", async () => {
-      const CANCEL_KEY = 'yappr.signin.connect-cancel.devnet-test';
-      const bob: SessionDTO = { ...alice, identityId: 'BobIdentity11111111111111111111111111111111', username: 'bob' };
-      await open({ mode: 'wallet', renew: '1' }, flow({ renew: true, phase: 'waiting', uri: URI, requestHash: HASH }));
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('storage failed'));
-      await act(async () => cancelAppConnect());
-      const renewal = { renew: true, account: alice.identityId, requestHash: HASH };
-
-      // Bob is signed in now: the engine cannot reach Alice's renewal, so it is not sent, and Bob's own cancel keeps it.
-      useSessionStore.setState({ session: bob });
-      await act(async () => {
-        await replayInterruptedCancel();
-      });
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(1);
-      await act(async () => startAppConnect('qr'));
-      await act(async () => cancelAppConnect());
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(2);
-      expect(JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null')).toMatchObject([renewal]);
-
-      useSessionStore.setState({ session: alice });
-      await act(async () => {
-        await replayInterruptedCancel();
-      });
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenLastCalledWith(renewal);
-      expect(syncStorage.getItem(CANCEL_KEY)).toBeNull();
-    });
-
-    it('drops a cancel once the request it names has run out, and lets a renewal the engine has not loaded wait without holding up a start', async () => {
-      const CANCEL_KEY = 'yappr.signin.connect-cancel.devnet-test';
-      const parked = { renew: true, account: alice.identityId, requestHash: HASH };
-      syncStorage.setItem(
-        CANCEL_KEY,
-        JSON.stringify([
-          { id: `${Date.now() - 12 * 60_000}-1`, renew: false, requestHash: HASH },
-          { id: `${Date.now()}-2`, ...parked },
-        ]),
-      );
-      useSessionStore.setState({ session: null });
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(Object.assign(new Error('not here'), { code: 'NOT_SIGNED_IN' }));
-      fakeEngine.method('session.appConnectStart').mockClear();
-      await act(async () => startAppConnect('qr'));
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(1);
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith(parked);
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
-      expect(JSON.parse(syncStorage.getItem(CANCEL_KEY) ?? 'null')).toContainEqual(expect.objectContaining(parked));
-      syncStorage.removeItem(CANCEL_KEY);
-    });
-
-    it('starts a new sign-in only once the engine has the cancel, so the cancel cannot stop it', async () => {
-      await open({ mode: 'qr' });
-      const order: string[] = [];
-      let reject: (error: unknown) => void = () => undefined;
-      fakeEngine.method('session.appConnectCancel').mockImplementationOnce(() => {
-        order.push('cancel');
-        return new Promise((_resolve, fail) => { reject = fail; });
-      });
-      fakeEngine.method('session.appConnectCancel').mockImplementationOnce(async () => {
-        order.push('cancel again');
-      });
-      fakeEngine.method('session.appConnectStart').mockImplementationOnce(async () => {
-        order.push('start');
-        return flow({ phase: 'waiting', uri: URI, requestHash: HASH });
-      });
-      await act(async () => cancelAppConnect());
-      let starting: Promise<void> = Promise.resolve();
-      await act(async () => {
-        starting = startAppConnect('qr');
-      });
-      expect(order).toEqual(['cancel']);
-      await act(async () => {
-        reject(restarted());
-        await starting;
-      });
-      expect(order).toEqual(['cancel', 'cancel again', 'start']);
-    });
-
-    it('finishes as signed in when the new engine restored the account the answer was for', async () => {
+    it('says the sign-in was interrupted, claiming neither success nor failure', async () => {
       await open({ mode: 'qr' }, confirm());
       fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockResolvedValue(alice);
       await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
-      expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
-      expect(screen.queryByTestId('kx-error')).toBeNull();
+      expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+      expect(screen.queryByTestId('kx-signed-in')).toBeNull();
     });
 
-    it('reads the outcome again when another restart cuts that read short, and finishes as signed in', async () => {
-      await open({ mode: 'qr' }, confirm());
+    it('never reports a renewal done that it cannot confirm', async () => {
       fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockRejectedValueOnce(restarted()).mockResolvedValue(alice);
-      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
-      expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
-      expect(screen.queryByTestId('kx-error')).toBeNull();
-    });
-
-    it('picks the request up again when the grant never landed, rather than showing an error', async () => {
-      await open({ mode: 'qr' }, confirm());
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockResolvedValue(null);
-      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ renew: false, fresh: false }));
-      expect(screen.queryByTestId('kx-error')).toBeNull();
-    });
-
-    it('resumes a renewal as "Sign in again" when the new engine could not restore its account', async () => {
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockResolvedValue(null);
-      fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: alice.identityId });
-      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
-      fakeEngine.method('session.appConnectStart').mockResolvedValue(flow({ phase: 'waiting', uri: URI, requestHash: HASH }));
+      await open({ mode: 'wallet', renew: '1' }, confirm({ renew: true }));
       await act(async () => {});
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ renew: false, reauth: alice.identityId }));
-      expect(useAppConnect.getState()).toMatchObject({ renew: false, reauth: alice.identityId });
-    });
-
-    it('still picks the renewal up when the new engine cannot say who is signed in', async () => {
-      // The resumed renewal finds the same answer again and takes it.
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted()).mockResolvedValue({ status: 'renewed', session: alice });
-      fakeEngine.method('session.current').mockRejectedValue(restarted());
-      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
-      await act(async () => {});
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
-      expect(fakeEngine.method('session.appConnectAccept')).toHaveBeenCalledTimes(2);
-      expect(useAppConnect.getState().step.name).toBe('done');
-    });
-
-    it('claims no renewal when the new engine has the session but no request: the old keys may still be in place', async () => {
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockResolvedValue(alice);
-      fakeEngine.method('session.appConnectPending').mockResolvedValue(false);
-      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
-      await act(async () => {});
-      expect(useAppConnect.getState().step).toMatchObject({ name: 'error', title: 'Renewal not confirmed' });
-      expect(screen.queryByText('Renewed')).toBeNull();
-    });
-
-    it('resumes a renewal whose request is still stored: the old keys still restored the session', async () => {
-      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
-      fakeEngine.method('session.current').mockResolvedValue(alice);
-      fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
-      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
-      fakeEngine.method('session.appConnectStart').mockResolvedValue(flow({ renew: true, phase: 'waiting', uri: URI, requestHash: HASH }));
-      await act(async () => {});
-      expect(fakeEngine.method('session.appConnectPending')).toHaveBeenCalledWith({ renew: true });
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(2);
-      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenLastCalledWith(expect.objectContaining({ renew: true }));
-      expect(Linking.openURL).not.toHaveBeenCalled();
+      expect(screen.getByText('Renewal was interrupted')).toBeTruthy();
       expect(screen.queryByText('Renewed')).toBeNull();
     });
   });
@@ -573,11 +369,11 @@ describe("the wallet's return link", () => {
     // A return for a code that was replaced says nothing about this one.
     expect(takeAppConnectReturnLink(`yappr-dev://connect?r=${'cd'.repeat(20)}&ac=declined`)).toBe(true);
     expect(useAppConnect.getState().step.name).toBe('flow');
-    await act(async () => {
+    act(() => {
       takeAppConnectReturnLink(`yappr-dev://connect?r=${HASH}&ac=declined`);
     });
     expect(screen.getByText('Sign-in declined')).toBeTruthy();
-    expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledWith({ renew: false, requestHash: HASH });
+    expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
   });
 
   it('is taken (and ignored) when no sign-in waits', () => {

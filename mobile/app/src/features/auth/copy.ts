@@ -19,6 +19,10 @@ export const copy = {
     /** AUTH-14: the flow opened for an account whose stored key no longer signs. */
     reauth: (name: string) => `Sign in again as ${name} with its wallet or key.`,
     openWallet: 'Open wallet',
+    interrupted: {
+      title: 'Sign-in was interrupted',
+      body: "You may already be signed in. If you're not, try again.",
+    },
     otherDevice: 'Use a wallet on another device',
     other: 'Advanced',
     privateKey: 'Sign in with a private key',
@@ -106,8 +110,10 @@ export const copy = {
     renewed: 'Renewed',
     failed: "Couldn't renew",
     acceptFailed: "We couldn't finish renewing. Try again with a new request.",
-    unconfirmedTitle: 'Renewal not confirmed',
-    unconfirmed: "We couldn't confirm the renewal. Renew again to keep posting.",
+    interrupted: {
+      title: 'Renewal was interrupted',
+      body: 'If Yappr still asks you to renew, renew again.',
+    },
     soon: "Yappr's allowance from your wallet is running low.",
     soonAction: 'Renew',
     signedOutTitle: 'Signed out from your wallet',
