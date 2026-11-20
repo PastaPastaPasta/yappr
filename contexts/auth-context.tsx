@@ -16,6 +16,7 @@ import { keyNetwork } from '@/lib/constants'
 import { keyValidationService } from '@/lib/services/key-validation-service'
 import { usernamePromptClosed, useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useAppStore } from '@/lib/store'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
@@ -113,7 +114,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // ...and no CRITICAL key held for the tab outlives the session it was given in.
     const unwatchCriticalKeys = forgetCriticalKeysOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
     const unbindCriticalKeySession = bindCriticalKeySession(() => controller.sessionEpoch())
-    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession() }
+    // ...and a post card's hand-off to the thread page, which carries that viewer's marks, is dropped.
+    let handOffIdentity = controller.getState().user?.identityId ?? null
+    const unwatchHandOff = controller.subscribe((state) => {
+      const next = state.user?.identityId ?? null
+      if (next === handOffIdentity) return
+      handOffIdentity = next
+      useAppStore.setState({ pendingPostNavigation: null })
+    })
+    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession(); unwatchHandOff() }
   }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */

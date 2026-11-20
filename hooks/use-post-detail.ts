@@ -194,8 +194,6 @@ export function usePostDetail({
 
   // Track if we used navigation data for initial render (computed once at mount)
   const usedNavigationDataRef = useRef<boolean>(!!getInitialData()?.post)
-  // The post id this page has read itself. Until then the post on screen is a card's hand-off.
-  const readPostIdRef = useRef<string | null>(null)
 
   // Enrichment hook with callback to update state
   // Note: enrichment works on posts, replies have their own author resolution
@@ -357,7 +355,6 @@ export function usePostDetail({
         setRemovedChainIds([])
       }
       setRootCheckedFor(postId)
-      readPostIdRef.current = postId
 
       // Show the main post as soon as it's available
       setState(current => {
@@ -379,12 +376,10 @@ export function usePostDetail({
       if (!isCurrent()) return
       logger.error('usePostDetail: Failed to load post:', err)
       setError('This post could not be loaded. Please try again.')
-      // Keep this thread's last successful data during a failed refresh, but not a hand-off it never read.
-      const readHere = readPostIdRef.current === postId
-      setState(current => readHere && current.post?.id === postId
+      // Keep this thread's last successful data during a failed refresh.
+      setState(current => current.post?.id === postId
         ? current
         : { post: null, replies: [], replyThreads: [], replyChain: [] })
-      if (!readHere) setPostEnrichment(undefined)
       setIsLoading(false)
       setIsLoadingReplies(false)
       return

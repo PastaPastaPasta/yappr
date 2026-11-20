@@ -107,7 +107,12 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
     try {
       // The featured cards render as soon as they are proved; the stats and
       // contributors follow with the full snapshot.
-      const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
+      const sameViewer = () => getCurrentUserId() === viewer
+      const snapshot = await loadHomepage((posts) => {
+        if (sameViewer()) setFeaturedPosts({ posts, loading: false, error: null })
+      })
+      // Read for another viewer than the one signed in now: read it again for this one.
+      if (!sameViewer()) return load(forceRefresh)
       cache = { data: snapshot, timestamp: Date.now(), allLanes, viewer }
       applySnapshot(snapshot)
     } catch (error) {
