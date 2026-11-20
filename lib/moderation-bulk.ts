@@ -316,15 +316,15 @@ export function provedAt(read: BulkChainRead, id: string): number | undefined {
 
 /**
  * A run's guard on its by-ID reads ({@link BulkRunDeps.pending}, `recheck`):
- * a read answering an asked document from before `listedAt()` (the newest list
- * read the dialog showed, as of the read), the listing page it came from, what a run proved of it, or an earlier read this
+ * a read answering an asked document from before `listedAt(kind)` (the newest
+ * list of its type the dialog showed, as of the read), the listing page it came from, what a run proved of it, or an earlier read this
  * run accepted for it cannot settle it, and rejects, so nothing is counted,
  * announced or sent on it.
  */
-export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: () => number) {
+export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: (kind: BulkKind) => number) {
   const accepted = new Map<string, number>()
   const known = (time: number | undefined) => (time !== undefined && Number.isFinite(time) ? time : -Infinity)
-  const floor = (item: BulkItem) => Math.max(known(listedAt()), known(item.provedAt), known(changes.get(item.id)?.at), known(accepted.get(item.id)))
+  const floor = (item: BulkItem) => Math.max(known(listedAt(item.kind)), known(item.provedAt), known(changes.get(item.id)?.at), known(accepted.get(item.id)))
   return (asked: readonly BulkItem[]) => (read: BulkChainRead): BulkChainRead => {
     const behind = asked.some((item) => {
       const min = floor(item)
