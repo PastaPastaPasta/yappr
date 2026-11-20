@@ -268,7 +268,7 @@ the signing gate, and then, unless `dry_run`:
    key (never an Apple ID or an Xcode account);
 2. waits up to 45 minutes for processing (`scripts/asc-testflight.mjs`, the
    API key's JWT);
-3. attaches an existing **approved** export compliance declaration with the
+3. attaches an existing **approved, non-exempt** export compliance declaration with the
    standard-algorithm answers. It never answers "no encryption" and never
    creates one, because the French store answer is the owner's call
    (COMPLIANCE C8). If approved declarations disagree on the French store,

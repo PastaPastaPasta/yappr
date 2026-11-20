@@ -193,6 +193,7 @@ async function exportCompliance(appId, buildId) {
   }
   const candidates = all.filter(
     (d) =>
+      d.attributes.exempt === false &&
       d.attributes.containsProprietaryCryptography === false &&
       d.attributes.containsThirdPartyCryptography === true &&
       d.attributes.appEncryptionDeclarationState === 'APPROVED',
@@ -205,13 +206,13 @@ async function exportCompliance(appId, buildId) {
       data: { type: 'appEncryptionDeclarations', id: declaration.id },
     });
     field('Declaration', `${declaration.id} (APPROVED, attached)`);
-    field('Answers', `standard third-party algorithms, no proprietary crypto, French store: ${declaration.attributes.availableOnFrenchStore}`);
+    field('Answers', `not exempt, standard third-party algorithms, no proprietary crypto, French store: ${declaration.attributes.availableOnFrenchStore}`);
     return;
   }
   out(
     candidates.length > 0
       ? '- Approved declarations disagree on, or omit, the French-store answer, so none is picked. The build stays in **Missing Compliance** (owner\'s call). In App Store Connect:'
-      : '- No approved declaration with the standard-algorithm answers exists, so the build stays in **Missing Compliance** (owner\'s call). In App Store Connect:',
+      : '- No approved non-exempt declaration with the standard-algorithm answers exists, so the build stays in **Missing Compliance** (owner\'s call). In App Store Connect:',
   );
   for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
 }
