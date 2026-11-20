@@ -346,6 +346,26 @@ describe('a refusal', () => {
     expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent + 1)
   })
 
+  it('keeps a slot left without its reservation where no lock reaches the other tabs: another tab may have dropped it', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(timeout())
+    builders.exists.mockResolvedValue(null)
+    settle.mockResolvedValue(null)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
+    nonces.held = []
+    builders.consumed.mockResolvedValue(false)
+    webLocks.available = false
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.sign).toHaveBeenCalledTimes(1)
+    expect(stored('addedModerator', 'e5:m1')?.reservation?.id).toBe('r1')
+  })
+
+  it('counts a refused create\'s nonce spent when it cannot be read back: it may have been paid', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
+    builders.consumed.mockRejectedValue(new Error('no available addresses'))
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+  })
+
   it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })

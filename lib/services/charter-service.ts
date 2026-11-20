@@ -890,7 +890,8 @@ class CharterService {
         // Released on a verdict that left its nonce free (the page died before clearing the slot): never sent
         // again, so once the nonce is proved unused it can no longer execute and the slot is free. Not when this
         // browser ever saw that nonce spent (the floor): it landed or was paid, and a read saying unused is behind.
-        if (!nonceSeenSpent(stored) && await charterNonceConsumed(sdk, ownerId, stored.signed.nonce).catch(() => null) === false) {
+        // Only under a lock every tab shares: on the per-tab fallback another tab's write can drop a live reservation.
+        if (crossTabLocks() && !nonceSeenSpent(stored) && await charterNonceConsumed(sdk, ownerId, stored.signed.nonce).catch(() => null) === false) {
           forgetPendingCreate(key, stored)
           return { kind: 'empty' }
         }
@@ -930,8 +931,8 @@ class CharterService {
               ? `This may still go through; the network refused it just now: ${reason}`
               : `An earlier try may still go through; the network refused to resend it just now: ${reason}`, 'uncertain')
           }
-          // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not.
-          this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => false))
+          // Refused at execution (paid), its nonce is spent; refused at broadcast, it is not. Unreadable counts as spent.
+          this.release(ownerId, key, entry, await charterNonceConsumed(sdk, ownerId, entry.signed.nonce).catch(() => true))
           throw error
         }
         logger.warn(`charters: ${type} ${entry.signed.id} reported no verdict; checking for it`, extractErrorMessage(error))
