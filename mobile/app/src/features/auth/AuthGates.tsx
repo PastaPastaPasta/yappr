@@ -96,14 +96,19 @@ function useSignInExit(pathname: string): void {
 const PENDING_LOOKUP_TRIES = 3;
 const PENDING_LOOKUP_BACKOFF_MS = 2_000;
 
-/** Looks again after a failed lookup (a timeout, say), a few times; a restart is retried when the engine is back. */
-async function lookupWithRetries<T>(lookup: () => Promise<T>): Promise<T> {
+/**
+ * Looks again after a failed lookup (a timeout, say), a few times, while
+ * `current` (its engine is still the one up); a restart is retried when the
+ * engine is back.
+ */
+async function lookupWithRetries<T>(lookup: () => Promise<T>, current: () => boolean): Promise<T> {
   for (let attempt = 1; ; attempt++) {
     try {
       return await lookup();
     } catch (error) {
       if (attempt >= PENDING_LOOKUP_TRIES || errorCode(error) === 'ENGINE_RESTARTED') throw error;
       await new Promise((resolve) => setTimeout(resolve, PENDING_LOOKUP_BACKOFF_MS * attempt));
+      if (!current()) throw new Error('The engine this lookup was for is gone');
     }
   }
 }
@@ -123,10 +128,12 @@ const switchUnderway = () => useAccounts.getState().transition !== null;
  */
 function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   const { status } = useSession();
-  const { state } = useEngineStatus();
+  const { state, epoch } = useEngineStatus();
   const transition = useAccounts((s) => s.transition);
   const checked = useRef(false);
   const launchChecked = useRef(false);
+  /** The lookup under way: the engine it asks, and whether it settles the launch. */
+  const lookingUp = useRef<{ epoch: number; atLaunch: boolean } | null>(null);
   const path = useRef(pathname);
   useEffect(() => {
     path.current = pathname;
@@ -134,6 +141,13 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   const engineUp = state === 'ready' || state === 'degraded';
   useEffect(() => {
     if (!ready || !engineUp || status === 'unknown' || transition) return;
+    // A lookup of an engine that is gone settles nothing: this engine asks again, with tries of its own.
+    const abandoned = lookingUp.current;
+    if (abandoned && abandoned.epoch !== epoch) {
+      lookingUp.current = null;
+      checked.current = false;
+      if (abandoned.atLaunch) launchChecked.current = false;
+    }
     const atLaunch = !launchChecked.current;
     launchChecked.current = true;
     const recover = (resume: boolean) => {
@@ -160,8 +174,13 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       appConnect
         ? engine.api.session.appConnectPendingSignIn()
         : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
-    lookupWithRetries(lookup)
+    const mine = { epoch, atLaunch };
+    lookingUp.current = mine;
+    const current = () => lookingUp.current === mine;
+    lookupWithRetries(lookup, current)
       .then((pending) => {
+        if (!current()) return;
+        lookingUp.current = null;
         if (signingIn()) {
           recover(true);
           return;
@@ -189,13 +208,15 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
         } else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
+        if (!current()) return;
+        lookingUp.current = null;
         // The answer is unknown (a restart cut the lookup short, or every try failed): stay put, keeping the
         // Add account marker, and look again on the next engine.
         if (errorCode(error) !== 'ENGINE_RESTARTED') appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
         checked.current = false;
         if (atLaunch) launchChecked.current = false;
       });
-  }, [ready, engineUp, status, transition]);
+  }, [ready, engineUp, epoch, status, transition]);
 }
 
 /**
