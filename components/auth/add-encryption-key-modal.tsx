@@ -325,7 +325,7 @@ function KeyEntryAddEncryptionKeyModal({
         YAPPR_CONTRACT_ID, // Contract-bound to Yappr
         { cancelled }
       )
-      if (result.cancelled) return
+      if (result.cancelled || cancelled()) return
 
       if (result.success) {
         try {

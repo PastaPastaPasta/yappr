@@ -22,7 +22,7 @@ import {
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
 import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
-import { IDENTITY_UPDATE_UNLOCKED } from '@/lib/identity-write-lock'
+import { IDENTITY_UPDATE_UNLOCKED, crossTabLocks } from '@/lib/identity-write-lock'
 import { KeyExchangeQR } from './key-exchange-qr'
 
 export type MessagingSetupContext = 'private-feed' | 'store' | 'generic'
@@ -280,6 +280,7 @@ export function SetUpMessaging({
   }
 
   const trimmedMasterKey = masterKey.trim()
+  const signsHere = crossTabLocks() !== undefined
   const title = (
     <ModalTitle>
       <ChatBubbleLeftRightIcon className="h-6 w-6 text-yappr-500" />
@@ -325,8 +326,13 @@ export function SetUpMessaging({
             This adds a messaging key to your Dash account. It can only encrypt messages to you: it can&apos;t spend your
             credits or post for you.
           </p>
+          {!signsHere && (
+            <p role="alert" className="text-sm text-amber-700 dark:text-amber-400 mb-4">
+              This browser can&apos;t add a messaging key safely. Update it, or use a different browser.
+            </p>
+          )}
           <div className="flex flex-col gap-3">
-            {loginIsMaster ? (
+            {loginIsMaster && signsHere ? (
               <Button onClick={signWithLoginKey} className="w-full">
                 <ChatBubbleLeftRightIcon className="h-4 w-4 mr-2" />
                 Set up messaging
@@ -337,10 +343,12 @@ export function SetUpMessaging({
                   <DevicePhoneMobileIcon className="h-4 w-4 mr-2" />
                   Approve in your wallet
                 </Button>
-                <Button onClick={() => setPhase({ kind: 'master-key' })} variant="outline" className="w-full">
-                  <KeyIcon className="h-4 w-4 mr-2" />
-                  Use your master key instead
-                </Button>
+                {signsHere && (
+                  <Button onClick={() => setPhase({ kind: 'master-key' })} variant="outline" className="w-full">
+                    <KeyIcon className="h-4 w-4 mr-2" />
+                    Use your master key instead
+                  </Button>
+                )}
               </>
             )}
             <Button onClick={onCancel} variant="ghost" className="w-full">Not now</Button>
@@ -372,9 +380,11 @@ export function SetUpMessaging({
             <div role="status" className="flex justify-center py-8"><Spinner size="lg" /></div>
           )}
           <div className="mt-4 flex flex-col gap-2">
-            <Button onClick={() => setPhase({ kind: 'master-key' })} variant="ghost" className="w-full text-sm">
-              Use your master key instead
-            </Button>
+            {signsHere && (
+              <Button onClick={() => setPhase({ kind: 'master-key' })} variant="ghost" className="w-full text-sm">
+                Use your master key instead
+              </Button>
+            )}
             <Button onClick={onCancel} variant="outline" className="w-full">Cancel</Button>
           </div>
         </>

@@ -30,3 +30,16 @@ test('closing the dialog while its key update is held behind another update send
   await releaseLock(page)
   await expect.poll(() => updates(page)).toEqual({ sent: 0, cancelled: 1 })
 })
+
+test('closing the dialog while a sent key update awaits confirmation stores no key', async ({ page }) => {
+  const storedKeys = () => page.evaluate(() => Object.keys(localStorage).sort())
+  await submitHeldUpdate(page)
+  await releaseLock(page)
+  await expect.poll(() => updates(page)).toEqual({ sent: 1, cancelled: 0 })
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('modal-state')).toHaveText('closed')
+  const before = await storedKeys()
+  await page.evaluate(() => window.confirmIdentityUpdate?.())
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 500)))
+  expect(await storedKeys()).toEqual(before)
+})

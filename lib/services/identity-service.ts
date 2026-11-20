@@ -498,60 +498,65 @@ class IdentityService {
 
       if (options.cancelled?.()) return { success: false, cancelled: true };
 
-      // Create signer with the master key (for signing the update transition)
-      const signer = await signerService.createSigner(signingPrivateKeyWif);
-
-      // Also add the NEW encryption key's private key to the signer.
-      // Dash Platform requires a "key proof" signature from each new key being added,
-      // proving ownership of the private key. The SDK looks up the private key by
-      // Hash160(compressed_public_key) in the signer, so it must contain both:
-      // 1. The master key (to authorize the identity update)
-      // 2. The new key (to generate the key proof)
       if (encryptionPrivateKey.length !== 32) {
         return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
       }
-      const network = keyNetwork();
       const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
-      const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
-      signer.addKey(encryptionPrivateKeyObj);
-      logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
 
-      // The last moment a caller can still back out: everything after this may be on chain.
-      if (options.cancelled?.()) return { success: false, cancelled: true };
-
-      // Update the identity using typed API
-      logger.debug('Calling sdk.identities.update...');
+      // Create signer with the master key (for signing the update transition)
+      const signer = await signerService.createSigner(signingPrivateKeyWif);
+      let encryptionPrivateKeyObj: PrivateKey | undefined;
       try {
-        await sdk.identities.update({
-          identity,
-          addPublicKeys: [newKey],
-          signer
-        });
-        logger.debug('sdk.identities.update completed successfully');
-      } catch (updateError) {
-        // No verdict (a timeout, or a result proof that could not be checked
-        // during a quorum rotation): the key may be on the identity already.
-        if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
-          logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
-          noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
-          this.clearCache(identityId);
-          return { success: true, keyId: newKeyId };
-        }
-        logger.error('sdk.identities.update failed:', updateError);
-        if (updateError && typeof updateError === 'object') {
-          const wasmErr = updateError as Record<string, unknown>;
-          logger.error('WasmSdkError properties:');
-          try {
-            logger.error('  - kind:', wasmErr.kind);
-            logger.error('  - name:', wasmErr.name);
-            logger.error('  - message:', wasmErr.message);
-            logger.error('  - code:', wasmErr.code);
-            logger.error('  - retriable:', wasmErr.retriable);
-          } catch (e) {
-            logger.error('  - Could not read properties:', e);
+        // Also add the NEW encryption key's private key to the signer.
+        // Dash Platform requires a "key proof" signature from each new key being added,
+        // proving ownership of the private key. The SDK looks up the private key by
+        // Hash160(compressed_public_key) in the signer, so it must contain both:
+        // 1. The master key (to authorize the identity update)
+        // 2. The new key (to generate the key proof)
+        encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, keyNetwork());
+        signer.addKey(encryptionPrivateKeyObj);
+        logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
+
+        // The last moment a caller can still back out: everything after this may be on chain.
+        if (options.cancelled?.()) return { success: false, cancelled: true };
+
+        // Update the identity using typed API
+        logger.debug('Calling sdk.identities.update...');
+        try {
+          await sdk.identities.update({
+            identity,
+            addPublicKeys: [newKey],
+            signer
+          });
+          logger.debug('sdk.identities.update completed successfully');
+        } catch (updateError) {
+          // No verdict (a timeout, or a result proof that could not be checked
+          // during a quorum rotation): the key may be on the identity already.
+          if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
+            logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
+            noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
+            this.clearCache(identityId);
+            return { success: true, keyId: newKeyId };
           }
+          logger.error('sdk.identities.update failed:', updateError);
+          if (updateError && typeof updateError === 'object') {
+            const wasmErr = updateError as Record<string, unknown>;
+            logger.error('WasmSdkError properties:');
+            try {
+              logger.error('  - kind:', wasmErr.kind);
+              logger.error('  - name:', wasmErr.name);
+              logger.error('  - message:', wasmErr.message);
+              logger.error('  - code:', wasmErr.code);
+              logger.error('  - retriable:', wasmErr.retriable);
+            } catch (e) {
+              logger.error('  - Could not read properties:', e);
+            }
+          }
+          throw updateError;
         }
-        throw updateError;
+      } finally {
+        encryptionPrivateKeyObj?.free();
+        signer.free();
       }
 
       logger.debug('Encryption key added successfully');
