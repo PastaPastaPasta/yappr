@@ -1,4 +1,4 @@
-import { ChosenWriteNotSentError } from './identity-nonce'
+import { ChosenWriteNotSentError, chosenNonceSending } from './identity-nonce'
 import type { EvoSDK } from '@dashevo/evo-sdk'
 import {
   BatchTransition, BatchedTransition, ContractFeeClaim, ContractUserModeration,
@@ -43,6 +43,7 @@ export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, w
     try {
       assertLive?.()
       transition.sign(privateKey, identityKey)
+      chosenNonceSending(ownerId, nonce)
       broadcastStarted = true
       return await (strict ? sdk.stateTransitions.broadcastAndWait(transition) : sdk.stateTransitions.broadcastAndWaitForAffectedState(transition))
     } finally {

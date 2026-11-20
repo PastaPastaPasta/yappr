@@ -670,7 +670,10 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     const allowAnother = new Set([first.request.reservationId])
     expect(await prepareWalletPayment(undefined, buildFresh, { ...context, allowAnother })).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
     expect(buildFresh).toHaveBeenCalledOnce()
-    expect(storedPayments().map(record => record.reservationId)).not.toContain(first.request.reservationId)
+    // Sending another past it is this confirmation's choice: every other one is still held back by it.
+    expect(storedPayments().map(record => record.reservationId)).toContain(first.request.reservationId)
+    const otherContext = { ...context, key: 'different payment' }
+    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: first.request.reservationId } } })
   })
 
   it.each([['an empty string', ''], ['an entry without a nonce', '[{}]']])('reads stored requests holding %s as an unknown earlier payment', async (_label, raw) => {
@@ -795,7 +798,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(buildFresh).not.toHaveBeenCalled()
     expect(await prepareWalletPayment(undefined, buildFresh, { ...context, allowAnother: new Set([first.request.reservationId]) })).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
     expect(buildFresh).toHaveBeenCalledOnce()
-    expect(storedPayments().map(record => record.reservationId)).not.toContain(first.request.reservationId)
+    expect(storedPayments().map(record => record.reservationId)).toContain(first.request.reservationId)
   })
 
   it('takes over a stored request of the same payment that can still execute once its own was proved absent', async () => {

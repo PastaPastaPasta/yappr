@@ -466,14 +466,8 @@ async function preparePayment(
         catch (error) {
           logger.warn('Could not read an earlier wallet payment request:', error);
           const unreadable = unreadablePayment(context.ownerId, record);
-          if (context.allowAnother?.has(record.reservationId)) {
-            // The user chose to send another past it: once its nonce is used it can't hold back anything else, so it goes.
-            let used = false;
-            try { used = !(await unreadable.observe()).executable; }
-            catch (readError) { logger.debug('Could not read the earlier wallet payment nonce:', readError); }
-            if (used) drop(record);
-            continue;
-          }
+          // Its outcome stays unknown: only this confirmation's "send another" goes past it, and it stays for every other.
+          if (context.allowAnother?.has(record.reservationId)) continue;
           return settle({ completed: false, payment: unreadable, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
         }
         let result: PaymentObservation;
