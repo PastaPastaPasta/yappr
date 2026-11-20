@@ -134,11 +134,6 @@ export interface SessionModuleOptions {
   unhydrated?: Set<string>
 }
 
-/** An App Connect request's hash, as the wallet's return link names it. */
-const REQUEST_HASH = /^[0-9a-f]{40}$/
-/** Plain storage: the account whose interrupted renewal a boot is carrying over (`restored`). */
-const CARRY_MARKER_KEY = 'yappr_engine_carry_pending'
-
 /** A Platform identity id: 32 bytes in base58. */
 function isIdentityId(value: string): boolean {
   try {
@@ -265,36 +260,22 @@ export function createSessionModule(options: SessionModuleOptions) {
   }
 
   let restoring: Promise<SessionDTO | null> | null = null
-  /** The account whose secrets the host loaded into this engine (the session slot's at boot), if any. */
-  let bootIdentity: string | null = null
   /** Restores lib's saved session once per engine boot; every session call waits for it. */
   function restored(): Promise<SessionDTO | null> {
     restoring ??= (async () => {
       const switched = registry.takeSwitchMarker()
       const storedIdentity = registry.activeIdentityId()
-      bootIdentity = storedIdentity
       const hadSession = storedIdentity !== null
       const user = await controller.restoreSession()
       if (!user) {
         if (hadSession) {
-          // A renewal the wallet answered, killed twice before it landed: signed out, the account is signed in again with
-          // it. It is on the device in its new slot before the slot below is freed. One try per slot: a boot that dies
-          // in the copy (a native write that fails) leaves the marker, and the next frees the slot without it.
-          if (storage.getItem(CARRY_MARKER_KEY) !== storedIdentity) {
-            storage.setItem(CARRY_MARKER_KEY, storedIdentity)
-            await appConnect.carryRenewalOver(storedIdentity, async () => { await options.secureDurable?.() }).catch((error: unknown) => {
-              logger.warn('App Connect: could not keep the interrupted renewal:', error)
-            })
-          }
           // This slot belongs to one native engine, unlike shared browser metadata.
           // Keep the account and its secrets available for reauthentication, but free the unusable slot.
           if (!controller.getState().user && registry.activeIdentityId() === storedIdentity) storage.removeItem(SESSION_STORAGE_KEY)
           announce('key-invalid')
         }
-        storage.removeItem(CARRY_MARKER_KEY)
         return null
       }
-      storage.removeItem(CARRY_MARKER_KEY)
       // A session restored from its key ring is a wallet session, even when a sign-in was killed before it recorded that.
       const entry = registry.get(user.identityId)
       const wallet = appConnectSessions.current(user.identityId) !== null
@@ -525,8 +506,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
     // A renewal whose account was signed out meanwhile (the wallet disabled the old keys first) signs it back in.
     assertSlotFree(identityId)
-    // An account known here whose secrets this engine never loaded (parked, or carried over by an earlier boot).
-    const parked = isParked(identityId) || (registry.get(identityId) !== undefined && identityId !== bootIdentity)
+    const parked = isParked(identityId)
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
     try {
@@ -564,30 +544,6 @@ export function createSessionModule(options: SessionModuleOptions) {
     // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
     if (parked) requireRestart()
     return { status: 'signed-in', session, reload: parked }
-  }
-
-  /**
-   * The stored requests a cancel names. A renewal is `account`'s (the active
-   * account's when it names none): its renewal while that account is active
-   * here; signed out, also what that renewal became when its account could
-   * not be restored (`carryRenewalOver`). While another account is active,
-   * or the account is parked (an "Add account" boot), the renewal is filed
-   * with its own account's secrets, out of this engine's reach, so the
-   * cancel is refused. `forget` deletes a "Sign in
-   * again" only when it is for the account named.
-   */
-  function cancelledKinds(opts: { renew?: boolean; reauth?: string; account?: string }): AppConnectRequestKind[] {
-    const named = (id: unknown): id is string => typeof id === 'string' && isIdentityId(id)
-    if (opts.renew) {
-      const active = registry.activeIdentityId()
-      const account = named(opts.account) ? opts.account : active
-      if (!account) return []
-      if (account === active) return [{ identityHint: account, renew: true }]
-      if (active || isParked(account)) throw new RpcError('That renewal is for an account that is not signed in here', 'NOT_SIGNED_IN')
-      return [{ identityHint: account, renew: true }, { identityHint: account }]
-    }
-    if (opts.reauth === undefined) return [{}]
-    return named(opts.reauth) ? [{ identityHint: opts.reauth }] : []
   }
 
   /** The keys the wallets granted the active account, with this device's marked (Settings). */
@@ -826,45 +782,16 @@ export function createSessionModule(options: SessionModuleOptions) {
     /**
      * Abandon the flow: its request and any verified answer are forgotten.
      * Resolves once the request is gone from the device, and fails if it
-     * could not be deleted. With no flow running (the engine restarted under
-     * the cancel, which runs none), the stored request the host names is
-     * forgotten instead: `renew` for `account`'s renewal (refused while
-     * another account is active or it is parked, `NOT_SIGNED_IN`), `reauth` for
-     * signing that account in again, else a sign-in. With `requestHash` (hex)
-     * the cancel names its request: a flow that never showed it is left
-     * alone, and a stored request goes only if it is that one.
+     * could not be deleted.
      */
-    async appConnectCancel(opts: { renew?: boolean; reauth?: string; account?: string; requestHash?: string } = {}): Promise<void> {
-      const named = opts?.requestHash
-      if (named !== undefined && (typeof named !== 'string' || !REQUEST_HASH.test(named))) {
-        throw new RpcError('requestHash must be a request hash (hex)', 'BAD_REQUEST')
-      }
-      const flowKind = appConnect.runningKind()
-      // A renewal cancel for another flow (sent again after a restart while an unrelated flow runs) leaves that flow be.
-      const otherFlow = flowKind !== null && opts?.renew === true && (!flowKind.renew || (opts.account !== undefined && opts.account !== flowKind.identityHint))
-      if ((named !== undefined && !appConnect.showed(named)) || otherFlow) {
-        await restored()
-        const running = appConnect.runningKind()
-        for (const kind of cancelledKinds(opts)) {
-          // Not under a start that may be resuming that very request.
-          const resuming = running && running.identityHint === kind.identityHint && running.renew === (kind.renew === true)
-          if (!resuming) await appConnect.forget(kind, named)
-        }
-        // A revoke the cancelled renewal held back goes ahead once no renewal of that account is stored.
-        const held = deferredRevoke
-        if (held && !(await appConnect.pending({ identityHint: held, renew: true }))) settleDeferredRevoke()
-        await options.secureDurable?.()
-        return
-      }
+    async appConnectCancel(): Promise<void> {
       const cancelled = cancelledStart = ++appConnectStarts
       // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
       const running = appConnect.runningKind()
       appConnect.cancel()
       settleDeferredRevoke()
-      await restored()
-      const kinds = running ? [running] : cancelledKinds(opts ?? {})
       // Unless a start since then has made the request this would find.
-      for (const kind of kinds) if (appConnectStarts === cancelled) await appConnect.forget(kind)
+      if (running && appConnectStarts === cancelled) await appConnect.forget(running)
       await options.secureDurable?.()
     },
 

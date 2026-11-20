@@ -104,14 +104,10 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
  */
 export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
   const record = await requestRecordsFor(identityId).load()
-  return record !== null && requestHashOf(record) === requestHash
-}
-
-/** The hash (hex) a stored request goes by: what the wallet's return link names. */
-export function requestHashOf(record: StoredAppConnectRequest): string {
+  if (!record) return false
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
-    return bytesToHex(hash160(getYapprPublicKey(privateKey)))
+    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
   } finally {
     clearSensitiveBytes(privateKey)
   }

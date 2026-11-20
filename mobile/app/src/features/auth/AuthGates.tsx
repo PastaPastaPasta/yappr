@@ -17,7 +17,7 @@ import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { reauthenticate, recoverInterruptedAdd, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
-import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, replayInterruptedCancel, useAppConnect } from './app-connect';
+import { appConnectInProgress, cancelAppConnect, lastAppConnectMode, useAppConnect } from './app-connect';
 import { AppConnectNotices } from './AppConnectNotices';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
@@ -138,7 +138,7 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
     // tell a plain sign-in from signing an account in again ("Sign in again").
     const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
     const pendingRequest: Promise<{ reauth: string | null } | null> = appConnect
-      ? replayInterruptedCancel().then((confirmed) => (confirmed ? engine.api.session.appConnectPendingSignIn() : null))
+      ? engine.api.session.appConnectPendingSignIn()
       : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
     pendingRequest
       .then((pending) => {
@@ -198,8 +198,8 @@ function useResumeRenewal(ready: boolean, pathname: string): void {
     if (!ready || !engineUp || !walletAccount || checked.current) return;
     checked.current = true;
     if (getCapabilities()?.walletSignIn !== 'app-connect') return;
-    replayInterruptedCancel()
-      .then((confirmed) => confirmed && engine.api.session.appConnectPending({ renew: true }))
+    engine.api.session
+      .appConnectPending({ renew: true })
       .then((pending) => {
         // The account signed out or changed while the engine answered: the answer was about the one before.
         const now = useSessionStore.getState();

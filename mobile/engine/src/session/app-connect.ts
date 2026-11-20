@@ -9,7 +9,7 @@ import {
   type RequestRecordStore,
   type StoredAppConnectRequest,
 } from '@/lib/app-connect/login-flow'
-import { requestHashOf, requestRecordsFor } from '@/lib/app-connect/pending-request'
+import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import { appConnectCallbackUrl } from '@/lib/app-connect/yappr-request'
@@ -123,8 +123,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
   let state: AppConnectFlowDTO = { flow, renew: false, phase: 'idle' }
   /** The login state last seen, so a confirm whose names resolve late is dropped once superseded. */
   let latest: AppConnectLoginState | null = null
-  /** Every request the running flow has shown ("Check again" and "That's not me" make new ones). */
-  const shown = new Set<string>()
 
   function set(next: AppConnectFlowDTO): void {
     state = next
@@ -143,7 +141,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     latest = next
     const base = { flow: id, renew: renewFor !== undefined }
     const requestHash = instance.requestHashHex() ?? ''
-    if (requestHash) shown.add(requestHash)
     switch (next.phase) {
       case 'confirm':
         names(next.candidates)
@@ -166,7 +163,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     login?.dispose()
     login = null
     latest = null
-    shown.clear()
     renewFor = undefined
     hint = undefined
   }
@@ -188,9 +184,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
 
     /** The kind of request the running flow makes or resumes, if one is running. */
     runningKind: (): AppConnectRequestKind | null => (login ? { identityHint: hint, renew: renewFor !== undefined } : null),
-
-    /** Whether the running flow has shown the request `requestHash` (hex). */
-    showed: (requestHash: string): boolean => login !== null && shown.has(requestHash),
 
     /**
      * Starts a sign-in, resuming the stored request of the same kind unless
@@ -264,14 +257,11 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       return grant
     },
 
-    /**
-     * Forgets the stored request of this kind (see `pending`) without a
-     * running flow; with `requestHash` (hex), only if it is that request.
-     */
-    async forget(kind: AppConnectRequestKind, requestHash?: string): Promise<void> {
+    /** Forgets the stored request of this kind (see `pending`), if there is one. */
+    async forget(kind: AppConnectRequestKind): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
       const record = await loadRequest(kind)
-      if (record && (requestHash === undefined || requestHashOf(record) === requestHash)) await recordsFor(kind).clear(record)
+      if (record) await recordsFor(kind).clear(record)
     },
 
     /**
@@ -295,29 +285,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       const reauth = again?.identityHint
       if (again && reauth !== undefined && (!plain || again.createdAt > plain.createdAt)) return { reauth }
       return plain ? { reauth: null } : null
-    },
-
-    /**
-     * `identityId`'s session could not be restored (the wallet superseded its
-     * keys while it answered a renewal, and the app was killed before that
-     * renewal landed): its stored renewal becomes a request to sign it in
-     * again, which a signed-out launch resumes. The renewal's slot is in that
-     * account's bucket, which no signed-out boot reads.
-     */
-    async carryRenewalOver(identityId: string, durable: () => Promise<void>): Promise<void> {
-      if (!isAppConnectBuild() || !appConnectPins()) return
-      const record = await loadRequest({ identityHint: identityId, renew: true })
-      if (!record) return
-      // A newer "Sign in again" the user started stays; the renewal is kept only once it is safely in its new slot.
-      const reauthSlot = recordsFor({ identityHint: identityId })
-      const newer = await reauthSlot.load()
-      if (newer && newer.createdAt > record.createdAt) return
-      await reauthSlot.save(record)
-      const carried = await loadRequest({ identityHint: identityId })
-      if (carried?.ephemeralPrivateKey !== record.ephemeralPrivateKey) throw new Error('The interrupted renewal could not be kept')
-      // On the device before its old copy (and the session it belonged to) go.
-      await durable()
-      await recordsFor({ identityHint: identityId, renew: true }).clear(record)
     },
   }
 }
