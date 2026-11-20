@@ -20,7 +20,8 @@ import { tipHistoryService, matchesSentTip, type SentTipMatch } from '@/lib/serv
 import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
 import { identityService } from '@/lib/services/identity-service'
-import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
+import { MIN_YAPP_TIP, YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
+import { walletRequestLive } from '@/lib/services/identity-nonce'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
 import { targetKindOf, yappIsLocked } from '@/lib/contract-topology'
 import { creditTipsEnabled } from '@/lib/feature-flags'
@@ -164,6 +165,8 @@ export function TipModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
+  // The QR this modal session built, shown again by "Check again" while it may still execute.
+  const shownRequestRef = useRef<{ key: string; uri: string; nonce: bigint; match: SentTipMatch | null } | null>(null)
   const walletSessionRef = useRef(0)
 
   // Transfer key persistence (credits tab only)
@@ -239,6 +242,7 @@ export function TipModal() {
       setYappBalance(null)
       setCanSignLocally(null)
       walletMatchRef.current = null
+      shownRequestRef.current = null
       walletSessionRef.current++
       usedTransferKeyRef.current = null
     }
@@ -328,6 +332,7 @@ export function TipModal() {
   // Shared tail of both YAPP paths: refresh balances, drop the cached tip
   // pages so the new proof can show up, and land on the success screen.
   const finishYappTip = useCallback(() => {
+    shownRequestRef.current = null
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
     // auth context caches is stale too.
@@ -435,7 +440,17 @@ export function TipModal() {
     setError(null)
     setWalletUri(null)
     setWalletExpired(false)
+    const key = JSON.stringify([recipientInfo.id, yappAmountBig.toString(), tipTarget ?? null, noteMessage ?? null])
     try {
+      // This session's QR for the same tip, while it may still execute, is shown again with its own match.
+      const shown = shownRequestRef.current
+      if (shown?.key === key && await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)) {
+        if (walletSessionRef.current !== session) return
+        walletMatchRef.current = shown.match
+        setWalletUri(shown.uri)
+        return
+      }
+      shownRequestRef.current = null
       // Recipient, amount, post and message all have to agree before a row
       // counts as this tip, plus a time floor so an identical earlier tip to
       // the same author isn't mistaken for the wallet's. The margin absorbs
@@ -458,7 +473,9 @@ export function TipModal() {
         await request.discard()
         return
       }
-      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
+      const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
+      shownRequestRef.current = { key, uri, nonce: request.nonce, match: walletMatchRef.current }
+      setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet tip request:', err)

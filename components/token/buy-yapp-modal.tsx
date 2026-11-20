@@ -17,7 +17,8 @@ import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
-import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
+import { YAPP_TOKEN_COSTS, YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
+import { walletRequestLive } from '@/lib/services/identity-nonce'
 import { repostsAreQuotes } from '@/lib/contract-topology'
 
 // Preset purchase amounts in whole YAPP (must be >= the on-chain minimum of 100).
@@ -81,6 +82,8 @@ export function BuyYappModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletBaselineRef = useRef<bigint | null>(null)
+  // The QR this modal session built, shown again by "Check again" while it may still execute.
+  const shownRequestRef = useRef<{ key: string; uri: string; nonce: bigint; baseline: bigint } | null>(null)
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
   // baseline after its awaits resolve.
@@ -106,6 +109,7 @@ export function BuyYappModal() {
       setWalletUri(null)
       setWalletExpired(false)
       walletBaselineRef.current = null
+      shownRequestRef.current = null
       walletSessionRef.current++
     }
   }, [isOpen])
@@ -144,6 +148,7 @@ export function BuyYappModal() {
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
   const finishPurchase = useCallback(() => {
+    shownRequestRef.current = null
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
@@ -198,7 +203,17 @@ export function BuyYappModal() {
     setError(null)
     setWalletUri(null)
     setWalletExpired(false)
+    const key = `${amountBig}:${costCredits}`
     try {
+      // This session's QR for the same purchase, while it may still execute, is shown again with its own baseline.
+      const shown = shownRequestRef.current
+      if (shown?.key === key && await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)) {
+        if (walletSessionRef.current !== session) return
+        walletBaselineRef.current = shown.baseline
+        setWalletUri(shown.uri)
+        return
+      }
+      shownRequestRef.current = null
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
       const baseline = await tokenService.getBalance(user.identityId)
@@ -210,7 +225,9 @@ export function BuyYappModal() {
         await request.discard()
         return
       }
-      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
+      const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
+      shownRequestRef.current = { key, uri, nonce: request.nonce, baseline }
+      setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
