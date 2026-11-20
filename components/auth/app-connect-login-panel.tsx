@@ -78,7 +78,7 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
     const returnTo = login?.returnToHere() ?? null
     const grant = login?.accept(identityId)
     if (!grant) return
-    if (!identityHint) holdWalletSignInReturn(returnTo)
+    if (!identityHint) holdWalletSignInReturn(identityId, returnTo)
     setSigning('running')
     setSignInError(null)
     onGrant(grant)

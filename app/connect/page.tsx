@@ -7,7 +7,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
-import { isPendingRenewal } from '@/lib/app-connect/pending-request'
+import { isPendingRenewal, pendingSignInReturn } from '@/lib/app-connect/pending-request'
+import { loginRoute } from '@/lib/auth/return-to'
 import {
   APP_CONNECT_CHANNEL,
   appReturnLink,
@@ -30,7 +31,7 @@ const STATUS_COPY: Record<string, { title: string; description: string }> = {
 type View =
   | { kind: 'waiting' }
   | { kind: 'other-tab' }
-  | { kind: 'status'; title: string; description: string }
+  | { kind: 'status'; title: string; description: string; retry: string }
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
 
@@ -83,7 +84,11 @@ export default function ConnectPage() {
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
     if (failure) {
-      setView({ kind: 'status', ...failure })
+      // Trying again carries the page the request (if still pending) started from.
+      pendingSignInReturn(callback.requestHash).then(
+        (route) => setView({ kind: 'status', ...failure, retry: loginRoute(route ?? '') }),
+        () => setView({ kind: 'status', ...failure, retry: '/login/' }),
+      )
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
@@ -138,7 +143,7 @@ export default function ConnectPage() {
             <p className="font-medium text-gray-900 dark:text-white">{view.title}</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">{view.description}</p>
             <Button asChild>
-              <Link href="/login/">Back to Yappr</Link>
+              <Link href={view.retry}>Back to Yappr</Link>
             </Button>
           </>
         )}

@@ -73,6 +73,21 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
   return sanitizeReturnTo(value, basePath) ?? DEFAULT_RETURN_TO
 }
 
+/** The page a wallet sign-in of `identityId` started from (`null`: none). */
+export interface WalletSignInReturn {
+  identityId: string
+  returnTo: string | null
+}
+
+/**
+ * Where /login sends `identityId` once signed in: its own `next`, whatever
+ * the sign-in; else, for that identity's wallet sign-in, the page its request
+ * started from; else /feed.
+ */
+export function afterSignInRoute(next: string | null, identityId: string, wallet: WalletSignInReturn | null, basePath?: string): string {
+  return sanitizeReturnTo(next, basePath) ?? returnToOrDefault(wallet?.identityId === identityId ? wallet.returnTo : null, basePath)
+}
+
 /**
  * Where the DPNS wizard's Continue goes: back to `next` only when the user now
  * has a username. After a failed registration they go to /feed instead.
