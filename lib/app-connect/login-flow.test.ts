@@ -429,6 +429,14 @@ describe('the page a sign-in returns to', () => {
     await settings.login.reject()
     expect(settings.login.requestHashHex()).not.toBe(replaced)
     expect(settings.records.value?.returnTo).toBe('/post/?id=x')
+
+    // "Try again" after a failed check and "Start again" after too many answers.
+    settings.records.value = null
+    await settings.login.start()
+    expect(settings.records).toMatchObject({ value: { returnTo: '/post/?id=x' } })
+    settings.records.value = null
+    await settings.login.start({ fresh: true })
+    expect(settings.records).toMatchObject({ value: { returnTo: '/post/?id=x' } })
   })
 
   it('goes with the request once it is accepted or has expired', async () => {

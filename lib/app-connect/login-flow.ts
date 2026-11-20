@@ -159,6 +159,8 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
+  /** The page of the last request made or resumed here: every request that replaces it keeps that page. */
+  private returnTo: string | undefined
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -187,9 +189,9 @@ export class AppConnectLogin {
   /**
    * Checks the network and the group, then resumes a stored request (a
    * reload, or the wallet's return link) or starts a new one. `identityHint`
-   * (renewal) accepts only that identity. `returnTo` is the page of a request a new one replaces.
+   * (renewal) accepts only that identity.
    */
-  async start(options: { identityHint?: string; fresh?: boolean; returnTo?: string } = {}): Promise<void> {
+  async start(options: { identityHint?: string; fresh?: boolean } = {}): Promise<void> {
     if (this.disposed) return
     const generation = ++this.generation
     const current = () => !this.disposed && this.generation === generation
@@ -220,7 +222,7 @@ export class AppConnectLogin {
       const stored = options.fresh ? null : await this.deps.records.load()
       if (!current()) return
       const resumable = stored && stored.identityHint === options.identityHint ? stored : null
-      record = resumable ?? await this.newRecord(options.identityHint, current, options.returnTo)
+      record = resumable ?? await this.newRecord(options.identityHint, current)
     } catch (error) {
       if (!current()) return
       this.deps.onError?.('App Connect: could not prepare the request', error)
@@ -238,9 +240,9 @@ export class AppConnectLogin {
    * so it cannot overwrite the newer request (the store applies writes in
    * the order they are issued).
    */
-  private async newRecord(identityHint: string | undefined, current: () => boolean, replacedReturnTo?: string): Promise<StoredAppConnectRequest | null> {
+  private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
-    const returnTo = replacedReturnTo ?? this.deps.returnTo?.()
+    const returnTo = this.returnTo ?? this.deps.returnTo?.() ?? undefined
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
@@ -261,6 +263,7 @@ export class AppConnectLogin {
   }
 
   private activate(record: StoredAppConnectRequest): void {
+    this.returnTo = record.returnTo
     // A new request replaces the old one: its ephemeral key is no longer needed.
     if (this.active) clearSensitiveBytes(this.active.privateKey)
     const privateKey = hexToBytes(record.ephemeralPrivateKey)
@@ -305,7 +308,7 @@ export class AppConnectLogin {
       this.poll()
       return
     }
-    await this.start({ identityHint: active?.record.identityHint, fresh: true, returnTo: active?.record.returnTo })
+    await this.start({ identityHint: active?.record.identityHint, fresh: true })
   }
 
   /**
@@ -322,9 +325,9 @@ export class AppConnectLogin {
 
   /** "That's not me": drop everything, including the request someone else answered, and show a new code. */
   async reject(): Promise<void> {
-    const replaced = this.active?.record
+    const hint = this.active?.record.identityHint
     this.finish()
-    await this.start({ identityHint: replaced?.identityHint, fresh: true, returnTo: replaced?.returnTo })
+    await this.start({ identityHint: hint, fresh: true })
   }
 
   /**
