@@ -1,6 +1,6 @@
 import type { AppConnectCandidateDTO } from '@engine/api';
 import { Stack, useLocalSearchParams, useNavigation, useRoute } from 'expo-router';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -11,7 +11,6 @@ import {
   cancelAppConnect,
   checkAgain,
   flowUri,
-  forgetAppConnectRequest,
   notMe,
   openWallet,
   pollNow,
@@ -128,9 +127,11 @@ export default function ConnectScreen() {
   }, [renewalAnswer]);
 
   // The screen closes once the engine has confirmed the cancel, so a cancel still on its way cannot overtake a later
-  // start. One it could not confirm says so, and the user leaves (or retries) knowingly.
+  // start. One it could not confirm says so, and the user leaves knowingly. Going back waits the same way.
   const [cancelling, setCancelling] = useState<'sent' | 'unconfirmed' | null>(null);
   const cancelState = useRef<'sent' | 'unconfirmed' | null>(null);
+  const exitAction = useRef<Parameters<typeof navigation.dispatch>[0] | null>(null);
+  const leaving = useRef(false);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -138,27 +139,43 @@ export default function ConnectScreen() {
       mounted.current = false;
     };
   }, []);
-  const awaitCancel = (request: Promise<boolean>) => {
-    cancelState.current = 'sent';
-    setCancelling('sent');
-    const settled = (confirmed: boolean) => {
-      if (!mounted.current) return;
-      if (confirmed) {
-        closeRef.current();
-        return;
-      }
-      cancelState.current = 'unconfirmed';
-      setCancelling('unconfirmed');
-    };
-    request.then(settled, () => settled(false));
-  };
-  const cancel = () => {
-    if (cancelState.current === 'unconfirmed') closeRef.current();
+  const leave = useCallback(() => {
+    leaving.current = true;
+    if (exitAction.current) navigation.dispatch(exitAction.current);
+    else closeRef.current();
+  }, [navigation]);
+  const awaitCancel = useCallback(
+    (request: Promise<boolean>) => {
+      cancelState.current = 'sent';
+      setCancelling('sent');
+      const settled = (confirmed: boolean) => {
+        if (!mounted.current) return;
+        if (confirmed) {
+          leave();
+          return;
+        }
+        cancelState.current = 'unconfirmed';
+        setCancelling('unconfirmed');
+      };
+      request.then(settled, () => settled(false));
+    },
+    [leave],
+  );
+  const cancel = useCallback(() => {
+    if (cancelState.current === 'unconfirmed') leave();
     else if (cancelState.current === null) awaitCancel(cancelAppConnect());
-  };
-  const retryCancel = () => {
-    if (cancelState.current === 'unconfirmed') awaitCancel(forgetAppConnectRequest());
-  };
+  }, [leave, awaitCancel]);
+  useEffect(
+    () =>
+      navigation.addListener('beforeRemove', (event) => {
+        const live = !['idle', 'done', 'error'].includes(useAppConnect.getState().step.name);
+        if (leaving.current || (!live && cancelState.current === null)) return;
+        event.preventDefault();
+        exitAction.current = event.data.action;
+        cancel();
+      }),
+    [navigation, cancel],
+  );
   const startOver = () => {
     startAppConnect(mode, { renew, reauth: useAppConnect.getState().reauth, fresh: true }).catch(() => undefined);
   };
@@ -179,12 +196,7 @@ export default function ConnectScreen() {
         testID="ac-cancel-unconfirmed"
       />
     );
-    footer = (
-      <>
-        <Button label={copy.signin.tryAgain} size="block" onPress={retryCancel} testID="ac-cancel-retry" />
-        <Button label={copy.signin.closeAnyway} variant="ghost" size="block" onPress={close} testID="ac-close-anyway" />
-      </>
-    );
+    footer = <Button label={copy.signin.closeAnyway} variant="ghost" size="block" onPress={leave} testID="ac-close-anyway" />;
   } else if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
     body = <StatusBlock tone="busy" title={copy.signin.starting} />;
   } else if (step.name === 'accepting' || renewalAnswer) {

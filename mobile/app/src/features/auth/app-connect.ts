@@ -300,11 +300,6 @@ export async function cancelAppConnect(): Promise<boolean> {
   next();
   set(initial);
   if (step.name === 'idle' || step.name === 'done') return true;
-  return forgetAppConnectRequest();
-}
-
-/** Asks the engine again to forget the request (a cancel it did not confirm). Resolves to whether it confirmed that. */
-export async function forgetAppConnectRequest(): Promise<boolean> {
   try {
     await engine.api.session.appConnectCancel();
     return true;
