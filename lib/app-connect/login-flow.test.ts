@@ -419,6 +419,16 @@ describe('the page a sign-in returns to', () => {
     await settings.login.start()
     expect(settings.login.requestHashHex()).toBe(post.login.requestHashHex())
     expect(settings.records.value?.returnTo).toBe('/post/?id=x')
+
+    settings.clock.now += 10 * 60_000
+    await settings.login.checkAgain()
+    expect(settings.login.requestHashHex()).not.toBe(post.login.requestHashHex())
+    expect(settings.records.value?.returnTo).toBe('/post/?id=x')
+
+    const replaced = settings.login.requestHashHex()
+    await settings.login.reject()
+    expect(settings.login.requestHashHex()).not.toBe(replaced)
+    expect(settings.records.value?.returnTo).toBe('/post/?id=x')
   })
 
   it('goes with the request once it is accepted or has expired', async () => {
