@@ -23,6 +23,7 @@ import {
 } from '@/lib/services/messaging-key-service'
 import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
 import { IDENTITY_UPDATE_UNLOCKED, crossTabLocks } from '@/lib/identity-write-lock'
+import { STALE_IDENTITY_ERROR } from '@/lib/services/identity-service'
 import { KeyExchangeQR } from './key-exchange-qr'
 
 export type MessagingSetupContext = 'private-feed' | 'store' | 'generic'
@@ -57,7 +58,7 @@ const REFUSED_BEFORE_BROADCAST = /require a MASTER key|does not match any key|al
 /** Consumer-grade wording for a failed MASTER-signed update. */
 function masterKeyFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : ''
-  if (message === IDENTITY_UPDATE_UNLOCKED) return message
+  if (message === IDENTITY_UPDATE_UNLOCKED || message === STALE_IDENTITY_ERROR) return message
   if (/require a MASTER key/i.test(message)) return 'That key can\'t approve this. Enter your account\'s master key.'
   if (/does not match any key/i.test(message)) return 'That key isn\'t one of this account\'s keys.'
   if (/invalid (private )?key|checksum|wif/i.test(message)) return 'That doesn\'t look like a private key. Check it and try again.'
@@ -228,17 +229,26 @@ export function SetUpMessaging({
     } catch (error) {
       failure = error
     }
-    if (failure instanceof MessagingSetupCancelledError) {
+    // Closed, superseded or signed out since: whatever Platform shows next is not this attempt's to save.
+    const stopped = () => {
+      if (!cancelled()) return false
       if (aliveRef.current && !signal.aborted) setPhase({ kind: 'choose' })
+      return true
+    }
+    if (failure instanceof MessagingSetupCancelledError) {
+      stopped()
       return
     }
+    if (stopped()) return
     // A broadcast whose answer timed out may still land, so only a refusal before broadcast skips the wait.
     const message = failure instanceof Error ? failure.message : ''
-    const refused = failure !== null && (message === IDENTITY_UPDATE_UNLOCKED || REFUSED_BEFORE_BROADCAST.test(message))
+    const refused = failure !== null && (message === IDENTITY_UPDATE_UNLOCKED || message === STALE_IDENTITY_ERROR || REFUSED_BEFORE_BROADCAST.test(message))
     const attempts = refused ? 1 : CONFIRM_ATTEMPTS
-    for (let attempt = 0; attempt < attempts && aliveRef.current; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt > 0) await sleep(CONFIRM_DELAY_MS)
+      if (stopped()) return
       const state = await anchorKeyState(ready).catch(() => null)
+      if (stopped()) return
       if (state === 'this-key') {
         finish(ready)
         return
@@ -248,7 +258,6 @@ export function SetUpMessaging({
         return
       }
     }
-    if (!aliveRef.current) return
     logger.warn('Messaging setup: the master-signed update did not land:', failure)
     if (failure && fromMasterKeyForm) {
       setMasterKeyError(masterKeyFailure(failure))

@@ -17,6 +17,8 @@ window.identityUpdates = updates
 window.releaseIdentityUpdateLock = () => releaseLock()
 window.confirmIdentityUpdate = () => confirm()
 
+export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached the network yet. Try again in a moment."
+
 export const identityService = {
   hasEncryptionKey: async () => fixture !== 'encryption-key-modal',
   validateKeySecurityLevel: async () => ({ isValid: true, keyId: 0, securityLevel: 'MASTER' }),

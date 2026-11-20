@@ -26,6 +26,7 @@ export default defineConfig({
       { find: /^@\/components\/ui\/profile-image-upload$/, replacement: fromHere('./blog-management-mocks.tsx') },
       { find: /^@\/components\/moderation\/barred-writer-notice$/, replacement: fromHere('./blog-management-mocks.tsx') },
       { find: /^@\/lib\/auth\/passkey-vault$/, replacement: passkeyMocks },
+      { find: /^@\/lib\/services\/messaging-key-service$/, replacement: fromHere('./set-up-messaging-mocks.ts') },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],

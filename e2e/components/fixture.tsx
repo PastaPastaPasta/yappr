@@ -7,7 +7,8 @@ import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fi
 import { BlogManagementFixture } from './blog-management-fixture'
 import { BlogEditorFixture } from './blog-editor-fixture'
 import { PasskeyEnrolFixture } from './passkey-enrol-fixture'
-import { EncryptionKeyModalFixture } from './encryption-key-modal-fixture'
+import { EncryptionKeyModalFixture, signInWithLoginKey } from './encryption-key-modal-fixture'
+import { SetUpMessagingFixture } from './set-up-messaging-fixture'
 
 declare global {
   interface Window {
@@ -20,12 +21,15 @@ window.privateFeedTestSnapshot = snapshot
 const root = document.getElementById('root')
 if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
+if (fixture === 'encryption-key-modal' || fixture === 'set-up-messaging') signInWithLoginKey()
 const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
 createRoot(root).render(
   fixture === 'passkey-enrol' ? (
     <PasskeyEnrolFixture />
   ) : fixture === 'encryption-key-modal' ? (
     <EncryptionKeyModalFixture />
+  ) : fixture === 'set-up-messaging' ? (
+    <SetUpMessagingFixture />
   ) : fixture === 'blog-management' ? (
     <BlogManagementFixture />
   ) : fixture === 'blog-editor' ? (
