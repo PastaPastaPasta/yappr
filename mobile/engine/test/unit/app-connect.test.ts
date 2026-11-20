@@ -773,6 +773,22 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(stored()).not.toContain(RENEWAL_SLOT)
   })
 
+  it('deletes a plain sign-in request left over from an accepted sign-in when the account signs out', async () => {
+    const engine = await signedOut()
+    await answered(engine, [68, 69])
+    const leftover = localStorage.getItem(LOGIN_SLOT)
+    expect(leftover).not.toBeNull()
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    localStorage.setItem(LOGIN_SLOT, leftover ?? '')
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    expect(stored()).toContain(LOGIN_SLOT)
+    await next.signOut()
+    expect(stored()).not.toContain(LOGIN_SLOT)
+    expect(await next.appConnectPendingSignIn()).toBeNull()
+  })
+
   it('restores a wallet session killed before it recorded its method as a wallet session', async () => {
     const engine = await signedOut()
     await answered(engine, [24, 25])
