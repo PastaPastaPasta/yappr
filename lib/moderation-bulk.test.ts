@@ -17,6 +17,7 @@ import {
   runBulk,
   laneOf,
   oldestBlockTime,
+  provedAt,
   readPredatesRun,
   tabAfter,
   withRunChanges,
@@ -101,6 +102,12 @@ describe('paging', () => {
     expect(oldestBlockTime([30, 10, 20])).toBe(10)
     expect(oldestBlockTime([30, undefined])).toBeNaN()
     expect(oldestBlockTime([30, NaN])).toBeNaN()
+  })
+
+  it("dates each document by the answer that covered it, else the read's oldest", () => {
+    const read = { todo: new Set<string>(), changed: new Set<string>(), at: 10, ats: new Map([['a', 30]]) }
+    expect(provedAt(read, 'a')).toBe(30)
+    expect(provedAt(read, 'b')).toBe(10)
   })
 
   it('reads one more page after a full last one, and stops at the cap', async () => {

@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkChainRead, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, provedAt, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkChainRead, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -282,9 +282,20 @@ export function BulkHideModal() {
       return
     }
     const { batch } = opened
-    // A read from before what this opening's runs proved of these cannot settle them: it fails, and nothing is sent.
+    // A read of one from before what this opening's runs proved of it, or
+    // before an earlier read in this run, cannot settle it: it fails, and nothing is sent.
+    const settledAt = new Map<string, number>()
     const settles = (asked: readonly BulkItem[]) => (read: BulkChainRead) => {
-      if (readPredatesRun(runChangesRef.current, read.at, asked.map((item) => item.id))) throw new Error('read behind a proved change')
+      const behind = asked.some((item) => {
+        const at = provedAt(read, item.id)
+        const last = settledAt.get(item.id)
+        return readPredatesRun(runChangesRef.current, at, [item.id]) || (last !== undefined && !(at !== undefined && at >= last))
+      })
+      if (behind) throw new Error('read behind a proved change')
+      for (const item of asked) {
+        const at = provedAt(read, item.id)
+        if (at !== undefined && Number.isFinite(at)) settledAt.set(item.id, at)
+      }
       return read
     }
     const hideLabel = chosen?.label ?? 0
