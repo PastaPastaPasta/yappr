@@ -26,8 +26,6 @@ jest.mock('./accounts', () => ({
 }));
 let mockPathname = '/';
 const mockGoBack = jest.fn();
-const mockDispatch = jest.fn();
-const mockListeners: Record<string, (event: unknown) => void> = {};
 let mockParams: Record<string, string> = {};
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: () => true },
@@ -35,11 +33,7 @@ jest.mock('expo-router', () => ({
   useNavigation: () => ({
     getParent: () => ({ canGoBack: () => true, goBack: mockGoBack }),
     getState: () => ({ routes: [{ key: 'connect' }] }),
-    dispatch: mockDispatch,
-    addListener: (name: string, listener: (event: unknown) => void) => {
-      mockListeners[name] = listener;
-      return () => undefined;
-    },
+    addListener: () => () => undefined,
   }),
   useRoute: () => ({ key: 'connect' }),
   useLocalSearchParams: () => mockParams,
@@ -313,77 +307,9 @@ describe('the wallet sign-in on App Connect builds', () => {
     await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
     await act(async () => fireEvent.press(screen.getByTestId('kx-check-again')));
     expect(fakeEngine.method('session.appConnectCheckAgain')).toHaveBeenCalled();
-    // The screen closes only once the engine has deleted the request, so a later start cannot be overtaken by it.
-    let deleted: () => void = () => undefined;
-    fakeEngine.method('session.appConnectCancel').mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          deleted = resolve;
-        }),
-    );
     fireEvent.press(screen.getByText('Cancel'));
     expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
-    expect(screen.getByTestId('ac-cancelling')).toBeTruthy();
-    expect(mockGoBack).not.toHaveBeenCalled();
-    await act(async () => deleted());
     expect(mockGoBack).toHaveBeenCalled();
-  });
-
-  it('says when the engine could not confirm a cancel, and closes then only when the user chooses to', async () => {
-    await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
-    fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('timed out'));
-    await act(async () => fireEvent.press(screen.getByText('Cancel')));
-    expect(screen.getByText("We couldn't confirm the cancel.")).toBeTruthy();
-    expect(screen.getByText('The sign-in request may still be saved.')).toBeTruthy();
-    expect(screen.queryByText('Try again')).toBeNull();
-    expect(mockGoBack).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByTestId('ac-close-anyway'));
-    expect(mockGoBack).toHaveBeenCalled();
-  });
-
-  describe('going back while the request is live', () => {
-    const back = { type: 'GO_BACK' };
-    const goBack = () => {
-      const preventDefault = jest.fn();
-      act(() => mockListeners.beforeRemove?.({ preventDefault, data: { action: back } }));
-      return preventDefault;
-    };
-
-    it('leaves only once the engine has deleted the request', async () => {
-      await open({ mode: 'qr' });
-      let deleted: () => void = () => undefined;
-      fakeEngine.method('session.appConnectCancel').mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            deleted = resolve;
-          }),
-      );
-      expect(goBack()).toHaveBeenCalled();
-      expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalledTimes(1);
-      expect(screen.getByTestId('ac-cancelling')).toBeTruthy();
-      expect(mockDispatch).not.toHaveBeenCalled();
-      await act(async () => deleted());
-      expect(mockDispatch).toHaveBeenCalledWith(back);
-      expect(goBack()).not.toHaveBeenCalled();
-    });
-
-    it('says when it could not confirm the cancel, and leaves on "Close anyway"', async () => {
-      await open({ mode: 'qr' });
-      fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('timed out'));
-      goBack();
-      await act(async () => {});
-      expect(screen.getByTestId('ac-cancel-unconfirmed')).toBeTruthy();
-      expect(mockDispatch).not.toHaveBeenCalled();
-      fireEvent.press(screen.getByTestId('ac-close-anyway'));
-      expect(mockDispatch).toHaveBeenCalledWith(back);
-      expect(mockGoBack).not.toHaveBeenCalled();
-    });
-
-    it('does not hold back a finished flow', async () => {
-      await open({ mode: 'qr' }, flow({ phase: 'unavailable', reason: 'untrusted' }));
-      act(() => useAppConnect.setState({ step: { name: 'done' } }));
-      expect(goBack()).not.toHaveBeenCalled();
-    });
   });
 
   describe('cut short by an engine restart while it takes the answer', () => {

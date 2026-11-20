@@ -1,4 +1,4 @@
-import { PlatformAuthController, clearSensitiveBytes, decodeYapprIdentityId, type AuthUser } from 'platform-auth'
+import { PlatformAuthController, decodeYapprIdentityId, type AuthUser } from 'platform-auth'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
@@ -405,8 +405,6 @@ export function createSessionModule(options: SessionModuleOptions) {
   let appConnectStarts = 0
   /** The generation the last cancel took. */
   let cancelledStart = -1
-  /** Starts still waiting for the restore: each settles once it has forgotten the request a cancel abandoned. */
-  const waitingStarts = new Set<Promise<void>>()
 
   /** The account a revoke signed out here: reported only once its sign-out is done, never for a revoke that changed nothing. */
   let revokedSignOut: string | null = null
@@ -487,26 +485,15 @@ export function createSessionModule(options: SessionModuleOptions) {
       throw new RpcError(renewing ? 'The renewal came from another account' : 'The answer came from another account', 'BAD_REQUEST')
     }
     const active = registry.activeIdentityId()
-    // An answer is taken once its request is gone from the device: one left behind would be resumed and answered
-    // again. Only that request goes: a newer one saved in its slot meanwhile stays.
-    const request = appConnect.runningKind()
-    const answered = request ? appConnect.stored(request) : null
-    const forgetRequest = async () => {
-      if (request) await appConnect.forget(request, { strict: true, only: answered })
-      await options.secureDurable?.()
-    }
     if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
-      // The old keys still restore the session: the renewal's request goes only once its grant is stored, so a
-      // kill in between resumes the renewal rather than report it done.
-      const grant = appConnect.accept(identityId, { keepRequest: true })
+      const grant = appConnect.accept(identityId)
       if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
       await appConnectSessions.adopt(grant)
-      await options.secureDurable?.()
       if (deferredRevoke === identityId) deferredRevoke = null
       useAppConnectStatus.getState().dismissRenewRequired()
       // The renewal may have added keys: whatever reads the identity next must not see a cached copy.
       identityService.clearCache(identityId)
-      await forgetRequest()
+      await options.secureDurable?.()
       const session = announce('renewed')
       if (!session) throw new RpcError('Renewing did not keep the session', 'NOT_SIGNED_IN')
       return { status: 'renewed', session }
@@ -517,12 +504,6 @@ export function createSessionModule(options: SessionModuleOptions) {
     const unloaded = registry.get(identityId) !== undefined && identityId !== hydratedIdentity
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
-    try {
-      await forgetRequest()
-    } catch (error) {
-      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
-      throw error
-    }
     const hold = unloaded ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
     let succeeded = false
     try {
@@ -598,12 +579,10 @@ export function createSessionModule(options: SessionModuleOptions) {
     const identityId = opts.identityId ?? active
     if (!identityId) return
     const isActive = identityId === active
-    // Its pending renewal, and a "Sign in again" kept apart from its secrets, go first: one that cannot be deleted
-    // fails the sign-out, so a later launch never resumes a request of an account the user signed out.
-    // A plain sign-in request left behind is the accepted one (none can start while someone is signed in).
-    const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }, ...(active !== null ? [{}] : [])]
-    for (const kind of kinds) await appConnect.forget(kind, { strict: true })
-    // A parked account's renewal is in its own bucket, which this boot did not load.
+    // Its pending renewal and "Sign in again" requests go first, so a later launch never resumes a request of an
+    // account the user signed out. A parked account's renewal is in its own bucket, which this boot did not load.
+    const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }]
+    for (const kind of kinds) await appConnect.forget(kind)
     if (identityId !== hydratedIdentity) appConnect.drop({ identityHint: identityId, renew: true })
     await options.secureDurable?.()
     if (isActive) {
@@ -714,43 +693,30 @@ export function createSessionModule(options: SessionModuleOptions) {
       assertUsable()
       // A cancel (or a newer start) while this waits for the restore wins: it makes no request.
       const start = ++appConnectStarts
+      await restored()
+      const overtaken = start !== appConnectStarts
+      const active = registry.activeIdentityId()
       const renew = opts?.renew === true
-      let abandoned: Promise<void> = Promise.resolve()
-      const ready = (async () => {
-        await restored()
-        const overtaken = start !== appConnectStarts
-        const active = registry.activeIdentityId()
-        let hint: string | undefined
-        if (renew) {
-          // A renewal a revoke is waiting for (resumed after the app was killed) may go on without a ring.
-          if (!active || (!appConnectSessions.current(active) && deferredRevoke !== active)) {
-            throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
-          }
-          hint = active
-        } else if (active) {
-          // The wallet would register keys a sign-in here could never use: add the account first.
-          throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
-        } else if (opts?.reauth !== undefined) {
-          // Signing an account in again ("Sign in again"): only that account may answer.
-          if (typeof opts.reauth !== 'string' || !isIdentityId(opts.reauth)) throw new RpcError('reauth must be an identity id', 'BAD_REQUEST')
-          hint = opts.reauth
+      let identityHint: string | undefined
+      if (renew) {
+        // A renewal a revoke is waiting for (resumed after the app was killed) may go on without a ring.
+        if (!active || (!appConnectSessions.current(active) && deferredRevoke !== active)) {
+          throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
         }
-        // Cancelled, and nothing started since: the stored request this would have resumed is abandoned too.
-        if (overtaken && appConnectStarts === cancelledStart) {
-          abandoned = appConnect.forget({ identityHint: hint, renew }, { strict: true })
-          await abandoned
-        }
-        return { overtaken, identityHint: hint }
-      })()
-      // The cancel replies once this start's cleanup is done (or failed).
-      const settled = ready.then(() => undefined, () => abandoned)
-      waitingStarts.add(settled)
-      const done = () => {
-        waitingStarts.delete(settled)
+        identityHint = active
+      } else if (active) {
+        // The wallet would register keys a sign-in here could never use: add the account first.
+        throw new RpcError('Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.', 'BAD_REQUEST')
+      } else if (opts?.reauth !== undefined) {
+        // Signing an account in again ("Sign in again"): only that account may answer.
+        if (typeof opts.reauth !== 'string' || !isIdentityId(opts.reauth)) throw new RpcError('reauth must be an identity id', 'BAD_REQUEST')
+        identityHint = opts.reauth
       }
-      settled.then(done, done)
-      const { overtaken, identityHint } = await ready
-      if (overtaken) return appConnect.state()
+      if (overtaken) {
+        // Cancelled, and nothing started since: the stored request this would have resumed is abandoned too.
+        if (appConnectStarts === cancelledStart) await appConnect.forget({ identityHint, renew })
+        return appConnect.state()
+      }
       const started = appConnect.start({ identityHint, renew, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
       // A new flow replaces a renewal a revoke was waiting for.
       settleDeferredRevoke()
@@ -802,21 +768,11 @@ export function createSessionModule(options: SessionModuleOptions) {
       await appConnect.reject()
     },
 
-    /**
-     * Abandon the flow: its request and any verified answer are forgotten.
-     * Resolves once the request is gone from the device, and fails if it
-     * could not be deleted.
-     */
+    /** Abandon the flow: its request and any verified answer are forgotten. */
     async appConnectCancel(): Promise<void> {
-      const cancelled = cancelledStart = ++appConnectStarts
-      // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
-      const running = appConnect.runningKind()
+      cancelledStart = ++appConnectStarts
       appConnect.cancel()
       settleDeferredRevoke()
-      await Promise.all([...waitingStarts])
-      // Unless a start since then has made the request this would find.
-      if (running && appConnectStarts === cancelled) await appConnect.forget(running, { strict: true })
-      await options.secureDurable?.()
     },
 
     /**
