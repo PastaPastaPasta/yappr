@@ -603,6 +603,8 @@ export function createSessionModule(options: SessionModuleOptions) {
     // A plain sign-in request left behind is the accepted one (none can start while someone is signed in).
     const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }, ...(active !== null ? [{}] : [])]
     for (const kind of kinds) await appConnect.forget(kind, { strict: true })
+    // A parked account's renewal is in its own bucket, which this boot did not load.
+    if (identityId !== hydratedIdentity) appConnect.drop({ identityHint: identityId, renew: true })
     await options.secureDurable?.()
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.

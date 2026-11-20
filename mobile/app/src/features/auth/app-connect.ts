@@ -294,16 +294,23 @@ function walletReported(status: string): void {
   });
 }
 
-/** "Cancel", or leaving the flow: the engine forgets the request and any answer. */
-export async function cancelAppConnect(): Promise<void> {
+/** "Cancel", or leaving the flow: the engine forgets the request and any answer. Resolves to whether it confirmed that. */
+export async function cancelAppConnect(): Promise<boolean> {
   const { step } = get();
   next();
   set(initial);
-  if (step.name === 'idle' || step.name === 'done') return;
+  if (step.name === 'idle' || step.name === 'done') return true;
+  return forgetAppConnectRequest();
+}
+
+/** Asks the engine again to forget the request (a cancel it did not confirm). Resolves to whether it confirmed that. */
+export async function forgetAppConnectRequest(): Promise<boolean> {
   try {
     await engine.api.session.appConnectCancel();
+    return true;
   } catch (error) {
     appendLog('warn', 'host', `Cancelling the wallet sign-in failed: ${errorMessage(error)}`);
+    return false;
   }
 }
 

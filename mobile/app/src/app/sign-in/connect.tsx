@@ -11,6 +11,7 @@ import {
   cancelAppConnect,
   checkAgain,
   flowUri,
+  forgetAppConnectRequest,
   notMe,
   openWallet,
   pollNow,
@@ -126,9 +127,10 @@ export default function ConnectScreen() {
     if (renewalAnswer) acceptAccount(renewalAnswer).catch(() => undefined);
   }, [renewalAnswer]);
 
-  // The screen closes once the engine has answered the cancel, so a cancel still on its way cannot overtake a later start.
-  const [cancelling, setCancelling] = useState(false);
-  const cancelSent = useRef(false);
+  // The screen closes once the engine has confirmed the cancel, so a cancel still on its way cannot overtake a later
+  // start. One it could not confirm says so, and the user leaves (or retries) knowingly.
+  const [cancelling, setCancelling] = useState<'sent' | 'unconfirmed' | null>(null);
+  const cancelState = useRef<'sent' | 'unconfirmed' | null>(null);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -136,14 +138,26 @@ export default function ConnectScreen() {
       mounted.current = false;
     };
   }, []);
-  const cancel = () => {
-    if (cancelSent.current) return;
-    cancelSent.current = true;
-    setCancelling(true);
-    const closeIfShown = () => {
-      if (mounted.current) closeRef.current();
+  const awaitCancel = (request: Promise<boolean>) => {
+    cancelState.current = 'sent';
+    setCancelling('sent');
+    const settled = (confirmed: boolean) => {
+      if (!mounted.current) return;
+      if (confirmed) {
+        closeRef.current();
+        return;
+      }
+      cancelState.current = 'unconfirmed';
+      setCancelling('unconfirmed');
     };
-    cancelAppConnect().then(closeIfShown, closeIfShown);
+    request.then(settled, () => settled(false));
+  };
+  const cancel = () => {
+    if (cancelState.current === 'unconfirmed') closeRef.current();
+    else if (cancelState.current === null) awaitCancel(cancelAppConnect());
+  };
+  const retryCancel = () => {
+    if (cancelState.current === 'unconfirmed') awaitCancel(forgetAppConnectRequest());
   };
   const startOver = () => {
     startAppConnect(mode, { renew, reauth: useAppConnect.getState().reauth, fresh: true }).catch(() => undefined);
@@ -154,8 +168,23 @@ export default function ConnectScreen() {
   const uri = flowUri(flow);
   const tryAgain = <Button label={copy.signin.tryAgain} size="block" onPress={startOver} testID="kx-try-again" />;
 
-  if (cancelling) {
+  if (cancelling === 'sent') {
     body = <StatusBlock tone="busy" title={copy.signin.cancelling} testID="ac-cancelling" />;
+  } else if (cancelling === 'unconfirmed') {
+    body = (
+      <StatusBlock
+        tone="error"
+        title={copy.signin.cancelUnconfirmed.title}
+        body={copy.signin.cancelUnconfirmed.body}
+        testID="ac-cancel-unconfirmed"
+      />
+    );
+    footer = (
+      <>
+        <Button label={copy.signin.tryAgain} size="block" onPress={retryCancel} testID="ac-cancel-retry" />
+        <Button label={copy.signin.closeAnyway} variant="ghost" size="block" onPress={close} testID="ac-close-anyway" />
+      </>
+    );
   } else if (step.name === 'idle' || step.name === 'starting' || (step.name === 'flow' && flow?.phase === 'checking')) {
     body = <StatusBlock tone="busy" title={copy.signin.starting} />;
   } else if (step.name === 'accepting' || renewalAnswer) {
