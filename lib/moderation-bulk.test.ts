@@ -238,6 +238,17 @@ describe("a run's changes over a lagging read", () => {
     expect(withRunChanges([hidden], 'hide', changes([hidden, 'unhide', NOW]), NOW - 1)).toEqual([])
   })
 
+  it('dates each type by its own listing, so an older reply page cannot bring back a post a fresher post page omits', () => {
+    const post = doc('p', 2)
+    const reply: BulkItem = { id: 'r', kind: 'reply', createdAt: 1, preview: 'r' }
+    // The run unhid p and r at NOW; p's author deleted it a block later, which the post listing (NOW + 1) shows.
+    const unhid = changes([post, 'hide', NOW], [reply, 'hide', NOW])
+    const ats = { post: NOW + 1, reply: NOW - 1 }
+    expect(withRunChanges([], 'hide', unhid, ats).map((item) => item.id)).toEqual(['r'])
+    expect(readPredatesRun(changes([post, 'hide', NOW]), ats)).toBe(false)
+    expect(readPredatesRun(unhid, ats)).toBe(true)
+  })
+
   it('never ranks a change of unknown block time above a read, and ranks every known one above a read of unknown age', () => {
     const x = doc('x', 1)
     const unknown = new Map([[x.id, { item: x, tab: 'unhide' as const }]])

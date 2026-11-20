@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, freshReads, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, freshReads, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type ReadAt, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -141,7 +141,7 @@ export function BulkHideModal() {
   }, [isOpen, target])
 
   /** A read of either tab proved at `readAt` predates a run change: the chain will show more, so read both again (a few times at most per run). */
-  const scheduleStaleRead = useCallback((readAt: number) => {
+  const scheduleStaleRead = useCallback((readAt: ReadAt) => {
     if (staleReadTimerRef.current || !readPredatesRun(runChangesRef.current, readAt)) return
     if (staleReadsRef.current >= MAX_STALE_REREADS) return
     staleReadsRef.current++
@@ -181,12 +181,12 @@ export function BulkHideModal() {
     }
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read && !background) setList({ status: 'loading', count })
-    }).then(({ items: fresh, truncated, at }) => {
+    }).then(({ items: fresh, truncated, at, ats }) => {
       if (readRef.current !== read) return
       settledReadRef.current = read
       listedAt(at)
-      const items = withRunChanges(fresh, which, runChangesRef.current, at)
-      scheduleStaleRead(at)
+      const items = withRunChanges(fresh, which, runChangesRef.current, ats)
+      scheduleStaleRead(ats)
       shownKeyRef.current = key
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
@@ -225,12 +225,12 @@ export function BulkHideModal() {
     countingRef.current = changes.size > 0
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => {
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at, ats }) => {
         if (!cancelled) {
           listedAt(at)
-          scheduleStaleRead(at)
+          scheduleStaleRead(ats)
         }
-        return truncated ? null : withRunChanges(items, other, changes, at).length
+        return truncated ? null : withRunChanges(items, other, changes, ats).length
       })
     counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
