@@ -789,6 +789,39 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(resumed.requestHash).toBe(plain.requestHash)
   })
 
+  it('hands a reopened request out only once the mark that it was opened last is on the host', async () => {
+    const engine = await signedOut()
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    heldAcks = []
+    emitted = []
+    const reopening = engine.appConnectStart({ returnTo: RETURN_TO })
+    await until(() => heldAcks?.length, 'the mark on its way to the host')
+    await settle()
+    expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
+    releaseAcks()
+    const reopened = await reopening
+    if (reopened.phase !== 'waiting') throw new Error('not waiting')
+    expect(reopened.requestHash).toBe(plain.requestHash)
+  })
+
+  it('still hands the request out when the mark cannot be saved', async () => {
+    const engine = await signedOut()
+    const store = appConnectSessions.keyStore()
+    const save = store.saveSecret.bind(store)
+    const saves = vi.spyOn(store, 'saveSecret').mockImplementation(async (network, name, bytes) => {
+      if (name === 'pending-request:active-sign-in') throw new Error('storage failed')
+      await save(network, name, bytes)
+    })
+    try {
+      const started = await engine.appConnectStart({ returnTo: RETURN_TO })
+      expect(started.phase).toBe('waiting')
+    } finally {
+      saves.mockRestore()
+    }
+  })
+
   it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
     const engine = await walletSignIn(await signedOut(), [32, 33])
     const renewal = await engine.appConnectStart({ renew: true, returnTo: RETURN_TO })

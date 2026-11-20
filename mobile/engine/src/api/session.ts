@@ -420,7 +420,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     },
   })
 
-  const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
+  const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state), durable: options.secureDurable })
   /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
   let appConnectStarts = 0
   /** The generation the last cancel took. */
