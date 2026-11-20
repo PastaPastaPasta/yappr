@@ -27,7 +27,7 @@ on:
         required: false
         default: 'New beta build.'
       distribute_only:
-        description: 'Skip the build: put build_number in the internal group and resend tester invites'
+        description: 'Skip the build (ignores dry_run): put build_number in the internal group and email tester invites'
         type: boolean
         default: false
 
@@ -58,8 +58,8 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
-            mobile/app/package.json
             mobile/app/scripts/asc-testflight.mjs
+            mobile/app/src/variants.ts
           sparse-checkout-cone-mode: false
 
       - name: Setup Node.js
@@ -72,19 +72,21 @@ jobs:
           API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-          BUNDLE_ID: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_BUNDLE_ID || '' }}
+          APP_VARIANT: ${{ inputs.variant }}
+          YAPPR_IOS_BUNDLE_ID: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_BUNDLE_ID || '' }}
           BUILD_NUMBER: ${{ inputs.build_number }}
           BETA_GROUP: Yappr Internal
           SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
         run: |
           set -euo pipefail
           [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] || { echo '::error::distribute_only needs build_number'; exit 1; }
-          [[ -n "$BUNDLE_ID" ]] || { echo '::error::distribute_only supports the testnet variant only'; exit 1; }
+          BUNDLE_ID="$(node -p "require('./src/variants.ts').resolveIosBundleId(process.env.APP_VARIANT, process.env.YAPPR_IOS_BUNDLE_ID)")"
+          export BUNDLE_ID
           keys="$RUNNER_TEMP/private_keys"
           mkdir -m 700 "$keys"
           trap 'rm -rf "$keys"' EXIT
           printf '%s' "$API_PRIVATE_KEY_BASE64" | base64 --decode > "$keys/key.p8"
-          APP_VERSION="$(node -p "require('./package.json').version")" ASC_KEY_PATH="$keys/key.p8" \
+          ASC_KEY_PATH="$keys/key.p8" \
             node scripts/asc-testflight.mjs distribute | tee -a "$GITHUB_STEP_SUMMARY"
 
   testflight:

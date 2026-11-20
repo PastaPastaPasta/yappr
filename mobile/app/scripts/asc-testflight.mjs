@@ -307,6 +307,7 @@ const maskEmail = (email) => {
   const [local = '', domain = ''] = String(email ?? '').split('@');
   return `${local.slice(0, 2)}***@${domain}`;
 };
+const redactEmails = (text) => String(text).replace(/[^\s@"'`]+@[^\s@"'`]+/g, maskEmail);
 
 async function listAll(path) {
   const all = [];
@@ -318,31 +319,21 @@ async function listAll(path) {
   return all;
 }
 
-async function inviteTester(appId, tester) {
-  try {
-    await api('POST', '/v1/betaTesterInvitations', {
-      data: {
-        type: 'betaTesterInvitations',
-        relationships: {
-          app: { data: { type: 'apps', id: appId } },
-          betaTester: { data: { type: 'betaTesters', id: tester.id } },
-        },
-      },
-    });
-    return 'invite sent';
-  } catch (error) {
-    return `invite not sent (${error.message})`;
-  }
-}
+const BLOCKED_INTERNAL_STATES = ['PROCESSING', 'PROCESSING_EXCEPTION', 'MISSING_EXPORT_COMPLIANCE', 'IN_EXPORT_COMPLIANCE_REVIEW', 'EXPIRED'];
 
 async function distribute() {
-  const version = env('APP_VERSION');
   const buildNumber = env('BUILD_NUMBER');
   const groupName = env('BETA_GROUP', 'Yappr Internal');
   const app = await findApp();
   out('### Build');
   field('App', `${app.attributes.name} (${app.id})`);
-  const build = await waitForBuild(app.id, version, buildNumber, 0);
+  const builds = await listAll(
+    `/v1/builds?filter[app]=${app.id}&filter[version]=${encodeURIComponent(buildNumber)}` +
+      '&filter[preReleaseVersion.platform]=IOS&limit=200',
+  );
+  if (builds.length !== 1) throw new Error(`Expected one iOS build numbered ${buildNumber}, found ${builds.length}`);
+  const build = builds[0];
+  const version = (await api('GET', `/v1/builds/${build.id}/preReleaseVersion`)).data?.attributes?.version;
   field('Build id', build.id);
   field('Version', `${version} (${build.attributes.version})`);
   field('processingState', build.attributes.processingState);
@@ -354,61 +345,69 @@ async function distribute() {
 
   out('### Beta groups');
   const groups = await listAll(`/v1/apps/${app.id}/betaGroups?limit=200`);
+  // Public enrollment links stay out of public run logs; App Store Connect shows them.
   for (const g of groups) {
     const a = g.attributes;
-    field(`Group ${a.name} (${g.id})`, `${a.isInternalGroup ? 'internal' : 'external'}, publicLinkEnabled ${a.publicLinkEnabled ?? false}, publicLink ${a.publicLink ?? 'none'}`);
+    field(`Group ${a.name} (${g.id})`, `${a.isInternalGroup ? 'internal' : 'external'}, public link ${a.publicLinkEnabled ? 'enabled (URL withheld)' : 'off'}`);
   }
   const group = groups.find((g) => g.attributes.name === groupName && g.attributes.isInternalGroup);
   if (!group) throw new Error(`No internal beta group named "${groupName}"`);
 
+  if (build.attributes.processingState !== 'VALID' || build.attributes.expired || BLOCKED_INTERNAL_STATES.includes(detail.internalBuildState)) {
+    fail(`build ${buildNumber} is not installable (${build.attributes.processingState}, ${detail.internalBuildState}); answer export compliance in App Store Connect if it is MISSING_EXPORT_COMPLIANCE, then rerun`);
+    for (const step of COMPLIANCE_MANUAL) out(`  1. ${step}`);
+    return;
+  }
+
   const inGroup = group.attributes.hasAccessToAllBuilds ||
     (await listAll(`/v1/betaGroups/${group.id}/builds?limit=200`)).some((b) => b.id === build.id);
-  if (inGroup) {
-    field('Build in group', 'yes (already)');
-  } else {
-    try {
-      await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: build.id }] });
-      field('Build in group', 'yes (added now)');
-    } catch (error) {
-      fail(`adding the build to ${groupName}: ${error.message}`);
-    }
-  }
+  if (!inGroup) await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: build.id }] });
+  field('Build in group', inGroup ? 'yes (already)' : 'yes (added now)');
 
   out('### Testers');
   let testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);
   if (testers.length === 0) {
     // An empty internal group gets the team's account holder, who is always an App Store Connect user.
-    try {
-      const holders = await listAll('/v1/users?filter[roles]=ACCOUNT_HOLDER&limit=200');
-      for (const user of holders) {
-        const u = user.attributes;
-        const created = await api('POST', '/v1/betaTesters', {
-          data: {
-            type: 'betaTesters',
-            attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
-            relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
-          },
-        });
-        field('Added account holder', maskEmail(created.data?.attributes?.email ?? u.username));
-      }
-    } catch (error) {
-      fail(`adding the account holder: ${error.message}`);
+    for (const user of await listAll('/v1/users?filter[roles]=ACCOUNT_HOLDER&limit=200')) {
+      const u = user.attributes;
+      await api('POST', '/v1/betaTesters', {
+        data: {
+          type: 'betaTesters',
+          attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
+          relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
+        },
+      });
+      field('Added account holder', maskEmail(u.username));
     }
     testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);
   }
   field('Testers in group', testers.length);
+  if (testers.length === 0) fail(`${groupName} has no testers`);
   for (const tester of testers) {
     const t = tester.attributes;
     const pasta = /pasta/i.test(`${t.email} ${t.firstName} ${t.lastName}`) ? ', matches pasta' : '';
-    const invite = await inviteTester(app.id, tester);
-    field(`Tester ${maskEmail(t.email)}`, `inviteType ${t.inviteType ?? 'n/a'}, state ${t.state ?? 'n/a'}${pasta}, ${invite}`);
+    const label = `Tester ${maskEmail(t.email)}`;
+    try {
+      await api('POST', '/v1/betaTesterInvitations', {
+        data: {
+          type: 'betaTesterInvitations',
+          relationships: {
+            app: { data: { type: 'apps', id: app.id } },
+            betaTester: { data: { type: 'betaTesters', id: tester.id } },
+          },
+        },
+      });
+      field(label, `inviteType ${t.inviteType ?? 'n/a'}, state ${t.state ?? 'n/a'}${pasta}, invite sent`);
+    } catch (error) {
+      fail(`${label}: inviteType ${t.inviteType ?? 'n/a'}, state ${t.state ?? 'n/a'}${pasta}, invite failed (${redactEmails(error.message)})`);
+    }
   }
 }
 
 try {
   await ({ preflight, post, distribute })[mode]();
 } catch (error) {
-  fail(isDenied(error.message) ? 'an App Store Connect error mentioned a denylisted name (withheld)' : error.message);
+  fail(isDenied(error.message) ? 'an App Store Connect error mentioned a denylisted name (withheld)' : redactEmails(error.message));
 }
 out(`- Denylist: ${DENYLIST.length} names checked against every value above`);
 console.log(lines.join('\n'));
