@@ -48,8 +48,9 @@ bundle_id_matches() { # <application id> <project.pbxproj>
 }
 application_id="$(node -p "require('./src/variants.ts').resolveIosBundleId('$APP_VARIANT', process.env.YAPPR_IOS_BUNDLE_ID)")"
 if ! bundle_id_matches "$application_id" "ios/$scheme.xcodeproj/project.pbxproj" ||
-  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "ios/$scheme/Info.plist")" != "$build_number" ]]; then
-  echo "ios/ was prebuilt for another variant or build number; rerun without YAPPR_SKIP_PREBUILD." >&2
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "ios/$scheme/Info.plist")" != "$build_number" ]] ||
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :ITSEncryptionExportComplianceCode' "ios/$scheme/Info.plist" 2>/dev/null || true)" != "${YAPPR_IOS_EXPORT_COMPLIANCE_CODE:-}" ]]; then
+  echo "ios/ was prebuilt for another variant, build number or export compliance code; rerun without YAPPR_SKIP_PREBUILD." >&2
   exit 1
 fi
 

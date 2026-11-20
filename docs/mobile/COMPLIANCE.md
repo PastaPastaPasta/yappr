@@ -28,7 +28,7 @@ moderation or legal/entity/governing-law gates for the testnet release.
 | C5 | Account deletion in the app, plus a web URL | 5.1.1(v) | Account deletion policy | Yappr (Y7) plus mobile | 2 |
 | C6 | Non-custodial only; no exchange features | 3.1.5 | Out of scope of the crypto wallet licensing policy if non-custodial | Architecture (by design) | — |
 | C7 | Age rating questionnaire incl. social-media questions (answers required from September 2026); Declared Age Range API (Texas SB 2420) | Required | Content rating (IARC) | Mobile plus product owner | 3 |
-| C8 | Export compliance: `ITSAppUsesNonExemptEncryption=YES`; French declaration or exclude France at launch | Required | n/a | Product owner | 3 |
+| C8 | Export compliance: write `ITSAppUsesNonExemptEncryption=YES` only with the approved `ITSEncryptionExportComplianceCode`; otherwise omit both and answer Apple's questionnaire; French declaration or exclude France at launch | Required | n/a | Product owner | 3 |
 | C9 | Privacy: `PrivacyInfo.xcprivacy`, nutrition labels; Play Data safety, Financial features declaration | Required | Required | Mobile | 3 |
 | C10 | Not a thin web wrapper; OTA updates never change features | 4.2, 2.5.2 | — | Architecture (native UI) | — |
 | C11 | Toolchain: Xcode 26 / iOS 26 SDK; Android targetSdk 36 | Required since 2026-04-28 | Required since 2026-08-31 | Mobile | 1 |
