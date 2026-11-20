@@ -132,9 +132,11 @@ export function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyTh
   const childrenOf = new Map<string, Reply[]>()
   const topOfThread: Reply[] = []
 
+  // v20: a removed reply's stub held at the top goes under its kept parent once the thread holds it.
+  const present = new Set([mainPost.id, ...allReplies.map((reply) => reply.id)])
   // v11: a tombstoned reply goes unless a reply still nests under it.
   for (const reply of pruneHiddenTombstones(allReplies).sort(byCreatedAtAsc)) {
-    const parentId = reply.replyToReplyId
+    const parentId = reply.replyToReplyId ?? (reply.keptParentId && present.has(reply.keptParentId) ? reply.keptParentId : undefined)
     if (!parentId) {
       topOfThread.push(reply)
       continue

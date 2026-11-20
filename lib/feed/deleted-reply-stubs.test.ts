@@ -187,11 +187,16 @@ describe('withMissingReplyParents', () => {
       expect(shown(assembleFlatThread(root, replies))).toEqual([['tomb1', [['tomb2', [['gone1', [['gone2', [['leaf', []]]]]]]]]]])
     })
 
-    it('keeps a hole at the top while the live reply its record names is on a later page', async () => {
+    it('keeps a hole at the top while the live reply its record names is on a later page, then nests it there', async () => {
       const r = removed({ gone: 'live' })
       const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
-      expect(replies.find((x) => x.id === 'gone')?.replyToReplyId).toBeUndefined()
+      expect([replies.find((x) => x.id === 'gone')?.replyToReplyId, replies.find((x) => x.id === 'gone')?.keptParentId]).toEqual([undefined, 'live'])
       expect(shown(assembleFlatThread(root, replies))).toEqual([['gone', [['c3', []]]]])
+      // A continuation brings the parent without resending the stub or its reply.
+      expect(shown(assembleFlatThread(root, [...replies, reply('live', undefined, 3)]))).toEqual([['live', [['gone', [['c3', []]]]]]])
+      // On the parent's own page, the parent is the focus rather than a listed reply.
+      const focus = { ...root, id: 'live', parentId: 'ROOT', replyToReplyId: undefined, rootPostId: 'ROOT' }
+      expect(shown(assembleFlatThread(focus as unknown as typeof root, replies))).toEqual([['gone', [['c3', []]]]])
       const later = await withMissingReplyParents([reply('c3', 'gone', 12)], r, new Set(['live']))
       expect(later.find((x) => x.id === 'gone')?.replyToReplyId).toBe('live')
     })

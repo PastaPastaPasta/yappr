@@ -177,8 +177,10 @@ Keep the window between the create and the redeploy short:
    the id from the journal.
 4. Refresh the bundled testnet snapshot (`NETWORK=testnet npm run
    contracts:snapshot -- --prune`, with `CONTRACT_IDS` naming the `/testing`
-   defaults as in the activation), then build, push and merge into `staging`
-   at once. `/staging` refuses new App Connect sign-ins from step 3 until this
+   defaults as in the activation and the unused social v19
+   `3M5Dafkrnh1CaDbvF1XVvJ67xAhGQvqBiNDtNFoMVASG`: no contract variable names it
+   any more, and deployment monitoring checks every group pin against the
+   snapshot), then build, push and merge into `staging` at once. `/staging` refuses new App Connect sign-ins from step 3 until this
    deploy is live.
 5. File the social charter for the new contract with
    `file-release-charters.mjs`, as on 2026-11-12. The contract accepts no

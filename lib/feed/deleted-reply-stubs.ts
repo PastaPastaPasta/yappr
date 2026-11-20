@@ -76,12 +76,12 @@ export async function withMissingReplyParents(replies: readonly Reply[], reads: 
   const proved = new Set<string>();
   const unplaced = new Map<string, Reply>();
   // A stub placed under a parent this page lacks (live, on a later page) would drop out of the thread with
-  // its replies: it keeps its place at the top until that parent is loaded.
+  // its replies: it keeps its place at the top, and its kept parent, until that parent is loaded.
   const settled = () => {
     const present = new Set([...all.map((reply) => reply.id), ...loaded]);
     return all.map((reply) => {
       const original = unplaced.get(reply.id);
-      return original && !present.has(reply.replyToReplyId ?? '') ? original : reply;
+      return original && reply.replyToReplyId && !present.has(reply.replyToReplyId) ? { ...original, keptParentId: reply.replyToReplyId } : reply;
     });
   };
   // One round unless a stub is placed under a parent that is missing too.

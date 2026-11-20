@@ -165,6 +165,11 @@ export interface Reply {
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */
   deletedStub?: boolean
   /**
+   * v20: on a `deletedStub` held at the top because its parent is not loaded yet, the reply its removal
+   * record says it answered. `assembleFlatThread` nests the stub under it once that reply is in the thread.
+   */
+  keptParentId?: string
+  /**
    * v18: a stand-in for a reply a default build does not list, keeping its children's place in the thread:
    * one the moderators hid, or one written while its author was restricted (the two are not told apart, so
    * the copy must not single out an account; e.g. "This reply isn't shown"). Carries no content or author;
