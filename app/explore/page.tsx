@@ -49,6 +49,7 @@ export default function ExplorePage() {
   const [trendingByWindow, setTrendingByWindow] = useState<Partial<Record<RankingWindow, TrendingHashtag[]>>>({})
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
+  const [creatorsLoading, setCreatorsLoading] = useState(false)
   // v7: the bounded timeline read stopped with more posts after it (see boundedPostListState).
   const [moreBlogPostsAfter, setMoreBlogPostsAfter] = useState<string | undefined>()
   const [topByWindow, setTopByWindow] = useState<Partial<Record<RankingWindow, Post[]>>>({})
@@ -60,6 +61,14 @@ export default function ExplorePage() {
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
   const trendingHashtags = trendingByWindow[trendingWindow]
+  const tabLoadingLabel: Record<ExploreTab, string | null> = {
+    hashtags: trendingHashtags ? null : 'Loading trending tags',
+    // The top posts skeleton carries its own status.
+    top: null,
+    creators: creatorsLoading ? 'Loading creators' : null,
+    blogs: isLoadingBlogs ? 'Loading posts' : null,
+  }
+  const loadingLabel = searchQuery ? null : tabLoadingLabel[activeTab]
   const topPosts = topByWindow[topWindow]
 
   const selectTab = useCallback((tab: ExploreTab) => {
@@ -368,6 +377,9 @@ export default function ExplorePage() {
               </motion.div>
             )}
 
+          {/* Outside the hidden panels, so revealing a tab still loading changes it. */}
+          <LoadingAnnouncement loading={loadingLabel !== null} label={loadingLabel ?? ''} />
+
           {/* Every visited tab stays mounted and is only hidden, so a revisit
               shows its content instantly: no fade, no skeleton, no refetch
               flash. Background refreshes swap rows in place. */}
@@ -379,7 +391,6 @@ export default function ExplorePage() {
           >
             <KeptPanel active={activeTab === 'hashtags'}>
                 <RankingWindowToggle axis="hashtags" value={trendingWindow} onChange={setTrendingWindow} testIdPrefix="explore-trending" />
-                <LoadingAnnouncement loading={!trendingHashtags} label="Loading trending tags" />
                 <div className="divide-y divide-gray-200 dark:divide-gray-800">
                   {!trendingHashtags ? (
                     <TrendingHashtagRowSkeleton count={12} testId="explore-trending-loading" />
@@ -418,11 +429,10 @@ export default function ExplorePage() {
             <KeptPanel active={activeTab === 'creators'}>
                 {/* v9 creator leaderboard (proved prefix rankings). */}
                 <RankingWindowToggle axis="creators" value={creatorsWindow} onChange={setCreatorsWindow} testIdPrefix="explore-creators" />
-                <TopCreators window={creatorsWindow} />
+                <TopCreators window={creatorsWindow} onLoadingChange={setCreatorsLoading} />
             </KeptPanel>
 
             <KeptPanel active={activeTab === 'blogs'}>
-                <LoadingAnnouncement loading={isLoadingBlogs} label="Loading posts" />
                 {isLoadingBlogs ? (
                   <BlogPostCardSkeleton count={10} />
                 ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (

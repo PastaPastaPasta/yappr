@@ -5,7 +5,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { UserAvatar } from '@/components/ui/avatar-image'
-import { LoadingAnnouncement } from '@/components/ui/loading-announcement'
 import { formatNumber } from '@/lib/utils'
 import type { RankedGroupCount, RankingWindow } from '@/lib/services/ranked-likes'
 import { followRankingsAvailable } from '@/lib/contract-topology'
@@ -122,7 +121,7 @@ function RankedUserList({
  *
  * Render-gated by the caller on `prefixRankingsAvailable()`.
  */
-export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {}) {
+export function TopCreators({ window = 'all', onLoadingChange }: { window?: RankingWindow; onLoadingChange?: (loading: boolean) => void } = {}) {
   // Kept per window: switching back shows the last leaderboard at once.
   const [byWindow, setByWindow] = useState<Partial<Record<RankingWindow, { creators: RankedUser[]; mostFollowed: RankedUser[] }>>>({})
 
@@ -151,12 +150,9 @@ export function TopCreators({ window = 'all' }: { window?: RankingWindow } = {})
   }, [window])
 
   const current = byWindow[window]
-  return (
-    <>
-      <LoadingAnnouncement loading={!current} label="Loading creators" />
-      {current ? <CreatorLists {...current} /> : <RankedUserListSkeleton />}
-    </>
-  )
+  const loading = !current
+  useEffect(() => onLoadingChange?.(loading), [loading, onLoadingChange])
+  return current ? <CreatorLists {...current} /> : <RankedUserListSkeleton />
 }
 
 function CreatorLists({ creators, mostFollowed }: { creators: RankedUser[]; mostFollowed: RankedUser[] }) {

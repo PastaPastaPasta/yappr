@@ -47,3 +47,13 @@ test('a view that opens already loading mounts its status region empty, then ann
   await page.getByRole('button', { name: 'Settle' }).click()
   await expect(region).toHaveText('')
 })
+
+test('revealing a tab that is still loading changes the status outside its hidden panel', async ({ page }) => {
+  await page.goto('/loading-announcement.html?kept-tabs')
+  const region = page.getByRole('region', { name: 'Kept tabs' })
+  const status = region.getByRole('status')
+  await expect(region.getByText('Blogs')).toBeVisible()
+  await expect(status).toHaveText('')
+  await region.getByRole('button', { name: 'Trending' }).click()
+  await expect(status).toHaveText('Loading trending tags')
+})
