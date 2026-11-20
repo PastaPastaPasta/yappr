@@ -230,6 +230,15 @@ describe("a run's changes over a lagging read", () => {
     expect(() => guard([row])(at(NOW + 50))).not.toThrow()
   })
 
+  it('guards each type by its own newest listing, so an older reply listing cannot lower the floor for a post', () => {
+    const post = doc('p', 2)
+    const floors = { post: NOW + 1, reply: NOW - 1 }
+    const read = (time: number): BulkChainRead => ({ todo: new Set([post.id]), changed: new Set(), at: time })
+    const guard = freshReads(new Map(), (kind) => floors[kind])
+    expect(() => guard([post])(read(NOW))).toThrow()
+    expect(() => guard([post])(read(NOW + 1))).not.toThrow()
+  })
+
   it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
     const hidden = doc('h', 2)
     // This run hid h at NOW; its author deleted it a block later, and the Hidden read was proved after that.

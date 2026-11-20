@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, freshReads, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type ReadAt, type RunChange } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, freshReads, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkKind, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type ReadAt, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -103,7 +103,7 @@ export function BulkHideModal() {
   /** Drops the other tab's count read still out, so it cannot repaint a badge cleared since. */
   const dropCountRef = useRef(() => {})
   /** The newest block time a list read this opening was proved at: a run's by-ID reads are no older. */
-  const listedAtRef = useRef(-Infinity)
+  const listedAtRef = useRef<Record<BulkKind, number>>({ post: -Infinity, reply: -Infinity })
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
@@ -129,7 +129,7 @@ export function BulkHideModal() {
     setCounts(NO_COUNTS)
     runChangesRef.current = new Map()
     staleReadsRef.current = 0
-    listedAtRef.current = -Infinity
+    listedAtRef.current = { post: -Infinity, reply: -Infinity }
     setAuthorName(target.authorName ?? null)
     if (!target.authorName) {
       // Only for this opening: a lookup that answers after the dialog was opened for someone else is dropped.
@@ -164,8 +164,10 @@ export function BulkHideModal() {
     staleReadTimerRef.current = null
   }, [isOpen])
 
-  const listedAt = useCallback((at: number) => {
-    if (Number.isFinite(at)) listedAtRef.current = Math.max(listedAtRef.current, at)
+  const listedAt = useCallback((ats: Record<BulkKind, number>) => {
+    for (const kind of ['post', 'reply'] as const) {
+      if (Number.isFinite(ats[kind])) listedAtRef.current[kind] = Math.max(listedAtRef.current[kind], ats[kind])
+    }
   }, [])
 
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
@@ -181,10 +183,10 @@ export function BulkHideModal() {
     }
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read && !background) setList({ status: 'loading', count })
-    }).then(({ items: fresh, truncated, at, ats }) => {
+    }).then(({ items: fresh, truncated, ats }) => {
       if (readRef.current !== read) return
       settledReadRef.current = read
-      listedAt(at)
+      listedAt(ats)
       const items = withRunChanges(fresh, which, runChangesRef.current, ats)
       scheduleStaleRead(ats)
       shownKeyRef.current = key
@@ -225,9 +227,9 @@ export function BulkHideModal() {
     countingRef.current = changes.size > 0
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated, at, ats }) => {
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated, ats }) => {
         if (!cancelled) {
-          listedAt(at)
+          listedAt(ats)
           scheduleStaleRead(ats)
         }
         return truncated ? null : withRunChanges(items, other, changes, ats).length
@@ -326,7 +328,7 @@ export function BulkHideModal() {
       return
     }
     const { batch } = opened
-    const settles = freshReads(runChangesRef.current, () => listedAtRef.current)
+    const settles = freshReads(runChangesRef.current, (kind) => listedAtRef.current[kind])
     const hideLabel = chosen?.label ?? 0
     const result = await runBulk(batchItems, {
       apply: (item, guard) => mode === 'hide'
