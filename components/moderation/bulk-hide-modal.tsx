@@ -22,7 +22,7 @@ const CHIP = 'px-3 py-1 rounded-full border text-xs font-medium transition-color
 
 type ListState =
   | { status: 'loading'; count: number }
-  | { status: 'ready'; items: BulkItem[]; truncated: boolean }
+  | { status: 'ready'; items: BulkItem[]; truncated: boolean; stale?: boolean }
   | { status: 'failed' }
 
 const RANGES: ReadonlyArray<{ range: BulkRange; text: string }> = [
@@ -98,6 +98,8 @@ export function BulkHideModal() {
   const countingRef = useRef(false)
   /** The next list read is an automatic re-read: the rows on screen stay until it lands, and stay if it fails. */
   const backgroundReadRef = useRef(false)
+  /** Which opening, author and tab the rows on screen were read for ('' while none are): only those are kept through a re-read. */
+  const shownKeyRef = useRef('')
   /** Drops the other tab's count read still out, so it cannot repaint a badge cleared since. */
   const dropCountRef = useRef(() => {})
   /** The newest block time a list read this opening was proved at: a run's by-ID reads are no older. */
@@ -108,6 +110,12 @@ export function BulkHideModal() {
 
   useEffect(() => {
     openingRef.current++
+    readRef.current++
+    backgroundReadRef.current = false
+    shownKeyRef.current = ''
+    dropCountRef.current()
+    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
+    staleReadTimerRef.current = null
     if (!isOpen || !target) return
     setRunning(false)
     setStopping(false)
@@ -164,9 +172,13 @@ export function BulkHideModal() {
   const load = useCallback((which: BulkMode) => {
     if (!authorId) return
     const read = ++readRef.current
-    const background = backgroundReadRef.current
+    const key = `${openingRef.current}:${authorId}:${which}`
+    const background = backgroundReadRef.current && shownKeyRef.current === key
     backgroundReadRef.current = false
-    if (!background) setList({ status: 'loading', count: 0 })
+    if (!background) {
+      shownKeyRef.current = ''
+      setList({ status: 'loading', count: 0 })
+    }
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read && !background) setList({ status: 'loading', count })
     }).then(({ items: fresh, truncated, at }) => {
@@ -175,6 +187,7 @@ export function BulkHideModal() {
       listedAt(at)
       const items = withRunChanges(fresh, which, runChangesRef.current, at)
       scheduleStaleRead(at)
+      shownKeyRef.current = key
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
@@ -182,7 +195,14 @@ export function BulkHideModal() {
     }).catch(() => {
       if (readRef.current !== read) return
       settledReadRef.current = read
-      if (!background) setList({ status: 'failed' })
+      if (!background) {
+        shownKeyRef.current = ''
+        setList({ status: 'failed' })
+        return
+      }
+      // The rows stay, marked as possibly out of date, and are read again within the same budget.
+      setList((current) => (current.status === 'ready' ? { ...current, stale: true } : current))
+      scheduleStaleRead(NaN)
     })
   }, [authorId, scheduleStaleRead, listedAt])
 
@@ -246,6 +266,7 @@ export function BulkHideModal() {
 
   const switchMode = (next: BulkMode) => {
     if (running || next === mode) return
+    backgroundReadRef.current = false
     setMode(next)
     setSelected(new Set())
     setProgress(null)
@@ -476,6 +497,12 @@ export function BulkHideModal() {
               </li>
             ))}
           </ul>
+        )}
+        {list.status === 'ready' && list.stale && (
+          <p className="p-3 text-xs text-gray-500">
+            Couldn&apos;t check this list again, so it may be out of date.{' '}
+            <button type="button" className="underline disabled:opacity-50" disabled={running} onClick={() => setReadEpoch((epoch) => epoch + 1)} data-testid="bulk-hide-reread">Check again</button>
+          </p>
         )}
         {list.status === 'ready' && list.truncated && (
           <p className="p-3 text-xs text-gray-500">Showing their newest {items.length.toLocaleString()}. Hide these, then open this again for the rest.</p>
