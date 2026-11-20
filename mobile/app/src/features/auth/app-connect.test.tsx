@@ -197,6 +197,29 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
   });
 
+  it('loads it again once, from the reply, when the engine announces the reload while the accept waits', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockImplementation(async () => {
+      fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true });
+      return { status: 'signed-in', session: alice, reload: true };
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
+  });
+
+  it('loads it again when the sign-in lands after its accept timed out, keeping the interrupted state', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }));
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+    expect(loadSignedInAgain).not.toHaveBeenCalled();
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true }));
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
+    expect(screen.queryByTestId('kx-try-again')).toBeNull();
+  });
+
   it('offers a chooser when several accounts answered, and "None of these are me" starts over', async () => {
     const bob = 'BobIdentity22222222222222222222222222222222';
     await open({ mode: 'qr' }, flow({
