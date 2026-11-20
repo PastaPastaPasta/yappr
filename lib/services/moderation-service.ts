@@ -14,7 +14,7 @@ import { PENDING_WRITE_ERROR, classifyModerationError, extractErrorMessage, hasC
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
-import { ChosenWriteNotSentError, withSdkSignedWrite } from './identity-nonce';
+import { ChosenWriteNotSentError, chosenNonceSending, withSdkSignedWrite } from './identity-nonce';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { moderationMarksOf, type ModerationMarks } from '@/lib/moderation-view';
 import { restrictionServiceFor, type Restriction, type RestrictionContract } from './restriction-service';
@@ -1508,6 +1508,7 @@ class ModerationService {
             privateKey: PrivateKey.fromWIF(wif),
             identityKey,
           });
+          if (chosenNonce !== undefined) chosenNonceSending(moderatorId, chosenNonce);
           broadcastStarted = true;
           await sdk.stateTransitions.broadcastStateTransition(transition);
           await sdk.stateTransitions.waitForResponse(transition);

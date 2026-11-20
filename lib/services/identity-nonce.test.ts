@@ -29,7 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key'
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, chosenNonceSending, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, settlePendingWrites, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -232,6 +232,29 @@ describe('withSdkSignedWrite', () => {
     expect(warn).not.toHaveBeenCalled()
     expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:b', undefined, warn))).toEqual({ ok: true, value: 'warned' })
     expect(warn).toHaveBeenCalledWith(n(103))
+  })
+
+  it('keeps a chosen write that was sent pending until its nonce is used, though its page closed before the answer', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    let sent = () => {}
+    const sending = new Promise<void>(resolve => { sent = resolve })
+    let abandon = () => {}
+    const unsent = new ChosenWriteNotSentError(new Error('page closed'))
+    // The page closes after the broadcast went out, before its answer.
+    const write = withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, nonce => {
+      chosenNonceSending(OWNER, nonce)
+      sent()
+      return new Promise<string>((_resolve, reject) => { abandon = () => reject(unsent) })
+    })
+    await sending
+    const reservation = loadReservation(OWNER, CONTRACT)
+    expect(stillPending(n(100), reservation, Date.now() + 10 * MINUTE).map(p => p.nonce)).toEqual([n(101), n(102)])
+    expect(stillPending(n(102) | (BigInt(1) << BigInt(40)), reservation, Date.now() + 10 * MINUTE).map(p => p.nonce)).toEqual([n(101)])
+    await vi.advanceTimersByTimeAsync(2 * MINUTE)
+    expect(loadReservation(OWNER, CONTRACT)?.pending.find(p => p.nonce === n(102))?.expiresAt).toBeNull()
+    abandon()
+    await settle(write)
   })
 
   it('keeps an uncertain chosen write reserved but releases one Platform refused', async () => {
