@@ -3,7 +3,6 @@
 import { Fragment, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
-import { useAppStore } from '@/lib/store'
 import { NetworkPill } from '@/components/layout/network-pill'
 import { SkipLink } from '@/components/layout/skip-link'
 import { MobileBottomNav } from '@/components/layout/mobile-bottom-nav'
@@ -25,8 +24,6 @@ function ViewerScope({ children }: { children: React.ReactNode }) {
   const viewer = user?.identityId ?? null
   const [scope, setScope] = useState<{ viewer: string | null; key: number } | null>(null)
   if (!isAuthRestoring && scope?.viewer !== viewer) {
-    // A card's hand-off to the thread page carries the previous viewer's state.
-    if (scope) useAppStore.setState({ pendingPostNavigation: null })
     setScope({ viewer, key: scope ? scope.key + 1 : 0 })
   }
   return <Fragment key={scope?.key ?? 0}>{children}</Fragment>

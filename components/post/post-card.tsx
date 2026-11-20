@@ -598,7 +598,7 @@ function PostCardView({
 
   const prepareThreadNavigation = () => {
     // Hand the detail page what this card already shows, so it renders at once.
-    useAppStore.getState().setPendingPostNavigation(enrichedPost, {
+    useAppStore.getState().setPendingPostNavigation(enrichedPost, viewerId ?? null, {
       username: usernameState,
       displayName,
       profileLoaded,
