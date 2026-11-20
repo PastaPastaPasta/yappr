@@ -52,6 +52,8 @@ jobs:
       YAPPR_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
       # The override is for the testnet (Yappr Beta) record only; other variants keep their ids.
       YAPPR_IOS_BUNDLE_ID: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_BUNDLE_ID || '' }}
+      # The Yappr Beta record's export compliance documentation code (ITMS-90592); testnet only.
+      YAPPR_IOS_EXPORT_COMPLIANCE_CODE: ${{ inputs.variant == 'testnet' && vars.YAPPR_IOS_EXPORT_COMPLIANCE_CODE || '' }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_EXPECTED_ORG_NAME: ${{ vars.APPLE_EXPECTED_ORG_NAME }}
       YAPPR_COMMIT: ${{ github.sha }}

@@ -117,11 +117,31 @@ const BLOCKED_ANDROID_PERMISSIONS = [
  */
 const RELEASE_ATS = { NSAppTransportSecurity: { NSAllowsArbitraryLoads: false } };
 
+/**
+ * `ITSEncryptionExportComplianceCode`: the code of the app record's approved
+ * export compliance documentation (App Store Connect → App Information → App
+ * Encryption Documentation). Once a record has that documentation, App Store
+ * Connect refuses uploads whose Info.plist lacks the matching code (ITMS-90592).
+ * It never changes `ITSAppUsesNonExemptEncryption`, which stays YES.
+ */
+export function resolveExportComplianceCode(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^[A-Za-z0-9-]{1,100}$/.test(raw)) {
+    throw new Error(`YAPPR_IOS_EXPORT_COMPLIANCE_CODE must be App Store Connect's code (letters, digits, dashes), got "${raw}".`);
+  }
+  return raw;
+}
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
   const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
   const iosBundleId = resolveIosBundleId(variant, process.env.YAPPR_IOS_BUNDLE_ID);
+  const exportComplianceCode = resolveExportComplianceCode(process.env.YAPPR_IOS_EXPORT_COMPLIANCE_CODE);
+  const infoPlist = {
+    ...(process.env.YAPPR_RELEASE === '1' ? RELEASE_ATS : null),
+    ...(exportComplianceCode ? { ITSEncryptionExportComplianceCode: exportComplianceCode } : null),
+  };
   // Per-variant icons from scripts/brand-assets.mjs at the repo root: devnet and testnet carry a DEV / BETA badge.
   const icons = `./assets/images/icons/${variant === 'staging-testnet' ? 'testnet' : variant}`;
 
@@ -146,7 +166,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (COMPLIANCE.md, Encryption export).
       config: { usesNonExemptEncryption: true },
       privacyManifests: PRIVACY_MANIFEST,
-      ...(process.env.YAPPR_RELEASE === '1' ? { infoPlist: RELEASE_ATS } : null),
+      ...(Object.keys(infoPlist).length > 0 ? { infoPlist } : null),
     },
     android: {
       package: v.applicationId,

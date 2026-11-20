@@ -311,6 +311,7 @@ Values are never committed.
 | `APPLE_EXPECTED_ORG_NAME` | variable | `The Dash Foundation, Inc.` |
 | `SIGNING_NAME_DENYLIST` | secret | optional; comma-separated names that must never appear in signing metadata. A secret, not a variable: run logs print variables unmasked, and the run refuses a variable-only denylist |
 | `YAPPR_IOS_BUNDLE_ID` | variable | optional, `testnet` runs only; see below |
+| `YAPPR_IOS_EXPORT_COMPLIANCE_CODE` | variable | `testnet` runs only; required once the app record has approved export compliance documentation: its code from App Store Connect → App Information → App Encryption Documentation. Uploads without it fail with ITMS-90592 |
 
 **Bundle id fallback.** If the App Store record has to live under another id
 (for example `org.dashfoundation.yappr.beta`), set `YAPPR_IOS_BUNDLE_ID` and

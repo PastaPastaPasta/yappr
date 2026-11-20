@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import appConfig, { resolveBuildNumber, resolveCommit } from '../../app.config';
+import appConfig, { resolveBuildNumber, resolveCommit, resolveExportComplianceCode } from '../../app.config';
 import { withConfigurationHandler, withFontScaleConfigChange } from '../../plugins/font-scale';
 import pkg from '../../package.json';
 import { VARIANTS, type Variant } from '../variants';
@@ -133,6 +133,27 @@ describe('YAPPR_IOS_BUNDLE_ID (TestFlight fallback record)', () => {
     expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.dev' })).toThrow(/devnet variant's id/);
     expect(() => configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'PR.YAP.APP.DEV' })).toThrow(/devnet variant's id/);
     expect(configFor('testnet', { YAPPR_IOS_BUNDLE_ID: 'pr.yap.app.beta' }).ios?.bundleIdentifier).toBe('pr.yap.app.beta');
+  });
+});
+
+describe('YAPPR_IOS_EXPORT_COMPLIANCE_CODE (ITMS-90592)', () => {
+  it('adds the documentation code next to the release ATS, and keeps non-exempt encryption declared', () => {
+    const config = configFor('testnet', { YAPPR_RELEASE: '1', YAPPR_IOS_EXPORT_COMPLIANCE_CODE: 'abc-123' });
+    expect(config.ios?.infoPlist).toEqual({
+      NSAppTransportSecurity: { NSAllowsArbitraryLoads: false },
+      ITSEncryptionExportComplianceCode: 'abc-123',
+    });
+    expect(config.ios?.config?.usesNonExemptEncryption).toBe(true);
+  });
+
+  it('leaves Info.plist alone when unset or empty', () => {
+    expect(resolveExportComplianceCode(undefined)).toBeUndefined();
+    expect(resolveExportComplianceCode('')).toBeUndefined();
+    expect(configFor('testnet').ios?.infoPlist).toBeUndefined();
+  });
+
+  it.each(['a b', 'x;y', '<code>'])('refuses %p', (code) => {
+    expect(() => resolveExportComplianceCode(code)).toThrow(/YAPPR_IOS_EXPORT_COMPLIANCE_CODE/);
   });
 });
 
