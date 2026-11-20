@@ -151,7 +151,7 @@ function listen(): void {
   // the accept to settle, so no restart cuts its reply off; a reply that never comes (it timed out) still reloads.
   onEngineEvent('session.changed', ({ session, reload }) => {
     if (!reload || !session) return;
-    if (get().step.name === 'accepting') announcedReload = session;
+    if (get().step.name === 'accepting') announcedReload = { session, epoch: engineSupervisor.getStatus().epoch };
     else reloadInto(session);
   });
   engineSupervisor.subscribeStatus(() => {
@@ -170,8 +170,14 @@ function listen(): void {
   });
 }
 
-/** A reload the engine announced while the accept waited for its reply. */
-let announcedReload: SessionDTO | null = null;
+/** A reload the engine announced while the accept waited for its reply, and that engine's epoch. */
+let announcedReload: { session: SessionDTO; epoch: number } | null = null;
+
+function takeAnnouncedReload(): { session: SessionDTO; epoch: number } | null {
+  const announced = announcedReload;
+  announcedReload = null;
+  return announced;
+}
 
 function reloadInto(session: SessionDTO): void {
   loadSignedInAgain(session).catch((error: unknown) =>
@@ -286,9 +292,11 @@ export async function acceptAccount(identityId: string): Promise<void> {
     if (stale(gen)) return;
     set({ step: { name: 'done' } });
   } catch (error) {
-    // The engine announced a reload before the reply was lost: it still has to happen.
-    if (announcedReload) reloadInto(announcedReload);
-    announcedReload = null;
+    // The engine announced a reload before the reply was lost: it still has to happen, unless that engine was
+    // replaced, since the replacement boots into the durable sign-in on its own.
+    const announced = takeAnnouncedReload();
+    const replaced = errorCode(error) === 'ENGINE_RESTARTED' || announced?.epoch !== engineSupervisor.getStatus().epoch;
+    if (announced && !replaced) reloadInto(announced.session);
     if (stale(gen)) return;
     // The engine restarted or timed out while it took the answer: whether the grant landed is unknown here, so claim neither.
     const code = errorCode(error);
