@@ -697,6 +697,25 @@ describe('App Connect requests across kills and engine restarts', () => {
     await reloaded.signOut()
   })
 
+  it('asks the host to reload once the sign-in is durable, even if the accept reply never reaches it', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [70, 71])
+    heldAcks = []
+    emitted = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the sign-in on its way to the host')
+    await settle()
+    expect(emitted.some(e => e.event === 'session.changed')).toBe(false)
+    releaseAcks()
+    const result = await accepting
+    expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: result.status === 'signed-in' ? result.session : null, reason: 'signed-in', reload: true } })
+    await expect(engine.signOut()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
   it('leaves the post-login tasks of an account it must reload into to the reloaded engine', async () => {
     const { engine } = await failedRestore()
     await answered(engine, [66, 67])

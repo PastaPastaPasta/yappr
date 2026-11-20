@@ -147,6 +147,14 @@ function listen(): void {
     if (flow.flow <= floor || (current && flow.flow < current.flow) || flow.renew !== renew) return;
     receive(flow);
   });
+  // A sign-in the engine cannot finish loading whose accept reply never came (it timed out): restart into it.
+  // While the accept is still waiting, its reply does that, before any restart could cut it off.
+  onEngineEvent('session.changed', ({ session, reload }) => {
+    if (!reload || !session || get().step.name === 'accepting') return;
+    loadSignedInAgain(session).catch((error: unknown) =>
+      appendLog('warn', 'host', `Reloading the signed-in account failed: ${errorMessage(error)}`),
+    );
+  });
   engineSupervisor.subscribeStatus(() => {
     const { state, epoch } = engineSupervisor.getStatus();
     if (state !== 'ready' && state !== 'degraded') return;

@@ -238,6 +238,9 @@ function runSwitch(
   });
 }
 
+/** The reload under way, if any (`loadSignedInAgain`). */
+let reloading: Promise<SessionDTO> | null = null;
+
 /**
  * After a sign-in that logged in afresh an account marked "Sign in again"
  * (AUTH-14; the caller reads the mark before signing in, since the sign-in
@@ -248,7 +251,9 @@ function runSwitch(
  * itself is durable, and the next boot loads the secrets.
  */
 export function loadSignedInAgain(session: SessionDTO): Promise<SessionDTO> {
-  return withTransition({ kind: 'reload', label: copy.accounts.signingInAs(accountName(session)) }, async () => {
+  // The accept reply and the engine's `reload` event can both ask for it: one restart.
+  if (reloading) return reloading;
+  reloading = withTransition({ kind: 'reload', label: copy.accounts.signingInAs(accountName(session)) }, async () => {
     try {
       const restored = await restartEngine('Signed in again');
       if (restored?.identityId !== session.identityId) throw new Error('The account did not restore');
@@ -256,8 +261,11 @@ export function loadSignedInAgain(session: SessionDTO): Promise<SessionDTO> {
     } catch (error) {
       appendLog('warn', 'host', `Reloading the account after signing in again failed: ${errorMessage(error)}`);
       return session;
+    } finally {
+      reloading = null;
     }
   });
+  return reloading;
 }
 
 /**

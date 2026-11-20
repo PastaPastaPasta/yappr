@@ -89,7 +89,8 @@ export type AppConnectAcceptDTO =
   | { status: 'renewed'; session: SessionDTO }
 
 export interface SessionEvents {
-  'session.changed': { session: SessionDTO | null; reason: SessionChangeReason }
+  /** `reload`: a sign-in whose secrets this boot did not load; the host restarts into it even if the accept reply never reaches it. */
+  'session.changed': { session: SessionDTO | null; reason: SessionChangeReason; reload?: true }
   'session.keyRequired': { identityId: string | null; purpose: 'auth' | 'encryption' }
   /** Every change of the App Connect sign-in or renewal in progress. */
   'session.appConnect': AppConnectFlowDTO
@@ -270,9 +271,9 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
   }
 
-  function announce(reason: SessionChangeReason): SessionDTO | null {
+  function announce(reason: SessionChangeReason, reload = false): SessionDTO | null {
     const session = toDTO(controller.getState().user)
-    options.emit('session.changed', { session, reason })
+    options.emit('session.changed', reload ? { session, reason, reload: true } : { session, reason })
     return session
   }
 
@@ -356,12 +357,14 @@ export function createSessionModule(options: SessionModuleOptions) {
     options.tickets?.requireRestart()
   }
 
-  async function signedIn(identityId: string, method: SignInMethod): Promise<SessionDTO> {
+  async function signedIn(identityId: string, method: SignInMethod, reload = false): Promise<SessionDTO> {
     const user = controller.getState().user
     registry.upsert(identityId, { username: user?.username ?? null, method })
     await options.secureDurable?.()
-    const session = announce('signed-in')
+    const session = announce('signed-in', reload)
     if (!session) throw new RpcError('Sign-in did not establish a session', 'NOT_SIGNED_IN')
+    // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
+    if (reload) requireRestart()
     return session
   }
 
@@ -549,9 +552,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       revokedSignOut = null
       emitAppConnectStatus()
     }
-    const session = await signedIn(identityId, 'app-connect')
-    // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
-    if (unloaded) requireRestart()
+    const session = await signedIn(identityId, 'app-connect', unloaded)
     return { status: 'signed-in', session, reload: unloaded }
   }
 
