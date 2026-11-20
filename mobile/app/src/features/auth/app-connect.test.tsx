@@ -332,6 +332,16 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(screen.getByText('Renewal was interrupted')).toBeTruthy();
       expect(screen.queryByText('Renewed')).toBeNull();
     });
+
+    it('offers only Close, never a fresh request, while the outcome is unknown', async () => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.queryByTestId('kx-try-again')).toBeNull();
+      fireEvent.press(screen.getByTestId('kx-close'));
+      expect(mockGoBack).toHaveBeenCalled();
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('says why wallet sign-in is not available, and retries only what a retry can fix', async () => {

@@ -146,7 +146,8 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           recover(true);
           return;
         }
-        if (!pending) {
+        // A switch started, or the session moved on, while the engine answered: the switch owns navigation.
+        if (!pending || useAccounts.getState().transition || useSessionStore.getState().status !== 'signed-out') {
           recover(false);
           return;
         }
