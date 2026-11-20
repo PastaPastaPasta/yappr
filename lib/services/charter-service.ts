@@ -669,6 +669,8 @@ class CharterService {
           signer.addKey(newKey)
           // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
           await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
+          // Accepted: the next update (any tab) waits for a read at this revision even when the readback below lags.
+          noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1)
         } catch (error) {
           if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
           logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))

@@ -5,7 +5,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fetch = vi.hoisted(() => vi.fn())
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch } }) }))
+const update = vi.hoisted(() => vi.fn())
+const updateLock = vi.hoisted(() => ({ held: Promise.resolve() }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch, update } }) }))
+vi.mock('@/lib/identity-write-lock', () => ({
+  withIdentityUpdateLock: async (_identityId: string, run: () => Promise<unknown>) => { await updateLock.held; return run() },
+}))
 vi.mock('./signer-service', () => ({ signerService: {} }))
 
 import { identityService } from './identity-service'
@@ -42,5 +47,20 @@ describe('identityService.getIdentity', () => {
     await identityService.getIdentity(IDENTITY)
     fetch.mockRejectedValueOnce(new Error('DAPI unavailable'))
     await expect(identityService.getIdentity(IDENTITY, { fresh: true })).rejects.toThrow('DAPI unavailable')
+  })
+})
+
+describe('identityService.addEncryptionKey', () => {
+  it('sends nothing for an add cancelled while it waited behind another update', async () => {
+    let release!: () => void
+    updateLock.held = new Promise<void>((resolve) => { release = resolve })
+    let closed = false
+    const added = identityService.addEncryptionKey(IDENTITY, new Uint8Array(32).fill(1), 'master-wif', undefined, { cancelled: () => closed })
+    await Promise.resolve()
+    closed = true
+    release()
+    await expect(added).resolves.toEqual({ success: false, cancelled: true })
+    expect(fetch).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
   })
 })

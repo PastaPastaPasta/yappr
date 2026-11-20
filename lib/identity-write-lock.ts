@@ -47,7 +47,7 @@ export async function withIdentityWriteLock<T>(ownerId: string, contractId: stri
   return run
 }
 
-export const IDENTITY_UPDATE_UNLOCKED = "This browser can't add a key to your account safely. Update it, or use another browser."
+export const IDENTITY_UPDATE_UNLOCKED = "This browser can't safely add a key here. Update your browser or use another one."
 
 /**
  * One identity update the app signs at a time per identity, across tabs. An

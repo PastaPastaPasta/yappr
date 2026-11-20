@@ -15,6 +15,7 @@ import { SetUpMessaging, type MessagingSetupContext } from './set-up-messaging'
 import { MessagingSignInPrompt } from './messaging-sign-in-prompt'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
 
 type EncryptionKeyContext = MessagingSetupContext
 
@@ -132,9 +133,15 @@ function KeyEntryAddEncryptionKeyModal({
   // Track open state in a ref so async callbacks can bail out if the modal closes
   // while a network call (validateDerivedKeyMatchesIdentity, validateEncryptionKey) is in flight.
   const isOpenRef = useRef(isOpen)
+  /** Moved on by every add and every close: an add still waiting for the identity update lock is then dropped. */
+  const attemptRef = useRef(0)
   useEffect(() => {
     isOpenRef.current = isOpen
+    attemptRef.current++
   }, [isOpen])
+  useEffect(() => () => {
+    attemptRef.current++
+  }, [])
 
   // App Connect setup finished: the key is the anchor's current one and stored for this session.
   const handleMessagingReady = useCallback((identityId: string) => {
@@ -296,6 +303,10 @@ function KeyEntryAddEncryptionKeyModal({
 
     setStep('adding')
     setError(null)
+    const attempt = ++attemptRef.current
+    const session = criticalKeySession()
+    const identityId = user.identityId
+    const cancelled = () => !isOpenRef.current || attemptRef.current !== attempt || !sessionIsLive(identityId, session)
 
     try {
       const { storeEncryptionKey, storeEncryptionKeyType } = await import('@/lib/secure-storage')
@@ -306,8 +317,10 @@ function KeyEntryAddEncryptionKeyModal({
         user.identityId,
         privateKeyBytes,
         criticalKeyWif.trim(),
-        YAPPR_CONTRACT_ID // Contract-bound to Yappr
+        YAPPR_CONTRACT_ID, // Contract-bound to Yappr
+        { cancelled }
       )
+      if (result.cancelled) return
 
       if (result.success) {
         try {
@@ -389,6 +402,7 @@ function KeyEntryAddEncryptionKeyModal({
     setExistingKeyError(null)
     setIsValidatingExistingKey(false)
     setIsEnterExistingPath(false)
+    attemptRef.current++
     onClose()
   }, [onClose])
 

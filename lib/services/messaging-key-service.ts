@@ -24,6 +24,7 @@ import { deriveEncryptionKey } from '@/lib/crypto/derive-encryption-key'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType, storedEncryptionPublicKey } from '@/lib/secure-storage'
+import { IDENTITY_UPDATE_UNLOCKED, crossTabLocks } from '@/lib/identity-write-lock'
 import { identityService } from './identity-service'
 
 export interface MessagingKeyDraft {
@@ -68,6 +69,18 @@ export class MessagingSetupCancelledError extends Error {
   }
 }
 
+/** This browser can't keep other tabs off the identity while it signs a key update, so none is signed here: the wallet can. */
+export class MessagingSetupUnsupportedError extends Error {
+  constructor() {
+    super(IDENTITY_UPDATE_UNLOCKED)
+  }
+}
+
+/** Whether this browser can sign the key update itself (the wallet always can). */
+export function canAddMessagingKeyHere(): boolean {
+  return crossTabLocks() !== undefined
+}
+
 /** The anchor's current key compared with the draft: this key, another key, or none. */
 export type AnchorKeyState = 'this-key' | 'other-key' | 'none'
 
@@ -83,24 +96,27 @@ export async function anchorKeyState(draft: MessagingKeyDraft): Promise<AnchorKe
 
 /**
  * Add the draft key, signing the IdentityUpdate with a MASTER key the user
- * holds (WIF or hex). `cancelled` is asked right before the broadcast.
+ * holds (WIF or hex). `cancelled` is asked once the identity update lock is
+ * held and again right before the broadcast.
  */
 export async function addMessagingKeyWithMasterKey(draft: MessagingKeyDraft, masterKey: string, cancelled?: () => boolean): Promise<void> {
+  if (!canAddMessagingKeyHere()) throw new MessagingSetupUnsupportedError()
   const parsed = parsePrivateKey(masterKey)
   // The identity service matches and signs WIF only.
   const masterKeyWif = parsed.format === 'hex' ? privateKeyToWif(parsed.privateKey, keyNetwork(), true) : masterKey
   const result = await identityService.addEncryptionKey(draft.identityId, draft.privateKey, masterKeyWif, undefined, { cancelled })
   if (result.success) return
   if (result.cancelled) throw new MessagingSetupCancelledError()
+  if (result.error === IDENTITY_UPDATE_UNLOCKED) throw new MessagingSetupUnsupportedError()
   if (/already has an encryption key/i.test(result.error ?? '')) throw new MessagingAlreadySetUpError()
   throw new Error(result.error || 'Couldn\'t set up messaging.')
 }
 
 /** Add the draft key, signing with the session's login key, which `loginKeyIsMaster` found to be the MASTER key. */
-export async function addMessagingKeyWithLoginKey(draft: MessagingKeyDraft): Promise<void> {
+export async function addMessagingKeyWithLoginKey(draft: MessagingKeyDraft, cancelled?: () => boolean): Promise<void> {
   const loginKey = getPrivateKey(draft.identityId)
   if (!loginKey) throw new Error('Sign in again to set up messaging.')
-  await addMessagingKeyWithMasterKey(draft, loginKey)
+  await addMessagingKeyWithMasterKey(draft, loginKey, cancelled)
 }
 
 /** A `dash-st:` link carrying the unsigned IdentityUpdate that adds the draft key, for the wallet to sign. */

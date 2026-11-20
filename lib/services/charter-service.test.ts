@@ -59,7 +59,7 @@ vi.mock('@/lib/identity-write-lock', () => ({
   withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() },
   withIdentityUpdateLock: async (_i: string, update: () => Promise<unknown>) => { await updateLocks(); return update() },
   crossTabLocks: () => (webLocks.available ? {} : undefined),
-  IDENTITY_UPDATE_UNLOCKED: "This browser can't add a key to your account safely. Update it, or use another browser.",
+  IDENTITY_UPDATE_UNLOCKED: "This browser can't safely add a key here. Update your browser or use another one.",
 }))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => { hooks.onAwaitNonce?.(); return { current: 0n, value: nonces.next++ } },
@@ -1139,6 +1139,15 @@ describe('a charter key added from two tabs at once', () => {
     expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 6 }))
   })
 
+  it('keeps the revision an accepted update left the identity at, even when no read shows the key yet', async () => {
+    const { publicKey } = await leaderKey()
+    sdk.identities.fetch.mockResolvedValue({ revision: 7, publicKeys: [{ keyId: 2 }] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 3, publicKey }))
+    expect(localStorage.getItem(revisionKey)).toBe('8')
+  })
+
   it('keeps the floor by chain and identity, where every build on this origin reads it', () => {
     noteProvedIdentityRevision(OWNER, 9)
     expect(localStorage.getItem(revisionKey)).toBe('9')
@@ -1147,7 +1156,7 @@ describe('a charter key added from two tabs at once', () => {
   it('asks for no MASTER key where no lock reaches the other tabs, and says why', async () => {
     webLocks.available = false
     await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({
-      outcome: 'refused', message: "This browser can't add a key to your account safely. Update it, or use another browser.",
+      outcome: 'refused', message: "This browser can't safely add a key here. Update your browser or use another one.",
     })
     expect(keys.stepUp).not.toHaveBeenCalled()
   })
