@@ -3,10 +3,10 @@ import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
   loginRoute,
+  onLoginPage,
   returnToOrDefault,
   sanitizeReturnTo,
   signInReturnRoute,
-  signedInRoute,
 } from './return-to'
 
 describe('sanitizeReturnTo', () => {
@@ -106,6 +106,14 @@ describe('afterRegistrationRoute', () => {
   })
 })
 
+describe('fragments', () => {
+  it('keeps one that decodes and drops one that does not, with the path and query', () => {
+    expect(sanitizeReturnTo('/settings/?section=x#caf%C3%A9', '')).toBe('/settings/?section=x#caf%C3%A9')
+    expect(sanitizeReturnTo('/settings/?section=x#%', '')).toBe('/settings/?section=x')
+    expect(sanitizeReturnTo('/settings/?section=x#%FF', '')).toBe('/settings/?section=x')
+  })
+})
+
 describe('loginRoute', () => {
   it('carries the page the visitor opened, without the deployment base path', () => {
     expect(loginRoute('/staging/messages/?conversation=x', '/staging')).toBe('/login?next=%2Fmessages%2F%3Fconversation%3Dx')
@@ -134,12 +142,10 @@ describe('where a sign-in started here returns to', () => {
     expect(signInReturnRoute()).toBeNull()
   })
 
-  it('after a sign-in, is the `next` the sign-in page carries, and the feed anywhere else', () => {
+  it('knows the sign-in page, under a base path too', () => {
     at('/staging/login/', '?next=%2Fmessages%2F')
-    expect(signedInRoute()).toBe('/messages/')
-    at('/login/', '?next=%2F%2Fevil.example')
-    expect(signedInRoute()).toBe(DEFAULT_RETURN_TO)
+    expect(onLoginPage()).toBe(true)
     at('/post/', '?id=x&next=%2Fmessages%2F')
-    expect(signedInRoute()).toBe(DEFAULT_RETURN_TO)
+    expect(onLoginPage()).toBe(false)
   })
 })

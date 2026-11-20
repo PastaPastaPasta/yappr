@@ -23,7 +23,7 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
-import { afterRegistrationRoute, currentReturnToParam } from '@/lib/auth/return-to'
+import { afterRegistrationRoute, currentReturnToParam, onLoginPage } from '@/lib/auth/return-to'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -298,7 +298,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   const handleContinue = useCallback(() => {
     const hasUsername = Boolean(user?.dpnsUsername) || usernames.some((u) => u.registered === true)
     onComplete?.()
-    router.push(afterRegistrationRoute(hasUsername, currentReturnToParam()))
+    if (!onLoginPage()) router.push(afterRegistrationRoute(hasUsername, currentReturnToParam()))
   }, [onComplete, router, user?.dpnsUsername, usernames])
 
   return (

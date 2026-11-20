@@ -12,7 +12,8 @@ import { missingReplyParentReads } from '@/lib/feed/missing-reply-parent-reads'
 import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAtAsc, MAX_NESTED_DEPTH } from '@/lib/feed/reply-thread'
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
-import { useAppStore } from '@/lib/store'
+import { useAppStore, type PendingPostNavigation } from '@/lib/store'
+import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
@@ -121,6 +122,12 @@ function nestUnderReply(
  * } = usePostDetail({ postId, enabled: !!user })
  * ```
  */
+/** The card hand-off for `postId`, when it was made for the current viewer. */
+function pendingNavigationFor(postId: string): PendingPostNavigation | null {
+  const pending = useAppStore.getState().pendingPostNavigation
+  return pending && pending.post.id === postId && pending.viewerId === getCurrentUserId() ? pending : null
+}
+
 export function usePostDetail({
   postId,
   enabled = true
@@ -130,11 +137,7 @@ export function usePostDetail({
   // This must be done outside hooks to capture the value at component mount time
   const getInitialData = () => {
     if (!postId || !enabled) return null
-    const pending = useAppStore.getState().pendingPostNavigation
-    if (pending && pending.post.id === postId) {
-      return pending
-    }
-    return null
+    return pendingNavigationFor(postId)
   }
 
   const [state, setState] = useState<PostDetailState>(() => {
@@ -605,8 +608,8 @@ export function usePostDetail({
 
     // Check for pending navigation data for the new postId
     const store = useAppStore.getState()
-    const pending = store.pendingPostNavigation
-    if (pending && pending.post.id === postId) {
+    const pending = pendingNavigationFor(postId)
+    if (pending) {
       // Use navigation data immediately, reset stale context
       setState({
         post: pending.post,

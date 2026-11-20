@@ -7,7 +7,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
 import { rememberUsernameSkip } from '@/lib/username-skip'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
+import { currentReturnToParam, onLoginPage, returnToOrDefault } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 import { WalletUsernameGuide } from './wallet-username-guide'
@@ -45,7 +45,8 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   const handleSkip = () => {
     if (currentIdentityId) rememberUsernameSkip(currentIdentityId)
     onClose()
-    router.push(returnToOrDefault(currentReturnToParam()))
+    // On /login the sign-in goes on once this closes (contexts/auth-context.tsx).
+    if (!onLoginPage()) router.push(returnToOrDefault(currentReturnToParam()))
   }
 
   const handleComplete = () => {

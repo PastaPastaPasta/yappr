@@ -37,6 +37,16 @@ function withoutBasePath(path: string, basePath: string): string {
   return path
 }
 
+/** `hash`, or nothing when it can't be decoded: navigating decodes the fragment, and would throw. */
+function decodableFragment(hash: string): string {
+  try {
+    decodeURIComponent(hash)
+    return hash
+  } catch {
+    return ''
+  }
+}
+
 /**
  * The app-relative route in `value`, or `null` when it is not safe to follow.
  *
@@ -58,7 +68,7 @@ export function sanitizeReturnTo(value: string | null | undefined, basePath: str
   }
   if (url.origin !== PARSE_ORIGIN) return null
 
-  const route = withoutBasePath(`${url.pathname}${url.search}${url.hash}`, basePath.replace(/\/+$/, ''))
+  const route = withoutBasePath(`${url.pathname}${url.search}${decodableFragment(url.hash)}`, basePath.replace(/\/+$/, ''))
   // Re-check after normalisation: `/./evil` style dot segments or a stripped
   // basePath must not leave a protocol-relative path behind.
   if (!route.startsWith('/') || route.startsWith('//')) return null
@@ -105,15 +115,10 @@ export function signInReturnRoute(): string | null {
   return sanitizeReturnTo(currentPagePath()) ?? sanitizeReturnTo(currentReturnToParam())
 }
 
-/** True on the sign-in page. Client-only. */
-function onLoginPage(): boolean {
+/** True on the sign-in page, which picks where a sign-in made on it goes next. Client-only. */
+export function onLoginPage(): boolean {
   const path = window.location.pathname.replace(/\/+$/, '')
   return path === LOGIN_ROUTE || path.endsWith(LOGIN_ROUTE)
-}
-
-/** Where a finished sign-in goes: the `next` the sign-in page carries, or /feed. Client-only. */
-export function signedInRoute(): string {
-  return onLoginPage() ? returnToOrDefault(currentReturnToParam()) : DEFAULT_RETURN_TO
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */

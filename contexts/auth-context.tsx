@@ -6,7 +6,7 @@ import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
-import { currentPagePath, loginRoute, signInReturnRoute, signedInRoute } from '@/lib/auth/return-to'
+import { currentPagePath, currentReturnToParam, loginRoute, onLoginPage, returnToOrDefault, signInReturnRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -14,7 +14,7 @@ import { PlatformAuthController, SupersededSignInError, type AppConnectGrant, ty
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { keyNetwork } from '@/lib/constants'
 import { keyValidationService } from '@/lib/services/key-validation-service'
-import { useUsernameModal } from '@/hooks/use-username-modal'
+import { usernamePromptClosed, useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
@@ -196,11 +196,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)
-    if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
     // Signed out: to sign in again, carrying this page (replaced, so Back doesn't land on a page that needs the account).
-    else if (next.href === '/login') router.replace(loginRoute(signInReturnRoute() ?? ''))
-    else router.push(signedInRoute())
-  }, [router])
+    if (next.kind === 'route' && next.href === '/login') {
+      router.replace(loginRoute(signInReturnRoute() ?? ''))
+      return
+    }
+    // Signed in on /login: on to the page that sent the visitor there, replacing /login, once
+    // any username prompt is closed. The prompt itself doesn't navigate on /login.
+    if (onLoginPage()) {
+      const destination = returnToOrDefault(currentReturnToParam())
+      const identityId = controller.getState().user?.identityId
+      if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+      const leave = () => {
+        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId) router.replace(destination)
+      }
+      usernamePromptClosed().then(leave, (error: unknown) => logger.error('Auth: leaving the sign-in page failed:', error))
+      return
+    }
+    if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+    else router.push(next.href)
+  }, [controller, router])
 
   /**
    * `since`: the session epoch the sign-in began on; any sign-in or sign-out

@@ -57,6 +57,7 @@ import { EmbeddedPostCard, EmbeddedPostSkeleton, EmbeddedPostUnavailable } from 
 import { AuthorDeletedStub, RemovedPostStub } from '@/components/moderation/removed-post-stub'
 import { moderationService } from '@/lib/services/moderation-service'
 import { bulkHideAvailable } from '@/lib/services/bulk-hide-service'
+import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { GatedPostMedia } from './gated-media'
 import { PostActionBar, stopAndRun } from './post-action-bar'
 import { PostAuthorLine, hasRealProfile, resolveUsernameState, type UsernameState } from './post-author-line'
@@ -598,7 +599,7 @@ function PostCardView({
 
   const prepareThreadNavigation = () => {
     // Hand the detail page what this card already shows, so it renders at once.
-    useAppStore.getState().setPendingPostNavigation(enrichedPost, {
+    useAppStore.getState().setPendingPostNavigation(enrichedPost, getCurrentUserId(), {
       username: usernameState,
       displayName,
       profileLoaded,
@@ -612,10 +613,13 @@ function PostCardView({
   }
 
   const handleCardClick = (e: React.MouseEvent) => {
-    prepareThreadNavigation()
     const url = `/post?id=${post.id}`
-    if (e.ctrlKey || e.metaKey) window.open(url, '_blank')
-    else router.push(url)
+    if (e.ctrlKey || e.metaKey) {
+      window.open(url, '_blank')
+      return
+    }
+    prepareThreadNavigation()
+    router.push(url)
   }
 
   const authorLabel = usernameState ? `@${usernameState}` : displayName
@@ -674,7 +678,11 @@ function PostCardView({
                   profileLoaded={profileLoaded}
                 />
               )}
-              <Link href={`/post?id=${post.id}`} onClick={(event) => { event.stopPropagation(); prepareThreadNavigation() }} aria-label={`Read thread · ${createdAtLabel}`} className="text-gray-500 flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-yappr-600">
+              <Link href={`/post?id=${post.id}`} onClick={(event) => {
+                event.stopPropagation()
+                // Only a plain click opens the thread in this tab; a new tab or window reads it afresh.
+                if (event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) prepareThreadNavigation()
+              }} aria-label={`Read thread · ${createdAtLabel}`} className="text-gray-500 flex-shrink-0 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-yappr-600">
                 <time dateTime={createdAtValid ? createdAtDate.toISOString() : undefined} title={createdAtValid ? createdAtDate.toLocaleString() : undefined}>
                   {createdAtLabel}
                 </time>
