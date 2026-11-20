@@ -7,7 +7,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
 import { rememberUsernameSkip } from '@/lib/username-skip'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { afterRegistrationRoute, currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
+import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 import { WalletUsernameGuide } from './wallet-username-guide'
@@ -19,19 +19,14 @@ interface UsernameModalProps {
   onClose: () => void
   /**
    * Called instead of `onClose` when the user dismisses the modal (close button
-   * or backdrop). Skip and Continue never run it.
+   * or backdrop). Skip and Continue navigate on their own, so they never run it.
    */
   onDismiss?: () => void
-  /**
-   * Skip and Continue go on to the page's `next` route (the feed after a
-   * registration that failed everywhere). Elsewhere they only close the modal.
-   */
-  returnWhenDone?: boolean
   customIdentityId?: string
   hasExistingUsernames?: boolean
 }
 
-export function UsernameModal({ isOpen, onClose, onDismiss, returnWhenDone = false, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
+export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
   const router = useRouter()
   const { user } = useAuth()
   const { reset } = useDpnsRegistration()
@@ -47,18 +42,14 @@ export function UsernameModal({ isOpen, onClose, onDismiss, returnWhenDone = fal
     }
   }, [isOpen, reset])
 
-  const finish = (route: string) => {
-    onClose()
-    if (returnWhenDone) router.push(route)
-  }
-
   const handleSkip = () => {
     if (currentIdentityId) rememberUsernameSkip(currentIdentityId)
-    finish(returnToOrDefault(currentReturnToParam()))
+    onClose()
+    router.push(returnToOrDefault(currentReturnToParam()))
   }
 
-  const handleComplete = (hasUsername = Boolean(user?.dpnsUsername)) => {
-    finish(afterRegistrationRoute(hasUsername, currentReturnToParam()))
+  const handleComplete = () => {
+    onClose()
   }
 
   // Closing it is a choice too: don't ask this identity again on its own.
@@ -87,7 +78,7 @@ export function UsernameModal({ isOpen, onClose, onDismiss, returnWhenDone = fal
 
       {/* Registration Wizard */}
       {walletSession
-        ? <WalletUsernameGuide onComplete={() => handleComplete()} onSkip={handleSkip} additional={hasExistingUsernames} />
+        ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} additional={hasExistingUsernames} />
         : <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />}
     </Modal>
   )

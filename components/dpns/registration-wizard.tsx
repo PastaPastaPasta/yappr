@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger';
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
@@ -22,15 +23,16 @@ import { ReviewStep } from './steps/review-step'
 import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
+import { afterRegistrationRoute, currentReturnToParam } from '@/lib/auth/return-to'
 
 interface DpnsRegistrationWizardProps {
-  /** Continue, after the registrations: whether the identity now has a username. */
-  onComplete?: (hasUsername: boolean) => void
+  onComplete?: () => void
   onSkip?: () => void
   hasExistingUsernames?: boolean
 }
 
 export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
+  const router = useRouter()
   const { user, updateDPNSUsername } = useAuth()
   const { isReady: isSdkReady } = useSdk()
   const {
@@ -295,8 +297,9 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleContinue = useCallback(() => {
     const hasUsername = Boolean(user?.dpnsUsername) || usernames.some((u) => u.registered === true)
-    onComplete?.(hasUsername)
-  }, [onComplete, user?.dpnsUsername, usernames])
+    onComplete?.()
+    router.push(afterRegistrationRoute(hasUsername, currentReturnToParam()))
+  }, [onComplete, router, user?.dpnsUsername, usernames])
 
   return (
     <div className="space-y-6">

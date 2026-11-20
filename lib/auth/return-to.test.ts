@@ -3,10 +3,10 @@ import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
   loginRoute,
-  onRegistrationPage,
   returnToOrDefault,
   sanitizeReturnTo,
   signInReturnRoute,
+  signedInRoute,
 } from './return-to'
 
 describe('sanitizeReturnTo', () => {
@@ -134,10 +134,12 @@ describe('where a sign-in started here returns to', () => {
     expect(signInReturnRoute()).toBeNull()
   })
 
-  it('knows the registration page, under a base path too', () => {
-    at('/staging/dpns/register/')
-    expect(onRegistrationPage()).toBe(true)
-    at('/settings/')
-    expect(onRegistrationPage()).toBe(false)
+  it('after a sign-in, is the `next` the sign-in page carries, and the feed anywhere else', () => {
+    at('/staging/login/', '?next=%2Fmessages%2F')
+    expect(signedInRoute()).toBe('/messages/')
+    at('/login/', '?next=%2F%2Fevil.example')
+    expect(signedInRoute()).toBe(DEFAULT_RETURN_TO)
+    at('/post/', '?id=x&next=%2Fmessages%2F')
+    expect(signedInRoute()).toBe(DEFAULT_RETURN_TO)
   })
 })

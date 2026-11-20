@@ -14,9 +14,10 @@ export const RETURN_TO_PARAM = 'next'
 export const DEFAULT_RETURN_TO = '/feed'
 
 const DPNS_REGISTER_ROUTE = '/dpns/register'
+const LOGIN_ROUTE = '/login'
 
 /** The detour itself and the login page: returning to them would loop or strand the user. */
-const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, '/login']
+const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, LOGIN_ROUTE]
 
 const MAX_RETURN_TO_LENGTH = 2048
 // Any whitespace or control character. The URL parser silently drops tabs and
@@ -104,10 +105,15 @@ export function signInReturnRoute(): string | null {
   return sanitizeReturnTo(currentPagePath()) ?? sanitizeReturnTo(currentReturnToParam())
 }
 
-/** True on the username registration page, which asks for a username itself. Client-only. */
-export function onRegistrationPage(): boolean {
+/** True on the sign-in page. Client-only. */
+function onLoginPage(): boolean {
   const path = window.location.pathname.replace(/\/+$/, '')
-  return path === DPNS_REGISTER_ROUTE || path.endsWith(DPNS_REGISTER_ROUTE)
+  return path === LOGIN_ROUTE || path.endsWith(LOGIN_ROUTE)
+}
+
+/** Where a finished sign-in goes: the `next` the sign-in page carries, or /feed. Client-only. */
+export function signedInRoute(): string {
+  return onLoginPage() ? returnToOrDefault(currentReturnToParam()) : DEFAULT_RETURN_TO
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */

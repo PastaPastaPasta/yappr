@@ -13,14 +13,6 @@ import { assembleFlatThread, authorThreadDepthFirst, buildReplyTree, byCreatedAt
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from '@/lib/services/pagination-utils'
 import { usePostEnrichment } from './use-post-enrichment'
 import { useAppStore } from '@/lib/store'
-import { useAuth } from '@/contexts/auth-context'
-
-/**
- * How many reply pages the last thread had loaded, and for whom, so the page
- * mounted afresh for a new viewer (a sign-in on it) loads as many again, read
- * for that viewer. Reopening the thread as the same viewer starts at page one.
- */
-let lastThreadPages: { rootId: string; pages: number; viewerId: string | null } | null = null
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
@@ -134,14 +126,12 @@ export function usePostDetail({
   enabled = true
 }: UsePostDetailOptions): UsePostDetailResult {
   const router = useRouter()
-  const viewerId = useAuth().user?.identityId ?? null
   // Get initial navigation data synchronously from store (for useState initializers)
-  // This must be done outside hooks to capture the value at component mount time.
-  // A card's hand-off is used only for the viewer it was shown to.
+  // This must be done outside hooks to capture the value at component mount time
   const getInitialData = () => {
     if (!postId || !enabled) return null
     const pending = useAppStore.getState().pendingPostNavigation
-    if (pending && pending.post.id === postId && pending.viewerId === viewerId) {
+    if (pending && pending.post.id === postId) {
       return pending
     }
     return null
@@ -196,9 +186,6 @@ export function usePostDetail({
   const acceptedRepliesRef = useRef(new Map<string, { reply: Reply; confirmed: boolean; ancestors: Reply[] }>())
   /** The ids of the replies on screen, for Load More to tell a missing parent from one an earlier page holds. */
   const shownReplyIdsRef = useRef<ReadonlySet<string>>(new Set())
-  /** Reply pages loaded for this thread, and how many more to load again after a fresh mount. */
-  const pagesLoadedRef = useRef(1)
-  const restorePagesRef = useRef(0)
   useEffect(() => {
     shownReplyIdsRef.current = new Set(state.replies.map(reply => reply.id))
   }, [state.replies])
@@ -356,9 +343,6 @@ export function usePostDetail({
       }
 
       threadRootIdRef.current = threadRootIdOf(loadedPost)
-      pagesLoadedRef.current = 1
-      restorePagesRef.current = lastThreadPages?.rootId === threadRootIdRef.current && lastThreadPages.viewerId !== viewerId ? lastThreadPages.pages - 1 : 0
-      lastThreadPages = { rootId: threadRootIdRef.current, pages: 1, viewerId }
 
       // If the loaded item is a reply, show the context it hangs off
       let replyChain: Post[] = []
@@ -546,7 +530,7 @@ export function usePostDetail({
         setIsLoadingReplies(false)
       }
     }
-  }, [postId, enabled, viewerId, enrich, fetchReplyChain, router])
+  }, [postId, enabled, enrich, fetchReplyChain, router])
 
   /**
    * Fetch the next page of the thread (v9 only — v2's `getReplies` covers one
@@ -579,8 +563,6 @@ export function usePostDetail({
       replyCursorRef.current = result.nextCursor
       setHasMoreReplies(Boolean(result.nextCursor))
       setError(null)
-      pagesLoadedRef.current += 1
-      lastThreadPages = { rootId, pages: pagesLoadedRef.current, viewerId }
 
       setState(current => {
         if (!current.post) return current
@@ -596,14 +578,7 @@ export function usePostDetail({
     } finally {
       setIsLoadingMoreReplies(false)
     }
-  }, [isLoadingMoreReplies, viewerId])
-
-  // Load again the pages the thread had before the page was mounted afresh.
-  useEffect(() => {
-    if (restorePagesRef.current <= 0 || !hasMoreReplies || isLoadingReplies || isLoadingMoreReplies) return
-    restorePagesRef.current -= 1
-    loadMoreReplies().catch((err) => logger.error('usePostDetail: Failed to restore reply pages:', err))
-  }, [hasMoreReplies, isLoadingReplies, isLoadingMoreReplies, loadMoreReplies])
+  }, [isLoadingMoreReplies])
 
   const cancelRequests = useCallback(() => {
     acceptedRepliesRef.current.clear()
@@ -631,7 +606,7 @@ export function usePostDetail({
     // Check for pending navigation data for the new postId
     const store = useAppStore.getState()
     const pending = store.pendingPostNavigation
-    if (pending && pending.post.id === postId && pending.viewerId === viewerId) {
+    if (pending && pending.post.id === postId) {
       // Use navigation data immediately, reset stale context
       setState({
         post: pending.post,
@@ -658,7 +633,7 @@ export function usePostDetail({
 
     loadPost().catch((err) => logger.error('usePostDetail: load failed:', err))
     return cancelRequests
-  }, [postId, enabled, viewerId, loadPost, resetEnrichment, cancelRequests])
+  }, [postId, enabled, loadPost, resetEnrichment, cancelRequests])
 
   const refresh = useCallback(async () => {
     loadedPostIdRef.current = null

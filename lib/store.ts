@@ -21,8 +21,6 @@ export interface ThreadPost {
 export interface PendingPostNavigation {
   post: Post
   enrichment?: ProgressiveEnrichment
-  /** Who the card showed it to (null: signed out); the thread uses it only for that viewer. */
-  viewerId: string | null
 }
 
 interface ThreadDraft {
@@ -60,7 +58,7 @@ interface AppState {
   markThreadPostAsPosted: (id: string, postedPostId: string) => void
   setActiveThreadPost: (id: string | null) => void
   // Navigation actions for instant post detail transitions
-  setPendingPostNavigation: (post: Post, viewerId: string | null, enrichment?: ProgressiveEnrichment) => void
+  setPendingPostNavigation: (post: Post, enrichment?: ProgressiveEnrichment) => void
   consumePendingPostNavigation: (postId: string) => PendingPostNavigation | null
 }
 
@@ -157,9 +155,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveThreadPost: (id) => set({ activeThreadPostId: id }),
 
   // Navigation actions for instant feed -> post detail transitions
-  setPendingPostNavigation: (post, viewerId, enrichment) => {
+  setPendingPostNavigation: (post, enrichment) => {
     set({
-      pendingPostNavigation: { post, enrichment, viewerId }
+      pendingPostNavigation: { post, enrichment }
     })
   },
 

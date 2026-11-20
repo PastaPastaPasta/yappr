@@ -7,7 +7,6 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
 import { moderationViewAll } from '@/lib/moderation-view'
-import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 
 export type TopUser = HomepageTopUser
 
@@ -43,8 +42,7 @@ export interface HomepageData {
 // their authors and the top contributors together (see lib/home/load-homepage).
 // `allLanes`: read under the moderator view, so it holds hidden and restricted
 // posts; only a load under the same view may reuse it.
-/** The last homepage snapshot; its featured posts carry the likes and reposts of `viewer`. */
-let cache: { data: HomepageSnapshot; timestamp: number; allLanes: boolean; viewer: string | null } | null = null
+let cache: { data: HomepageSnapshot; timestamp: number; allLanes: boolean } | null = null
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
 /**
@@ -95,8 +93,7 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
 
   const load = useCallback(async (forceRefresh = false) => {
     const allLanes = moderationViewAll()
-    const viewer = getCurrentUserId()
-    if (!forceRefresh && cache && cache.allLanes === allLanes && cache.viewer === viewer && Date.now() - cache.timestamp < CACHE_TTL) {
+    if (!forceRefresh && cache && cache.allLanes === allLanes && Date.now() - cache.timestamp < CACHE_TTL) {
       applySnapshot(cache.data)
       return
     }
@@ -109,7 +106,7 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
       // The featured cards render as soon as they are proved; the stats and
       // contributors follow with the full snapshot.
       const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
-      cache = { data: snapshot, timestamp: Date.now(), allLanes, viewer }
+      cache = { data: snapshot, timestamp: Date.now(), allLanes }
       applySnapshot(snapshot)
     } catch (error) {
       logger.error('Error loading homepage:', error)
