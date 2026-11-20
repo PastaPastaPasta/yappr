@@ -400,6 +400,8 @@ export function createSessionModule(options: SessionModuleOptions) {
   const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
   /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
   let appConnectStarts = 0
+  /** A cancelled request whose deletion failed: a cancel with no flow running tries it again. */
+  let unforgotten: AppConnectRequestKind | null = null
   /** The generation the last cancel took. */
   let cancelledStart = -1
 
@@ -485,7 +487,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     // An answer is taken once its request is gone from the device: one left behind would be resumed and answered again.
     const request = appConnect.runningKind()
     const forgetRequest = async () => {
-      if (request) await appConnect.forget(request)
+      if (request) await appConnect.forget(request, { strict: true })
     }
     if (renewing !== undefined && active === identityId && controller.getState().user?.identityId === identityId) {
       // The old keys still restore the session: the renewal's request goes only once its grant is stored, so a
@@ -594,7 +596,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     // fails the sign-out, so a later launch never resumes a request of an account the user signed out.
     // A plain sign-in request left behind is the accepted one (none can start while someone is signed in).
     const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }, ...(active !== null ? [{}] : [])]
-    for (const kind of kinds) await appConnect.forget(kind)
+    for (const kind of kinds) await appConnect.forget(kind, { strict: true })
     await options.secureDurable?.()
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.
@@ -787,11 +789,20 @@ export function createSessionModule(options: SessionModuleOptions) {
     async appConnectCancel(): Promise<void> {
       const cancelled = cancelledStart = ++appConnectStarts
       // A running flow may not have taken up its stored request yet (a resume still checking the network, or offline).
-      const running = appConnect.runningKind()
+      // With none running, the request an earlier cancel here failed to forget.
+      const running = appConnect.runningKind() ?? unforgotten
       appConnect.cancel()
       settleDeferredRevoke()
       // Unless a start since then has made the request this would find.
-      if (running && appConnectStarts === cancelled) await appConnect.forget(running)
+      if (running && appConnectStarts === cancelled) {
+        try {
+          await appConnect.forget(running, { strict: true })
+          unforgotten = null
+        } catch (error) {
+          unforgotten = running
+          throw error
+        }
+      }
       await options.secureDurable?.()
     },
 
