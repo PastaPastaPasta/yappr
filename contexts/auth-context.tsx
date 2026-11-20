@@ -6,6 +6,8 @@ import { observeSignOut } from '@/lib/auth/cross-tab-sign-out'
 import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standing-reset'
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
+import { bumpSessionGeneration } from '@/lib/auth/session-generation'
+import { currentPagePath, currentReturnToParam, loginRoute, onLoginPage, returnToOrDefault, signInReturnRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -13,8 +15,9 @@ import { PlatformAuthController, SupersededSignInError, type AppConnectGrant, ty
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { keyNetwork } from '@/lib/constants'
 import { keyValidationService } from '@/lib/services/key-validation-service'
-import { useUsernameModal } from '@/hooks/use-username-modal'
+import { usernamePromptClosed, useUsernameModal } from '@/hooks/use-username-modal'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { useAppStore } from '@/lib/store'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { settleHeldRevoke, type HeldRevoke } from '@/lib/app-connect/held-revoke'
 import { createWalletSignIn, wipeGrant } from '@/lib/app-connect/wallet-sign-in'
@@ -112,7 +115,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // ...and no CRITICAL key held for the tab outlives the session it was given in.
     const unwatchCriticalKeys = forgetCriticalKeysOnIdentityChange(controller.getState(), (listener) => controller.subscribe(listener))
     const unbindCriticalKeySession = bindCriticalKeySession(() => controller.sessionEpoch())
-    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession() }
+    // ...and the session generation moves on, and a post card's hand-off to the thread page, which carries that viewer's marks, is dropped.
+    let sessionIdentity = controller.getState().user?.identityId ?? null
+    const unwatchSession = controller.subscribe((state) => {
+      const next = state.user?.identityId ?? null
+      if (next === sessionIdentity) return
+      sessionIdentity = next
+      bumpSessionGeneration()
+      useAppStore.setState({ pendingPostNavigation: null })
+    })
+    return () => { unbind(); unsubscribe(); unwatchRestrictions(); unwatchCriticalKeys(); unbindCriticalKeySession(); unwatchSession() }
   }, [controller])
 
   /** A sign-out caused by a wallet revoke, while it runs: a grant adopted meanwhile waits for it. */
@@ -195,9 +207,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)
+    // Signed out: to sign in again, carrying this page (replaced, so Back doesn't land on a page that needs the account).
+    if (next.kind === 'route' && next.href === '/login') {
+      router.replace(loginRoute(signInReturnRoute() ?? ''))
+      return
+    }
+    // Signed in on /login: on to the page that sent the visitor there, replacing /login, once
+    // any username prompt is closed. The prompt itself doesn't navigate on /login.
+    if (onLoginPage()) {
+      const destination = returnToOrDefault(currentReturnToParam())
+      const identityId = controller.getState().user?.identityId
+      if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+      const leave = () => {
+        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId) router.replace(destination)
+      }
+      usernamePromptClosed().then(leave, (error: unknown) => logger.error('Auth: leaving the sign-in page failed:', error))
+      return
+    }
     if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
     else router.push(next.href)
-  }, [router])
+  }, [controller, router])
 
   /**
    * `since`: the session epoch the sign-in began on; any sign-in or sign-out
@@ -383,7 +412,8 @@ export function withAuth<P extends object>(
     // A username is optional: pages never send a signed-in user to the username step.
     useEffect(() => {
       if (isAuthRestoring || user || options?.optional) return
-      router.push('/login')
+      // Replace, so Back from the sign-in page doesn't land here and bounce again.
+      router.replace(loginRoute(currentPagePath()))
     }, [user, isAuthRestoring, router])
 
     if (isAuthRestoring) {

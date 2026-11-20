@@ -37,7 +37,7 @@ export function WelcomePageContent({ redirectAuthenticated = false }: WelcomePag
   useEffect(() => setIsHydrated(true), [])
 
   useEffect(() => {
-    if (redirectAuthenticated && user) router.push('/feed')
+    if (redirectAuthenticated && user) router.replace('/feed')
   }, [redirectAuthenticated, user, router])
 
   return (

@@ -7,6 +7,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useAuth } from '@/contexts/auth-context'
 import { loadHomepage, type HomepageSnapshot, type HomepageTopUser } from '@/lib/home/load-homepage'
 import { moderationViewAll } from '@/lib/moderation-view'
+import { sessionGeneration, sessionGuard } from '@/lib/auth/session-generation'
 
 export type TopUser = HomepageTopUser
 
@@ -42,7 +43,7 @@ export interface HomepageData {
 // their authors and the top contributors together (see lib/home/load-homepage).
 // `allLanes`: read under the moderator view, so it holds hidden and restricted
 // posts; only a load under the same view may reuse it.
-let cache: { data: HomepageSnapshot; timestamp: number; allLanes: boolean } | null = null
+let cache: { data: HomepageSnapshot; timestamp: number; allLanes: boolean; session: number } | null = null
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
 /**
@@ -77,6 +78,12 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
   })
 
   const hasLoadedRef = useRef(false)
+  const activeRef = useRef(false)
+
+  useEffect(() => {
+    activeRef.current = enabled
+    return () => { activeRef.current = false }
+  }, [enabled])
 
   const applySnapshot = useCallback((snapshot: HomepageSnapshot) => {
     setPlatformStats({
@@ -93,7 +100,8 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
 
   const load = useCallback(async (forceRefresh = false) => {
     const allLanes = moderationViewAll()
-    if (!forceRefresh && cache && cache.allLanes === allLanes && Date.now() - cache.timestamp < CACHE_TTL) {
+    const session = sessionGeneration()
+    if (!forceRefresh && cache && cache.allLanes === allLanes && cache.session === session && Date.now() - cache.timestamp < CACHE_TTL) {
       applySnapshot(cache.data)
       return
     }
@@ -105,8 +113,16 @@ export function useHomepageData({ skipSignedIn = false }: { skipSignedIn?: boole
     try {
       // The featured cards render as soon as they are proved; the stats and
       // contributors follow with the full snapshot.
-      const snapshot = await loadHomepage((posts) => setFeaturedPosts({ posts, loading: false, error: null }))
-      cache = { data: snapshot, timestamp: Date.now(), allLanes }
+      const stillCurrent = sessionGuard()
+      const snapshot = await loadHomepage((posts) => {
+        if (stillCurrent()) setFeaturedPosts({ posts, loading: false, error: null })
+      })
+      // Read across a sign-in, sign-out or account switch: read it again for the session now.
+      if (!stillCurrent()) {
+        if (activeRef.current) return load(forceRefresh)
+        return
+      }
+      cache = { data: snapshot, timestamp: Date.now(), allLanes, session }
       applySnapshot(snapshot)
     } catch (error) {
       logger.error('Error loading homepage:', error)

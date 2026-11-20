@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
+  loginRoute,
+  onLoginPage,
   returnToOrDefault,
   sanitizeReturnTo,
+  signInReturnRoute,
 } from './return-to'
 
 describe('sanitizeReturnTo', () => {
@@ -100,5 +103,49 @@ describe('afterRegistrationRoute', () => {
 
   it('still refuses an unsafe next after a success', () => {
     expect(afterRegistrationRoute(true, '//evil.example')).toBe(DEFAULT_RETURN_TO)
+  })
+})
+
+describe('fragments', () => {
+  it('keeps one that decodes and drops one that does not, with the path and query', () => {
+    expect(sanitizeReturnTo('/settings/?section=x#caf%C3%A9', '')).toBe('/settings/?section=x#caf%C3%A9')
+    expect(sanitizeReturnTo('/settings/?section=x#%', '')).toBe('/settings/?section=x')
+    expect(sanitizeReturnTo('/settings/?section=x#%FF', '')).toBe('/settings/?section=x')
+  })
+})
+
+describe('loginRoute', () => {
+  it('carries the page the visitor opened, without the deployment base path', () => {
+    expect(loginRoute('/staging/messages/?conversation=x', '/staging')).toBe('/login?next=%2Fmessages%2F%3Fconversation%3Dx')
+    expect(returnToOrDefault(decodeURIComponent(loginRoute('/messages/', '').split('next=')[1]), '')).toBe('/messages/')
+  })
+
+  it('carries nothing it would refuse to follow', () => {
+    expect(loginRoute('/login/', '')).toBe('/login')
+    expect(loginRoute('//evil.example', '')).toBe('/login')
+  })
+})
+
+describe('where a sign-in started here returns to', () => {
+  afterEach(() => vi.unstubAllGlobals())
+  const at = (pathname: string, search = '', hash = '') => vi.stubGlobal('window', { location: { pathname, search, hash } })
+
+  it('is this page, fragment included', () => {
+    at('/settings/', '?section=privateFeed', '#private-feed-requests')
+    expect(signInReturnRoute()).toBe('/settings/?section=privateFeed#private-feed-requests')
+  })
+
+  it('is the `next` a detour page carries', () => {
+    at('/login/', '?next=%2Fmessages%2F')
+    expect(signInReturnRoute()).toBe('/messages/')
+    at('/login/', '?next=%2F%2Fevil.example')
+    expect(signInReturnRoute()).toBeNull()
+  })
+
+  it('knows the sign-in page, under a base path too', () => {
+    at('/staging/login/', '?next=%2Fmessages%2F')
+    expect(onLoginPage()).toBe(true)
+    at('/post/', '?id=x&next=%2Fmessages%2F')
+    expect(onLoginPage()).toBe(false)
   })
 })

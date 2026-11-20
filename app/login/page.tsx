@@ -1,29 +1,31 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Lockup } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 export default function LoginPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, isAuthRestoring } = useAuth()
   const { open } = useLoginModal()
 
-  // Open the login modal when this page loads
+  // Open the login modal once no saved session is coming back
   useEffect(() => {
-    if (!user) {
+    if (!user && !isAuthRestoring) {
       open()
     }
-  }, [user, open])
+  }, [user, isAuthRestoring, open])
 
-  // Redirect if already logged in
+  // Already signed in on arrival: on to the page that sent the visitor here, or the
+  // feed. A sign-in made here goes on through the auth context instead.
+  const [arrivedSignedIn, setArrivedSignedIn] = useState<boolean | null>(null)
+  if (arrivedSignedIn === null && !isAuthRestoring) setArrivedSignedIn(Boolean(user))
   useEffect(() => {
-    if (user) {
-      router.push('/feed')
-    }
-  }, [user, router])
+    if (arrivedSignedIn) router.replace(returnToOrDefault(currentReturnToParam()))
+  }, [arrivedSignedIn, router])
 
   // This page just renders the background - the modal is global
   return (

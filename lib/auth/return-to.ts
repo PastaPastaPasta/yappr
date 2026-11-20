@@ -1,9 +1,9 @@
 /**
- * Where a user goes back to after the DPNS username gate detoured them through
- * /dpns/register.
+ * Where a user goes back to after a detour: /login, when a signed-out visitor
+ * opens a page that needs an account, and /dpns/register for a username.
  *
  * The route travels as the `next` query parameter. It is attacker-controllable
- * (anyone can link to `/dpns/register?next=...`), so it is only ever followed
+ * (anyone can link to `/login?next=...`), so it is only ever followed
  * after `sanitizeReturnTo` accepts it as an app-relative path.
  *
  * Paths are kept WITHOUT the deployment's `basePath` (/testing, /devnet):
@@ -14,9 +14,10 @@ export const RETURN_TO_PARAM = 'next'
 export const DEFAULT_RETURN_TO = '/feed'
 
 const DPNS_REGISTER_ROUTE = '/dpns/register'
+const LOGIN_ROUTE = '/login'
 
 /** The detour itself and the login page: returning to them would loop or strand the user. */
-const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, '/login']
+const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, LOGIN_ROUTE]
 
 const MAX_RETURN_TO_LENGTH = 2048
 // Any whitespace or control character. The URL parser silently drops tabs and
@@ -34,6 +35,16 @@ function withoutBasePath(path: string, basePath: string): string {
   const rest = path.slice(basePath.length)
   if (path.startsWith(basePath) && /^[/?#]/.test(rest)) return rest.startsWith('/') ? rest : `/${rest}`
   return path
+}
+
+/** `hash`, or nothing when it can't be decoded: navigating decodes the fragment, and would throw. */
+function decodableFragment(hash: string): string {
+  try {
+    decodeURIComponent(hash)
+    return hash
+  } catch {
+    return ''
+  }
 }
 
 /**
@@ -57,7 +68,7 @@ export function sanitizeReturnTo(value: string | null | undefined, basePath: str
   }
   if (url.origin !== PARSE_ORIGIN) return null
 
-  const route = withoutBasePath(`${url.pathname}${url.search}${url.hash}`, basePath.replace(/\/+$/, ''))
+  const route = withoutBasePath(`${url.pathname}${url.search}${decodableFragment(url.hash)}`, basePath.replace(/\/+$/, ''))
   // Re-check after normalisation: `/./evil` style dot segments or a stripped
   // basePath must not leave a protocol-relative path behind.
   if (!route.startsWith('/') || route.startsWith('//')) return null
@@ -79,6 +90,35 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
  */
 export function afterRegistrationRoute(hasUsername: boolean, next?: string | null): string {
   return hasUsername ? returnToOrDefault(next) : DEFAULT_RETURN_TO
+}
+
+/**
+ * The sign-in page, carrying `currentPath` (as `window.location` has it, with
+ * its query) as `next` when it is a route worth returning to.
+ */
+export function loginRoute(currentPath: string, basePath?: string): string {
+  const next = sanitizeReturnTo(currentPath, basePath)
+  return next ? `/login?${RETURN_TO_PARAM}=${encodeURIComponent(next)}` : '/login'
+}
+
+/** The current page as `window.location` has it: path, query and fragment. Client-only. */
+export function currentPagePath(): string {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`
+}
+
+/**
+ * Where a sign-in started here should return to: this page, or, on a detour
+ * page (/login, /dpns/register), the `next` it carries. Null when neither is
+ * a route worth returning to. Client-only.
+ */
+export function signInReturnRoute(): string | null {
+  return sanitizeReturnTo(currentPagePath()) ?? sanitizeReturnTo(currentReturnToParam())
+}
+
+/** True on the sign-in page, which picks where a sign-in made on it goes next. Client-only. */
+export function onLoginPage(): boolean {
+  const path = window.location.pathname.replace(/\/+$/, '')
+  return path === LOGIN_ROUTE || path.endsWith(LOGIN_ROUTE)
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */
