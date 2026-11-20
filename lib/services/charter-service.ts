@@ -280,9 +280,10 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * Under the charters write lock, held across tabs (none without Web Locks):
  * frees each create reservation whose slot no longer holds a signed create
  * under it. That is left only when a page died between reserving a nonce and
- * storing the create, so it was never sent: a slot's create is replaced or
- * cleared (refused, landed or abandoned) only once its reservation is
- * released. So its nonce is not
+ * storing the create, or after its create was refused with its nonce free,
+ * so it can't execute: a slot's create is otherwise replaced or cleared
+ * (refused with its nonce spent, landed or abandoned) only once its
+ * reservation is released. So its nonce is not
  * counted spent: the next SDK-signed write may sign that very nonce, and must
  * then be settled by it. Beside a landed marker it is counted spent: earlier
  * builds wrote the marker of a create that landed before releasing its
@@ -1056,12 +1057,15 @@ class CharterService {
   }
 
   /**
-   * Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its
-   * nonce is spent first: a page that dies in between leaves the create stored, never a reservation without it.
+   * Drops a slot's signed create (only while storage still holds it) and tells the nonce coordinator whether its
+   * nonce is spent. A spent one is recorded first: a page that dies in between leaves the create stored with its
+   * nonce below the floor, for proof to settle. An unspent one is dropped first: its create can no longer execute,
+   * so a page that dies in between leaves only its reservation, which the next write frees as unsent.
    */
   private release(ownerId: string, key: string, entry: PendingCreate, spent: boolean): void {
+    if (!spent) forgetPendingCreate(key, entry)
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
-    forgetPendingCreate(key, entry)
+    if (spent) forgetPendingCreate(key, entry)
   }
 
   /** A create proved landed: its slot keeps a landed marker for a while (see {@link LandedCreate}), its nonce is spent. */

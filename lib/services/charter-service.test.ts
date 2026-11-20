@@ -327,6 +327,25 @@ describe('a refusal', () => {
     expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent + 1)
   })
 
+  it('recovers a team change refused with its nonce free when the page died as it released it, however far later writes moved the floor', async () => {
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('insufficient balance'), { code: 40120 }))
+    builders.consumed.mockResolvedValue(false)
+    const release = nonces.release.getMockImplementation()
+    nonces.release.mockImplementationOnce((...args: unknown[]) => {
+      release?.(...args)
+      throw new Error('the page closed')
+    })
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toThrow()
+    const sent = sdk.stateTransitions.broadcastAndWait.mock.calls.length
+    // Later writes landed past r1's nonce, which stays unused.
+    nonces.floor = 5n
+    builders.exists.mockImplementation(async (_w: unknown, _sdk: unknown, signed: { id: string }) => signed.id === 'doc-2')
+    sdk.stateTransitions.broadcastAndWait.mockResolvedValue(undefined)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).resolves.toBe('doc-2')
+    expect(builders.sign).toHaveBeenCalledTimes(2)
+    expect(sdk.stateTransitions.broadcastAndWait).toHaveBeenCalledTimes(sent + 1)
+  })
+
   it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
