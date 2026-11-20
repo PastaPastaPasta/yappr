@@ -59,7 +59,16 @@ export interface PendingTransition {
    * touch what it is about to do. Absent means unknown: it may touch anything.
    */
   scope?: string;
+  /**
+   * {@link RESERVATION_FORMAT} on every entry this build reserves; absent on
+   * one an earlier build stored, whose callers may have dropped what it signed
+   * before recording its nonce spent.
+   */
+  format?: number;
 }
+
+/** The format of entries this build reserves (see {@link PendingTransition.format}). */
+export const RESERVATION_FORMAT = 2;
 
 export interface NonceReservation {
   /** The highest nonce this browser signed, or that the SDK may have signed for it, for the identity on the contract. */
@@ -149,7 +158,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     const parsed = JSON.parse(raw) as {
       mark: string;
       floor?: unknown;
-      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
+      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown; format?: unknown }[];
     };
     return {
       mark: BigInt(parsed.mark),
@@ -166,6 +175,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
             // Both, or neither: one without its range only expires.
             ...(signedAfter !== undefined && signedAtMost !== undefined ? { signedAfter, signedAtMost } : {}),
             ...(typeof p.scope === 'string' ? { scope: p.scope } : {}),
+            ...(typeof p.format === 'number' ? { format: p.format } : {}),
           };
         }),
     };
@@ -186,6 +196,7 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
         ? { signedAfter: p.signedAfter.toString(), signedAtMost: p.signedAtMost.toString() }
         : {}),
       ...(p.scope !== undefined ? { scope: p.scope } : {}),
+      ...(p.format !== undefined ? { format: p.format } : {}),
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
@@ -279,6 +290,7 @@ export function reserveNonce(
     ? { id, nonce, signedAfter: floor, signedAtMost: max(floor, mark) + BigInt(1), expiresAt: Date.now() + PENDING_LIFETIME_MS }
     : { id, nonce, expiresAt: null };
   if (scope !== undefined) entry.scope = scope;
+  entry.format = RESERVATION_FORMAT;
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,

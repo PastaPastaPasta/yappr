@@ -26,7 +26,7 @@ const storage = vi.hoisted(() => {
   return local
 })
 const settle = vi.hoisted(() => vi.fn())
-const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), raise: vi.fn(), load: vi.fn(), next: 1n, floor: 0n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string }> }))
+const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), raise: vi.fn(), load: vi.fn(), next: 1n, floor: 0n, held: [] as Array<{ id: string; nonce: bigint | null; expiresAt: number | null; scope?: string; format?: number }> }))
 const locks = vi.hoisted(() => vi.fn())
 const updateLocks = vi.hoisted(() => vi.fn())
 const webLocks = vi.hoisted(() => ({ available: true }))
@@ -70,6 +70,7 @@ vi.mock('./identity-nonce', () => ({
   releaseNonce: nonces.release,
   raiseNonceFloor: nonces.raise,
   WRITE_PRECONDITION_FAILED: 'This was not sent: what it depended on changed.',
+  RESERVATION_FORMAT: 2,
   withSdkSignedWrite: async (_o: string, _c: string, write: () => Promise<unknown>, _scope?: string, precondition?: () => Promise<boolean>, beforeNonce?: () => void) => {
     sdkPreconditions.push(precondition)
     await sdkLocks()
@@ -170,7 +171,7 @@ beforeEach(() => {
   builders.sign.mockImplementation(async (_w: unknown, _sdk: unknown, { type, ownerId, nonce }: { type: string; ownerId: string; nonce: bigint }) => (
     { id: `doc-${nonce}`, type, owner: ownerId, nonce: String(nonce), bytes: new Uint8Array([Number(nonce)]), hash: `h${nonce}` }))
   nonces.reserve.mockImplementation((_o: string, _c: string, nonce: bigint, _tip: unknown, scope?: string) => {
-    const entry = { id: `r${nonce}`, nonce, expiresAt: null, ...(scope ? { scope } : {}) }
+    const entry = { id: `r${nonce}`, nonce, expiresAt: null, ...(scope ? { scope } : {}), format: 2 }
     nonces.held = [...nonces.held, entry]
     return entry
   })
@@ -1440,6 +1441,14 @@ describe('a create reservation left without its stored create (the page died bet
     await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
     const before = released().filter(([id]) => id !== 'r1')
     expect(before).toEqual([['r-orphan', 9n], ['r-landed', 7n]])
+  })
+
+  it('frees one this build reserved unspent: it was never sent, or the floor already counts its nonce', async () => {
+    nonces.held = [{ ...entry('r-unsent', 4n, `${OWNER}:addedModerator:e5:m9`), format: 2 }]
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
+    expect(released().filter(([id]) => id === 'r-unsent')).toEqual([['r-unsent', undefined]])
+    expect(nonces.floor).toBeLessThan(4n)
   })
 
   it('counts a leftover from a build that cleared a spent refusal\'s slot first as spent: nothing tells it from one never sent', async () => {

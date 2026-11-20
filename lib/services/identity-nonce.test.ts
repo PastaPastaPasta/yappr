@@ -441,6 +441,27 @@ describe('settlePendingWrites', () => {
   })
 })
 
+describe('the reservation format', () => {
+  it('marks every entry this build reserves and reads it back; an entry stored without it reads as an earlier build\'s', () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), 'scope')
+    reserveNonce(OWNER, CONTRACT, null, n(100))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map((p) => p.format)).toEqual([2, 2])
+    const key = `yappr:nonce-reservation:${OWNER}:${CONTRACT}`
+    storage.set(key, JSON.stringify({ mark: '5', floor: '4', pending: [{ id: 'old', nonce: '5', expiresAt: null }] }))
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0].format).toBeUndefined()
+  })
+
+  it('settles a lost SDK answer at the nonce of a create reservation released unspent (an orphan this build reserved)', async () => {
+    // A create reserved 101 with Platform at 100; its page died before storing it, and the sweep freed it unspent.
+    releaseNonce(OWNER, CONTRACT, reserveNonce(OWNER, CONTRACT, n(101), n(100), 'owner:reason:spam'))
+    expect(loadReservation(OWNER, CONTRACT)).toMatchObject({ mark: n(101), floor: n(100) })
+    // A fresh SDK signs the delete at 101 and its answer is lost: Platform showing 101 settles it.
+    await lostAnswer(100)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ signedAfter: n(100), signedAtMost: n(102) })
+    expect(stillPending(n(101), loadReservation(OWNER, CONTRACT))).toEqual([])
+  })
+})
+
 describe('raiseNonceFloor', () => {
   it('stores the floor and leaves the entry pending, so its later release keeps the floor', () => {
     const entry = reserveNonce(OWNER, CONTRACT, n(101), n(100))

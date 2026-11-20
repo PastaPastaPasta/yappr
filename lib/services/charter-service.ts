@@ -52,7 +52,7 @@ import {
 import { CHARTER_UNCERTAIN_MESSAGE, CharterActionError, charterActionError, isStatelessRefusal, type CharterAction } from '@/lib/moderation-charters/refusals'
 import type { CreateFees } from '@/lib/moderation-charters/costs'
 import { getEvoSdk } from './evo-sdk-service'
-import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, raiseNonceFloor, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
+import { RESERVATION_FORMAT, WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, loadReservation, raiseNonceFloor, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
 import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
@@ -261,7 +261,7 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
       for (const entry of loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []) {
         if (entry.scope !== key || entry.nonce === null) continue
         if (await charterNonceConsumed(sdk, ownerId, String(entry.nonce)).catch(() => null) !== true) throw new CharterActionError(MAY_STILL_LAND, 'uncertain')
-        releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+        releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.format === RESERVATION_FORMAT ? undefined : entry.nonce)
       }
     }
     if (abandoned && !raiseNonceFloor(ownerId, CHARTERS_CONTRACT_ID, BigInt(abandoned.signed.nonce))) {
@@ -287,9 +287,12 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * storing the create, or between clearing a refused, landed or abandoned
  * create's slot and releasing its reservation (earlier builds cleared the
  * slot of a spent one first, and wrote a landed marker before releasing).
- * Nothing stored tells these apart, so its nonce is always counted spent: a
- * floor too high only makes a lost answer wait out its lifetime, one too low
- * could settle a later SDK-signed write early.
+ * This build records a spent nonce in the floor before it changes a slot, so
+ * an entry it reserved ({@link RESERVATION_FORMAT}) is released unspent: it
+ * was never sent, never executed, or the floor already counts it, and the
+ * next SDK-signed write may sign that very nonce and must then be settled by
+ * it. An entry an earlier build reserved is counted spent: nothing stored
+ * tells its cases apart, and a floor too high only costs waiting.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -311,7 +314,7 @@ function releaseOrphanedReservations(ownerId: string): void {
       continue
     }
     if (stored && !isLanded(stored) && stored.reservation.id === entry.id) continue
-    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.format === RESERVATION_FORMAT ? undefined : entry.nonce)
   }
 }
 
