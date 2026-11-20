@@ -167,7 +167,16 @@ export function TipModal() {
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
   // The QR this modal session built, shown again by "Check again" while it may still execute.
-  const shownRequestRef = useRef<{ key: string; uri: string; nonce: bigint; match: SentTipMatch | null } | null>(null)
+  const shownRequestRef = useRef<{ ownerId: string; key: string; uri: string; nonce: bigint; match: SentTipMatch | null } | null>(null)
+
+  // An account switch ends the modal session: the QR and any wallet work in flight belong to the old identity.
+  const sessionIdentity = user?.identityId
+  const identityRef = useRef(sessionIdentity)
+  useEffect(() => {
+    if (identityRef.current === sessionIdentity) return
+    identityRef.current = sessionIdentity
+    close()
+  }, [sessionIdentity, close])
   const walletSessionRef = useRef(0)
 
   // Transfer key persistence (credits tab only)
@@ -443,15 +452,23 @@ export function TipModal() {
     setWalletExpired(false)
     const key = JSON.stringify([recipientInfo.id, yappAmountBig.toString(), tipTarget ?? null, noteMessage ?? null])
     try {
-      // This session's QR for the same tip, while it may still execute, is shown again with its own match.
-      const shown = shownRequestRef.current
-      if (shown?.key === key && await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)) {
+      // This session's QR, while it may still execute, is shown again for the same tip with its own match
+      // and holds any other back; it is kept until a new one replaces it or it is proved retired.
+      const shown = shownRequestRef.current?.ownerId === user.identityId ? shownRequestRef.current : null
+      if (shown) {
+        const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
         if (walletSessionRef.current !== session) return
-        walletMatchRef.current = shown.match
-        setWalletUri(shown.uri)
-        return
+        if (live && shown.key !== key) {
+          exitWalletSign(PAYMENT_PENDING_ERROR)
+          return
+        }
+        if (live) {
+          walletMatchRef.current = shown.match
+          setWalletUri(shown.uri)
+          return
+        }
+        if (shownRequestRef.current === shown) shownRequestRef.current = null
       }
-      shownRequestRef.current = null
       // Recipient, amount, post and message all have to agree before a row
       // counts as this tip, plus a time floor so an identical earlier tip to
       // the same author isn't mistaken for the wallet's. The margin absorbs
@@ -475,7 +492,7 @@ export function TipModal() {
         return
       }
       const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
-      shownRequestRef.current = { key, uri, nonce: request.nonce, match: walletMatchRef.current }
+      shownRequestRef.current = { ownerId: user.identityId, key, uri, nonce: request.nonce, match: walletMatchRef.current }
       setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
