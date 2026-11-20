@@ -59,6 +59,7 @@ describe('secure key names', () => {
     expect(isSharedKey('staging:yappr_secure_ac_secret_devnet_pending_request_reauth')).toBe(true);
     expect(isSharedKey(`yappr_secure_ac_secret_testnet_pending_request_${ALICE}`)).toBe(false);
     expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_login_x')).toBe(false);
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_active_sign_in')).toBe(true);
     expect(isSharedKey('yappr:pf:feed_seed')).toBe(false);
   });
 
@@ -113,6 +114,7 @@ describe('engine storage', () => {
     await storage.snapshot(ALICE);
     const login = 'yappr_secure_ac_secret_testnet_pending_request_login';
     const reauth = 'yappr_secure_ac_secret_testnet_pending_request_reauth';
+    const active = 'yappr_secure_ac_secret_testnet_pending_request_active_sign_in';
     const renewal = `yappr_secure_ac_secret_testnet_pending_request_${ALICE}`;
     await storage.apply({
       area: 'secure',
@@ -120,16 +122,18 @@ describe('engine storage', () => {
       ops: [
         ['set', login, 'login'],
         ['set', reauth, 'reauth'],
+        ['set', active, 'login'],
         ['set', renewal, 'renewal'],
       ],
     });
     storage.apply({ area: 'local', seq: 3, ops: [['del', 'yappr_session']] });
 
-    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login', [reauth]: 'reauth' });
-    expect((await storage.snapshot(BOB)).secure).toEqual({ [login]: 'login', [reauth]: 'reauth' });
+    const signedOut = { [login]: 'login', [reauth]: 'reauth', [active]: 'login' };
+    expect((await storage.snapshot(null)).secure).toEqual(signedOut);
+    expect((await storage.snapshot(BOB)).secure).toEqual(signedOut);
     expect((await storage.snapshot(ALICE)).secure).toMatchObject({ [renewal]: 'renewal' });
     await storage.apply({ area: 'secure', seq: 4, ops: [['del', reauth]] });
-    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login' });
+    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login', [active]: 'login' });
   });
 
   it('reads and deletes a pending sign-in only as the shared copy, and deletes one an older build left with an account', async () => {

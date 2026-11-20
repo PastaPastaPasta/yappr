@@ -71,12 +71,13 @@ export function identityInKey(key: string): string | null {
 
 /**
  * App Connect's pending sign-in requests (`pending-request:login` and
- * "Sign in again"'s `pending-request:reauth`): made while nobody is signed in,
+ * "Sign in again"'s `pending-request:reauth`), and the mark of which was opened
+ * last (`pending-request:active-sign-in`): made while nobody is signed in,
  * and resumed by a signed-out launch, which reads only the shared bucket. A
  * boot whose account could not be restored still runs as that account, so
  * without this rule they would land in its bucket, out of that launch's reach.
  */
-const SIGNED_OUT_REQUEST = /^(?:[^:]+:)?yappr_secure_ac_secret_[A-Za-z0-9]+_pending_request_(?:login|reauth)$/;
+const SIGNED_OUT_REQUEST = /^(?:[^:]+:)?yappr_secure_ac_secret_[A-Za-z0-9]+_pending_request_(?:login|reauth|active_sign_in)$/;
 
 /** Whether a secure key always belongs to the shared bucket, whoever is signed in when it is written. */
 export function isSharedKey(key: string): boolean {
