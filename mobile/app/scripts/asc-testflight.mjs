@@ -6,6 +6,8 @@
 //   asc-testflight.mjs post        after the upload: waits for processing, attaches an existing
 //                                  export compliance declaration, sets What to Test, and adds
 //                                  the build to the internal beta group
+//   asc-testflight.mjs distribute  for an uploaded build: reports its state, adds it to the internal
+//                                  group, makes sure the group has testers and resends their invites
 //
 // Environment: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8), BUNDLE_ID; for post also
 // APP_VERSION, BUILD_NUMBER, WHAT_TO_TEST, BETA_GROUP (default "Yappr Internal"),
@@ -22,8 +24,8 @@ const env = (name, fallback) => {
 };
 
 const mode = process.argv[2];
-if (mode !== 'preflight' && mode !== 'post') {
-  console.error('usage: asc-testflight.mjs preflight|post');
+if (!['preflight', 'post', 'distribute'].includes(mode)) {
+  console.error('usage: asc-testflight.mjs preflight|post|distribute');
   process.exit(2);
 }
 
@@ -301,8 +303,110 @@ async function post() {
   await betaGroup(app.id, build.id, groupName);
 }
 
+const maskEmail = (email) => {
+  const [local = '', domain = ''] = String(email ?? '').split('@');
+  return `${local.slice(0, 2)}***@${domain}`;
+};
+
+async function listAll(path) {
+  const all = [];
+  for (let next = path; next; ) {
+    const page = await api('GET', next);
+    all.push(...(page.data ?? []));
+    next = page.links?.next ? page.links.next.replace(API, '') : null;
+  }
+  return all;
+}
+
+async function inviteTester(appId, tester) {
+  try {
+    await api('POST', '/v1/betaTesterInvitations', {
+      data: {
+        type: 'betaTesterInvitations',
+        relationships: {
+          app: { data: { type: 'apps', id: appId } },
+          betaTester: { data: { type: 'betaTesters', id: tester.id } },
+        },
+      },
+    });
+    return 'invite sent';
+  } catch (error) {
+    return `invite not sent (${error.message})`;
+  }
+}
+
+async function distribute() {
+  const version = env('APP_VERSION');
+  const buildNumber = env('BUILD_NUMBER');
+  const groupName = env('BETA_GROUP', 'Yappr Internal');
+  const app = await findApp();
+  out('### Build');
+  field('App', `${app.attributes.name} (${app.id})`);
+  const build = await waitForBuild(app.id, version, buildNumber, 0);
+  field('Build id', build.id);
+  field('Version', `${version} (${build.attributes.version})`);
+  field('processingState', build.attributes.processingState);
+  field('usesNonExemptEncryption', build.attributes.usesNonExemptEncryption);
+  field('expired', build.attributes.expired);
+  const detail = (await api('GET', `/v1/builds/${build.id}/buildBetaDetail`)).data?.attributes ?? {};
+  field('internalBuildState', detail.internalBuildState);
+  field('externalBuildState', detail.externalBuildState);
+
+  out('### Beta groups');
+  const groups = await listAll(`/v1/apps/${app.id}/betaGroups?limit=200`);
+  for (const g of groups) {
+    const a = g.attributes;
+    field(`Group ${a.name} (${g.id})`, `${a.isInternalGroup ? 'internal' : 'external'}, publicLinkEnabled ${a.publicLinkEnabled ?? false}, publicLink ${a.publicLink ?? 'none'}`);
+  }
+  const group = groups.find((g) => g.attributes.name === groupName && g.attributes.isInternalGroup);
+  if (!group) throw new Error(`No internal beta group named "${groupName}"`);
+
+  const inGroup = group.attributes.hasAccessToAllBuilds ||
+    (await listAll(`/v1/betaGroups/${group.id}/builds?limit=200`)).some((b) => b.id === build.id);
+  if (inGroup) {
+    field('Build in group', 'yes (already)');
+  } else {
+    try {
+      await api('POST', `/v1/betaGroups/${group.id}/relationships/builds`, { data: [{ type: 'builds', id: build.id }] });
+      field('Build in group', 'yes (added now)');
+    } catch (error) {
+      fail(`adding the build to ${groupName}: ${error.message}`);
+    }
+  }
+
+  out('### Testers');
+  let testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);
+  if (testers.length === 0) {
+    // An empty internal group gets the team's account holder, who is always an App Store Connect user.
+    try {
+      const holders = await listAll('/v1/users?filter[roles]=ACCOUNT_HOLDER&limit=200');
+      for (const user of holders) {
+        const u = user.attributes;
+        const created = await api('POST', '/v1/betaTesters', {
+          data: {
+            type: 'betaTesters',
+            attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
+            relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
+          },
+        });
+        field('Added account holder', maskEmail(created.data?.attributes?.email ?? u.username));
+      }
+    } catch (error) {
+      fail(`adding the account holder: ${error.message}`);
+    }
+    testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);
+  }
+  field('Testers in group', testers.length);
+  for (const tester of testers) {
+    const t = tester.attributes;
+    const pasta = /pasta/i.test(`${t.email} ${t.firstName} ${t.lastName}`) ? ', matches pasta' : '';
+    const invite = await inviteTester(app.id, tester);
+    field(`Tester ${maskEmail(t.email)}`, `inviteType ${t.inviteType ?? 'n/a'}, state ${t.state ?? 'n/a'}${pasta}, ${invite}`);
+  }
+}
+
 try {
-  await (mode === 'preflight' ? preflight() : post());
+  await ({ preflight, post, distribute })[mode]();
 } catch (error) {
   fail(isDenied(error.message) ? 'an App Store Connect error mentioned a denylisted name (withheld)' : error.message);
 }
