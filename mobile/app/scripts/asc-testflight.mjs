@@ -157,7 +157,7 @@ const COMPLIANCE_MANUAL = [
   'Available on the French App Store? The owner decides (COMPLIANCE.md C8: French declaration filed, or France excluded).',
 ];
 
-// The build's Info.plist says it uses non-exempt encryption, which is never changed here. The
+// The build only ever answers that it uses non-exempt encryption (never exempt). The
 // truthful answers are known except one: availability on the French store is the owner's call
 // (COMPLIANCE.md C8). So a declaration is only reused, never created: the approved ones with the
 // standard-algorithm answers, and only when they all give the same French-store answer.
@@ -202,8 +202,15 @@ async function exportCompliance(appId, buildId) {
   const candidates = matching.filter((d) => d.attributes.exempt === false);
   if (candidates.length > 0 && agreed) {
     const declaration = candidates[0];
-    await api('PATCH', `/v1/builds/${buildId}/relationships/appEncryptionDeclaration`, {
-      data: { type: 'appEncryptionDeclarations', id: declaration.id },
+    await api('PATCH', `/v1/builds/${buildId}`, {
+      data: {
+        type: 'builds',
+        id: buildId,
+        attributes: { usesNonExemptEncryption: true },
+        relationships: {
+          appEncryptionDeclaration: { data: { type: 'appEncryptionDeclarations', id: declaration.id } },
+        },
+      },
     });
     field('Declaration', `${declaration.id} (APPROVED, attached)`);
     field('Answers', `not exempt, standard third-party algorithms, no proprietary crypto, French store: ${declaration.attributes.availableOnFrenchStore}`);
