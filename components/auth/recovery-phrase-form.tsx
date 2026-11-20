@@ -32,6 +32,7 @@ const MESSAGING_NOTICE: Partial<Record<PhraseMessaging, string>> = {
   'another-wallet': 'Messaging on this account was set up with a different key. Sign in the way you set it up to read your messages.',
   'not-set-up': 'Messaging couldn\'t be set up just now. Sign in with your recovery phrase again to try once more.',
   'no-master-key': 'Messaging isn\'t set up on this account yet. Set it up in your Dash wallet, then sign in again.',
+  'unsupported-browser': 'This browser can\'t add a messaging key safely. Set messaging up in your Dash wallet, or use a different browser.',
 }
 
 const CONNECTION_FAILURE = 'Couldn\'t reach Dash Platform. Check your connection and try again.'

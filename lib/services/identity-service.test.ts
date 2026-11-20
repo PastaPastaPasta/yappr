@@ -6,11 +6,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const fetch = vi.hoisted(() => vi.fn())
 const update = vi.hoisted(() => vi.fn())
-const updateLock = vi.hoisted(() => ({ held: Promise.resolve() }))
+const updateLock = vi.hoisted(() => ({ held: Promise.resolve(), refused: false }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch, update } }) }))
 vi.mock('@/lib/identity-write-lock', () => ({
-  withIdentityUpdateLock: async (_identityId: string, run: () => Promise<unknown>) => { await updateLock.held; return run() },
-  crossTabLocks: () => ({}),
+  withIdentityUpdateLock: async (_identityId: string, run: () => Promise<unknown>) => {
+    if (updateLock.refused) throw new Error('no cross-tab lock')
+    await updateLock.held
+    return run()
+  },
 }))
 vi.mock('./signer-service', () => ({ signerService: {} }))
 
@@ -52,6 +55,18 @@ describe('identityService.getIdentity', () => {
 })
 
 describe('identityService.addEncryptionKey', () => {
+  it('sends nothing where the update lock refuses (no Web Locks), as charter keys do', async () => {
+    updateLock.refused = true
+    try {
+      await expect(identityService.addEncryptionKey(IDENTITY, new Uint8Array(32).fill(1), 'master-wif'))
+        .resolves.toEqual({ success: false, error: 'no cross-tab lock' })
+    } finally {
+      updateLock.refused = false
+    }
+    expect(fetch).not.toHaveBeenCalled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('sends nothing for an add cancelled while it waited behind another update', async () => {
     let release!: () => void
     updateLock.held = new Promise<void>((resolve) => { release = resolve })

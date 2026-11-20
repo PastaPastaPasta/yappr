@@ -10,7 +10,7 @@ import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
-import { crossTabLocks, withIdentityUpdateLock } from '@/lib/identity-write-lock'
+import { withIdentityUpdateLock } from '@/lib/identity-write-lock'
 import { sleep } from '@/lib/retry-utils'
 import { Identifier } from '@dashevo/wasm-sdk'
 
@@ -419,9 +419,7 @@ class IdentityService {
     _contractId?: string, // Reserved for future use: contract-bound keys
     options: { cancelled?: () => boolean } = {}
   ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
-    const add = () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options);
-    // Without Web Locks it runs unlocked, as it always has: only charter keys refuse there.
-    return (crossTabLocks() ? withIdentityUpdateLock(identityId, add) : add())
+    return withIdentityUpdateLock(identityId, () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options))
       .catch((error: unknown) => ({ success: false, error: extractErrorMessage(error) }));
   }
 
@@ -497,6 +495,8 @@ class IdentityService {
       // Log identity revision for debugging
       const identityJson = identity.toJSON();
       logger.debug('Identity revision before update:', identityJson.revision);
+
+      if (options.cancelled?.()) return { success: false, cancelled: true };
 
       // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);

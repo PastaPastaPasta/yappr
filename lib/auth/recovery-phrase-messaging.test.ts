@@ -85,6 +85,7 @@ function messagingKeyOf(session: Awaited<ReturnType<typeof preparePhraseSession>
 const account = { identityIndex: 0, identityId: IDENTITY, username: null }
 
 beforeEach(() => {
+  vi.stubGlobal('navigator', { locks: {} })
   state.publicKeys = [authKey(0, SecurityLevel.MASTER), authKey(2, SecurityLevel.HIGH)]
   state.current = null
   state.added = []
@@ -99,6 +100,14 @@ describe('preparePhraseSession messaging key', () => {
     expect(state.added.map(bytesToHex)).toEqual([bytesToHex(rotationKey(0).publicKey)])
     expect(bytesToHex(messagingKeyOf(session).publicKey)).toBe(bytesToHex(rotationKey(0).publicKey))
     expect(bytesToHex(messagingKeyOf(session).privateKey)).toBe(bytesToHex(rotationKey(0).privateKey))
+  })
+
+  it('signs in without messaging, adding nothing, where this browser has no Web Locks', async () => {
+    vi.stubGlobal('navigator', {})
+    const session = await preparePhraseSession(wallet, account)
+    expect(session).toMatchObject({ messaging: 'unsupported-browser', messagingKey: null })
+    expect(session.signInWif).toBeTruthy()
+    expect(state.added).toEqual([])
   })
 
   it('uses rotation 0 when it is the current key', async () => {

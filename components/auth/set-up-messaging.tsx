@@ -22,6 +22,7 @@ import {
   type MessagingKeyDraft,
 } from '@/lib/services/messaging-key-service'
 import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
+import { IDENTITY_UPDATE_UNLOCKED } from '@/lib/identity-write-lock'
 import { KeyExchangeQR } from './key-exchange-qr'
 
 export type MessagingSetupContext = 'private-feed' | 'store' | 'generic'
@@ -56,6 +57,7 @@ const REFUSED_BEFORE_BROADCAST = /require a MASTER key|does not match any key|al
 /** Consumer-grade wording for a failed MASTER-signed update. */
 function masterKeyFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : ''
+  if (message === IDENTITY_UPDATE_UNLOCKED) return message
   if (/require a MASTER key/i.test(message)) return 'That key can\'t approve this. Enter your account\'s master key.'
   if (/does not match any key/i.test(message)) return 'That key isn\'t one of this account\'s keys.'
   if (/invalid (private )?key|checksum|wif/i.test(message)) return 'That doesn\'t look like a private key. Check it and try again.'
@@ -231,7 +233,8 @@ export function SetUpMessaging({
       return
     }
     // A broadcast whose answer timed out may still land, so only a refusal before broadcast skips the wait.
-    const refused = failure !== null && REFUSED_BEFORE_BROADCAST.test(failure instanceof Error ? failure.message : '')
+    const message = failure instanceof Error ? failure.message : ''
+    const refused = failure !== null && (message === IDENTITY_UPDATE_UNLOCKED || REFUSED_BEFORE_BROADCAST.test(message))
     const attempts = refused ? 1 : CONFIRM_ATTEMPTS
     for (let attempt = 0; attempt < attempts && aliveRef.current; attempt++) {
       if (attempt > 0) await sleep(CONFIRM_DELAY_MS)

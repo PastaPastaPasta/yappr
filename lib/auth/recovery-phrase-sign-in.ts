@@ -24,6 +24,7 @@
 import bs58 from 'bs58'
 import { messagingAnchorId } from '@/lib/app-connect/config'
 import { keyNetwork } from '@/lib/constants'
+import { crossTabLocks } from '@/lib/identity-write-lock'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { hash160 } from '@/lib/crypto/hash'
 import {
@@ -123,6 +124,8 @@ export type PhraseMessaging =
   | 'not-set-up'
   /** The account has none, and the phrase doesn't hold the MASTER key that could add it. */
   | 'no-master-key'
+  /** The account has none, and this browser can't add one safely (no Web Locks). */
+  | 'unsupported-browser'
   /** This build has no messaging anchor. */
   | 'unavailable'
 
@@ -218,6 +221,7 @@ export async function preparePhraseSession(
     if (state === 'absent') {
       const master = masterKey(held)
       if (!master) return { ...session, messagingKey: null, messaging: 'no-master-key' }
+      if (!crossTabLocks()) return { ...session, messagingKey: null, messaging: 'unsupported-browser' }
       if (cancelled()) throw new PhraseSignInCancelled()
       const added = await addMessagingKey(messagingKey, master, cancelled)
       // Another device may have set messaging up meanwhile: say which.

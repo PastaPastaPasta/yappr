@@ -16,6 +16,7 @@ import { MessagingSignInPrompt } from './messaging-sign-in-prompt'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
+import { crossTabLocks } from '@/lib/identity-write-lock'
 
 type EncryptionKeyContext = MessagingSetupContext
 
@@ -664,10 +665,16 @@ function KeyEntryAddEncryptionKeyModal({
             </div>
 
             <div className="flex flex-col gap-3">
-              <Button onClick={deriveKey} className="w-full">
-                <KeyIcon className="h-4 w-4 mr-2" />
-                Create Encryption Key
-              </Button>
+              {crossTabLocks() ? (
+                <Button onClick={deriveKey} className="w-full">
+                  <KeyIcon className="h-4 w-4 mr-2" />
+                  Create Encryption Key
+                </Button>
+              ) : (
+                <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+                  This browser can&apos;t add a messaging key safely. Update it, or use a different browser.
+                </p>
+              )}
               <Button onClick={handleClose} variant="outline" className="w-full">
                 Cancel
               </Button>
