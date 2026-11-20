@@ -364,38 +364,35 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 }
 
 /**
- * Start an SDK-signed transition's lifetime over: the page is still waiting on
- * the SDK, or has just lost the answer. `untilSettled` ends it instead, for a
- * chosen-nonce write that went out: it then stays until its nonce is consumed.
- * Best effort: when localStorage refuses, it expires a little sooner.
+ * Start an app write's lifetime over: the page is still waiting on the SDK, or
+ * has just lost the answer. Best effort: when localStorage refuses, it expires
+ * a little sooner.
  */
-function renewPending(ownerId: string, contractId: string, entry: PendingTransition, untilSettled = false): void {
+function renewPending(ownerId: string, contractId: string, entry: PendingTransition): void {
   try {
     const reservation = loadReservation(ownerId, contractId);
     if (!reservation?.pending.some((p) => p.id === entry.id)) return;
     const expiresAt = Date.now() + PENDING_LIFETIME_MS;
-    // An entry that already ends only when settled (a chosen write marked sent) keeps doing so.
-    saveReservation(ownerId, contractId, {
-      ...reservation,
-      pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt: untilSettled || p.expiresAt === null ? null : expiresAt } : p)),
-    });
+    saveReservation(ownerId, contractId, { ...reservation, pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt } : p)) });
   } catch {
     // Already logged.
   }
 }
 
 /**
- * Right before a chosen-nonce transition is broadcast: from then on it may
- * execute even if this page closes, so its pending entry no longer expires and
- * is settled only by its nonce being used. Throws {@link NONCE_STORE_ERROR}
- * when that can't be stored, and the transition must then not be sent.
+ * Right before a chosen-nonce transition is broadcast: its entry and the mark
+ * past its nonce are stored, with a fresh lifetime, so no later write signs
+ * that nonce. Like an SDK-signed write's, the entry expires once this page
+ * stops renewing it, so one that never reached Platform can't hold writes
+ * back for good. Throws {@link NONCE_STORE_ERROR} when that can't be stored,
+ * and the transition must then not be sent.
  */
 function markSent(ownerId: string, contractId: string, entry: PendingTransition): void {
   const reservation = loadReservation(ownerId, contractId);
   saveReservation(ownerId, contractId, {
     mark: max(reservation?.mark ?? BigInt(0), entry.nonce ?? BigInt(0)),
     floor: reservation?.floor ?? BigInt(0),
-    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, expiresAt: null }],
+    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, expiresAt: Date.now() + PENDING_LIFETIME_MS }],
   });
 }
 
@@ -522,17 +519,16 @@ export async function withSdkSignedWrite<T>(
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
     if (value.nonce !== null && writeWithNonce) {
       const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
-      // Like an SDK-signed write's, its lifetime keeps starting over while this page prepares it: a page that dies
-      // before anything was sent leaves nothing that holds writes back for good. Marked sent right before its
-      // broadcast (`sending`), it stays until its nonce is consumed.
+      // Like an SDK-signed write's, its lifetime keeps starting over while this page prepares or sends it, and
+      // once more on its answer: a page that dies, or a write that never reached Platform, holds nothing back for good.
       const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
       const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
       try {
         const result = await writeWithNonce(value.nonce, () => markSent(ownerId, contractId, entry));
         clearInterval(alive);
-        renewPending(ownerId, contractId, entry, true);
-        // An affected-state answer can be a snapshot rather than execution proof.
-        // Keep the chosen nonce until a nonce read proves it can no longer execute.
+        renewPending(ownerId, contractId, entry);
+        // An affected-state answer can be a snapshot rather than execution proof: released early only once a
+        // nonce read proves it can no longer execute.
         await settleChosenNonce(ownerId, contractId, entry);
         return result;
       } catch (error) {
@@ -543,8 +539,8 @@ export async function withSdkSignedWrite<T>(
           const reservation = loadReservation(ownerId, contractId);
           if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
         } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
-        // It may still execute: later writes to the same target wait for it however long that takes.
-        else renewPending(ownerId, contractId, entry, true);
+        // It may still execute: later writes to the same target wait for it through its lifetime.
+        else renewPending(ownerId, contractId, entry);
         throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
       }
     }
