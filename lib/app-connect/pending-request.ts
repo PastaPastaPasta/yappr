@@ -112,3 +112,14 @@ export async function pendingRequest(identityHint: string | undefined, requestHa
     clearSensitiveBytes(privateKey)
   }
 }
+
+let acceptedRequestHash: string | null = null
+
+/** Notes the request (its hash, hex) this tab signs in with, so /login follows a callback's `next` only for that request. */
+export function noteAcceptedRequest(requestHash: string | null): void {
+  acceptedRequestHash = requestHash
+}
+
+export function acceptedRequest(): string | null {
+  return acceptedRequestHash
+}

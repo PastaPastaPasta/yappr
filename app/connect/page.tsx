@@ -35,11 +35,18 @@ type View =
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
 
-/** Sign-in, carrying as `next` the page the still-pending request `requestHash` started from. */
+/**
+ * Sign-in, carrying as `next` the page the still-pending request `requestHash`
+ * started from, and the request as `r`: /login follows `next` only after a
+ * sign-in with that request.
+ */
 function signInRetry(requestHash: string): Promise<string> {
   return pendingRequest(undefined, requestHash)
     .catch(() => null)
-    .then((record) => loginRoute(record?.returnTo ?? ''))
+    .then((record) => {
+      const route = loginRoute(record?.returnTo ?? '')
+      return route.includes('?') ? `${route}&r=${requestHash}` : route
+    })
 }
 
 /**
