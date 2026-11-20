@@ -115,6 +115,16 @@ check_app() { # <Info.plist> <bundle id> <version> <build>
   expect 'CFBundleIdentifier' "$(plist_value "$1" CFBundleIdentifier)" "$2"
   expect 'CFBundleShortVersionString' "$(plist_value "$1" CFBundleShortVersionString)" "$3"
   expect 'CFBundleVersion' "$(plist_value "$1" CFBundleVersion)" "$4"
+  # App Store Connect refuses non-exempt encryption without its documentation code (ITMS-90592).
+  local encryption code
+  encryption="$(plist_value "$1" ITSAppUsesNonExemptEncryption)"
+  code="$(plist_value "$1" ITSEncryptionExportComplianceCode)"
+  if [[ "$encryption" == 'true' && -z "$code" ]]; then
+    fail 'ITSAppUsesNonExemptEncryption is YES without ITSEncryptionExportComplianceCode (ITMS-90592)'
+  else
+    evidence 'ITSAppUsesNonExemptEncryption' "${encryption:-absent}"
+    evidence 'ITSEncryptionExportComplianceCode' "${code:-absent}"
+  fi
 }
 
 check_ipa() { # <ipa> <bundle id> <version> <build> <profile uuid>

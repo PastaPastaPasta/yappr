@@ -117,11 +117,33 @@ const BLOCKED_ANDROID_PERMISSIONS = [
  */
 const RELEASE_ATS = { NSAppTransportSecurity: { NSAllowsArbitraryLoads: false } };
 
+/**
+ * Export compliance (COMPLIANCE.md, Encryption export). The app uses
+ * non-exempt standard encryption, but `ITSAppUsesNonExemptEncryption = YES`
+ * without an Apple-issued `ITSEncryptionExportComplianceCode` is refused at
+ * upload (ITMS-90592). So both keys are written together, only once the app
+ * record's approved documentation code is configured; until then neither is,
+ * and App Store Connect asks the compliance question for each build. The
+ * plist never says the app is exempt.
+ */
+export function resolveExportComplianceCode(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  if (!/^[A-Za-z0-9-]{1,100}$/.test(raw)) {
+    throw new Error(`YAPPR_IOS_EXPORT_COMPLIANCE_CODE must be App Store Connect's code (letters, digits, dashes), got "${raw}".`);
+  }
+  return raw;
+}
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
   const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
   const iosBundleId = resolveIosBundleId(variant, process.env.YAPPR_IOS_BUNDLE_ID);
+  const exportComplianceCode = resolveExportComplianceCode(process.env.YAPPR_IOS_EXPORT_COMPLIANCE_CODE);
+  const infoPlist = {
+    ...(process.env.YAPPR_RELEASE === '1' ? RELEASE_ATS : null),
+    ...(exportComplianceCode ? { ITSEncryptionExportComplianceCode: exportComplianceCode } : null),
+  };
   // Per-variant icons from scripts/brand-assets.mjs at the repo root: devnet and testnet carry a DEV / BETA badge.
   const icons = `./assets/images/icons/${variant === 'staging-testnet' ? 'testnet' : variant}`;
 
@@ -143,10 +165,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         dark: `${icons}/ios-dark.png`,
         tinted: `${icons}/ios-tinted.png`,
       },
-      // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (COMPLIANCE.md, Encryption export).
-      config: { usesNonExemptEncryption: true },
+      // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (resolveExportComplianceCode above).
+      ...(exportComplianceCode ? { config: { usesNonExemptEncryption: true } } : null),
       privacyManifests: PRIVACY_MANIFEST,
-      ...(process.env.YAPPR_RELEASE === '1' ? { infoPlist: RELEASE_ATS } : null),
+      ...(Object.keys(infoPlist).length > 0 ? { infoPlist } : null),
     },
     android: {
       package: v.applicationId,
