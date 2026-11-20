@@ -64,6 +64,19 @@ describe('removed-reply placeholders (v20)', () => {
     const chain = [reply('a', 'bob'), reply('b', 'carol', 'a'), stub('gone', 'b'), reply('c', 'dan', 'gone'), reply('d', 'erin', 'c')]
     expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, chain))).toEqual(['a@0', 'b@1', 'gone@1', 'c@1+1'])
   })
+
+  it('renders a branch through a placeholder past the cap, leaving only listed branches behind Continue thread', () => {
+    const chain = [reply('a', 'bob'), reply('b', 'carol', 'a'), reply('x', 'dan', 'b'), stub('gone', 'x'), reply('c', 'erin', 'gone'), reply('y', 'fay', 'x'), reply('z', 'gus', 'y')]
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, chain))).toEqual(['a@0', 'b@1', 'x@1+2', 'gone@1', 'c@1'])
+  })
+
+  it('keeps a placeholder at the top while its kept parent is loaded but not yet connected to the thread', () => {
+    const page = [stub('gone', undefined, 'a'), reply('c', 'carol', 'gone')]
+    // a arrives, but its own parent x does not: gone and c stay visible at the top.
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, [...page, reply('a', 'bob', 'x')]))).toEqual(['gone@0', 'c@1'])
+    expect(rows(assembleFlatThread({ id: 'root', authorId: 'op', isReply: false }, [...page, reply('a', 'bob', 'x'), reply('x', 'dan')])))
+      .toEqual(['x@0', 'a@1', 'gone@1', 'c@1'])
+  })
 })
 
 describe('v2 thread assembly', () => {

@@ -201,6 +201,16 @@ describe('withMissingReplyParents', () => {
       expect(later.find((x) => x.id === 'gone')?.replyToReplyId).toBe('live')
     })
 
+    it('keeps a hole at the top while its kept parent is loaded but not yet connected, and renders a branch through it past the cap', async () => {
+      const r = removed({ gone: 'live' })
+      const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
+      // live arrives on a later page, but its own parent x does not yet: gone and c3 stay visible at the top.
+      expect(shown(assembleFlatThread(root, [...replies, reply('live', 'x', 3)]))).toEqual([['gone', [['c3', []]]]])
+      // With x loaded, x > live > gone > c3: gone sits at the cap, and the branch through it still renders.
+      const linked = assembleFlatThread(root, [...replies, reply('live', 'x', 3), reply('x', undefined, 2)])
+      expect(shown(linked)).toEqual([['x', [['live', [['gone', [['c3', []]]]]]]]])
+    })
+
     it('leaves a hole at the top when its record names no parent: a direct reply, or a reply with no record', async () => {
       const r = removed({}, ['gone'])
       const replies = await withMissingReplyParents([reply('c3', 'gone', 12)], r)
