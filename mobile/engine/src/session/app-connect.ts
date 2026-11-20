@@ -282,16 +282,21 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       if (!isAppConnectBuild() || !appConnectPins()) return
       const network = appConnectSessions.network()
       const name = slotName(kind)
+      // The load runs in the record queue, after any save already issued (a request still being wrapped) has landed.
+      const record = await recordsFor(kind).load()
       const before = engineSecretRaw(localStorage, network, name)
       if (before === null || (only !== undefined && before !== only)) return
-      const record = await recordsFor(kind).load()
-      // The load waited behind any save already issued: one that replaced the request meant here keeps its own.
-      if (only !== undefined && engineSecretRaw(localStorage, network, name) !== before) return
       if (record) {
         if (record.identityHint !== kind.identityHint) return
         await recordsFor(kind).clear(record)
       }
       if (strict && engineSecretRaw(localStorage, network, name) === before) removeEngineSecret(localStorage, network, name)
+    },
+
+    /** Deletes the stored request of this kind by name, unread: one in an account bucket this boot did not load. */
+    drop(kind: AppConnectRequestKind): void {
+      if (!isAppConnectBuild() || !appConnectPins()) return
+      removeEngineSecret(localStorage, appConnectSessions.network(), slotName(kind))
     },
 
     /**

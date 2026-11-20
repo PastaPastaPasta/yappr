@@ -696,6 +696,54 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(stored()).not.toContain(LOGIN_SLOT)
   })
 
+  it('a cancel made while the request is being wrapped replies only once the host has deleted it', async () => {
+    const engine = await signedOut()
+    const keyStore = appConnectSessions.keyStore()
+    const save = keyStore.saveSecret.bind(keyStore)
+    const hold: { release?: () => void } = {}
+    const saves = vi.spyOn(keyStore, 'saveSecret').mockImplementationOnce(async (network, name, bytes) => {
+      await new Promise<void>(resolve => { hold.release = resolve })
+      return save(network, name, bytes)
+    })
+    try {
+      const starting = engine.appConnectStart({ returnTo: RETURN_TO, fresh: true })
+      await until(() => hold.release, 'the request being wrapped')
+      let replied = false
+      const cancelling = engine.appConnectCancel().then(() => { replied = true })
+      await settle()
+      expect(replied).toBe(false)
+      secureDeletes.length = 0
+      heldAcks = []
+      hold.release?.()
+      await until(() => secureDeletes.includes(LOGIN_SLOT), 'the request deletion on its way to the host')
+      await settle()
+      expect(replied).toBe(false)
+      releaseAcks()
+      await cancelling
+      await starting
+      expect(stored()).not.toContain(LOGIN_SLOT)
+    } finally {
+      saves.mockRestore()
+    }
+  })
+
+  it('keeps a parked account listed until its renewal is deleted from the bucket this boot did not load', async () => {
+    const engine = await walletSignIn(await signedOut(), [58, 59])
+    await engine.prepareAddAccount()
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    secureDeletes.length = 0
+    heldAcks = []
+    const signingOut = next.signOut({ identityId: OWNER })
+    await until(() => secureDeletes.includes(RENEWAL_SLOT), 'the parked renewal deletion on its way to the host')
+    await settle()
+    expect((await next.accounts()).map(account => account.identityId)).toContain(OWNER)
+    releaseAcks()
+    await signingOut
+    expect((await next.accounts()).map(account => account.identityId)).not.toContain(OWNER)
+  })
+
   it('a cancel deletes its stored request even when it cannot be read', async () => {
     const engine = await signedOut()
     await engine.appConnectStart({ returnTo: RETURN_TO, fresh: true })

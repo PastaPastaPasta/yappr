@@ -323,6 +323,31 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(mockGoBack).toHaveBeenCalled();
   });
 
+  it('says when the engine could not confirm a cancel, and closes then only when the user chooses to', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
+    const cancelRpc = fakeEngine.method('session.appConnectCancel');
+    cancelRpc.mockRejectedValueOnce(new Error('timed out')).mockRejectedValueOnce(new Error('timed out'));
+    await act(async () => fireEvent.press(screen.getByText('Cancel')));
+    expect(screen.getByText("We couldn't confirm the cancel.")).toBeTruthy();
+    expect(screen.getByText('The sign-in request may still be saved.')).toBeTruthy();
+    expect(mockGoBack).not.toHaveBeenCalled();
+    await act(async () => fireEvent.press(screen.getByTestId('ac-cancel-retry')));
+    expect(cancelRpc).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('ac-cancel-unconfirmed')).toBeTruthy();
+    expect(mockGoBack).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByTestId('ac-close-anyway'));
+    expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  it('closes once a retried cancel is confirmed', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'timeout', uri: URI, requestHash: HASH }));
+    fakeEngine.method('session.appConnectCancel').mockRejectedValueOnce(new Error('timed out'));
+    await act(async () => fireEvent.press(screen.getByText('Cancel')));
+    expect(mockGoBack).not.toHaveBeenCalled();
+    await act(async () => fireEvent.press(screen.getByTestId('ac-cancel-retry')));
+    expect(mockGoBack).toHaveBeenCalled();
+  });
+
   describe('cut short by an engine restart while it takes the answer', () => {
     const restarted = () => Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' });
     const confirm = (extra: Partial<AppConnectFlowDTO> = {}) =>
