@@ -186,6 +186,20 @@ describe('withSdkSignedWrite', () => {
     expect(await nextCreateNonce()).toEqual({ ok: true, value: n(102) })
   })
 
+  it('holds writes back for no longer than a minute after a page dies while preparing a chosen write', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    let started = () => {}
+    const preparing = new Promise<void>(resolve => { started = resolve })
+    // The page closes during preparation: the write never resolves and nothing is signed.
+    withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, () => { started(); return new Promise<string>(() => {}) })
+      .catch(() => {})
+    await preparing
+    const reservation = loadReservation(OWNER, CONTRACT)
+    expect(reservation?.pending.map(p => p.nonce)).toEqual([n(101), n(102)])
+    expect(stillPending(n(100), reservation, Date.now() + 2 * MINUTE).map(p => p.nonce)).toEqual([n(101)])
+  })
+
   it('keeps an uncertain chosen write reserved but releases one Platform refused', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
     sdk.identities.contractNonce.mockResolvedValue(n(100))

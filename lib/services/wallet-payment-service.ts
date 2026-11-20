@@ -48,8 +48,6 @@ type PersistedWalletPayment = {
   reservationId: string;
   data: PaymentData;
   replacedBy?: { state: ReplacementState; at: number };
-  /** When its unreadable transition's nonce was first seen used: an outcome that can't be told, kept for a while. */
-  unreadableUsedAt?: number;
 };
 type PaymentContext = {
   ownerId: string;
@@ -164,18 +162,25 @@ function attemptSettled(context: PaymentContext, shown: WalletPayment | undefine
   return 'settled';
 }
 
+/** A stored request that names its reservation and nonce: anything less can't be judged at all. */
+const readable = (record: unknown): record is PersistedWalletPayment => {
+  const item = record as Partial<PersistedWalletPayment> | null;
+  return typeof item?.reservationId === 'string' && typeof item.nonce === 'string' && /^\d+$/.test(item.nonce);
+};
+
 function readPersisted(ownerId: string): PersistedWalletPayment[] {
   const raw = loadWalletPayments(ownerId, YAPPR_CONTRACT_ID, STORAGE_KEY);
-  if (!raw) return [];
+  if (raw === null) return [];
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { parsed = null; }
-  if (!Array.isArray(parsed)) throw new UnreadableJournalError();
-  return (parsed as PersistedWalletPayment[]).filter(record => typeof record?.reservationId === 'string');
+  if (!Array.isArray(parsed)) throw new UnreadableJournalError(raw, []);
+  if (!parsed.every(readable)) throw new UnreadableJournalError(raw, parsed.filter(readable));
+  return parsed;
 }
 
-/** The stored requests can't be read at all: they stand for one earlier payment of unknown outcome. */
+/** Stored requests that can't all be read: they stand for one earlier payment of unknown outcome. */
 class UnreadableJournalError extends Error {
-  constructor() { super('Could not read earlier wallet payments'); }
+  constructor(readonly raw: string, readonly readable: PersistedWalletPayment[]) { super('Could not read earlier wallet payments'); }
 }
 const UNREADABLE_JOURNAL = 'unreadable-wallet-payments';
 
@@ -405,9 +410,11 @@ async function preparePayment(
       catch (error) {
         if (!(error instanceof UnreadableJournalError)) throw error;
         if (!context.allowAnother?.has(UNREADABLE_JOURNAL)) return { completed: false, payment: unreadableJournal(), unresolved: true, different: true };
-        logger.warn('Resetting unreadable wallet payment requests after the user chose to send another');
-        writePersisted(context.ownerId, []);
-        records = [];
+        // Only what can't be read is set aside, kept under a key of its own; every readable request stays.
+        logger.warn('Setting aside unreadable wallet payment requests after the user chose to send another');
+        storeWalletPayments(context.ownerId, YAPPR_CONTRACT_ID, `${STORAGE_KEY}:unreadable:${Date.now()}`, error.raw);
+        writePersisted(context.ownerId, error.readable);
+        records = error.readable;
       }
       if (cached && !records.some(record => record.reservationId === cached.request.reservationId)) {
         try {
@@ -437,27 +444,15 @@ async function preparePayment(
         try { payment = restorePayment(context.ownerId, record); }
         catch (error) {
           logger.warn('Could not read an earlier wallet payment request:', error);
-          let unreadable: WalletPayment;
-          try { unreadable = unreadablePayment(context.ownerId, record); }
-          catch {
-            drop(record);
+          const unreadable = unreadablePayment(context.ownerId, record);
+          if (context.allowAnother?.has(record.reservationId)) {
+            // The user chose to send another past it: once its nonce is used it can't hold back anything else, so it goes.
+            let used = false;
+            try { used = !(await unreadable.observe()).executable; }
+            catch (readError) { logger.debug('Could not read the earlier wallet payment nonce:', readError); }
+            if (used) drop(record);
             continue;
           }
-          let used = false;
-          try { used = !(await unreadable.observe()).executable; }
-          catch (readError) { logger.debug('Could not read the earlier wallet payment nonce:', readError); }
-          if (used) {
-            // Used by this payment or by something else: which can't be told, so it stays unresolved for a while.
-            const since = record.unreadableUsedAt ?? Date.now();
-            if (Date.now() - since >= ATTEMPT_LIFETIME_MS) {
-              drop(record);
-              continue;
-            }
-            if (record.unreadableUsedAt === undefined) {
-              writePersisted(context.ownerId, readPersisted(context.ownerId).map(item => (item.reservationId === record.reservationId ? { ...item, unreadableUsedAt: since } : item)));
-            }
-          }
-          if (context.allowAnother?.has(record.reservationId)) continue;
           return settle({ completed: false, payment: unreadable, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
         }
         let result: PaymentObservation;
@@ -550,4 +545,20 @@ export async function buildWalletTip(
   const note = tipService.tipNoteFor(target, message);
   const request = await buildUnsignedYappTipTransition(ownerId, recipientId, amount, note, lockHeld);
   return paymentFor(ownerId, request, { kind: 'tip', recipientId, amount: amount.toString(), note });
+}
+
+/** What a payment modal holds for its payment: the request it showed or reconciles, and a different payment holding it back. */
+export type HeldWalletRequest = { payment: WalletPayment; foreign: boolean; blocker?: WalletPayment };
+
+/** What a modal holds once preparation returns `payment`: a different payment holding it back never takes the place of the request it showed. */
+export function holdWalletRequest(held: HeldWalletRequest | undefined, payment: WalletPayment, foreign: boolean): HeldWalletRequest {
+  if (foreign && held && !held.foreign) return { payment: held.payment, foreign: false, blocker: payment };
+  return { payment, foreign };
+}
+
+/** "Send another": the reservation it goes past (the blocker, else the held request), and what stays held. */
+export function sendPastWalletRequest(held: HeldWalletRequest | undefined): { past?: string; keep?: HeldWalletRequest } {
+  if (!held) return {};
+  if (held.blocker) return { past: held.blocker.request.reservationId, keep: { payment: held.payment, foreign: held.foreign } };
+  return { past: held.payment.request.reservationId };
 }
