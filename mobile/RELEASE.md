@@ -202,7 +202,7 @@ instead (the app target only, "Apple Distribution" from the keychain); the
     protected branches or gated by a required reviewer. Anyone with write
     access can dispatch the workflow.
   - Only the decode step sees the secrets, and it runs after `npm ci`.
-- **iOS** (macos-26, Xcode 26): an unsigned archive, uploaded as an unsigned
+- **iOS** (`xcode-27` runner, Xcode 27.2): an unsigned archive, uploaded as an unsigned
   `.ipa` together with the xcodebuild log.
 
 Neither job needs secrets to run.
@@ -247,7 +247,9 @@ personal account, and an App Store Connect app record per bundle id
 ### `iOS TestFlight` workflow
 
 `.github/workflows/ios-testflight.yml` runs on manual dispatch only, on
-macos-26, in the `testflight` environment. Inputs:
+the `xcode-27` runner with Xcode 27.2 (App Store Connect requires the iOS 27
+SDK from April 2027, ITMS-90725; `scripts/check-xcode.sh` fails a beta or
+older Xcode), in the `testflight` environment. Inputs:
 
 | Input | Default | What |
 | --- | --- | --- |
