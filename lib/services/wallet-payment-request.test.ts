@@ -12,7 +12,7 @@ vi.stubGlobal('localStorage', {
 
 import { YAPPR_CONTRACT_ID } from '../constants'
 import { WALLET_TOKEN_SCOPE, reserveNonce } from './identity-nonce'
-import { checkShownRequest, clearShownRequest, heldRequestMessage, loadShownRequest, saveShownRequest, type ShownPaymentRequest } from './wallet-payment-request'
+import { checkPurchaseRequest, checkShownRequest, clearShownRequest, heldRequestMessage, loadShownRequest, saveShownRequest, type ShownPaymentRequest } from './wallet-payment-request'
 
 const OWNER = 'owner'
 const n = (value: number) => BigInt(value)
@@ -63,6 +63,31 @@ describe('the wallet payment request this browser showed (#929)', () => {
     expect(loadShownRequest(OWNER)).toEqual(purchase)
     expect(await checkShownRequest(OWNER, tip.key)).toEqual({ kind: 'none' })
     expect(loadShownRequest(OWNER)).toBeNull()
+  })
+
+  describe('a purchase whose request can no longer execute', () => {
+    beforeEach(() => {
+      reserveNonce(OWNER, YAPPR_CONTRACT_ID, n(101), n(100), WALLET_TOKEN_SCOPE)
+      saveShownRequest(OWNER, purchase)
+      sdk.identities.contractNonce.mockResolvedValue(n(101))
+    })
+
+    it('is paid once a balance read, retried past a node that is behind, shows it', async () => {
+      const balance = vi.fn<() => Promise<bigint>>().mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce(n(90)).mockResolvedValue(n(140))
+      expect(await checkPurchaseRequest(OWNER, purchase.key, balance, { delayMs: 0 })).toEqual({ kind: 'paid', balance: n(140) })
+      expect(balance).toHaveBeenCalledTimes(3)
+    })
+
+    it('builds nothing new while unproven, until the user clears it to buy again', async () => {
+      // Paid, then 50 YAPP spent: the balance alone can't tell.
+      const balance = vi.fn<() => Promise<bigint>>().mockResolvedValue(n(90))
+      expect(await checkPurchaseRequest(OWNER, purchase.key, balance, { delayMs: 0 })).toEqual({ kind: 'unproven' })
+      expect(balance).toHaveBeenCalledTimes(5)
+      expect(await checkPurchaseRequest(OWNER, purchase.key, balance, { delayMs: 0 })).toEqual({ kind: 'unproven' })
+      expect(loadShownRequest(OWNER)).toEqual(purchase)
+      clearShownRequest(OWNER, purchase.key)
+      expect(await checkPurchaseRequest(OWNER, purchase.key, balance, { delayMs: 0 })).toEqual({ kind: 'none' })
+    })
   })
 
   it('reads nothing from Platform when no request is stored', async () => {
