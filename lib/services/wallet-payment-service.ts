@@ -48,6 +48,8 @@ type PersistedWalletPayment = {
   reservationId: string;
   data: PaymentData;
   replacedBy?: { state: ReplacementState; at: number };
+  /** When a different payment's check proved it paid: kept for its own confirmation to report. */
+  paidAt?: number;
 };
 type PaymentContext = {
   ownerId: string;
@@ -202,6 +204,16 @@ function unreadableJournal(): WalletPayment {
 
 function writePersisted(ownerId: string, records: PersistedWalletPayment[]): void {
   storeWalletPayments(ownerId, YAPPR_CONTRACT_ID, STORAGE_KEY, JSON.stringify(records));
+}
+
+/** Stored requests that could not be read, set aside when one confirmation sent another past them; every other confirmation still sees them. */
+const SET_ASIDE_KEY = `${STORAGE_KEY}:unreadable`;
+
+function setAsideUnreadable(ownerId: string, raw: string): void {
+  const previous = loadWalletPayments(ownerId, YAPPR_CONTRACT_ID, SET_ASIDE_KEY);
+  let blobs: unknown;
+  try { blobs = previous === null ? [] : JSON.parse(previous); } catch { blobs = [previous]; }
+  storeWalletPayments(ownerId, YAPPR_CONTRACT_ID, SET_ASIDE_KEY, JSON.stringify([...(Array.isArray(blobs) ? blobs : [previous]), raw]));
 }
 
 /**
@@ -405,16 +417,21 @@ async function preparePayment(
       if (attempt === 'settled') return { completed: true };
       if (attempt === 'gone') return { completed: false, unresolved: true };
       settledElsewhere = attempt === 'elsewhere';
+      const pastUnreadable = context.allowAnother?.has(UNREADABLE_JOURNAL) === true;
       let records: PersistedWalletPayment[];
       try { records = readPersisted(context.ownerId); }
       catch (error) {
         if (!(error instanceof UnreadableJournalError)) throw error;
-        if (!context.allowAnother?.has(UNREADABLE_JOURNAL)) return { completed: false, payment: unreadableJournal(), unresolved: true, different: true };
+        if (!pastUnreadable) return { completed: false, payment: unreadableJournal(), unresolved: true, different: true };
         // Only what can't be read is set aside, kept under a key of its own; every readable request stays.
         logger.warn('Setting aside unreadable wallet payment requests after the user chose to send another');
-        storeWalletPayments(context.ownerId, YAPPR_CONTRACT_ID, `${STORAGE_KEY}:unreadable:${Date.now()}`, error.raw);
+        setAsideUnreadable(context.ownerId, error.raw);
         writePersisted(context.ownerId, error.readable);
         records = error.readable;
+      }
+      // Set aside by another confirmation: this one is held back by them until its own user sends another.
+      if (!pastUnreadable && loadWalletPayments(context.ownerId, YAPPR_CONTRACT_ID, SET_ASIDE_KEY) !== null) {
+        return { completed: false, payment: unreadableJournal(), unresolved: true, different: true };
       }
       if (cached && !records.some(record => record.reservationId === cached.request.reservationId)) {
         try {
@@ -440,6 +457,10 @@ async function preparePayment(
       // The WASM module restoring them must be up, so a request is set aside only for what it holds.
       if (records.length > 0) await getEvoSdk();
       for (const record of records) {
+        if (record.paidAt !== undefined && Date.now() - record.paidAt >= ATTEMPT_LIFETIME_MS) {
+          drop(record);
+          continue;
+        }
         let payment: WalletPayment;
         try { payment = restorePayment(context.ownerId, record); }
         catch (error) {
@@ -458,6 +479,7 @@ async function preparePayment(
         let result: PaymentObservation;
         // Only a request proved absent is ever marked replaced, and that proof is final.
         if (record.replacedBy) result = { outcome: 'absent', executable: false };
+        else if (record.paidAt !== undefined) result = { outcome: 'completed', executable: false };
         else {
           try { result = await reconcilePayment(payment); }
           catch (error) {
@@ -486,6 +508,14 @@ async function preparePayment(
           // A local payment of this one goes ahead at a fresh nonce: the request stays, to be marked replaced by it.
           if (result.outcome === 'absent' && (!record.replacedBy || replacement === 'failed') && !build && !excluded && record.key === context.key) {
             replaceable.push(record.reservationId);
+            continue;
+          }
+          if (result.outcome === 'completed' && record.key !== context.key) {
+            // Another payment's: it stays, proved paid, until a check of that payment reports it.
+            if (record.paidAt === undefined) {
+              const paidAt = Date.now();
+              writePersisted(context.ownerId, readPersisted(context.ownerId).map(item => (item.reservationId === record.reservationId ? { ...item, paidAt } : item)));
+            }
             continue;
           }
           drop(record);

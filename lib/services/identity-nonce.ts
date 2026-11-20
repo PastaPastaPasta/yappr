@@ -38,6 +38,7 @@ import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
+import { MAX_NONCE_DISTANCE } from '@/lib/nonce-rules.mjs';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
 import { getEvoSdk } from './evo-sdk-service';
@@ -370,14 +371,15 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 
 /**
  * Start an SDK-signed transition's lifetime over: the page is still waiting on
- * the SDK, or has just lost the answer. Best effort: when localStorage
- * refuses, it expires a little sooner.
+ * the SDK, or has just lost the answer. `untilSettled` ends it instead, for a
+ * chosen-nonce write that went out: it then stays until its nonce is consumed.
+ * Best effort: when localStorage refuses, it expires a little sooner.
  */
-function renewPending(ownerId: string, contractId: string, entry: PendingTransition): void {
+function renewPending(ownerId: string, contractId: string, entry: PendingTransition, untilSettled = false): void {
   try {
     const reservation = loadReservation(ownerId, contractId);
     if (!reservation?.pending.some((p) => p.id === entry.id)) return;
-    const expiresAt = Date.now() + PENDING_LIFETIME_MS;
+    const expiresAt = untilSettled ? null : Date.now() + PENDING_LIFETIME_MS;
     saveReservation(ownerId, contractId, { ...reservation, pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt } : p)) });
   } catch {
     // Already logged.
@@ -466,7 +468,8 @@ function isVerdict(error: unknown): boolean {
  * fail unsent with PENDING_WRITE_ERROR if they do not settle. Wallet requests
  * never impose ordering and need no ordering wait. Their nonces
  * stay reserved until consumed, including after a QR closes or a page reloads.
- * Unknown SDK nonces still hold writes back.
+ * Unknown SDK nonces still hold writes back. While one is outstanding, a
+ * chosen nonce never takes the last slot Drive accepts, which stays for creates.
  *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
  *
@@ -495,7 +498,8 @@ export async function withSdkSignedWrite<T>(
         (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
       if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
         const nonce = allocateNonce(tip, reservation);
-        return nonce === null ? null : { nonce };
+        if (nonce === null || (pending.length > 0 && nonce - tipOf(tip) >= MAX_NONCE_DISTANCE)) return null;
+        return { nonce };
       }
       return pending.length === 0 ? { nonce: null } : null;
     });
@@ -504,12 +508,13 @@ export async function withSdkSignedWrite<T>(
       const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
       // Like an SDK-signed write's, its lifetime keeps starting over while this page works on it: a page that dies
       // mid-write (in preparation, before anything was signed) leaves nothing that holds writes back for good.
+      // Once it answers or loses its answer, it stays until its nonce is consumed.
       const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
       const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
       try {
         const result = await writeWithNonce(value.nonce);
         clearInterval(alive);
-        renewPending(ownerId, contractId, entry);
+        renewPending(ownerId, contractId, entry, true);
         // An affected-state answer can be a snapshot rather than execution proof.
         // Keep the chosen nonce until a nonce read proves it can no longer execute.
         await settleChosenNonce(ownerId, contractId, entry);
@@ -522,7 +527,8 @@ export async function withSdkSignedWrite<T>(
           const reservation = loadReservation(ownerId, contractId);
           if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
         } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
-        else renewPending(ownerId, contractId, entry);
+        // It may still execute: later writes to the same target wait for it however long that takes.
+        else renewPending(ownerId, contractId, entry, true);
         throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
       }
     }

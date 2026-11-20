@@ -1037,7 +1037,7 @@ export function TipModal() {
                         </Button>
                       )}
                     </div>
-                    {walletRequestsRef.current.has(walletPaymentKey) && (
+                    {isYapp && walletRequestsRef.current.has(walletPaymentKey) && (
                       <div className="space-y-2">
                         <p className="text-xs text-gray-500">Sending another tip could pay twice.</p>
                         <Button onClick={() => {
