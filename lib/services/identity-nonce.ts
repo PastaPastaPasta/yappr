@@ -36,7 +36,7 @@
  */
 import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
-import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
 import { MAX_NONCE_DISTANCE } from '@/lib/nonce-rules.mjs';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
@@ -206,34 +206,6 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
 }
 
 /**
- * The deployment-scoped (`scope`) wallet payment requests this browser shows
- * as QR codes, kept until their outcomes are known. A key of their own, beside
- * the reservation and under the same write lock: a tab still running a build
- * that writes the reservation without them can never erase them.
- */
-const walletPaymentsKey = (ownerId: string, contractId: string, scope: string) => `yappr:wallet-payments:${ownerId}:${contractId}:${scope}`;
-
-/** Throws {@link NONCE_STORE_ERROR} when localStorage cannot be read. */
-export function loadWalletPayments(ownerId: string, contractId: string, scope: string): string | null {
-  try {
-    return localStorage.getItem(walletPaymentsKey(ownerId, contractId, scope));
-  } catch (error) {
-    logger.warn('Could not read wallet payment requests:', error);
-    throw new Error(NONCE_STORE_ERROR);
-  }
-}
-
-/** Caller holds the identity write lock, including while creating the unsigned request. Throws {@link NONCE_STORE_ERROR} when refused. */
-export function storeWalletPayments(ownerId: string, contractId: string, scope: string, records: string): void {
-  try {
-    localStorage.setItem(walletPaymentsKey(ownerId, contractId, scope), records);
-  } catch (error) {
-    logger.warn('Could not store wallet payment requests:', error);
-    throw new Error(NONCE_STORE_ERROR);
-  }
-}
-
-/**
  * The pending transitions that may still execute, given the raw value
  * `identities.contractNonce` returned: not one whose nonce (or, SDK-signed,
  * any nonce it may carry) is consumed, and not an app write past its
@@ -288,6 +260,28 @@ export async function awaitNonce<T>(
     }
     logger.debug(`Waiting on an earlier transition before a write (Platform at ${current})`);
     await new Promise((resolve) => setTimeout(resolve, PENDING_POLL_MS));
+  }
+}
+
+/**
+ * {@link awaitNonce} for a payment: it also waits while a wallet payment
+ * request may still execute, since a second payment beside it could pay
+ * twice. Throws {@link PAYMENT_PENDING_ERROR} when one is still waiting.
+ */
+export async function awaitPaymentNonce<T>(
+  ownerId: string,
+  contractId: string,
+  ready: (current: bigint | undefined, reservation: NonceReservation | null) => T | null
+): Promise<{ current: bigint | undefined; value: T }> {
+  let held = false;
+  try {
+    return await awaitNonce(ownerId, contractId, (tip, reservation) => {
+      held = stillPending(tip, reservation).some((entry) => entry.scope === WALLET_TOKEN_SCOPE);
+      return held ? null : ready(tip, reservation);
+    });
+  } catch (error) {
+    if (held && error instanceof Error && error.message === PENDING_WRITE_ERROR) throw new Error(PAYMENT_PENDING_ERROR);
+    throw error;
   }
 }
 
@@ -485,8 +479,10 @@ function isVerdict(error: unknown): boolean {
  * wait, but only when both app writes have scopes and those scopes differ.
  * Same-scope writes, or app writes unscoped on either side, keep waiting and
  * fail unsent with PENDING_WRITE_ERROR if they do not settle. Wallet requests
- * never impose ordering and need no ordering wait. Their nonces
- * stay reserved until consumed, including after a QR closes or a page reloads.
+ * impose no ordering on these writes. Their nonces stay reserved until
+ * consumed, including after a QR closes or a page reloads. Without
+ * `writeWithNonce` (a payment), a wallet request still holds the write back
+ * ({@link PAYMENT_PENDING_ERROR}).
  * Unknown SDK nonces still hold writes back. While one is outstanding, a
  * chosen nonce never takes the last slot Drive accepts, which stays for creates.
  * It calls `sending` right before its broadcast, and must not send when that throws.
@@ -506,12 +502,12 @@ export async function withSdkSignedWrite<T>(
   write: () => Promise<T>,
   scope?: string,
   precondition?: () => Promise<boolean>,
-  writeWithNonce?: (nonce: bigint, sending: () => void) => Promise<T>,
-  lockHeld = false
+  writeWithNonce?: (nonce: bigint, sending: () => void) => Promise<T>
 ): Promise<T> {
   const send = async () => {
     let polls = 0;
-    const { current, value } = await awaitNonce<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
+    // Without a chosen-nonce builder (a payment), it waits behind a wallet payment request too.
+    const { current, value } = await (writeWithNonce ? awaitNonce : awaitPaymentNonce)<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
       const pending = stillPending(tip, reservation);
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
@@ -575,7 +571,7 @@ export async function withSdkSignedWrite<T>(
     releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
   };
-  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
+  return withIdentityWriteLock(ownerId, contractId, send);
 }
 
 async function settleChosenNonce(ownerId: string, contractId: string, entry: PendingTransition): Promise<void> {
@@ -586,22 +582,6 @@ async function settleChosenNonce(ownerId: string, contractId: string, entry: Pen
   } catch (error) {
     logger.debug('Could not prove the chosen nonce consumed:', error);
   }
-}
-
-/** Re-sign the same wallet payment; even a local refusal cannot retire the wallet's copy. */
-export async function withWalletTokenNonce<T>(ownerId: string, contractId: string, entry: PendingTransition, write: (nonce: bigint) => Promise<T>, lockHeld = false): Promise<T> {
-  if (entry.scope !== WALLET_TOKEN_SCOPE || entry.nonce === null) throw new Error('Invalid wallet payment reservation');
-  const nonce = entry.nonce;
-  const send = async () => {
-    try {
-      return await write(nonce);
-    } catch (error) {
-      throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
-    } finally {
-      await settleChosenNonce(ownerId, contractId, entry);
-    }
-  };
-  return lockHeld ? send() : withIdentityWriteLock(ownerId, contractId, send);
 }
 
 /**

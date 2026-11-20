@@ -10,8 +10,6 @@ import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { yappIsLocked } from '@/lib/contract-topology'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
-import type { LocalWalletPaymentIntent, PayAgainConsent } from './wallet-payment-service'
-import type { WalletTransitionRequest } from './token-transition-builder'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
 export interface TipResult {
@@ -37,12 +35,7 @@ export interface TipResult {
      * still land — the UI must offer "check again", never a blind retry, or the
      * user sends their money twice.
      */
-    | 'UNCONFIRMED'
-    /** An earlier tip of the same kind may have gone through and can't be checked: send only once the user confirms. */
-    | 'MAY_HAVE_PAID'
-    | 'PAID_ELSEWHERE';
-  /** What choosing to pay again agrees to, for that one retry (see TokenResult). */
-  payAgain?: PayAgainConsent;
+    | 'UNCONFIRMED';
 }
 
 /**
@@ -271,13 +264,12 @@ class TipService {
     recipientId: string,
     amount: bigint,
     target?: { kind: TipTargetKind; id: string },
-    message?: string,
-    walletRequest?: WalletTransitionRequest | LocalWalletPaymentIntent
+    message?: string
   ): Promise<TipResult> {
     const invalid = this.validateYappTip(senderId, recipientId, amount);
     if (invalid) return invalid;
 
-    const result = await tokenService.transfer(senderId, recipientId, amount, this.tipNoteFor(target, message), walletRequest);
+    const result = await tokenService.transfer(senderId, recipientId, amount, this.tipNoteFor(target, message));
     if (!result.success) {
       // Sent, and no verdict came back (a timeout, a proof that could not be
       // checked, a transport failure, "already in mempool"): never a failure to
@@ -292,7 +284,6 @@ class TipService {
         success: false,
         error: result.error ?? 'Tip failed',
         errorCode: result.errorCode ?? 'NETWORK_ERROR',
-        payAgain: result.payAgain,
       };
     }
 
@@ -318,8 +309,9 @@ class TipService {
       to: recipientId,
       amount,
       postId: target?.id,
+      // A profile tip's note is the bare message, which never parses as a tip
+      // note, so the proved row carries no message to compare against.
       message: target ? message?.trim() || undefined : undefined,
-      note: this.tipNoteFor(target, message),
       since,
     };
   }

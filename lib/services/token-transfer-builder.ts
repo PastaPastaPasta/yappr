@@ -26,8 +26,7 @@ export function buildUnsignedYappTipTransition(
   senderId: string,
   recipientId: string,
   amount: bigint,
-  publicNote?: string,
-  lockHeld = false
+  publicNote?: string
 ): Promise<WalletTransitionRequest> {
   if (!yappIsTransferable()) return Promise.reject(new Error('YAPP can\'t be sent to other accounts'));
   return buildUnsignedTokenBatch('TokenTransferBuilder', senderId, (base) =>
@@ -36,7 +35,6 @@ export function buildUnsignedYappTipTransition(
       recipientId,
       amount,
       ...(publicNote ? { publicNote } : {}),
-    }),
-    lockHeld
+    })
   );
 }
