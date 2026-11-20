@@ -91,10 +91,12 @@ const ACTIVE_SIGN_IN = 'pending-request:active-sign-in'
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-async function markActiveSignIn(slot: string): Promise<void> {
+/** Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. */
+async function markActiveSignIn(slot: string, durable?: () => Promise<void>): Promise<void> {
   const bytes = encoder.encode(slot)
   try {
     await appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, bytes)
+    await durable?.()
   } catch (error) {
     logger.warn('App Connect: could not record the sign-in in progress:', error)
   }
@@ -144,7 +146,7 @@ function checkReturn(target: unknown): AppConnectReturn {
   return { webBasePath, scheme }
 }
 
-export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): void }) {
+export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): void; durable?: () => Promise<void> }) {
   let login: AppConnectLogin | null = null
   /** The identity a renewal is for; undefined for a sign-in. */
   let renewFor: string | undefined
@@ -247,7 +249,11 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))
-      if (!input.renew) await markActiveSignIn(slotOf(input) ?? 'login')
+      if (!input.renew) {
+        await markActiveSignIn(slotOf(input) ?? 'login', options.durable)
+        // Cancelled, or started again, while the mark was saved.
+        if (login !== instance) return state
+      }
       await instance.start({ identityHint: input.identityHint, fresh: input.fresh })
       return state
     },
