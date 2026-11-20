@@ -159,8 +159,8 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
-  /** The page of the last request made or resumed here: every request that replaces it keeps that page. */
-  private returnTo: string | undefined
+  /** The last request made or resumed here: every request that replaces it keeps its page, or its lack of one. */
+  private replaced: { returnTo?: string } | null = null
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -242,7 +242,7 @@ export class AppConnectLogin {
    */
   private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
-    const returnTo = this.returnTo ?? this.deps.returnTo?.() ?? undefined
+    const returnTo = this.replaced ? this.replaced.returnTo : this.deps.returnTo?.() ?? undefined
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
@@ -263,7 +263,7 @@ export class AppConnectLogin {
   }
 
   private activate(record: StoredAppConnectRequest): void {
-    this.returnTo = record.returnTo
+    this.replaced = { returnTo: record.returnTo }
     // A new request replaces the old one: its ephemeral key is no longer needed.
     if (this.active) clearSensitiveBytes(this.active.privateKey)
     const privateKey = hexToBytes(record.ephemeralPrivateKey)

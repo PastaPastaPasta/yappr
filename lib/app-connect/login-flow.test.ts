@@ -453,6 +453,21 @@ describe('the page a sign-in returns to', () => {
   })
 })
 
+describe('a request with no page to return to', () => {
+  it('keeps none when another tab resumes and replaces it', async () => {
+    const plain = harness()
+    await plain.login.start()
+    expect(plain.records.value?.returnTo).toBeUndefined()
+    const settings = harness({ returnTo: '/settings/' })
+    settings.records.value = plain.records.value
+    await settings.login.start()
+    await settings.login.reject()
+    expect(settings.login.requestHashHex()).not.toBe(plain.login.requestHashHex())
+    expect(settings.records.value).not.toBeNull()
+    expect(settings.records.value?.returnTo).toBeUndefined()
+  })
+})
+
 describe('parseStoredRequest', () => {
   const record = { ephemeralPrivateKey: '11'.repeat(32), createdAt: T0, connectionId: 'ab'.repeat(16) }
 
