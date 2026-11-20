@@ -29,6 +29,7 @@ vi.stubGlobal('localStorage', {
 
 import { TokenTransferTransition } from '@dashevo/wasm-sdk'
 import { YAPPR_CONTRACT_ID } from '../constants'
+import { PAYMENT_PENDING_ERROR } from '@/lib/error-utils'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
 import { loadReservation, withSdkSignedWrite, stillPending } from './identity-nonce'
 import { buildUnsignedTokenBatch } from './token-transition-builder'
@@ -109,6 +110,31 @@ describe('displayed wallet QR reservations (#777)', () => {
     expect(chosen).not.toHaveBeenCalled()
     expect(sdkWrite).not.toHaveBeenCalled()
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toHaveLength(1)
+  })
+})
+
+describe('a second wallet payment QR (#929)', () => {
+  it.each(['this tab', 'another tab'])('is not built in %s while the first may still execute', async tab => {
+    vi.useFakeTimers()
+    await build()
+    let buildAgain = build
+    if (tab === 'another tab') {
+      vi.resetModules()
+      const fresh = await import('./token-transition-builder')
+      buildAgain = () => fresh.buildUnsignedTokenBatch('test', OWNER, base => new TokenTransferTransition({ base, recipientId: 'recipient', amount: BigInt(1) }))
+    }
+    expect(await settle(buildAgain())).toEqual({ error: new Error(PAYMENT_PENDING_ERROR) })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(101)])
+  })
+
+  it('is built once the first falls out of the nonce window', async () => {
+    vi.useFakeTimers()
+    await build()
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(125) | (BigInt(1) << BigInt(40 + 23)))
+    expect(await settle(build())).toEqual({ error: new Error(PAYMENT_PENDING_ERROR) })
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(126))
+    expect(await settle(build())).toMatchObject({ value: { bytes: new Uint8Array([7]) } })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(127)])
   })
 })
 
