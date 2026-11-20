@@ -285,12 +285,11 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * frees each create reservation whose slot no longer holds a signed create
  * under it. That is left only when a page died between reserving a nonce and
  * storing the create, or between clearing a refused, landed or abandoned
- * create's slot and releasing its reservation; a spent nonce is recorded in
- * the floor before the slot is cleared. So it is released without counting
- * its nonce spent: the next SDK-signed write may sign that very nonce, and
- * must then be settled by it, unless the floor already counts it. Beside a landed marker it is counted spent: earlier
- * builds wrote the marker of a create that landed before releasing its
- * reservation.
+ * create's slot and releasing its reservation (earlier builds cleared the
+ * slot of a spent one first, and wrote a landed marker before releasing).
+ * Nothing stored tells these apart, so its nonce is always counted spent: a
+ * floor too high only makes a lost answer wait out its lifetime, one too low
+ * could settle a later SDK-signed write early.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -312,7 +311,7 @@ function releaseOrphanedReservations(ownerId: string): void {
       continue
     }
     if (stored && !isLanded(stored) && stored.reservation.id === entry.id) continue
-    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, stored && isLanded(stored) ? entry.nonce : undefined)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
   }
 }
 

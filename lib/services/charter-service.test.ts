@@ -1414,7 +1414,7 @@ describe('a create reservation left without its stored create (the page died bet
   const entry = (id: string, nonce: bigint | null, scope?: string) => ({ id, nonce, expiresAt: nonce === null ? Date.now() + 60_000 : null, ...(scope ? { scope } : {}) })
   const released = () => nonces.release.mock.calls.filter((call) => call[1] === CHARTERS_CONTRACT_ID).map((call) => [call[2].id, call[3]])
 
-  it('is released, its nonce not counted spent, before the next charters write; nothing else is', async () => {
+  it('is released, its nonce counted spent, before the next charters write; nothing else is', async () => {
     const left = entry('r-orphan', 9n, `${OWNER}:reason:spam`)
     const landed = entry('r-landed', 7n, `${OWNER}:reason:done`)
     const stillSending = entry('r-kept', 8n, `${OWNER}:reason:other`)
@@ -1439,7 +1439,15 @@ describe('a create reservation left without its stored create (the page died bet
     builders.exists.mockResolvedValue(true)
     await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
     const before = released().filter(([id]) => id !== 'r1')
-    expect(before).toEqual([['r-orphan', undefined], ['r-landed', 7n]])
+    expect(before).toEqual([['r-orphan', 9n], ['r-landed', 7n]])
+  })
+
+  it('counts a leftover from a build that cleared a spent refusal\'s slot first as spent: nothing tells it from one never sent', async () => {
+    nonces.held = [entry('r-staging', 4n, `${OWNER}:addedModerator:e5:m9`)]
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
+    expect(released().filter(([id]) => id === 'r-staging')).toEqual([['r-staging', 4n]])
+    expect(nonces.floor).toBe(4n)
   })
 
   it('is left alone where no lock reaches the other tabs: one may be about to store its create', async () => {
@@ -1457,7 +1465,7 @@ describe('a create reservation left without its stored create (the page died bet
     nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [entry('r-orphan', 9n, `${OWNER}:addedModerator:e5:m2`)] })
     nonces.release.mockClear()
     await charterService.undoTeamChange(OWNER, 'addedModerator', { documentId: 'doc-1', electedCharterId: 'e4', memberId: 'm1' })
-    expect(released()).toEqual([['r-orphan', undefined]])
+    expect(released()).toEqual([['r-orphan', 9n]])
     // Under the delete's own lock, before its wait on earlier transitions: nothing can be orphaned in between.
     expect(sdkLocks.mock.invocationCallOrder[0]).toBeLessThan(nonces.release.mock.invocationCallOrder[0])
     expect(nonces.release.mock.invocationCallOrder[0]).toBeLessThan(sdkNonceWaits.mock.invocationCallOrder[0])
