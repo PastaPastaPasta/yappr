@@ -601,7 +601,9 @@ export function createSessionModule(options: SessionModuleOptions) {
     const isActive = identityId === active
     // Its pending renewal and "Sign in again" requests go first, so a later launch never resumes a request of an
     // account the user signed out. A parked account's renewal is in its own bucket, which this boot did not load.
+    // A plain sign-in request left over in this signed-in engine was this account's; a signed-out engine's may be an Add account's.
     const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }]
+    if (isActive) kinds.push({})
     for (const kind of kinds) await appConnect.forget(kind)
     if (identityId !== hydratedIdentity) await appConnect.drop({ identityHint: identityId, renew: true })
     await options.secureDurable?.()
