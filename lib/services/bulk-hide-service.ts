@@ -68,9 +68,9 @@ class BulkHideService {
    * Every post and reply of `authorId` in `mode`'s lane, newest first, read
    * page by page; `onProgress` sees how many so far. `truncated` when one type
    * holds more than the dialog reads (lib/moderation-bulk.ts MAX_ITEMS_PER_KIND);
-   * `ats` the block time of each type's oldest page.
+   * `ats` the block time of each type's oldest page, `newest` of its newest.
    */
-  async readAll(authorId: string, mode: BulkMode, onProgress?: (count: number) => void): Promise<{ items: BulkItem[]; truncated: boolean; ats: Record<BulkKind, number> }> {
+  async readAll(authorId: string, mode: BulkMode, onProgress?: (count: number) => void): Promise<{ items: BulkItem[]; truncated: boolean; ats: Record<BulkKind, number>; newest: Record<BulkKind, number> }> {
     const counts = new Map<BulkKind, number>()
     const [posts, replies] = await Promise.all(KINDS.map((kind) => readEveryPage(
       (startAfter) => this.readPage(kind, authorId, mode, startAfter),
@@ -81,7 +81,7 @@ class BulkHideService {
         },
       }
     )))
-    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated, ats: { post: posts.at, reply: replies.at } }
+    return { items: newestFirst(posts.items, replies.items), truncated: posts.truncated || replies.truncated, ats: { post: posts.at, reply: replies.at }, newest: { post: posts.newest, reply: replies.newest } }
   }
 
   /**

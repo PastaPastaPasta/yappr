@@ -183,10 +183,10 @@ export function BulkHideModal() {
     }
     bulkHideService.readAll(authorId, which, (count) => {
       if (readRef.current === read && !background) setList({ status: 'loading', count })
-    }).then(({ items: fresh, truncated, ats }) => {
+    }).then(({ items: fresh, truncated, ats, newest }) => {
       if (readRef.current !== read) return
       settledReadRef.current = read
-      listedAt(ats)
+      listedAt(newest)
       const items = withRunChanges(fresh, which, runChangesRef.current, ats)
       scheduleStaleRead(ats)
       shownKeyRef.current = key
@@ -227,9 +227,9 @@ export function BulkHideModal() {
     countingRef.current = changes.size > 0
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
-      : bulkHideService.readAll(authorId, other).then(({ items, truncated, ats }) => {
+      : bulkHideService.readAll(authorId, other).then(({ items, truncated, ats, newest }) => {
         if (!cancelled) {
-          listedAt(ats)
+          listedAt(newest)
           scheduleStaleRead(ats)
         }
         return truncated ? null : withRunChanges(items, other, changes, ats).length
