@@ -248,16 +248,18 @@ function hasPendingCreate(key: string): boolean {
 /** Frees a slot on the owner's deliberate say-so, its nonce kept as spent. */
 async function abandonSlot(ownerId: string, key: string): Promise<void> {
   await withIdentityWriteLock(ownerId, CHARTERS_CONTRACT_ID, async () => {
-    let stored: StoredSlot | null = null
-    try {
-      stored = loadSlot(key)
-    } catch {
-      // Unreadable: drop the raw value below all the same.
-    }
     // Its nonce may still execute: counting it spent raises the floor past it (the safe direction), so nothing new reuses it.
     // Released before the slot goes: a page that dies in between leaves the signed create stored, never a reservation
     // without one, which the next write would take for one never sent (releaseOrphanedReservations).
-    if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
+    try {
+      const stored = loadSlot(key)
+      if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
+    } catch {
+      // Unreadable: it may be the create of any reservation for this slot, each then counted spent the same way.
+      for (const entry of loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []) {
+        if (entry.scope === key && entry.nonce !== null) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+      }
+    }
     try {
       localStorage.removeItem(PENDING_PREFIX + key)
     } catch {
@@ -277,7 +279,9 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * storing the create, so it was never sent: a slot's create is replaced or
  * cleared (refused, landed or abandoned) only once its reservation is
  * released. So its nonce is not counted spent: the next SDK-signed write may
- * sign that very nonce, and must then be settled by it.
+ * sign that very nonce, and must then be settled by it. Beside a landed
+ * marker it is counted spent: an earlier version wrote the marker before
+ * releasing the reservation of the create that landed.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -299,7 +303,7 @@ function releaseOrphanedReservations(ownerId: string): void {
       continue
     }
     if (stored && !isLanded(stored) && stored.reservation.id === entry.id) continue
-    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry)
+    releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, stored && isLanded(stored) ? entry.nonce : undefined)
   }
 }
 

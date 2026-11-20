@@ -1055,6 +1055,18 @@ describe("the leader's way out of a proposal stuck uncertain", () => {
     expect(builders.sign).toHaveBeenCalledTimes(2)
   })
 
+  it('counts an unreadable slot\'s reservation spent before it clears the slot: it may be that create', async () => {
+    const slot = `${OWNER}:submittedCharter:${TERMS.targetContractId}`
+    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), '{"signed":')
+    nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [
+      { id: 'r-garbled', nonce: 9n, expiresAt: null, scope: slot },
+      { id: 'r-elsewhere', nonce: 8n, expiresAt: null, scope: `${OWNER}:reason:spam` },
+    ] })
+    await charterService.abandonProposal(OWNER, TERMS.targetContractId)
+    expect(nonces.release.mock.calls.map((call) => [call[2].id, call[3]])).toEqual([['r-garbled', 9n]])
+    expect(storage.getItem(slotKey('submittedCharter', TERMS.targetContractId))).toBeNull()
+  })
+
   it('releases the old reservation before it clears the slot, so a page dying in between leaves no reservation without its create', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(timeout())
     builders.exists.mockResolvedValue(null)
@@ -1231,7 +1243,7 @@ describe('a create reservation left without its stored create (the page died bet
     builders.exists.mockResolvedValue(true)
     await expect(charterService.fileReason(OWNER, { code: 'spam', label: 'Spam' })).resolves.toBe('doc-1')
     const before = released().filter(([id]) => id !== 'r1')
-    expect(before).toEqual([['r-orphan', undefined], ['r-landed', undefined]])
+    expect(before).toEqual([['r-orphan', undefined], ['r-landed', 7n]])
   })
 
   it('is left alone where no lock reaches the other tabs: one may be about to store its create', async () => {
