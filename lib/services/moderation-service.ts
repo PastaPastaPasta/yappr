@@ -14,7 +14,7 @@ import { PENDING_WRITE_ERROR, classifyModerationError, extractErrorMessage, hasC
 import { isReportGoneError, type ReportRecord, type ReportStatus } from '@/lib/reports';
 import { RESTORE_WINDOW_MS, dropSnapshot, loadSnapshot, removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots';
 import { getEvoSdk } from './evo-sdk-service';
-import { ChosenWriteNotSentError, chosenNonceSending, withSdkSignedWrite } from './identity-nonce';
+import { ChosenWriteNotSentError, withSdkSignedWrite } from './identity-nonce';
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse } from './sdk-helpers';
 import { moderationMarksOf, type ModerationMarks } from '@/lib/moderation-view';
 import { restrictionServiceFor, type Restriction, type RestrictionContract } from './restriction-service';
@@ -537,7 +537,7 @@ export function restrictionCreateFields(identityId: string, reason: number): { t
 
 type ModerationWriter = EvoSDK | ReturnType<typeof chosenNonceWrites>;
 /** Sends one transition under the write lock (see `withSdkSignedWrite`). */
-type ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint }) => R, scope?: string, precondition?: () => Promise<boolean>) => Promise<Awaited<R>>;
+type ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint; sending?: () => void }) => R, scope?: string, precondition?: () => Promise<boolean>) => Promise<Awaited<R>>;
 
 const NO_STANDING: ModerationStanding = { banned: false, banReason: null, suspendedUntil: null, suspensionReason: null, warnings: [] };
 
@@ -1482,7 +1482,7 @@ class ModerationService {
     return this.moderate(moderatorId, async ({ sdk, auth, send }) => {
       if (!auth.wif || !auth.identityKey) throw new Error(CRITICAL_KEY_REQUIRED);
       const { wif, identityKey } = auth;
-      await send(async ({ nonce: chosenNonce }) => {
+      await send(async ({ nonce: chosenNonce, sending }) => {
         let broadcastStarted = false;
         try {
           const [{ documentBuilderService }, { buildSignedCreateTransition }, { PrivateKey }] = await Promise.all([
@@ -1508,7 +1508,7 @@ class ModerationService {
             privateKey: PrivateKey.fromWIF(wif),
             identityKey,
           });
-          if (chosenNonce !== undefined) chosenNonceSending(moderatorId, chosenNonce);
+          sending?.();
           broadcastStarted = true;
           await sdk.stateTransitions.broadcastStateTransition(transition);
           await sdk.stateTransitions.waitForResponse(transition);
@@ -1926,12 +1926,12 @@ class ModerationService {
       const sdk = await getEvoSdk();
       // A batch's held signer still answers to its session: `assertLive` refuses it once that ended.
       const auth = heldAuth ?? await this.getCriticalSigner(moderatorId);
-      const send: ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint }) => R, scope = moderatedIdentityId ? this.identityScope(moderatedIdentityId) : undefined, precondition?: () => Promise<boolean>) => {
-        const run = async (nonce?: bigint): Promise<Awaited<R>> => {
+      const send: ModerationSend = <R>(write: (context: { writer: ModerationWriter; nonce?: bigint; sending?: () => void }) => R, scope = moderatedIdentityId ? this.identityScope(moderatedIdentityId) : undefined, precondition?: () => Promise<boolean>) => {
+        const run = async (nonce?: bigint, sending?: () => void): Promise<Awaited<R>> => {
           auth.assertLive();
           started = true;
-          const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, moderatorId, nonce, auth.wif, auth.identityKey, auth.assertLive);
-          return Promise.resolve(write({ writer, nonce }));
+          const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, moderatorId, nonce, auth.wif, auth.identityKey, auth.assertLive, sending);
+          return Promise.resolve(write({ writer, nonce, sending }));
         };
         return withSdkSignedWrite(moderatorId, this.contract.contractId, run, scope, precondition, run);
       };

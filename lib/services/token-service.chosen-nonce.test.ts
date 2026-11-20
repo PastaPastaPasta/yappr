@@ -11,7 +11,7 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
-import { beginLocalWalletPayment, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, holdWalletRequest, sendPastWalletRequest, markReplacedWalletPayments, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
+import { MAY_HAVE_PAID_MESSAGE, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
 import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
 import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, loadWalletPayments, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
 
@@ -213,7 +213,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   }
 
   const context = { ownerId: OWNER, key: action, expose: () => {} }
-  const storedPayments = () => JSON.parse(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1')) ?? '[]') as { reservationId: string; nonce: string; replacedBy?: { state: string } }[]
+  /** A QR shown for this payment: built and stored, as a confirmation does. */
+  const shownPayment = async () => {
+    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (shown.completed || shown.unproven) throw new Error('No QR payment')
+    return shown.payment
+  }
+  const storedPayments = () => JSON.parse(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1')) ?? '[]') as { reservationId: string; nonce: string }[]
 
   const differentReceipts: [string, Record<string, unknown>][] = action === 'tip'
     ? [
@@ -231,13 +237,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       ]
 
   it.each(differentReceipts)('rejects a receipt with a different %s at the consumed reserved nonce', async (field, fields) => {
-    const payment = await buildCachedPayment()
+    const payment = await shownPayment()
     recordReceipt(payment, fields)
     expect(execute(payment.request.nonce, true)).toBe(true)
     reportedNonce = chainNonce()
     expect(await payment.checkOutcome(), field).toBe('absent')
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(payment, buildFresh)).toMatchObject({ completed: false })
+    expect(await prepareWalletPayment(payment, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
     expect(buildFresh).toHaveBeenCalledOnce()
   })
 
@@ -265,49 +271,9 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     })
   }
 
-  it.each(['completed', 'absent'] as const)('continues the current operation after tab A clears a foreign cached blocker that is %s', async outcome => {
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
-    const buildOther = vi.fn((lockHeld = false) => action === 'tip'
-      ? buildWalletPurchase(OWNER, BigInt(100), BigInt(1000), lockHeld)
-      : buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld))
-    const otherContext = { ...context, key: 'different payment' }
-    const blocked = await prepareWalletPayment(undefined, buildOther, otherContext)
-    if (blocked.completed) throw new Error('Foreign payment was reported completed')
-    expect(blocked).toMatchObject({ unresolved: true, different: true, payment: { key: context.key, kind: action } })
-    expect(buildOther).not.toHaveBeenCalled()
-    if (outcome === 'completed') {
-      recordReceipt(first.payment)
-      expect(execute(first.payment.request.nonce, true)).toBe(true)
-      reportedNonce = chainNonce()
-    } else reportedNonce = BigInt(126)
-    await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
-    expect(storedPayments()).toEqual([])
-    expect(await prepareLocalWalletPayment(blocked.payment, otherContext)).toEqual({ completed: false })
-    const next = await prepareWalletPayment(blocked.payment, buildOther, otherContext)
-    expect(next).toMatchObject({ completed: false, payment: { key: otherContext.key, kind: action === 'tip' ? 'purchase' : 'tip' } })
-    if (next.completed || next.unresolved) throw new Error('Current operation was not prepared')
-    expect(next.payment.request.reservationId).not.toBe(first.payment.request.reservationId)
-    expect(buildOther).toHaveBeenCalledOnce()
-    expect(storedPayments()).toHaveLength(1)
-    expect(payments).toBe(outcome === 'completed' ? 1 : 0)
-  })
-
-  it('keeps a foreign cached blocker tagged as different when its shared record disappears before confirmation', async () => {
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
-    await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
-    const otherContext = { ...context, key: 'different payment' }
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(first.payment, buildFresh, otherContext)).toEqual({
-      completed: false, payment: first.payment, unresolved: true, different: true,
-    })
-    expect(buildFresh).not.toHaveBeenCalled()
-  })
-
   it('restores nonce 101 after a fresh-module reload without building 102, including local fallback', async () => {
     const prepared = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (prepared.completed) throw new Error('No payment was built')
+    if (prepared.completed || prepared.unproven) throw new Error('No payment was built')
     const originalBytes = prepared.payment.request.bytes
     vi.resetModules()
     const fresh = await import('./wallet-payment-service')
@@ -317,7 +283,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     vi.spyOn(freshHistory.tipHistoryService, 'getTipsSentWithProof').mockImplementation(async () => ({ tips: sentTips, height: historyHeight }))
     const buildFresh = vi.fn(buildCachedPayment)
     const restored = await fresh.prepareWalletPayment(undefined, buildFresh, context)
-    if (restored.completed || restored.unresolved) throw new Error('The original request was not restored')
+    if (restored.completed || restored.unproven || restored.unresolved) throw new Error('The original request was not restored')
     expect(buildFresh).not.toHaveBeenCalled()
     expect(restored.payment.request.bytes).toEqual(originalBytes)
     expect(restored.payment.request.nonce).toBe(BigInt(101))
@@ -327,66 +293,36 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(payments).toBe(1)
   })
 
-  it('blocks a different unresolved payment until the explicit another-payment action', async () => {
+  it('reports a completed persisted record even after unrelated writes pruned its pending nonce, keeping it until shown', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
-    const buildOther = vi.fn((lockHeld = false) => action === 'tip'
-      ? buildWalletPurchase(OWNER, BigInt(100), BigInt(1000), lockHeld)
-      : buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld))
-    const anotherContext = { ...context, key: 'different payment' }
-    const blocked = await prepareWalletPayment(undefined, buildOther, anotherContext)
-    expect(blocked).toMatchObject({ completed: false, unresolved: true, different: true })
-    expect(buildOther).not.toHaveBeenCalled()
-    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
-    const allowed = await prepareWalletPayment(undefined, buildOther, { ...anotherContext, allowAnother: new Set([first.payment.request.reservationId]) })
-    if (allowed.completed || allowed.unresolved) throw new Error('Explicit new payment was blocked')
-    expect(allowed.payment.request.nonce).toBe(BigInt(102))
-    expect(storedPayments()).toHaveLength(2)
-    expect(storedPayments()[0].reservationId).toBe(first.payment.request.reservationId)
-  })
-
-  it('clears a completed persisted record even after unrelated writes pruned its pending nonce', async () => {
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
+    if (first.completed || first.unproven) throw new Error('No original payment')
     expect(execute(BigInt(101), true)).toBe(true)
     recordPayment()
     reportedNonce = chainNonce()
     await settlePendingWrites(OWNER, YAPPR_CONTRACT_ID)
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toHaveLength(0)
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
-    expect(storedPayments()).toEqual([])
+    expect(storedPayments()).toHaveLength(1)
   })
 
-  it('does not complete a newer absent request from an older identical payment receipt', async () => {
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
-    const second = await prepareWalletPayment(undefined, buildCachedPayment, {
-      ...context, allowAnother: new Set([first.payment.request.reservationId]),
-    })
-    if (second.completed || second.unresolved) throw new Error('No second payment')
-    recordReceipt(first.payment)
-    reportedNonce = BigInt(127)
-    await clearPersistedWalletPayment(OWNER, second.payment.request.reservationId)
-    // Not completed by the older receipt, and with nothing stored to settle it by, never replaced without "send another".
-    expect(await prepareLocalWalletPayment(second.payment, context)).toEqual({ completed: false, payment: second.payment, unresolved: true })
-    expect(await prepareLocalWalletPayment(second.payment, { ...context, allowAnother: new Set([first.payment.request.reservationId, second.payment.request.reservationId]) })).toEqual({ completed: false })
-    expect(storedPayments()).toEqual([])
-  })
-
-  it.each((['executable', 'completed', 'completed and cleared', 'unknown', 'foreign'] as const).flatMap(state =>
-    [false, true].map(cached => ({ state, cached }))
-  ))('reconciles a $state replacement exposed by tab B while tab A acquires its local signer (cached: $cached)', async ({ state, cached }) => {
+  /** Tabs A and B both show the QR at 101; its nonce is then retired without it (proved absent). */
+  const shownThenRetired = async () => {
     const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (original.completed) throw new Error('No original payment')
+    if (original.completed || original.unproven) throw new Error('No original payment')
     for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
     reportedNonce = chainNonce()
-    if (!cached) {
-      // A local payment would replace it: it stays, for that payment to mark, until a QR replacement takes its place.
-      expect(await prepareLocalWalletPayment(original.payment, context)).toEqual({ completed: false, replaces: [original.payment.request.reservationId] })
-      expect(storedPayments()).toHaveLength(1)
-    }
+    return original.payment
+  }
+
+  it.each((['executable', 'completed', 'completed and cleared', 'unknown'] as const).flatMap(state =>
+    [false, true].map(cached => ({ state, cached }))
+  ))('settles a local confirmation by a $state QR another tab shows while it waits for its key (cached: $cached)', async ({ state, cached }) => {
+    const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (original.completed || original.unproven) throw new Error('No original payment')
+    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
+    reportedNonce = chainNonce()
 
     let resumeSigner = () => {}
     let signerStarted = () => {}
@@ -402,25 +338,20 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     await started
     let replacement: WalletPayment
     try {
+      // Tab B checks the QR again: proved unpaid, so it shows a new one.
       const expose = vi.fn()
-      const prepared = await prepareWalletPayment(original.payment, buildCachedPayment, {
-        ...context, key: state === 'foreign' ? 'another payment' : context.key, expose,
-      })
-      if (prepared.completed || prepared.unresolved) throw new Error('No replacement QR')
+      const prepared = await prepareWalletPayment(original.payment, buildCachedPayment, { ...context, expose })
+      if (prepared.completed || prepared.unproven || prepared.unresolved) throw new Error('No new QR')
       replacement = prepared.payment
-      expect(expose).toHaveBeenCalledOnce()
       expect(expose).toHaveBeenCalledWith(replacement)
       expect(replacement.request.nonce).toBe(BigInt(127))
-      expect(storedPayments()).toHaveLength(1)
+      expect(storedPayments().map(record => record.reservationId)).toEqual([replacement.request.reservationId])
       if (state === 'completed' || state === 'completed and cleared') {
         expect(execute(replacement.request.nonce, true)).toBe(true)
         recordReceipt(replacement)
         reportedNonce = chainNonce()
-        // Tab B saw its QR complete and cleared the record before tab A had its signer.
-        if (state === 'completed and cleared') {
-          await clearPersistedWalletPayment(OWNER, replacement.request.reservationId)
-          expect(storedPayments()).toEqual([])
-        }
+        // Tab B saw its QR paid and showed that before tab A had its key.
+        if (state === 'completed and cleared') await clearPersistedWalletPayment(OWNER, replacement.request.reservationId)
       } else if (state === 'unknown') {
         for (let nonce = BigInt(128); nonce <= BigInt(152); nonce++) expect(execute(nonce, false)).toBe(true)
         reportedNonce = chainNonce()
@@ -431,199 +362,84 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(sdk.tokens.transfer).not.toHaveBeenCalled()
     expect(sdk.tokens.directPurchase).not.toHaveBeenCalled()
     if (state === 'executable') {
+      // Signed at the new QR's own nonce: only one of the two can execute.
       expect(result).toEqual({ success: true })
       expect(execute(replacement.request.nonce, true)).toBe(false)
       expect(payments).toBe(1)
       const transition = StateTransition.fromBytes(localBytes)
       try { expect(transition.identityContractNonce).toBe(replacement.request.nonce) }
       finally { transition.free() }
-      expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: context.key, request: expect.objectContaining({ nonce: BigInt(127) }) }))
-      expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
-    } else if (state === 'completed' || state === 'completed and cleared') {
+    } else if (state === 'completed') {
       expect(result).toEqual({ success: true })
       expect(broadcast).not.toHaveBeenCalled()
       expect(payments).toBe(1)
-      expect(storedPayments()).toEqual([])
-      expect(onPrepared).toHaveBeenCalledWith(undefined)
-    } else {
+      expect(onPrepared).toHaveBeenCalledWith({ completed: true, payment: expect.objectContaining({ request: expect.objectContaining({ nonce: BigInt(127) }) }) })
+    } else if (state === 'unknown') {
+      // The new QR's outcome can't be proved just now: checked again later, nothing sent meanwhile.
       expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-      expect(result.error).toContain(state === 'foreign' ? 'An earlier payment' : 'This payment')
       expect(broadcast).not.toHaveBeenCalled()
       expect(payments).toBe(0)
-      expect(storedPayments()).toHaveLength(1)
-      expect(onPrepared).toHaveBeenCalledWith(expect.objectContaining({ key: replacement.key }))
-      expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(127))
+    } else {
+      // Its own QR proved unpaid and nothing stored after it: the user decides.
+      expect(result).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID', error: MAY_HAVE_PAID_MESSAGE })
+      expect(broadcast).not.toHaveBeenCalled()
+      expect(payments).toBe(1)
     }
   })
 
-  /** Tabs A and B both show the QR at 101; its nonce is then retired without it (proved absent). */
-  const shownThenRetired = async () => {
-    const original = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (original.completed) throw new Error('No original payment')
-    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
-    reportedNonce = chainNonce()
-    return original.payment
-  }
-
-  it('settles a QR another tab still shows by the local payment that replaced it', async () => {
-    const original = await shownThenRetired()
-    // Tab A pays locally at a fresh nonce, in place of the request proved absent.
-    const sends = () => broadcast.mock.calls.length + sdk.tokens.transfer.mock.calls.length + sdk.tokens.directPurchase.mock.calls.length
-    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
-    expect(sends()).toBe(1)
-    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'completed' } }])
-    // An unrelated payment leaves the mark for the tab still showing it.
-    const otherContext = { ...context, key: 'different payment' }
-    expect(await prepareLocalWalletPayment(undefined, otherContext)).toEqual({ completed: false })
-    expect(storedPayments()).toHaveLength(1)
-    // Tabs B and C check their QR again: done, with nothing new to scan.
+  it('never builds a second QR for a payment another tab shows, nor signs it at a fresh nonce', async () => {
+    const inA = await prepareWalletPayment(undefined, buildCachedPayment, context)
+    if (inA.completed || inA.unproven) throw new Error('No QR in tab A')
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
-    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
+    const inB = await prepareWalletPayment(undefined, buildFresh, context)
+    if (inB.completed || inB.unproven) throw new Error('No QR in tab B')
     expect(buildFresh).not.toHaveBeenCalled()
-    expect(storedPayments()).toHaveLength(1)
-    expect(sends()).toBe(1)
-    // A new payment of the same amount is its own: neither shown as paid nor blocked by the mark, even when reads fail.
-    sdk.documents.getWithProof.mockRejectedValueOnce(new Error('proof unavailable'))
-    const fresh = await prepareWalletPayment(undefined, buildFresh, context)
-    if (fresh.completed || fresh.unresolved) throw new Error('The new payment was not offered')
-    expect(buildFresh).toHaveBeenCalledOnce()
-    expect(fresh.payment.request.nonce).toBeGreaterThan(original.request.nonce)
-    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, payment: { request: { reservationId: fresh.payment.request.reservationId } } })
+    expect(inB.payment.request.reservationId).toBe(inA.payment.request.reservationId)
+    expect(inB.payment.request.bytes).toEqual(inA.payment.request.bytes)
+    expect(await sendPayment({ key: context.key })).toEqual({ success: true })
+    expect(execute(inA.payment.request.nonce, true)).toBe(false)
+    expect(payments).toBe(1)
   })
 
-  it('keeps a QR another tab shows unresolved while the local payment that replaced it may still go through', async () => {
-    const original = await shownThenRetired()
-    const prepared = await prepareLocalWalletPayment(original, context)
-    expect(prepared).toEqual({ completed: false, replaces: [original.request.reservationId] })
-    // Tab A's page died after marking it, before the answer.
-    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'sending')
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    // Only the user's own "send another" goes past it.
-    const next = await prepareWalletPayment(original, buildFresh, { ...context, allowAnother: new Set([original.request.reservationId]) })
-    expect(next).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
-  })
-
-  it('shows a fresh QR in place of one whose local replacement was refused', async () => {
-    const original = await shownThenRetired()
-    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'failed')
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
-    expect(buildFresh).toHaveBeenCalledOnce()
-  })
-
-  it('keeps a QR another tab shows unresolved when the local payment that replaced it loses its answer', async () => {
-    const original = await shownThenRetired()
-    const lost = new Error('request timed out')
-    broadcast.mockRejectedValueOnce(lost)
-    sdk.tokens.transfer.mockRejectedValueOnce(lost)
-    sdk.tokens.directPurchase.mockRejectedValueOnce(lost)
-    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'sending' } }])
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-  })
-
-  it('settles a local confirmation by a matching QR payment another tab checked again and cleared during it', async () => {
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
+  it('reports a paid QR only once the confirmation that shows it clears it, so an abandoned check loses nothing', async () => {
     const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
+    if (shown.completed || shown.unproven) throw new Error('No QR payment')
     expect(execute(shown.payment.request.nonce, true)).toBe(true)
     recordReceipt(shown.payment)
     reportedNonce = chainNonce()
-    expect(await prepareWalletPayment(shown.payment, buildCachedPayment, context)).toEqual({ completed: true })
+    const buildFresh = vi.fn(buildCachedPayment)
+    // A check after a reload, abandoned before it showed anything.
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: true, payment: { request: { reservationId: shown.payment.request.reservationId } } })
+    expect(storedPayments()).toHaveLength(1)
+    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: true })
+    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
     expect(storedPayments()).toEqual([])
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: true })
+    expect(buildFresh).not.toHaveBeenCalled()
     expect(payments).toBe(1)
   })
 
-  it('settles a local confirmation already waiting when another tab pays the same payment as a local replacement', async () => {
+  it('asks before paying again for a shown QR proved unpaid with nothing stored after it, and lets other payments through', async () => {
     const original = await shownThenRetired()
-    const waiting = await beginLocalWalletPayment(OWNER, context.key)
-    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: waiting })).toEqual({ completed: true })
-    const later = await beginLocalWalletPayment(OWNER, context.key)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: later })).toEqual({ completed: false })
-  })
-
-  it('keeps the original QR linked when a refused local replacement is retried locally', async () => {
-    const original = await shownThenRetired()
-    markReplacedWalletPayments(OWNER, [original.request.reservationId], 'failed')
-    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
-    expect(storedPayments()).toMatchObject([{ reservationId: original.request.reservationId, replacedBy: { state: 'completed' } }])
+    // Another tab proved it unpaid and cleared it; what it did next can't be told here.
+    await clearPersistedWalletPayment(OWNER, original.request.reservationId)
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: false, unproven: true })
+    expect(await prepareLocalWalletPayment(original, context)).toEqual({ completed: false, unproven: true })
     expect(buildFresh).not.toHaveBeenCalled()
-  })
-
-  it('keeps a confirmation bound to the QR it showed when another tab shows a new request of the same payment', async () => {
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    // Tab B chose to send another past it and left its new QR unpaid.
-    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, allowAnother: new Set([shown.payment.request.reservationId]) })
-    if (other.completed) throw new Error('No second QR payment')
-    expect(storedPayments()).toHaveLength(2)
-    const buildFresh = vi.fn(buildCachedPayment)
-    const again = await prepareWalletPayment(shown.payment, buildFresh, context)
-    if (again.completed) throw new Error('Reported completed')
-    expect(again.payment.request.reservationId).toBe(shown.payment.request.reservationId)
-    const local = await prepareLocalWalletPayment(shown.payment, context)
-    if (local.completed) throw new Error('Reported completed')
-    expect(local.payment?.request.reservationId).toBe(shown.payment.request.reservationId)
-    expect(buildFresh).not.toHaveBeenCalled()
-  })
-
-  it('pays nothing more for a shown QR an unrelated payment cleared before a local retry', async () => {
-    const original = await shownThenRetired()
-    // A third tab prepares a different payment, clearing the request proved absent.
     expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false })
-    expect(storedPayments()).toEqual([])
-    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    expect(broadcast).not.toHaveBeenCalled()
-    expect(sdk.tokens.transfer).not.toHaveBeenCalled()
-    expect(sdk.tokens.directPurchase).not.toHaveBeenCalled()
-  })
-
-  it('pays nothing more for a shown QR whose replacement QR another tab paid and cleared', async () => {
-    const original = await shownThenRetired()
-    // Tab B opens the same payment: the request proved absent is dropped and a new QR shown, paid and cleared.
-    const inB = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (inB.completed || inB.unresolved) throw new Error('No QR in tab B')
-    expect(execute(inB.payment.request.nonce, true)).toBe(true)
-    recordReceipt(inB.payment)
-    reportedNonce = chainNonce()
-    await clearPersistedWalletPayment(OWNER, inB.payment.request.reservationId)
-    // Tab A, still showing the original, checks again or confirms locally.
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-    expect(payments).toBe(1)
-  })
-
-  it('keeps a shown QR unresolved once the mark of the local payment that replaced it has expired', async () => {
-    const original = await shownThenRetired()
-    const sends = () => broadcast.mock.calls.length + sdk.tokens.transfer.mock.calls.length + sdk.tokens.directPurchase.mock.calls.length
-    expect(await sendPayment({ key: context.key, cached: original })).toEqual({ success: true })
-    expect(sends()).toBe(1)
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60_000 + 1000)
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    expect(await sendPayment({ key: context.key, cached: original })).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
-    expect(sends()).toBe(1)
+    const again = await prepareWalletPayment(original, buildFresh, { ...context, payAgain: true })
+    if (again.completed || again.unproven) throw new Error('Not paid again')
+    expect(buildFresh).toHaveBeenCalledOnce()
+    expect(again.payment.request.nonce).toBe(BigInt(127))
+    // The new request is stored and protected like any other: a fresh confirmation shows it again.
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { reservationId: again.payment.request.reservationId } } })
+    expect(buildFresh).toHaveBeenCalledOnce()
   })
 
   /** The shown request's stored transition becomes unreadable; its nonce stays readable. */
   const corruptStoredRequest = async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No QR payment')
+    if (first.completed || first.unproven) throw new Error('No QR payment')
     const key = [...storage.keys()].find(item => item.startsWith('yappr:wallet-payments:'))
     if (!key) throw new Error('No stored requests')
     const records = JSON.parse(storage.get(key) ?? '[]') as { bytes: string }[]
@@ -632,201 +448,84 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     return { first: first.payment, key }
   }
 
-  it('keeps an unreadable stored request as an earlier payment that "send another" gets past', async () => {
-    const { first } = await corruptStoredRequest()
-    const otherContext = { ...context, key: 'different payment' }
-    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: first.request.reservationId } } })
-    expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([first.request.reservationId]) })).toEqual({ completed: false })
-  })
-
-  it('reads stored requests that cannot be parsed as one earlier payment that "send another" resets', async () => {
-    const { key } = await corruptStoredRequest()
-    storage.set(key, '{')
-    const buildFresh = vi.fn(buildCachedPayment)
-    const blocked = await prepareWalletPayment(undefined, buildFresh, context)
-    if (blocked.completed || !blocked.unresolved) throw new Error('Not held back')
-    expect(blocked.different).toBe(true)
-    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    const allowAnother = new Set([blocked.payment.request.reservationId])
-    const next = await prepareWalletPayment(undefined, buildFresh, { ...context, allowAnother })
-    expect(next).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
-    expect(storedPayments()).toHaveLength(1)
-  })
-
-  it('keeps an unreadable stored request that may have paid unresolved until the user sends another', async () => {
+  it('asks before paying again past an unreadable stored request of the same payment, paid or not, and never for another payment', async () => {
     const { first } = await corruptStoredRequest()
     // The wallet paid it before the reload.
     expect(execute(first.request.nonce, true)).toBe(true)
     recordReceipt(first)
     reportedNonce = chainNonce()
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
+    expect(await prepareLocalWalletPayment(undefined, context)).toEqual({ completed: false, unproven: true })
+    expect(await sendPayment({ key: context.key })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID' })
     expect(buildFresh).not.toHaveBeenCalled()
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60_000 + 1000)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    const allowAnother = new Set([first.request.reservationId])
-    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, allowAnother })).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
-    expect(buildFresh).toHaveBeenCalledOnce()
-    // Sending another past it is this confirmation's choice: every other one is still held back by it.
+    expect(payments).toBe(1)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false })
+    const again = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })
+    expect(again).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
+    // The choice was this confirmation's: the unreadable request stays, and the next one asks again.
     expect(storedPayments().map(record => record.reservationId)).toContain(first.request.reservationId)
-    const otherContext = { ...context, key: 'different payment' }
-    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: first.request.reservationId } } })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
   })
 
-  it.each([['an empty string', ''], ['an entry without a nonce', '[{}]']])('reads stored requests holding %s as an unknown earlier payment', async (_label, raw) => {
+  it.each([['that cannot be parsed', '{'], ['holding an empty string', ''], ['holding an entry without a nonce', '[{}]']])('asks every confirmation before paying again past stored requests %s', async (_label, raw) => {
     const { key } = await corruptStoredRequest()
     storage.set(key, raw)
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true, different: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false, unproven: true })
     expect(buildFresh).not.toHaveBeenCalled()
+    const next = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })
+    expect(next).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
+    expect(storedPayments()).toHaveLength(1)
+    // Set aside, not dropped: a confirmation that hasn't chosen still asks.
+    expect([...storage.entries()].some(([name, value]) => name !== key && name.startsWith('yappr:wallet-payments:') && value === JSON.stringify([raw]))).toBe(true)
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false, unproven: true })
   })
 
-  it('sets aside only the unreadable part of the stored requests when the user sends another', async () => {
+  it('keeps every readable stored request when a confirmation pays again past an unreadable one', async () => {
     const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
+    if (shown.completed || shown.unproven) throw new Error('No QR payment')
     const key = [...storage.keys()].find(item => item.startsWith('yappr:wallet-payments:'))
     if (!key) throw new Error('No stored requests')
     const raw = JSON.stringify([...JSON.parse(storage.get(key) ?? '[]') as unknown[], { reservationId: 'broken' }])
     storage.set(key, raw)
-    const otherContext = { ...context, key: 'different payment' }
-    const blocked = await prepareLocalWalletPayment(undefined, otherContext)
-    if (blocked.completed || !blocked.payment) throw new Error('Not held back')
-    // Past the unreadable part, the readable request it held still holds this payment back.
-    expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([blocked.payment.request.reservationId]) }))
-      .toMatchObject({ completed: false, unresolved: true, different: true, payment: { request: { reservationId: shown.payment.request.reservationId } } })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, payAgain: true }))
+      .toMatchObject({ completed: false, payment: { request: { reservationId: shown.payment.request.reservationId } } })
     expect(storedPayments().map(record => record.reservationId)).toEqual([shown.payment.request.reservationId])
-    expect([...storage.entries()].some(([name, value]) => name !== key && name.startsWith('yappr:wallet-payments:') && value === JSON.stringify([raw]))).toBe(true)
   })
 
-  it('keeps unreadable stored requests one confirmation sent past holding back every other confirmation', async () => {
-    const { key } = await corruptStoredRequest()
-    storage.set(key, '{')
-    const otherContext = { ...context, key: 'different payment' }
-    const blocked = await prepareLocalWalletPayment(undefined, otherContext)
-    if (blocked.completed || !blocked.payment) throw new Error('Not held back')
-    expect(await prepareLocalWalletPayment(undefined, { ...otherContext, allowAnother: new Set([blocked.payment.request.reservationId]) })).toEqual({ completed: false })
-    // This payment's confirmation never sent past them: it still is held back by them.
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true, different: true })
-    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, unresolved: true, different: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-  })
-
-  it('reports a QR paid after its tab closed once its payment is tried again, even after a different payment checked it', async () => {
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    // The tab closes; the wallet pays the QR later.
-    expect(execute(shown.payment.request.nonce, true)).toBe(true)
-    recordReceipt(shown.payment)
-    reportedNonce = chainNonce()
-    const otherContext = { ...context, key: 'different payment' }
-    const buildOther = vi.fn((lockHeld = false) => action === 'tip'
-      ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld)
-      : buildWalletPurchase(OWNER, BigInt(200), BigInt(2000), lockHeld))
-    const other = await prepareWalletPayment(undefined, buildOther, otherContext)
-    if (other.completed || other.unresolved) throw new Error('The different payment was held back')
-    expect(await prepareLocalWalletPayment(undefined, otherContext)).toMatchObject({ completed: false })
-    // After a reload, with nothing cached, trying the first payment again reports it paid instead of a new QR.
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    expect(storedPayments().map(record => record.reservationId)).toEqual([other.payment.request.reservationId])
-    expect(payments).toBe(1)
-  })
-
-  it('keeps the QR a modal showed when a different payment holds its confirmation back', async () => {
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    let held = holdWalletRequest(undefined, shown.payment, false)
-    // Tab B sends past it and shows a different payment's QR.
-    const otherContext = { ...context, key: 'different payment' }
-    const buildOther = (lockHeld = false) => action === 'tip'
-      ? buildWalletTip(OWNER, OTHER, BigInt(100), undefined, 'different payment', lockHeld)
-      : buildWalletPurchase(OWNER, BigInt(200), BigInt(2000), lockHeld)
-    const other = await prepareWalletPayment(undefined, buildOther, { ...otherContext, allowAnother: new Set([shown.payment.request.reservationId]) })
-    if (other.completed) throw new Error('No other QR payment')
-    // Tab A checks again while both are live: the other payment holds it back, but doesn't replace what it showed.
-    const blocked = await prepareWalletPayment(held.payment, buildCachedPayment, context)
-    if (blocked.completed || !blocked.different) throw new Error('Not held back by the other payment')
-    held = holdWalletRequest(held, blocked.payment, true)
-    expect(held.payment.request.reservationId).toBe(shown.payment.request.reservationId)
-    // Both land, and tab B's next check clears its own record, keeping the one tab A showed.
-    for (const payment of [shown.payment, other.payment]) {
-      expect(execute(payment.request.nonce, true)).toBe(true)
-      recordReceipt(payment)
-    }
-    reportedNonce = chainNonce()
-    await prepareWalletPayment(undefined, buildOther, otherContext)
-    expect(storedPayments().map(record => record.reservationId)).toEqual([shown.payment.request.reservationId])
-    const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(held.payment, buildFresh, context)).toEqual({ completed: true })
-    expect(buildFresh).not.toHaveBeenCalled()
-    expect(storedPayments()).toEqual([])
-    // "Send another" goes past the payment holding it back, and keeps what it showed.
-    const past = sendPastWalletRequest({ ...held, blocker: other.payment })
-    expect(past).toEqual({ past: other.payment.request.reservationId, keep: { payment: held.payment, foreign: false } })
-  })
-
-  it('never settles a confirmation of a shown QR by a payment another tab chose to send in its place', async () => {
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    // Tab A moves to local signing of the QR it showed and waits at the key sheet.
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
-    // Tab B chooses to send another, and its new QR is paid and cleared.
-    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, allowAnother: new Set([shown.payment.request.reservationId]) })
-    if (other.completed) throw new Error('No second QR payment')
-    expect(execute(other.payment.request.nonce, true)).toBe(true)
-    recordReceipt(other.payment)
-    reportedNonce = chainNonce()
-    await clearPersistedWalletPayment(OWNER, other.payment.request.reservationId)
-    expect(await prepareLocalWalletPayment(shown.payment, { ...context, attemptId })).toMatchObject({ completed: false, payment: { request: { reservationId: shown.payment.request.reservationId } } })
-  })
-
-  it('shows no new QR while an unreadable stored request may still execute, nor once its nonce is used without "send another"', async () => {
+  it('asks before paying again when a request of the same payment may have paid, even with a newer one stored after it', async () => {
     const { first } = await corruptStoredRequest()
-    // The same tab after a reload opens the same payment again.
+    // Another tab chose to pay again and shows a new QR, then closes without it being paid.
+    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, payAgain: true })
+    if (other.completed || other.unproven) throw new Error('No new QR')
+    expect(other.payment.request.nonce).toBeGreaterThan(first.request.nonce)
+    // After a reload, neither signing method takes the newer request without this confirmation choosing to.
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
+    expect(await sendPayment({ key: context.key })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID' })
+    expect(broadcast).not.toHaveBeenCalled()
     expect(buildFresh).not.toHaveBeenCalled()
-    for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
-    reportedNonce = chainNonce()
-    expect(identityContractNonceConsumed(reportedNonce, first.request.nonce)).toBe(true)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unresolved: true })
+    // Once it chooses, the newer request is shown again rather than a third one built.
+    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })).toMatchObject({ completed: false, payment: { request: { reservationId: other.payment.request.reservationId } } })
     expect(buildFresh).not.toHaveBeenCalled()
-    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, allowAnother: new Set([first.request.reservationId]) })).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(127) } } })
-    expect(buildFresh).toHaveBeenCalledOnce()
-    expect(storedPayments().map(record => record.reservationId)).toContain(first.request.reservationId)
   })
 
   it('takes over a stored request of the same payment that can still execute once its own was proved absent', async () => {
     const original = await shownThenRetired()
     // Tab B opens the same payment: the request proved absent gives way to a new QR, not yet paid.
     const inB = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (inB.completed || inB.unresolved) throw new Error('No QR in tab B')
+    if (inB.completed || inB.unproven || inB.unresolved) throw new Error('No QR in tab B')
     const buildFresh = vi.fn(buildCachedPayment)
     expect(await prepareWalletPayment(original, buildFresh, context)).toMatchObject({ completed: false, payment: { request: { reservationId: inB.payment.request.reservationId } } })
     expect(await prepareLocalWalletPayment(original, context)).toMatchObject({ completed: false, payment: { request: { reservationId: inB.payment.request.reservationId } } })
     expect(buildFresh).not.toHaveBeenCalled()
   })
 
-  it('never takes a payment the user chose to send past as the completion of the new one', async () => {
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No QR payment')
-    const allowAnother = new Set([first.payment.request.reservationId])
-    // The old one completes before the new one is confirmed, its record still stored.
-    expect(execute(first.payment.request.nonce, true)).toBe(true)
-    recordReceipt(first.payment)
-    reportedNonce = chainNonce()
-    expect(await prepareLocalWalletPayment(undefined, { ...context, allowAnother })).toEqual({ completed: false })
-    expect(storedPayments()).toEqual([])
-  })
-
   it('keeps a shown request through a tab of the earlier build rewriting the nonce reservation', async () => {
     const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
+    if (shown.completed || shown.unproven) throw new Error('No QR payment')
     const key = [...storage.keys()].find(item => item.startsWith('yappr:nonce-reservation:'))
     if (!key) throw new Error('No reservation')
     // The earlier build writes the reservation as mark, floor and pending only (a document at 102, say).
@@ -834,13 +533,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     storage.set(key, JSON.stringify({ mark: '102', floor: base.floor, pending: base.pending }))
     const buildFresh = vi.fn(buildCachedPayment)
     const again = await prepareWalletPayment(undefined, buildFresh, context)
-    if (again.completed) throw new Error('Reported completed')
+    if (again.completed || again.unproven) throw new Error('Reported completed')
     expect(buildFresh).not.toHaveBeenCalled()
     expect(again.payment.request.reservationId).toBe(shown.payment.request.reservationId)
   })
 
   it('takes liveness and outcome from one read of the nonce', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     const before = sdk.identities.contractNonceWithProof.mock.calls.length
     // Executable at that read; the wallet pays just after it.
     sdk.identities.contractNonceWithProof.mockImplementationOnce(async () => {
@@ -851,58 +550,9 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       return answer
     })
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached })
     expect(sdk.identities.contractNonceWithProof.mock.calls.length - before).toBe(1)
     expect(buildFresh).not.toHaveBeenCalled()
-  })
-
-  it('settles a local confirmation by a matching payment completed during it, unless the user asked to send another', async () => {
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    expect(execute(shown.payment.request.nonce, true)).toBe(true)
-    recordReceipt(shown.payment)
-    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: true })
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId, allowAnother: new Set([shown.payment.request.reservationId]) })).toEqual({ completed: false })
-  })
-
-  it('still settles a local confirmation by a later matching completion after one the user chose to send past', async () => {
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
-    const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No QR payment')
-    expect(execute(first.payment.request.nonce, true)).toBe(true)
-    recordReceipt(first.payment)
-    await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
-    const allowAnother = new Set([first.payment.request.reservationId])
-    const second = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, allowAnother })
-    if (second.completed) throw new Error('No second QR payment')
-    expect(second.payment.request.reservationId).not.toBe(first.payment.request.reservationId)
-    reportedNonce = chainNonce()
-    expect(execute(second.payment.request.nonce, true)).toBe(true)
-    recordReceipt(second.payment)
-    await clearPersistedWalletPayment(OWNER, second.payment.request.reservationId)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId, allowAnother })).toEqual({ completed: true })
-  })
-
-  it('reads unreadable attempt storage as none, so a new local payment can still start', async () => {
-    storage.set(scopedKey(`wallet-payment-attempts:v1:${OWNER}`), '{')
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: false })
-  })
-
-  it('lets a new local payment go ahead after a matching one completed before it began', async () => {
-    const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (shown.completed) throw new Error('No QR payment')
-    expect(execute(shown.payment.request.nonce, true)).toBe(true)
-    recordReceipt(shown.payment)
-    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
-    const attemptId = await beginLocalWalletPayment(OWNER, context.key)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId })).toEqual({ completed: false })
-  })
-
-  it('signs nothing for a local confirmation whose record is gone', async () => {
-    expect(await prepareLocalWalletPayment(undefined, { ...context, attemptId: 'never-recorded' })).toEqual({ completed: false, unresolved: true })
   })
 
   it('serializes two tabs preparing the same payment under the reservation lock', async () => {
@@ -911,7 +561,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       prepareWalletPayment(undefined, buildFresh, context),
       prepareWalletPayment(undefined, buildFresh, context),
     ])
-    if (first.completed || second.completed) throw new Error('No payment to compare')
+    if (first.completed || first.unproven || second.completed || second.unproven) throw new Error('No payment to compare')
     expect(first.payment.request.bytes).toEqual(second.payment.request.bytes)
     expect(buildFresh).toHaveBeenCalledOnce()
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
@@ -922,13 +572,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       const chainTime = Date.now()
       vi.useFakeTimers()
       vi.setSystemTime(chainTime + 180_000)
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       recordPayment()
       sentTips = [{ id: 'landed', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: 'same payment', createdAt: new Date(chainTime) }]
       reportedNonce = BigInt(126)
       expect(await cached.checkOutcome()).toBe('completed')
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toMatchObject({ completed: true })
       expect(buildFresh).not.toHaveBeenCalled()
     })
 
@@ -939,19 +589,19 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       reportedNonce = BigInt(101)
       sentTips = [{ id: 'literal-note', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: note, postId: OTHER, targetKind: 'post', createdAt: new Date() }]
       expect(await payment.checkOutcome()).toBe('completed')
-      expect(await prepareWalletPayment(payment, buildCachedPayment)).toEqual({ completed: true })
+      expect(await prepareWalletPayment(payment, buildCachedPayment, context)).toMatchObject({ completed: true })
     })
 
     it('clears a proved-absent persisted record before building its replacement', async () => {
       const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-      if (first.completed) throw new Error('No original payment')
+      if (first.completed || first.unproven) throw new Error('No original payment')
       reportedNonce = BigInt(126)
       const buildFresh = vi.fn(async (lockHeld = false) => {
         expect(storedPayments()).toEqual([])
         return buildCachedPayment(lockHeld)
       })
       const next = await prepareWalletPayment(undefined, buildFresh, context)
-      if (next.completed || next.unresolved) throw new Error('Proved-absent payment was retained')
+      if (next.completed || next.unproven || next.unresolved) throw new Error('Proved-absent payment was retained')
       expect(next.payment.request.nonce).toBe(BigInt(127))
       expect(storedPayments()).toEqual([{ ...storedPayments()[0], nonce: '127' }])
       expect(storedPayments()[0].reservationId).not.toBe(first.payment.request.reservationId)
@@ -960,7 +610,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     it.each(['unreadable', 'incomplete'])('uses the exact receipt even when sender history is %s', async state => {
       if (state === 'unreadable') vi.mocked(tipHistoryService.getTipsSentWithProof).mockRejectedValueOnce(new Error('no baseline'))
       else sentTips = Array.from({ length: TIP_PAGE_LIMIT }, (_, index) => ({ id: String(index), from: OWNER, to: OTHER, amount: BigInt(1), createdAt: new Date() }))
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       recordPayment()
       reportedNonce = BigInt(101)
       expect(await cached.checkOutcome()).toBe('completed')
@@ -969,7 +619,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
     it('does not mistake an identical transfer from the baseline for a new tip', async () => {
       recordPayment()
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       reportedNonce = BigInt(126)
       expect(await cached.checkOutcome()).toBe('absent')
     })
@@ -977,33 +627,33 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   it('confirms a payment landing after the polling timeout and before Check again', async () => {
     vi.useFakeTimers()
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     expect(await cached.checkOutcome()).toBe('unknown')
     await vi.advanceTimersByTimeAsync(300_001)
     expect(execute(BigInt(101), true)).toBe(true)
     recordPayment()
     reportedNonce = chainNonce()
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toMatchObject({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(payments).toBe(1)
   })
 
   if (action === 'tip') {
     it.each(['wallet retry then local fallback', 'local fallback'] as const)('replaces an expired absent payment for %s, sharing the new nonce', async path => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       for (let nonce = BigInt(102); nonce <= BigInt(126); nonce++) expect(execute(nonce, false)).toBe(true)
       reportedNonce = chainNonce()
       expect(identityContractNonceConsumed(reportedNonce, BigInt(101))).toBe(true)
       const buildFresh = vi.fn(buildCachedPayment)
-      const prepared = await prepareWalletPayment(cached, buildFresh)
+      const prepared = await prepareWalletPayment(cached, buildFresh, context)
       expect(prepared.completed).toBe(false)
-      if (prepared.completed) throw new Error('Absent payment was reported completed')
+      if (prepared.completed || prepared.unproven) throw new Error('Absent payment was reported completed')
       const replacement = prepared.payment
       expect(replacement).not.toBe(cached)
       expect(buildFresh).toHaveBeenCalledOnce()
       if (path === 'wallet retry then local fallback') {
-        const local = await prepareWalletPayment(replacement, buildFresh)
+        const local = await prepareWalletPayment(replacement, buildFresh, context)
         expect(local).toEqual({ completed: false, payment: replacement })
         expect(buildFresh).toHaveBeenCalledOnce()
       }
@@ -1020,11 +670,11 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   }
 
   it('reuses an executable cached request for wallet retry and local fallback without a new nonce', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     expect(execute(BigInt(102), false)).toBe(true)
     reportedNonce = chainNonce()
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(await sendPayment(cached.request)).toEqual({ success: true })
     expect(payments).toBe(1)
@@ -1032,25 +682,25 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   })
 
   it('keeps the original request when the liveness read fails', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     sdk.identities.contractNonceWithProof.mockRejectedValueOnce(new Error('proof unavailable'))
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached, unresolved: true })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached, unresolved: true })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
   })
 
   it('keeps an expired request when the payment outcome read fails', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     reportedNonce = BigInt(126)
     sdk.documents.getWithProof.mockRejectedValueOnce(new Error('receipt unavailable'))
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached, unresolved: true })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached, unresolved: true })
     expect(buildFresh).not.toHaveBeenCalled()
   })
 
   it('reads the outcome after liveness so a payment landing during that read cannot be replaced', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     sdk.identities.contractNonceWithProof.mockImplementationOnce(async () => {
       expect(execute(BigInt(101), true)).toBe(true)
       recordPayment()
@@ -1058,13 +708,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       return { data: reportedNonce, metadata: { height: nonceHeight }, proof: {} }
     })
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toMatchObject({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
   })
 
   if (action === 'purchase') {
     it('confirms the exact purchase receipt even when spending masks its balance rise', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       expect(execute(BigInt(101), true)).toBe(true)
       recordPayment()
       balance -= BigInt(100)
@@ -1072,62 +722,62 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       expect(balance).toBe(BigInt(500))
       expect(await cached.checkOutcome()).toBe('completed')
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: true })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toMatchObject({ completed: true })
       expect(buildFresh).not.toHaveBeenCalled()
       expect(payments).toBe(1)
     })
 
     it('replaces a purchase only after proved receipt absence and nonce consumption', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       reportedNonce = BigInt(126)
       const buildFresh = vi.fn(buildCachedPayment)
-      const next = await prepareWalletPayment(cached, buildFresh)
+      const next = await prepareWalletPayment(cached, buildFresh, context)
       expect(next).toMatchObject({ completed: false })
       expect(buildFresh).toHaveBeenCalledOnce()
     })
 
     it('ignores unrelated balance changes across retries', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       balance = BigInt(450)
       expect(await cached.checkOutcome()).toBe('unknown')
       balance = BigInt(550)
-      expect(await prepareWalletPayment(cached, buildCachedPayment)).toEqual({ completed: false, payment: cached })
+      expect(await prepareWalletPayment(cached, buildCachedPayment, context)).toEqual({ completed: false, payment: cached })
     })
   } else {
     it('keeps a consumed request when the outcome proof is a block behind', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       expect(execute(BigInt(101), true)).toBe(true)
       reportedNonce = chainNonce()
       historyHeight = BigInt(199)
       expect(await cached.checkOutcome()).toBe('unknown')
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached, unresolved: true })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached, unresolved: true })
       expect(buildFresh).not.toHaveBeenCalled()
     })
 
     it.each([BigInt(200), BigInt(201)])('rebuilds only when absence is proved at height %s, at or above consumption', async height => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       reportedNonce = BigInt(126)
       historyHeight = height
       expect(await cached.checkOutcome()).toBe('absent')
       const buildFresh = vi.fn(buildCachedPayment)
-      const prepared = await prepareWalletPayment(cached, buildFresh)
+      const prepared = await prepareWalletPayment(cached, buildFresh, context)
       expect(prepared.completed).toBe(false)
-      if (prepared.completed) throw new Error('Absent tip was reported completed')
+      if (prepared.completed || prepared.unproven) throw new Error('Absent tip was reported completed')
       expect(prepared.payment).not.toBe(cached)
       expect(buildFresh).toHaveBeenCalledOnce()
     })
 
     it('keeps the request when the nonce is still free despite current empty history', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       expect(await cached.checkOutcome()).toBe('unknown')
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached })
       expect(buildFresh).not.toHaveBeenCalled()
     })
 
     it.each(['nonce proof', 'nonce height', 'outcome proof', 'outcome height'])('keeps a consumed request when %s is unavailable', async missing => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       reportedNonce = BigInt(126)
       if (missing === 'nonce proof') sdk.identities.contractNonceWithProof.mockResolvedValueOnce({ data: reportedNonce, metadata: { height: nonceHeight } })
       if (missing === 'nonce height') nonceHeight = undefined
@@ -1135,24 +785,24 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       if (missing === 'outcome height') historyHeight = undefined
       if (missing.startsWith('outcome')) expect(await cached.checkOutcome()).toBe('unknown')
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toEqual({ completed: false, payment: cached, unresolved: true })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached, unresolved: true })
       expect(buildFresh).not.toHaveBeenCalled()
     })
 
     it('proves exact receipt absence even when sender history is a full page', async () => {
-      const cached = await buildCachedPayment()
+      const cached = await shownPayment()
       reportedNonce = BigInt(126)
       sentTips = Array.from({ length: TIP_PAGE_LIMIT }, (_, index) => ({
         id: `other-${index}`, from: OWNER, to: OTHER, amount: BigInt(1), createdAt: new Date(),
       }))
       const buildFresh = vi.fn(buildCachedPayment)
-      expect(await prepareWalletPayment(cached, buildFresh)).toMatchObject({ completed: false })
+      expect(await prepareWalletPayment(cached, buildFresh, context)).toMatchObject({ completed: false })
       expect(buildFresh).toHaveBeenCalledOnce()
     })
   }
 
   it('uses the SDK receipt id derived from the owner, token, type and big-endian reserved nonce', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     reportedNonce = BigInt(126)
     const nonce = Buffer.alloc(8)
     nonce.writeBigUInt64BE(cached.request.nonce)
@@ -1167,30 +817,31 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   it('reconciles tab B cached 101 after tab A completes and clears storage without building 102', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
+    if (first.completed || first.unproven) throw new Error('No original payment')
     expect(execute(BigInt(101), true)).toBe(true)
     recordPayment()
     reportedNonce = chainNonce()
     await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
     expect(storedPayments()).toEqual([])
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(first.payment, buildFresh, context)).toEqual({ completed: true })
-    expect(await prepareLocalWalletPayment(first.payment, context)).toEqual({ completed: true })
+    expect(await prepareWalletPayment(first.payment, buildFresh, context)).toMatchObject({ completed: true })
+    expect(await prepareLocalWalletPayment(first.payment, context)).toMatchObject({ completed: true })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.mark).toBe(BigInt(101))
     expect(payments).toBe(1)
   })
 
-  it('keeps a cached request missing from storage unresolved when its receipt is unknown', async () => {
+  it('shows a cached request missing from storage again, and stores it, while it can still execute', async () => {
     const cached = { ...await buildCachedPayment(), key: context.key }
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached, unresolved: true })
+    expect(await prepareWalletPayment(cached, buildFresh, context)).toEqual({ completed: false, payment: cached })
     expect(buildFresh).not.toHaveBeenCalled()
+    expect(storedPayments().map(record => record.reservationId)).toEqual([cached.request.reservationId])
   })
 
   it('does not complete a matching transfer or unrelated balance rise while the nonce is unconsumed', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
+    if (first.completed || first.unproven) throw new Error('No original payment')
     recordPayment()
     expect(await first.payment.checkOutcome()).toBe('unknown')
     const buildFresh = vi.fn(buildCachedPayment)
@@ -1201,7 +852,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   })
 
   it('does not confuse a lagging baseline or an unrelated balance rise with this consumed payment', async () => {
-    const cached = await buildCachedPayment()
+    const cached = await shownPayment()
     balance += BigInt(100)
     sentTips = [{ id: 'older-identical-tip', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: 'same payment', createdAt: new Date() }]
     reportedNonce = BigInt(126)
@@ -1211,13 +862,13 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   it('a local-only key-sheet cancel never allocates or persists a wallet request', async () => {
     const local = await prepareLocalWalletPayment(undefined, context)
-    if (local.completed) throw new Error('No local attempt')
+    if (local.completed || local.unproven) throw new Error('No local attempt')
     readPrivateKey.mockImplementationOnce(() => { throw new CriticalKeyCancelledError() })
     expect(await sendPayment(local.payment?.request)).toMatchObject({ success: false, errorCode: 'CANCELLED' })
     expect(storedPayments()).toEqual([])
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)).toBeNull()
     const different = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, key: 'different' })
-    if (different.completed || different.unresolved) throw new Error('Different payment was blocked')
+    if (different.completed || different.unproven || different.unresolved) throw new Error('Different payment was blocked')
     expect(different.payment.request.nonce).toBe(BigInt(101))
   })
 
@@ -1227,7 +878,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     releaseNonce(OWNER, YAPPR_CONTRACT_ID, earlier)
     const local = await prepareLocalWalletPayment(undefined, context)
     expect(local).toEqual({ completed: false })
-    if (local.completed) throw new Error('No local payment was attempted')
+    if (local.completed || local.unproven) throw new Error('No local payment was attempted')
     sdk.contracts.fetch.mockRejectedValueOnce(failure === 'cancel' ? new CriticalKeyCancelledError() : new Error('contract unavailable'))
     const result = await sendPayment(local.payment?.request)
     expect(result.success).toBe(false)
@@ -1238,7 +889,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(broadcast).not.toHaveBeenCalled()
     const different = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, key: 'different' })
     expect(different).toMatchObject({ completed: false })
-    if (different.completed || different.unresolved) throw new Error('Different payment was blocked')
+    if (different.completed || different.unproven || different.unresolved) throw new Error('Different payment was blocked')
   })
 
   it('releases a proved-unsent normal local chosen allocation', async () => {
@@ -1253,7 +904,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   it('does not release an exposed request on a local cancel', async () => {
     const first = await prepareWalletPayment(undefined, buildCachedPayment, context)
-    if (first.completed) throw new Error('No original payment')
+    if (first.completed || first.unproven) throw new Error('No original payment')
     const local = await prepareLocalWalletPayment(first.payment, context)
     if (local.completed || !local.payment) throw new Error('No local fallback')
     sdk.contracts.fetch.mockRejectedValueOnce(new CriticalKeyCancelledError())
@@ -1311,7 +962,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     await vi.runAllTimersAsync()
     expect(await outcome).toEqual({ value: 'unrelated write' })
     expect(Date.now()).toBe(started)
-    expect(chosen).toHaveBeenCalledWith(BigInt(102))
+    expect(chosen).toHaveBeenCalledWith(BigInt(102), expect.any(Function))
     expect(sdkWrite).not.toHaveBeenCalled()
     expect(payments).toBe(1)
   })

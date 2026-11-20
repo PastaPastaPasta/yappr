@@ -48,7 +48,6 @@ vi.mock('./identity-nonce', () => ({
     if (nonceMode.chosen !== undefined && args[5]) return args[5](nonceMode.chosen)
     return args[2]()
   },
-  chosenNonceSending: () => {},
 }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))

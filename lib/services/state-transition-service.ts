@@ -1019,9 +1019,9 @@ class StateTransitionService {
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
       const wif = key.wif;
-      const write = (nonce?: bigint) => {
+      const write = (nonce?: bigint, sending?: () => void) => {
         sent = true;
-        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, undefined, sending);
         return writer.documents.replace({ document, identityKey: signingKey, signer });
       };
       await withSdkSignedWrite(ownerId, contractId, write, reservationScope, undefined, write);
@@ -1089,9 +1089,9 @@ class StateTransitionService {
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
       const wif = key.wif;
-      const write = (nonce?: bigint) => {
+      const write = (nonce?: bigint, sending?: () => void) => {
         sent = true;
-        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, undefined, sending);
         return writer.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
       };
       await withSdkSignedWrite(ownerId, contractId, write, undefined, precondition, write);
@@ -1179,11 +1179,11 @@ class StateTransitionService {
         // proof shows the entry gone: an indexOnly delete waits for the
         // affected state instead of throwing the strict wait's snapshot error.
         const wif = key.wif;
-        const write = (nonce?: bigint) => {
+        const write = (nonce?: bigint, sending?: () => void) => {
           sent = true;
           return nonce === undefined
             ? sdk.documents.delete({ document, identityKey: signingKey, signer })
-            : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey).documents.deleteByValues(document);
+            : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, undefined, sending).documents.deleteByValues(document);
         };
         await withSdkSignedWrite(ownerId, contractId, write, undefined, undefined, write);
         logger.debug(`indexOnly delete ${documentId} confirmed`);

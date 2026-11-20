@@ -390,25 +390,19 @@ function renewPending(ownerId: string, contractId: string, entry: PendingTransit
   }
 }
 
-/** Chosen-nonce app writes this tab is preparing, by owner and nonce: {@link chosenNonceSending} marks them sent. */
-const preparingChosen = new Map<string, { contractId: string; entry: PendingTransition }[]>();
-const preparingKey = (ownerId: string, nonce: bigint) => `${ownerId}:${nonce}`;
-
 /**
  * Right before a chosen-nonce transition is broadcast: from then on it may
  * execute even if this page closes, so its pending entry no longer expires and
  * is settled only by its nonce being used. Throws {@link NONCE_STORE_ERROR}
  * when that can't be stored, and the transition must then not be sent.
  */
-export function chosenNonceSending(ownerId: string, nonce: bigint): void {
-  for (const { contractId, entry } of preparingChosen.get(preparingKey(ownerId, nonce)) ?? []) {
-    const reservation = loadReservation(ownerId, contractId);
-    saveReservation(ownerId, contractId, {
-      mark: max(reservation?.mark ?? BigInt(0), nonce),
-      floor: reservation?.floor ?? BigInt(0),
-      pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, expiresAt: null }],
-    });
-  }
+function markSent(ownerId: string, contractId: string, entry: PendingTransition): void {
+  const reservation = loadReservation(ownerId, contractId);
+  saveReservation(ownerId, contractId, {
+    mark: max(reservation?.mark ?? BigInt(0), entry.nonce ?? BigInt(0)),
+    floor: reservation?.floor ?? BigInt(0),
+    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, expiresAt: null }],
+  });
 }
 
 /** How often, and how far apart, Platform is read for the nonce an answered SDK-signed transition took. */
@@ -495,6 +489,7 @@ function isVerdict(error: unknown): boolean {
  * stay reserved until consumed, including after a QR closes or a page reloads.
  * Unknown SDK nonces still hold writes back. While one is outstanding, a
  * chosen nonce never takes the last slot Drive accepts, which stays for creates.
+ * It calls `sending` right before its broadcast, and must not send when that throws.
  *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
  *
@@ -511,7 +506,7 @@ export async function withSdkSignedWrite<T>(
   write: () => Promise<T>,
   scope?: string,
   precondition?: () => Promise<boolean>,
-  writeWithNonce?: (nonce: bigint) => Promise<T>,
+  writeWithNonce?: (nonce: bigint, sending: () => void) => Promise<T>,
   lockHeld = false
 ): Promise<T> {
   const send = async () => {
@@ -533,21 +528,12 @@ export async function withSdkSignedWrite<T>(
       const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
       // Like an SDK-signed write's, its lifetime keeps starting over while this page prepares it: a page that dies
       // before anything was sent leaves nothing that holds writes back for good. Marked sent right before its
-      // broadcast (chosenNonceSending), it stays until its nonce is consumed.
+      // broadcast (`sending`), it stays until its nonce is consumed.
       const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
       const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
-      const key = preparingKey(ownerId, value.nonce);
-      const preparing = { contractId, entry };
-      preparingChosen.set(key, [...(preparingChosen.get(key) ?? []), preparing]);
-      const donePreparing = () => {
-        const rest = (preparingChosen.get(key) ?? []).filter((item) => item !== preparing);
-        if (rest.length > 0) preparingChosen.set(key, rest);
-        else preparingChosen.delete(key);
-      };
       try {
-        const result = await writeWithNonce(value.nonce);
+        const result = await writeWithNonce(value.nonce, () => markSent(ownerId, contractId, entry));
         clearInterval(alive);
-        donePreparing();
         renewPending(ownerId, contractId, entry, true);
         // An affected-state answer can be a snapshot rather than execution proof.
         // Keep the chosen nonce until a nonce read proves it can no longer execute.
@@ -555,7 +541,6 @@ export async function withSdkSignedWrite<T>(
         return result;
       } catch (error) {
         clearInterval(alive);
-        donePreparing();
         if (error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError) {
           releaseNonce(ownerId, contractId, entry);
           // No bytes left this lock, so this allocation never became a signed nonce.

@@ -13,7 +13,7 @@ import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
-import { holdWalletRequest, sendPastWalletRequest, type HeldWalletRequest, buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { MAY_HAVE_PAID_MESSAGE, buildWalletPurchase, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
@@ -40,7 +40,7 @@ function formatCreditsAsDash(credits: bigint): string {
   return `${whole.toString()}.${frac.toString().padStart(4, '0')} DASH`
 }
 
-type ModalState = 'input' | 'confirming' | 'needKey' | 'walletSign' | 'processing' | 'success' | 'unconfirmed' | 'error'
+type ModalState = 'input' | 'confirming' | 'needKey' | 'walletSign' | 'processing' | 'success' | 'unconfirmed' | 'mayHavePaid' | 'error'
 
 const MODAL_TITLES: Record<ModalState, string> = {
   input: 'Buy YAPP',
@@ -50,6 +50,7 @@ const MODAL_TITLES: Record<ModalState, string> = {
   processing: 'Buy YAPP',
   success: 'YAPP Purchased!',
   unconfirmed: 'Purchase Not Confirmed',
+  mayHavePaid: 'Pay Again?',
   error: 'Purchase Failed',
 }
 
@@ -82,8 +83,10 @@ export function BuyYappModal() {
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation cannot overwrite a fresh QR.
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, HeldWalletRequest>())
-  const allowedPaymentsRef = useRef(new Set<string>())
+  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  // The user chose, in this confirmation, to pay again past an earlier request that may have gone through.
+  const payAgainRef = useRef(false)
+  const retryPaymentRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (isOpen && user) {
@@ -98,7 +101,8 @@ export function BuyYappModal() {
 
   useEffect(() => {
     if (!isOpen) {
-      allowedPaymentsRef.current.clear()
+      payAgainRef.current = false
+      retryPaymentRef.current = null
       setAmount('100')
       setState('input')
       setError(null)
@@ -144,7 +148,7 @@ export function BuyYappModal() {
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
   const finishPurchase = useCallback((payment?: WalletPayment) => {
-    allowedPaymentsRef.current.clear()
+    payAgainRef.current = false
     walletRequestsRef.current.delete(walletPaymentKey)
     if (user && payment) clearPersistedWalletPayment(user.identityId, payment.request.reservationId).catch(err => logger.error('Could not clear the completed wallet payment:', err))
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
@@ -158,18 +162,23 @@ export function BuyYappModal() {
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
     // price rose since, the transition is rejected rather than silently overspending.
-    let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
+    let payment = walletRequestsRef.current.get(walletPaymentKey)
     const result = await tokenService.buyYapp(user.identityId, amountBig, costCredits, {
       key: walletPaymentKey,
       cached: payment,
-      allowAnother: allowedPaymentsRef.current,
+      payAgain: payAgainRef.current,
       onPrepared: prepared => {
-        payment = prepared
-        if (payment) walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'purchase'))
+        if (prepared.unproven) return
+        payment = prepared.payment
+        if (prepared.completed) return
+        if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
         else walletRequestsRef.current.delete(walletPaymentKey)
       },
     })
-    if (result.success) {
+    if (result.errorCode === 'MAY_HAVE_PAID') {
+      retryPaymentRef.current = () => { handleBuy().catch(err => logger.error('Failed to buy YAPP:', err)) }
+      setState('mayHavePaid')
+    } else if (result.success) {
       tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
       finishPurchase(payment)
     } else if (result.errorCode === 'CANCELLED') {
@@ -212,30 +221,29 @@ export function BuyYappModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)?.payment
-      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), {
-        ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
+      const prepared = await prepareWalletPayment(walletRequestsRef.current.get(walletPaymentKey), (lockHeld) => buildWalletPurchase(user.identityId, amountBig, costCredits, lockHeld), {
+        ownerId: user.identityId, key: walletPaymentKey, payAgain: payAgainRef.current,
         isCurrent: () => walletSessionRef.current === session,
         expose: payment => {
-          walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'purchase' })
+          walletRequestsRef.current.set(walletPaymentKey, payment)
           setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
         },
       })
+      // Left before the answer: a request proved paid stays stored, for the next check to show.
+      if (walletSessionRef.current !== session) return
       if (prepared.completed) {
-        if (walletSessionRef.current !== session) return
         tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
-        finishPurchase()
+        finishPurchase(prepared.payment)
         return
       }
-      const payment = prepared.payment
-      if (walletSessionRef.current !== session) {
+      if (prepared.unproven) {
+        retryPaymentRef.current = startWalletSign
+        setState('mayHavePaid')
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'purchase'))
+      walletRequestsRef.current.set(walletPaymentKey, prepared.payment)
       if (prepared.unresolved) {
-        setError(prepared.different
-          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
-          : "This payment may have gone through. Check your wallet's activity before trying again.")
+        setError("We couldn't check on this payment just now. Try again in a moment.")
         setState('unconfirmed')
         return
       }
@@ -252,9 +260,8 @@ export function BuyYappModal() {
 
   useEffect(() => {
     if (state !== 'walletSign' || !walletUri || !user) return
-    const cached = walletRequestsRef.current.get(walletPaymentKey)
-    const payment = cached?.payment
-    if (!payment || cached?.foreign || payment.key !== walletPaymentKey || payment.kind !== 'purchase') return
+    const payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (!payment) return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -540,22 +547,29 @@ export function BuyYappModal() {
                           <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
                           <p className="text-xs text-gray-500">This payment may have gone through. Check your wallet&apos;s activity before trying again.</p>
                         </div>
-                        <Button onClick={close} className="w-full">Close</Button>
-                        {walletRequestsRef.current.has(walletPaymentKey) && (
-                          <div className="space-y-2">
-                            <p className="text-xs text-gray-500">Starting another purchase could charge you again.</p>
-                            <Button onClick={() => {
-                              const { past, keep } = sendPastWalletRequest(walletRequestsRef.current.get(walletPaymentKey))
-                              if (past) allowedPaymentsRef.current.add(past)
-                              if (keep) walletRequestsRef.current.set(walletPaymentKey, keep)
-                              else walletRequestsRef.current.delete(walletPaymentKey)
-                              setError(null)
-                              setState('input')
-                            }} variant="outline" className="w-full">
-                              Start another purchase
-                            </Button>
-                          </div>
-                        )}
+                        <div className="flex gap-3">
+                          <Button onClick={close} variant="outline" className="flex-1">Close</Button>
+                          {walletRequestsRef.current.has(walletPaymentKey) && (
+                            <Button onClick={startWalletSign} className="flex-1">Check again</Button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {state === 'mayHavePaid' && (
+                      <div className="py-4 text-center space-y-4">
+                        <ExclamationCircleIcon className="h-16 w-16 text-amber-500 mx-auto" />
+                        <div className="space-y-2">
+                          <p className="text-sm text-gray-600 dark:text-gray-400">{MAY_HAVE_PAID_MESSAGE}</p>
+                          <p className="text-lg font-medium">Pay again anyway?</p>
+                        </div>
+                        <div className="flex gap-3">
+                          <Button onClick={close} variant="outline" className="flex-1">Close</Button>
+                          <Button onClick={() => {
+                            payAgainRef.current = true
+                            retryPaymentRef.current?.()
+                          }} className="flex-1">Pay again</Button>
+                        </div>
                       </div>
                     )}
 

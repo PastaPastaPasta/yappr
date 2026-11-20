@@ -14,7 +14,7 @@ import { CRITICAL_KEY_REQUIRED, CriticalKeyCancelledError, availableCriticalKey,
 import { starterClaimFromHistory, type StarterClaimState } from '@/lib/starter-grant';
 import { normalizeSDKResponse, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { beginLocalWalletPayment, endLocalWalletPayment, markReplacedWalletPayments, prepareLocalWalletPayment, type LocalWalletPaymentIntent, type ReplacementState } from './wallet-payment-service';
+import { MAY_HAVE_PAID_MESSAGE, findShownWalletPayment, prepareLocalWalletPayment, type LocalWalletPaymentIntent } from './wallet-payment-service';
 import type { WalletTransitionRequest } from './token-transition-builder';
 
 /** One page of an identity's token-history claims is plenty: YAPP's only distribution is the starter grant. */
@@ -32,7 +32,9 @@ export interface TokenResult {
      * could not be checked (a quorum rotation). It may have landed, so the UI
      * must never offer a plain retry: that could move the tokens or credits twice.
      */
-    | 'UNCONFIRMED';
+    | 'UNCONFIRMED'
+    /** An earlier payment of the same thing may have gone through and can't be checked: send again only once the user confirms. */
+    | 'MAY_HAVE_PAID';
 }
 
 /** A token write the SDK sent whose outcome is unknown (see TokenResult's UNCONFIRMED). */
@@ -42,11 +44,17 @@ class UnconfirmedTokenWriteError extends Error {
   }
 }
 
+/** The payment's earlier request could not be checked just now: check again, never send another. */
 class UnresolvedWalletPaymentError extends Error {
-  constructor(different?: boolean) {
-    super(different
-      ? "An earlier payment may still go through. Check your wallet's activity before trying again."
-      : "This payment may have gone through. Check your wallet's activity before trying again.");
+  constructor() {
+    super("We couldn't check on this payment just now. Try again in a moment.");
+  }
+}
+
+/** An earlier request of the same payment may have gone through and can't be checked: only the user may choose to pay again. */
+class UnprovenWalletPaymentError extends Error {
+  constructor() {
+    super(MAY_HAVE_PAID_MESSAGE);
   }
 }
 
@@ -57,48 +65,29 @@ class UnresolvedWalletPaymentError extends Error {
  * comes back as {@link UnconfirmedTokenWriteError}; a failure before that sent
  * nothing and is rethrown as is.
  */
-async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promise<unknown>, assertLive?: () => void, payment?: WalletTransitionRequest | LocalWalletPaymentIntent): Promise<void> {
+async function sendTokenWrite(ownerId: string, write: (nonce?: bigint, sending?: () => void) => Promise<unknown>, assertLive?: () => void, payment?: WalletTransitionRequest | LocalWalletPaymentIntent): Promise<void> {
   let sent = false;
   try {
-    const send = (nonce?: bigint) => {
+    const send = (nonce?: bigint, sending?: () => void) => {
       // Last check before a step-up key signs: the session it was given in must still be the one signed in.
       assertLive?.();
       sent = true;
-      return write(nonce);
+      return write(nonce, sending);
     };
     const intent = payment && 'key' in payment ? payment : undefined;
     const sendPayment = async () => {
       let walletRequest = payment && 'sendWithNonce' in payment ? payment : undefined;
-      let replaces: readonly string[] = [];
       if (intent) {
-        const prepared = await prepareLocalWalletPayment(intent.cached, { ownerId, key: intent.key, allowAnother: intent.allowAnother, attemptId: intent.attemptId }, true);
-        intent.onPrepared?.(prepared.completed ? undefined : prepared.payment);
+        const prepared = await prepareLocalWalletPayment(intent.cached, { ownerId, key: intent.key, payAgain: intent.payAgain }, true);
+        intent.onPrepared?.(prepared);
         if (prepared.completed) return;
-        if (prepared.unresolved) throw new UnresolvedWalletPaymentError(prepared.different);
+        if (prepared.unproven) throw new UnprovenWalletPaymentError();
+        if (prepared.unresolved) throw new UnresolvedWalletPaymentError();
         walletRequest = prepared.payment?.request;
-        // Requests of this payment proved absent, still shown as QR codes elsewhere: marked before this signs (still under
-        // the lock), so a tab that checks one again settles by this payment instead of showing a fresh one.
-        if (!walletRequest && prepared.replaces) {
-          replaces = prepared.replaces;
-          markReplacedWalletPayments(ownerId, replaces, 'sending');
-        }
       }
-      if (walletRequest) {
-        await walletRequest.sendWithNonce(ownerId, send, Boolean(intent));
-        return;
-      }
-      const answered = (state: ReplacementState) => {
-        try { markReplacedWalletPayments(ownerId, replaces, state); }
-        catch (error) { logger.warn('Could not record what replaced the earlier wallet payment request:', error); }
-      };
-      try {
-        await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send, Boolean(intent));
-      } catch (error) {
-        // An answer lost after sending leaves it `sending`: it may have gone through.
-        if (!(sent && sentWriteOutcomeUnknown(error))) answered('failed');
-        throw error;
-      }
-      answered('completed');
+      // The request a QR showed: signed here at its own nonce, so only one copy can ever execute.
+      if (walletRequest) await walletRequest.sendWithNonce(ownerId, send, Boolean(intent));
+      else await withSdkSignedWrite(ownerId, YAPPR_CONTRACT_ID, send, undefined, undefined, send, Boolean(intent));
     };
     if (intent) await withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, sendPayment);
     else await sendPayment();
@@ -110,22 +99,16 @@ async function sendTokenWrite(ownerId: string, write: (nonce?: bigint) => Promis
 }
 
 /**
- * Runs a local confirmation of a wallet payment as one recorded attempt
- * (`beginLocalWalletPayment`), started before `run` asks for the CRITICAL
- * signer: a matching payment another tab completes meanwhile settles it.
+ * Before a local payment asks for the CRITICAL signer: binds it to the request
+ * of the same payment a QR shows, so a wallet paying that QR while the key
+ * sheet is open settles it instead of a second payment going out.
  */
-async function asPaymentAttempt<T>(
+async function boundToShownRequest(
   ownerId: string,
-  payment: WalletTransitionRequest | LocalWalletPaymentIntent | undefined,
-  run: (payment: WalletTransitionRequest | LocalWalletPaymentIntent | undefined) => Promise<T>
-): Promise<T> {
-  if (!payment || !('key' in payment)) return run(payment);
-  const attemptId = await beginLocalWalletPayment(ownerId, payment.key);
-  try {
-    return await run({ ...payment, attemptId });
-  } finally {
-    await endLocalWalletPayment(ownerId, attemptId).catch((error: unknown) => logger.warn('Could not end the payment attempt:', error));
-  }
+  payment: WalletTransitionRequest | LocalWalletPaymentIntent | undefined
+): Promise<WalletTransitionRequest | LocalWalletPaymentIntent | undefined> {
+  if (!payment || !('key' in payment) || payment.cached) return payment;
+  return { ...payment, cached: await findShownWalletPayment(ownerId, payment.key) };
 }
 
 /** Minimum YAPP per direct purchase — enforced on-chain by the SetPrices tier, mirrored here for UX. */
@@ -217,11 +200,12 @@ class TokenService {
     }
 
     try {
-      await asPaymentAttempt(buyerId, walletRequest, async (payment) => {
+      const payment = await boundToShownRequest(buyerId, walletRequest);
+      {
         const sdk = await getEvoSdk();
         const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(buyerId);
 
-        await sendTokenWrite(buyerId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, buyerId, nonce, wif, identityKey, assertLive)).tokens.directPurchase({
+        await sendTokenWrite(buyerId, (nonce, sending) => (nonce === undefined ? sdk : chosenNonceWrites(sdk, buyerId, nonce, wif, identityKey, assertLive, sending)).tokens.directPurchase({
           dataContractId: new Identifier(YAPPR_CONTRACT_ID),
           tokenPosition: YAPP_TOKEN_POSITION,
           buyerId: new Identifier(buyerId),
@@ -230,7 +214,7 @@ class TokenService {
           identityKey,
           signer,
         } as Parameters<typeof sdk.tokens.directPurchase>[0]), assertLive, payment);
-      });
+      }
 
       return { success: true };
     } catch (error) {
@@ -267,11 +251,12 @@ class TokenService {
       return { success: false, error: 'YAPP can\'t be sent to other accounts', errorCode: 'NOT_AUTHORIZED' };
     }
     try {
-      await asPaymentAttempt(senderId, walletRequest, async (payment) => {
+      const payment = await boundToShownRequest(senderId, walletRequest);
+      {
         const sdk = await getEvoSdk();
         const { signer, identityKey, assertLive, wif } = await this.getAuthSigner(senderId);
 
-        await sendTokenWrite(senderId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, senderId, nonce, wif, identityKey, assertLive)).tokens.transfer({
+        await sendTokenWrite(senderId, (nonce, sending) => (nonce === undefined ? sdk : chosenNonceWrites(sdk, senderId, nonce, wif, identityKey, assertLive, sending)).tokens.transfer({
           dataContractId: new Identifier(YAPPR_CONTRACT_ID),
           tokenPosition: YAPP_TOKEN_POSITION,
           senderId: new Identifier(senderId),
@@ -281,7 +266,7 @@ class TokenService {
           identityKey,
           signer,
         } as Parameters<typeof sdk.tokens.transfer>[0]), assertLive, payment);
-      });
+      }
 
       return { success: true };
     } catch (error) {
@@ -353,7 +338,7 @@ class TokenService {
       const auth = await this.getAuthSigner(identityId, { keyRing: true });
       const { signer, identityKey, assertLive, wif } = auth;
       signingKey = auth.signingKey;
-      await sendTokenWrite(identityId, nonce => (nonce === undefined ? sdk : chosenNonceWrites(sdk, identityId, nonce, wif, identityKey, assertLive)).tokens.claim({
+      await sendTokenWrite(identityId, (nonce, sending) => (nonce === undefined ? sdk : chosenNonceWrites(sdk, identityId, nonce, wif, identityKey, assertLive, sending)).tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
         identityId: new Identifier(identityId),
@@ -408,8 +393,8 @@ class TokenService {
         signer,
       };
 
-      await sendTokenWrite(authorityId, async (nonce) => {
-        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, authorityId, nonce, wif, identityKey, assertLive);
+      await sendTokenWrite(authorityId, async (nonce, sending) => {
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, authorityId, nonce, wif, identityKey, assertLive, sending);
         if (action === 'freeze') {
           await writer.tokens.freeze(options as Parameters<typeof sdk.tokens.freeze>[0]);
         } else if (action === 'unfreeze') {
@@ -485,6 +470,7 @@ class TokenService {
     if (error instanceof CriticalKeyCancelledError) return { success: false, errorCode: 'CANCELLED' };
     if (error instanceof SigningUnavailableError) return { success: false, error: error.message, errorCode: 'NOT_AUTHORIZED' };
     if (error instanceof UnresolvedWalletPaymentError) return { success: false, error: error.message, errorCode: 'UNCONFIRMED' };
+    if (error instanceof UnprovenWalletPaymentError) return { success: false, error: error.message, errorCode: 'MAY_HAVE_PAID' };
     if (error instanceof UnconfirmedTokenWriteError) {
       logger.warn(`${fallback} unconfirmed:`, error.message);
       return { success: false, error: UNCONFIRMED_WRITE_MESSAGE, errorCode: 'UNCONFIRMED' };
