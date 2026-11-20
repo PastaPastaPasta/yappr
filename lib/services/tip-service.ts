@@ -10,7 +10,7 @@ import { encodeTipNote, type TipTargetKind } from '@/lib/tip-note'
 import { yappIsLocked } from '@/lib/contract-topology'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { tokenService } from './token-service'
-import type { LocalWalletPaymentIntent } from './wallet-payment-service'
+import type { LocalWalletPaymentIntent, PayAgainConsent } from './wallet-payment-service'
 import type { WalletTransitionRequest } from './token-transition-builder'
 import { tipHistoryService, type SentTipMatch } from './tip-history-service'
 
@@ -39,7 +39,10 @@ export interface TipResult {
      */
     | 'UNCONFIRMED'
     /** An earlier tip of the same kind may have gone through and can't be checked: send only once the user confirms. */
-    | 'MAY_HAVE_PAID';
+    | 'MAY_HAVE_PAID'
+    | 'PAID_ELSEWHERE';
+  /** What choosing to pay again agrees to, for that one retry (see TokenResult). */
+  payAgain?: PayAgainConsent;
 }
 
 /**
@@ -289,6 +292,7 @@ class TipService {
         success: false,
         error: result.error ?? 'Tip failed',
         errorCode: result.errorCode ?? 'NETWORK_ERROR',
+        payAgain: result.payAgain,
       };
     }
 

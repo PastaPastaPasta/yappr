@@ -11,9 +11,9 @@ import { buildUnsignedYappTipTransition } from './token-transfer-builder'
 import { tipService } from './tip-service'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { tokenService } from './token-service'
-import { MAY_HAVE_PAID_MESSAGE, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type WalletPayment } from './wallet-payment-service'
+import { COMPLETION_RETENTION_MS, MAY_HAVE_PAID_MESSAGE, PAID_ELSEWHERE_MESSAGE, StalePaymentError, buildWalletPurchase, buildWalletTip, clearPersistedWalletPayment, prepareLocalWalletPayment, prepareWalletPayment, type LocalWalletPaymentIntent, type PayAgainConsent, type WalletPayment } from './wallet-payment-service'
 import { tipHistoryService, TIP_PAGE_LIMIT, type ProvedTip } from './tip-history-service'
-import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, loadWalletPayments, releaseNonce, reserveNonce, settlePendingWrites, withSdkSignedWrite } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, ChosenWriteNotSentError, loadReservation, loadWalletPayments, releaseNonce, reserveNonce, settlePendingWrites, storeWalletPayments, withSdkSignedWrite } from './identity-nonce'
 
 const OWNER = '8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR'
 const OTHER = 'CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8'
@@ -212,14 +212,20 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     sentTips.push({ id: 'tip', from: OWNER, to: OTHER, amount: BigInt(100), publicNote: 'same payment', createdAt: new Date() })
   }
 
-  const context = { ownerId: OWNER, key: action, expose: () => {} }
+  /** A confirmation of this payment, started when the test starts. */
+  const context = { ownerId: OWNER, key: action, startedAt: 0, expose: () => {} }
+  beforeEach(() => { context.startedAt = Date.now() })
+  const unreadable: PayAgainConsent = { key: action, evidence: 'unreadable' }
   /** A QR shown for this payment: built and stored, as a confirmation does. */
   const shownPayment = async () => {
     const shown = await prepareWalletPayment(undefined, buildCachedPayment, context)
     if (shown.completed || shown.unproven) throw new Error('No QR payment')
     return shown.payment
   }
-  const storedPayments = () => JSON.parse(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1')) ?? '[]') as { reservationId: string; nonce: string }[]
+  const storedPayments = () => JSON.parse(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1')) ?? '[]') as { key: string; reservationId: string; nonce: string }[]
+  /** Another tab proved a stored request unpaid and dropped it. */
+  const dropStored = (reservationId: string) => storeWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1'),
+    JSON.stringify(storedPayments().filter(record => record.reservationId !== reservationId)))
 
   const differentReceipts: [string, Record<string, unknown>][] = action === 'tip'
     ? [
@@ -334,7 +340,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       return { publicKeys: [identityKey] }
     })
     const onPrepared = vi.fn()
-    const sending = sendPayment({ key: context.key, cached: cached ? original.payment : undefined, onPrepared })
+    const sending = sendPayment({ key: context.key, startedAt: context.startedAt, cached: cached ? original.payment : undefined, onPrepared })
     await started
     let replacement: WalletPayment
     try {
@@ -351,7 +357,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
         recordReceipt(replacement)
         reportedNonce = chainNonce()
         // Tab B saw its QR paid and showed that before tab A had its key.
-        if (state === 'completed and cleared') await clearPersistedWalletPayment(OWNER, replacement.request.reservationId)
+        if (state === 'completed and cleared') await clearPersistedWalletPayment(OWNER, replacement)
       } else if (state === 'unknown') {
         for (let nonce = BigInt(128); nonce <= BigInt(152); nonce++) expect(execute(nonce, false)).toBe(true)
         reportedNonce = chainNonce()
@@ -374,17 +380,88 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
       expect(broadcast).not.toHaveBeenCalled()
       expect(payments).toBe(1)
       expect(onPrepared).toHaveBeenCalledWith({ completed: true, payment: expect.objectContaining({ request: expect.objectContaining({ nonce: BigInt(127) }) }) })
-    } else if (state === 'unknown') {
+    } else if (state === 'completed and cleared') {
+      // Tab B showed its QR paid after this confirmation started: the user decides.
+      expect(result).toMatchObject({ success: false, errorCode: 'PAID_ELSEWHERE', error: PAID_ELSEWHERE_MESSAGE, payAgain: { key: context.key } })
+      expect(broadcast).not.toHaveBeenCalled()
+      expect(payments).toBe(1)
+    } else {
       // The new QR's outcome can't be proved just now: checked again later, nothing sent meanwhile.
       expect(result).toMatchObject({ success: false, errorCode: 'UNCONFIRMED' })
       expect(broadcast).not.toHaveBeenCalled()
       expect(payments).toBe(0)
-    } else {
-      // Its own QR proved unpaid and nothing stored after it: the user decides.
-      expect(result).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID', error: MAY_HAVE_PAID_MESSAGE })
-      expect(broadcast).not.toHaveBeenCalled()
-      expect(payments).toBe(1)
     }
+  })
+
+  it.each(['a QR', 'its own key'] as const)('never signs a confirmation waiting for its key with nothing stored once another tab pays it with %s', async how => {
+    let resumeSigner = () => {}
+    let signerStarted = () => {}
+    const paused = new Promise<void>(resolve => { resumeSigner = resolve })
+    const started = new Promise<void>(resolve => { signerStarted = resolve })
+    vi.spyOn(sdk.identities, 'fetch').mockImplementationOnce(async () => {
+      signerStarted()
+      await paused
+      return { publicKeys: [identityKey] }
+    })
+    const freshWrite = action === 'tip' ? sdk.tokens.transfer : sdk.tokens.directPurchase
+    const waiting = sendPayment({ key: context.key, startedAt: context.startedAt })
+    await started
+    try {
+      if (how === 'a QR') {
+        // Tab B shows a QR for the same payment, the wallet pays it, and B shows it paid.
+        const shown = await shownPayment()
+        expect(execute(shown.request.nonce, true)).toBe(true)
+        recordReceipt(shown)
+        reportedNonce = chainNonce()
+        expect(await prepareWalletPayment(shown, buildCachedPayment, context)).toMatchObject({ completed: true })
+        await clearPersistedWalletPayment(OWNER, shown)
+        expect(storedPayments()).toEqual([])
+      } else {
+        expect(await sendPayment({ key: context.key, startedAt: Date.now() })).toEqual({ success: true })
+        expect(freshWrite).toHaveBeenCalledOnce()
+      }
+    } finally { resumeSigner() }
+    const result = await waiting
+    expect(result).toMatchObject({ success: false, errorCode: 'PAID_ELSEWHERE', error: PAID_ELSEWHERE_MESSAGE, payAgain: { key: context.key } })
+    const paidBefore = freshWrite.mock.calls.length + payments
+    // Paying again is the user's choice, made for this payment.
+    const consent = result.payAgain
+    if (consent?.restartAt === undefined) throw new Error('No choice offered')
+    expect(await sendPayment({ key: context.key, startedAt: consent.restartAt, payAgain: consent })).toEqual({ success: true })
+    expect(freshWrite.mock.calls.length + payments).toBe(paidBefore + 1)
+    expect(paidBefore).toBe(1)
+  })
+
+  it('asks before showing its QR again once another request of the same payment went through, and counts that one shown', async () => {
+    const shown = await shownPayment()
+    // Another tab chose to pay again: a second request of the same payment, which the wallet pays.
+    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, key: 'another' })
+    if (other.completed || other.unproven) throw new Error('No second request')
+    storeWalletPayments(OWNER, YAPPR_CONTRACT_ID, scopedKey('wallet-payments:v1'), JSON.stringify(storedPayments().map(record => ({ ...record, key: context.key }))))
+    expect(execute(other.payment.request.nonce, true)).toBe(true)
+    recordReceipt(other.payment)
+    reportedNonce = chainNonce()
+    const asked = await prepareWalletPayment(shown, buildCachedPayment, context)
+    if (!asked.unproven) throw new Error('Not asked')
+    expect(asked).toMatchObject({ completed: false, unproven: true, paidElsewhere: true })
+    expect(storedPayments().map(record => record.reservationId)).toEqual([shown.request.reservationId])
+    expect(await sendPayment({ key: context.key, startedAt: context.startedAt, cached: shown })).toMatchObject({ success: false, errorCode: 'PAID_ELSEWHERE' })
+    expect(broadcast).not.toHaveBeenCalled()
+    const again = await prepareWalletPayment(shown, buildCachedPayment, { ...context, startedAt: asked.consent.restartAt ?? 0, payAgain: asked.consent })
+    expect(again).toEqual({ completed: false, payment: shown })
+    expect(payments).toBe(1)
+  })
+
+  it('refuses a payment started longer ago than completed payments are remembered, and forgets older completions', async () => {
+    const completedKey = `${scopedKey('wallet-payments:v1')}:completed`
+    storeWalletPayments(OWNER, YAPPR_CONTRACT_ID, completedKey, JSON.stringify([{ key: context.key, completedAt: Date.now() - COMPLETION_RETENTION_MS }]))
+    const stale = { ...context, startedAt: Date.now() - COMPLETION_RETENTION_MS }
+    const buildFresh = vi.fn(buildCachedPayment)
+    await expect(prepareWalletPayment(undefined, buildFresh, stale)).rejects.toBeInstanceOf(StalePaymentError)
+    expect(await sendPayment({ key: context.key, startedAt: stale.startedAt })).toMatchObject({ success: false, error: new StalePaymentError().message })
+    expect(buildFresh).not.toHaveBeenCalled()
+    expect(broadcast).not.toHaveBeenCalled()
+    expect(loadWalletPayments(OWNER, YAPPR_CONTRACT_ID, completedKey)).toBe('[]')
   })
 
   it('never builds a second QR for a payment another tab shows, nor signs it at a fresh nonce', async () => {
@@ -396,7 +473,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(buildFresh).not.toHaveBeenCalled()
     expect(inB.payment.request.reservationId).toBe(inA.payment.request.reservationId)
     expect(inB.payment.request.bytes).toEqual(inA.payment.request.bytes)
-    expect(await sendPayment({ key: context.key })).toEqual({ success: true })
+    expect(await sendPayment({ key: context.key, startedAt: context.startedAt })).toEqual({ success: true })
     expect(execute(inA.payment.request.nonce, true)).toBe(false)
     expect(payments).toBe(1)
   })
@@ -412,7 +489,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: true, payment: { request: { reservationId: shown.payment.request.reservationId } } })
     expect(storedPayments()).toHaveLength(1)
     expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: true })
-    await clearPersistedWalletPayment(OWNER, shown.payment.request.reservationId)
+    await clearPersistedWalletPayment(OWNER, shown.payment)
     expect(storedPayments()).toEqual([])
     expect(buildFresh).not.toHaveBeenCalled()
     expect(payments).toBe(1)
@@ -420,14 +497,19 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
 
   it('asks before paying again for a shown QR proved unpaid with nothing stored after it, and lets other payments through', async () => {
     const original = await shownThenRetired()
-    // Another tab proved it unpaid and cleared it; what it did next can't be told here.
-    await clearPersistedWalletPayment(OWNER, original.request.reservationId)
+    // Another tab proved it unpaid and dropped it; what it did next can't be told here.
+    dropStored(original.request.reservationId)
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: false, unproven: true })
-    expect(await prepareLocalWalletPayment(original, context)).toEqual({ completed: false, unproven: true })
+    const consent = { key: context.key, evidence: `unpaid:${original.request.reservationId}` }
+    expect(await prepareWalletPayment(original, buildFresh, context)).toEqual({ completed: false, unproven: true, consent })
+    expect(await prepareLocalWalletPayment(original, context)).toEqual({ completed: false, unproven: true, consent })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false })
-    const again = await prepareWalletPayment(original, buildFresh, { ...context, payAgain: true })
+    // Consent covers only what it was given for.
+    expect(await prepareWalletPayment(original, buildFresh, { ...context, payAgain: unreadable })).toMatchObject({ unproven: true })
+    expect(await prepareWalletPayment(original, buildFresh, { ...context, payAgain: { ...consent, key: 'different payment' } })).toMatchObject({ unproven: true })
+    expect(buildFresh).not.toHaveBeenCalled()
+    const again = await prepareWalletPayment(original, buildFresh, { ...context, payAgain: consent })
     if (again.completed || again.unproven) throw new Error('Not paid again')
     expect(buildFresh).toHaveBeenCalledOnce()
     expect(again.payment.request.nonce).toBe(BigInt(127))
@@ -455,32 +537,37 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     recordReceipt(first)
     reportedNonce = chainNonce()
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
-    expect(await prepareLocalWalletPayment(undefined, context)).toEqual({ completed: false, unproven: true })
-    expect(await sendPayment({ key: context.key })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID' })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unproven: true, consent: unreadable })
+    expect(await prepareLocalWalletPayment(undefined, context)).toMatchObject({ completed: false, unproven: true, consent: unreadable })
+    expect(await sendPayment({ key: context.key, startedAt: context.startedAt })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID', error: MAY_HAVE_PAID_MESSAGE, payAgain: unreadable })
     expect(buildFresh).not.toHaveBeenCalled()
     expect(payments).toBe(1)
     expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false })
-    const again = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })
-    expect(again).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
+    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: { ...unreadable, key: 'different payment' } })).toMatchObject({ unproven: true })
+    const again = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: unreadable })
+    if (again.completed || again.unproven) throw new Error('Not paid again')
+    expect(again.payment.request.nonce).toBe(BigInt(102))
     // The choice was this confirmation's: the unreadable request stays, and the next one asks again.
     expect(storedPayments().map(record => record.reservationId)).toContain(first.request.reservationId)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unproven: true, consent: unreadable })
+    // Checked again without the choice, the confirmation that made it shows its own QR again and builds nothing.
+    expect(await prepareWalletPayment(again.payment, buildFresh, context)).toEqual({ completed: false, payment: again.payment })
+    expect(buildFresh).toHaveBeenCalledOnce()
   })
 
   it.each([['that cannot be parsed', '{'], ['holding an empty string', ''], ['holding an entry without a nonce', '[{}]']])('asks every confirmation before paying again past stored requests %s', async (_label, raw) => {
     const { key } = await corruptStoredRequest()
     storage.set(key, raw)
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
-    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false, unproven: true })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unproven: true, consent: unreadable })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toMatchObject({ completed: false, unproven: true, consent: { key: 'different payment', evidence: 'unreadable' } })
     expect(buildFresh).not.toHaveBeenCalled()
-    const next = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })
+    const next = await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: unreadable })
     expect(next).toMatchObject({ completed: false, payment: { request: { nonce: BigInt(102) } } })
     expect(storedPayments()).toHaveLength(1)
     // Set aside, not dropped: a confirmation that hasn't chosen still asks.
     expect([...storage.entries()].some(([name, value]) => name !== key && name.startsWith('yappr:wallet-payments:') && value === JSON.stringify([raw]))).toBe(true)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toEqual({ completed: false, unproven: true })
+    expect(await prepareLocalWalletPayment(undefined, { ...context, key: 'different payment' })).toMatchObject({ completed: false, unproven: true, consent: { key: 'different payment', evidence: 'unreadable' } })
   })
 
   it('keeps every readable stored request when a confirmation pays again past an unreadable one', async () => {
@@ -490,7 +577,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     if (!key) throw new Error('No stored requests')
     const raw = JSON.stringify([...JSON.parse(storage.get(key) ?? '[]') as unknown[], { reservationId: 'broken' }])
     storage.set(key, raw)
-    expect(await prepareLocalWalletPayment(undefined, { ...context, payAgain: true }))
+    expect(await prepareLocalWalletPayment(undefined, { ...context, payAgain: unreadable }))
       .toMatchObject({ completed: false, payment: { request: { reservationId: shown.payment.request.reservationId } } })
     expect(storedPayments().map(record => record.reservationId)).toEqual([shown.payment.request.reservationId])
   })
@@ -498,17 +585,17 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
   it('asks before paying again when a request of the same payment may have paid, even with a newer one stored after it', async () => {
     const { first } = await corruptStoredRequest()
     // Another tab chose to pay again and shows a new QR, then closes without it being paid.
-    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, payAgain: true })
+    const other = await prepareWalletPayment(undefined, buildCachedPayment, { ...context, payAgain: unreadable })
     if (other.completed || other.unproven) throw new Error('No new QR')
     expect(other.payment.request.nonce).toBeGreaterThan(first.request.nonce)
     // After a reload, neither signing method takes the newer request without this confirmation choosing to.
     const buildFresh = vi.fn(buildCachedPayment)
-    expect(await prepareWalletPayment(undefined, buildFresh, context)).toEqual({ completed: false, unproven: true })
-    expect(await sendPayment({ key: context.key })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID' })
+    expect(await prepareWalletPayment(undefined, buildFresh, context)).toMatchObject({ completed: false, unproven: true, consent: unreadable })
+    expect(await sendPayment({ key: context.key, startedAt: context.startedAt })).toMatchObject({ success: false, errorCode: 'MAY_HAVE_PAID' })
     expect(broadcast).not.toHaveBeenCalled()
     expect(buildFresh).not.toHaveBeenCalled()
     // Once it chooses, the newer request is shown again rather than a third one built.
-    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: true })).toMatchObject({ completed: false, payment: { request: { reservationId: other.payment.request.reservationId } } })
+    expect(await prepareWalletPayment(undefined, buildFresh, { ...context, payAgain: unreadable })).toMatchObject({ completed: false, payment: { request: { reservationId: other.payment.request.reservationId } } })
     expect(buildFresh).not.toHaveBeenCalled()
   })
 
@@ -821,7 +908,7 @@ describe.each(['tip', 'purchase'] as const)('wallet %s signing fallback', action
     expect(execute(BigInt(101), true)).toBe(true)
     recordPayment()
     reportedNonce = chainNonce()
-    await clearPersistedWalletPayment(OWNER, first.payment.request.reservationId)
+    await clearPersistedWalletPayment(OWNER, first.payment)
     expect(storedPayments()).toEqual([])
     const buildFresh = vi.fn(buildCachedPayment)
     expect(await prepareWalletPayment(first.payment, buildFresh, context)).toMatchObject({ completed: true })
