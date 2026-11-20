@@ -490,7 +490,9 @@ describe('release build configuration', () => {
     expect(Object.keys(release).sort()).toEqual(Object.keys(template).sort())
     expect(() => assertReleaseConfig(release)).not.toThrow()
     expect(release.NEXT_PUBLIC_RELEASE).toBe('1')
-    expect(storageScope('/staging', release.STORAGE_EPOCH)).toBe('testnet-release-2:staging')
+    // A cut-over to another contract set bumps the epoch (D21), so it is read from the file, never pinned here.
+    expect(release.STORAGE_EPOCH).toMatch(/^testnet-release-[1-9][0-9]*$/)
+    expect(storageScope('/staging', release.STORAGE_EPOCH)).toBe(`${release.STORAGE_EPOCH}:staging`)
     const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(scripts.build).toBe('npm run build:release')
     expect(scripts['build:staging']).toBe('BASE_PATH=/staging npm run build')
