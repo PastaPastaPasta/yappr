@@ -18,6 +18,7 @@ import {
   laneOf,
   oldestBlockTime,
   provedAt,
+  freshReads,
   readPredatesRun,
   tabAfter,
   withRunChanges,
@@ -187,12 +188,23 @@ describe("a run's changes over a lagging read", () => {
     expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NaN)).toBe(true)
   })
 
-  it('judges a read of some documents only by the run changes to those', () => {
-    const run = changes([doc('a', 1), 'unhide', NOW], [doc('b', 2), 'hide', NOW + 20])
-    expect(readPredatesRun(run, NOW, ['a'])).toBe(false)
-    expect(readPredatesRun(run, NOW, ['b'])).toBe(true)
-    expect(readPredatesRun(run, NOW + 20, ['a', 'b'])).toBe(false)
-    expect(readPredatesRun(run, NOW - 20, ['c'])).toBe(false)
+  it("refuses a run's by-ID read older than the list it acts on, a run change, or a read it already accepted", () => {
+    const at = (time: number, ats: [string, number][] = []): BulkChainRead => ({ todo: new Set(), changed: new Set(), at: time, ats: new Map(ats) })
+    const a = doc('a', 1)
+    const b = doc('b', 2)
+    // The row came from a list proved at NOW: an older answer cannot settle it.
+    const listed = freshReads(new Map(), NOW)
+    expect(() => listed([a])(at(NOW - 20))).toThrow()
+    expect(listed([a])(at(NOW))).toEqual(at(NOW))
+    // ...nor one older than an answer this run already accepted for it.
+    expect(() => listed([a])(at(NOW + 10, [['a', NOW + 5]]))).not.toThrow()
+    expect(() => listed([a])(at(NOW + 1))).toThrow()
+    // A run change to b at NOW + 20 is a floor for b only; each is judged by its own answer.
+    const run = freshReads(changes([b, 'hide', NOW + 20]), -Infinity)
+    expect(() => run([a, b])(at(NOW, [['b', NOW + 20]]))).not.toThrow()
+    expect(() => run([b])(at(NOW + 19))).toThrow()
+    // Nothing known of a document: even an answer of unknown age is taken.
+    expect(() => freshReads(new Map(), -Infinity)([a])(at(NaN))).not.toThrow()
   })
 
   it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
@@ -287,6 +299,17 @@ describe('runBulk', () => {
     expect(summary.done).toBe(3)
     // Every confirmed one reaches the cards on screen: a and b with what the read holds, c as this run asked.
     expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { marks: null }], ['b', { marks: null }], ['c', {}]])
+  })
+
+  it('settles, announces and sends nothing on a first read the guard refuses as older than the row', async () => {
+    const d = deps()
+    const guard = freshReads(new Map(), NOW)
+    const stale = d.pending
+    const pending = vi.fn(async (asked: readonly BulkItem[]) => guard(asked)({ ...(await stale(asked)), todo: new Set(), at: NOW - 1 }))
+    const summary = await runBulk(items, { ...d, pending })
+    expect(summary).toMatchObject({ done: 0, stopped: 'fatal' })
+    expect(d.apply).not.toHaveBeenCalled()
+    expect(d.onDone).not.toHaveBeenCalled()
   })
 
   it('counts a document the read no longer finds, without announcing it', async () => {
