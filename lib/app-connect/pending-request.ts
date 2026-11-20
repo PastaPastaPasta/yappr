@@ -98,16 +98,16 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
 }
 
 /**
- * Whether the request the wallet just returned for (its hash, hex) is the
- * pending renewal for `identityId`, so /connect can resume that renewal
- * rather than start a sign-in.
+ * The live pending request in `identityHint`'s slot (`undefined`: sign-in)
+ * that the wallet just returned for (its hash, hex), or null when it expired,
+ * finished or was replaced.
  */
-export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
-  const record = await requestRecordsFor(identityId).load()
-  if (!record) return false
+export async function pendingRequest(identityHint: string | undefined, requestHash: string): Promise<StoredAppConnectRequest | null> {
+  const record = await requestRecordsFor(identityHint).load()
+  if (!record) return null
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
-    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
+    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash ? record : null
   } finally {
     clearSensitiveBytes(privateKey)
   }

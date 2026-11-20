@@ -7,8 +7,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useRenewModal } from '@/hooks/use-renew-modal'
-import { isPendingRenewal } from '@/lib/app-connect/pending-request'
-import { signInReturnFor } from '@/lib/app-connect/sign-in-return'
+import { pendingRequest } from '@/lib/app-connect/pending-request'
 import { loginRoute } from '@/lib/auth/return-to'
 import {
   APP_CONNECT_CHANNEL,
@@ -36,6 +35,13 @@ type View =
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
 
+/** Sign-in, carrying as `next` the page the still-pending request `requestHash` started from. */
+function signInRetry(requestHash: string): Promise<string> {
+  return pendingRequest(undefined, requestHash)
+    .catch(() => null)
+    .then((record) => loginRoute(record?.returnTo ?? ''))
+}
+
 /**
  * Where a wallet returns after an App Connect sign-in (`cb` in the request).
  * It is only a nudge: it tells the tab showing the QR code to check now, and
@@ -56,20 +62,15 @@ export default function ConnectPage() {
     const requestHash = continueHere
     const identityId = user?.identityId
     // A renewal of the signed-in account resumes in its renew dialog; anything else is a sign-in.
-    const pendingRenewal = identityId ? isPendingRenewal(identityId, requestHash) : Promise.resolve(false)
-    // Sign-in goes on to the page it started from, carried as `next`.
-    const signIn = () => router.replace(loginRoute(signInReturnFor(requestHash) ?? ''))
+    const pendingRenewal = identityId ? pendingRequest(identityId, requestHash).then(Boolean) : Promise.resolve(false)
     pendingRenewal
       .catch(() => false)
       .then((renewal) => {
-        if (renewal) {
-          useRenewModal.getState().open()
-          router.replace('/feed/')
-        } else {
-          signIn()
-        }
+        if (!renewal) return signInRetry(requestHash)
+        useRenewModal.getState().open()
+        return '/feed/'
       })
-      .catch(signIn)
+      .then((route) => router.replace(route), () => router.replace('/login/'))
   }, [continueHere, isAuthRestoring, router, user?.identityId])
 
   useEffect(() => {
@@ -87,7 +88,10 @@ export default function ConnectPage() {
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
     if (failure) {
-      setView({ kind: 'status', ...failure, retry: loginRoute(signInReturnFor(callback.requestHash) ?? '') })
+      signInRetry(callback.requestHash).then(
+        (retry) => setView({ kind: 'status', ...failure, retry }),
+        () => setView({ kind: 'status', ...failure, retry: '/login/' }),
+      )
       return
     }
     if (typeof BroadcastChannel === 'undefined') {

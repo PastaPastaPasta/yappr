@@ -5,7 +5,6 @@ import { logger } from '@/lib/logger'
 import { appConnectPins } from '@/lib/app-connect/config'
 import { AppConnectLogin, type AppConnectLoginState } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
-import { fileSignInReturn } from '@/lib/app-connect/sign-in-return'
 import { signInReturnRoute } from '@/lib/auth/return-to'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
@@ -22,6 +21,8 @@ function createLogin(identityHint: string | undefined): AppConnectLogin | null {
     trust: () => appConnectSessions.trust({ fresh: true }),
     connectionId: () => appConnectSessions.connectionId(),
     records: requestRecordsFor(identityHint),
+    // A sign-in the wallet may finish in a new tab carries on from there to its page; a renewal stays put.
+    ...(identityHint ? {} : { returnTo: signInReturnRoute }),
     origin: window.location.origin,
     basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
     onError: (message, error) => logger.warn(message, error),
@@ -45,22 +46,8 @@ export function useAppConnectLogin(identityHint?: string): { login: AppConnectLo
     const instance = createLogin(identityHint)
     if (!instance) return
     setLogin(instance)
-    // A sign-in (not a renewal) the wallet may finish in a new tab carries on from there to its page: each request
-    // the flow makes ("Check again" makes another) is filed with it.
-    let filed: string | null = null
-    const file = () => {
-      const requestHash = instance.requestHashHex()
-      if (identityHint || !requestHash || requestHash === filed) return
-      fileSignInReturn(requestHash, filed, signInReturnRoute())
-      filed = requestHash
-    }
-    const unsubscribe = instance.subscribe((next) => {
-      setState(next)
-      file()
-    })
-    instance.start({ identityHint })
-      .then(file)
-      .catch((error: unknown) => logger.error('App Connect: sign-in failed to start', error))
+    const unsubscribe = instance.subscribe(setState)
+    instance.start({ identityHint }).catch((error: unknown) => logger.error('App Connect: sign-in failed to start', error))
 
     const onFocus = () => instance.pollNow()
     window.addEventListener('focus', onFocus)

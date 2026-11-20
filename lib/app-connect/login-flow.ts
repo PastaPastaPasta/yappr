@@ -58,6 +58,8 @@ export interface StoredAppConnectRequest {
   createdAt: number
   connectionId: string
   identityHint?: string
+  /** The page a sign-in started from, set when the request is made and never on resume. */
+  returnTo?: string
 }
 
 /**
@@ -81,6 +83,8 @@ export interface AppConnectLoginDeps {
   trust: () => Promise<AppConnectTrust>
   connectionId: () => Promise<string>
   records: RequestRecordStore
+  /** The page a new request starts from, kept with it for the wallet's return tab. */
+  returnTo?: () => string | null
   /** Origin and base path for the wallet's return link. */
   origin: string
   basePath: string
@@ -105,13 +109,17 @@ const MAX_VERIFY_ATTEMPTS = 3
 export function parseStoredRequest(raw: unknown, now: number): StoredAppConnectRequest | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  const { ephemeralPrivateKey, createdAt, connectionId, identityHint } = record
+  const { ephemeralPrivateKey, createdAt, connectionId, identityHint, returnTo } = record
   if (typeof ephemeralPrivateKey !== 'string' || !/^[0-9a-f]{64}$/.test(ephemeralPrivateKey)) return null
   if (typeof connectionId !== 'string' || !/^[0-9a-f]{32}$/.test(connectionId)) return null
   if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt)) return null
   if (now - createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS || createdAt - now > 60_000) return null
   if (identityHint !== undefined && typeof identityHint !== 'string') return null
-  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}) }
+  return {
+    ephemeralPrivateKey, createdAt, connectionId,
+    ...(identityHint ? { identityHint } : {}),
+    ...(typeof returnTo === 'string' && returnTo ? { returnTo } : {}),
+  }
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -232,11 +240,13 @@ export class AppConnectLogin {
    */
   private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
+    const returnTo = this.deps.returnTo?.()
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
       connectionId: await this.deps.connectionId(),
       ...(identityHint ? { identityHint } : {}),
+      ...(returnTo ? { returnTo } : {}),
     }
     clearSensitiveBytes(privateKey)
     if (!current()) return null

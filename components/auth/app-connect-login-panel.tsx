@@ -6,7 +6,6 @@ import type { AppConnectCarrier, AppConnectGrant } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { useAppConnectLogin } from '@/hooks/use-app-connect-login'
 import { selectCarrierUri } from '@/lib/app-connect/carrier'
-import { retireSignInReturn } from '@/lib/app-connect/sign-in-return'
 import type { AppConnectUnavailableReason, VerifiedCandidate } from '@/lib/app-connect/login-flow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -75,10 +74,8 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   }, [])
 
   const accept = useCallback((identityId: string) => {
-    const requestHash = login?.requestHashHex()
     const grant = login?.accept(identityId)
     if (!grant) return
-    if (requestHash) retireSignInReturn(requestHash)
     setSigning('running')
     setSignInError(null)
     onGrant(grant)

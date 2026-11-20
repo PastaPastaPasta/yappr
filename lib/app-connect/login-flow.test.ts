@@ -36,6 +36,7 @@ function harness(options: {
   network?: 'mainnet' | 'testnet' | 'devnet'
   carriers?: readonly ['dashpay' | 'dash-key', ...('dashpay' | 'dash-key')[]]
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
+  returnTo?: string
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
@@ -54,6 +55,7 @@ function harness(options: {
       ? { ok: false, reason: 'unexpected-members', group: { groupId: pins.groupId, members: [] } }
       : { ok: true, group: { groupId: pins.groupId, members: [] } }),
     connectionId: async () => 'ab'.repeat(16),
+    ...(options.returnTo ? { returnTo: () => options.returnTo ?? null } : {}),
     records: {
       load: async () => records.value,
       save: async (r) => { records.value = r },
@@ -407,11 +409,39 @@ describe('AppConnectLogin and other tabs', () => {
   })
 })
 
+describe('the page a sign-in returns to', () => {
+  it('is kept with the request, and a tab that resumes it keeps that page', async () => {
+    const post = harness({ returnTo: '/post/?id=x' })
+    await post.login.start()
+    expect(post.records.value?.returnTo).toBe('/post/?id=x')
+    const settings = harness({ returnTo: '/settings/' })
+    settings.records.value = post.records.value
+    await settings.login.start()
+    expect(settings.login.requestHashHex()).toBe(post.login.requestHashHex())
+    expect(settings.records.value?.returnTo).toBe('/post/?id=x')
+  })
+
+  it('goes with the request once it is accepted or has expired', async () => {
+    const h = harness({ returnTo: '/post/?id=x' })
+    await h.login.start()
+    const record = h.records.value
+    h.setCandidates([candidate(ALICE)])
+    h.login.pollNow()
+    await h.flush()
+    h.login.accept(ALICE)
+    await h.flush()
+    expect(h.records.value).toBeNull()
+    expect(parseStoredRequest(record, T0 + 10 * 60_000)).toBeNull()
+  })
+})
+
 describe('parseStoredRequest', () => {
   const record = { ephemeralPrivateKey: '11'.repeat(32), createdAt: T0, connectionId: 'ab'.repeat(16) }
 
   it('accepts a fresh record and refuses a stale or malformed one', () => {
     expect(parseStoredRequest(record, T0 + 1000)).toEqual(record)
+    expect(parseStoredRequest({ ...record, returnTo: '/post/?id=x' }, T0)).toEqual({ ...record, returnTo: '/post/?id=x' })
+    expect(parseStoredRequest({ ...record, returnTo: 5 }, T0)).toEqual(record)
     expect(parseStoredRequest(record, T0 + 10 * 60_000)).toBeNull()
     expect(parseStoredRequest({ ...record, ephemeralPrivateKey: 'zz' }, T0)).toBeNull()
     expect(parseStoredRequest({ ...record, connectionId: 5 }, T0)).toBeNull()
