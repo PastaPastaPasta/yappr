@@ -205,6 +205,10 @@ describe("a run's changes over a lagging read", () => {
     expect(() => run([b])(at(NOW + 19))).toThrow()
     // Nothing known of a document: even an answer of unknown age is taken.
     expect(() => freshReads(new Map(), -Infinity)([a])(at(NaN))).not.toThrow()
+    // A change or list of unknown proof time sets no floor; the list's still does.
+    expect(() => freshReads(changes([a, 'hide', NaN]), -Infinity)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), NaN)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), NOW)([a])(at(NOW - 1))).toThrow()
   })
 
   it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
