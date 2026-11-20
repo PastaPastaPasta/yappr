@@ -27,6 +27,9 @@ const state = vi.hoisted(() => ({
   current: null as Uint8Array | null,
   added: [] as Uint8Array[],
   afterAdd: null as ((publicKey: Uint8Array) => void) | null,
+  /** The identity update lock, held by another update until it resolves. */
+  lock: null as Promise<void> | null,
+  waiting: 0,
 }))
 
 vi.mock('@/lib/services/identity-service', () => ({
@@ -39,18 +42,24 @@ vi.mock('@/lib/crypto/encryption-key-lookup', async (importActual) => ({
   ...(await importActual<typeof import('@/lib/crypto/encryption-key-lookup')>()),
   resolveEncryptionPublicKey: async () => state.current,
 }))
-vi.mock('@/lib/services/messaging-key-service', () => ({
-  MessagingAlreadySetUpError: class extends Error {},
-  MessagingSetupCancelledError: class extends Error {},
-  addMessagingKeyWithMasterKey: async (draft: { publicKey: Uint8Array }) => {
-    state.added.push(draft.publicKey)
-    state.afterAdd?.(draft.publicKey)
-  },
-  anchorKeyState: async (draft: { publicKey: Uint8Array }) => {
-    if (state.current === null) return 'none'
-    return bytesToHex(state.current) === bytesToHex(draft.publicKey) ? 'this-key' : 'other-key'
-  },
-}))
+vi.mock('@/lib/services/messaging-key-service', () => {
+  class MessagingSetupCancelledError extends Error {}
+  return {
+    MessagingAlreadySetUpError: class extends Error {},
+    MessagingSetupCancelledError,
+    addMessagingKeyWithMasterKey: async (draft: { publicKey: Uint8Array }, _masterWif: string, cancelled?: () => boolean) => {
+      state.waiting += 1
+      await state.lock
+      if (cancelled?.()) throw new MessagingSetupCancelledError()
+      state.added.push(draft.publicKey)
+      state.afterAdd?.(draft.publicKey)
+    },
+    anchorKeyState: async (draft: { publicKey: Uint8Array }) => {
+      if (state.current === null) return 'none'
+      return bytesToHex(state.current) === bytesToHex(draft.publicKey) ? 'this-key' : 'other-key'
+    },
+  }
+})
 
 import { preparePhraseSession } from './recovery-phrase-sign-in'
 
@@ -90,6 +99,8 @@ beforeEach(() => {
   state.current = null
   state.added = []
   state.afterAdd = null
+  state.lock = null
+  state.waiting = 0
 })
 
 describe('preparePhraseSession messaging key', () => {
@@ -107,6 +118,18 @@ describe('preparePhraseSession messaging key', () => {
     const session = await preparePhraseSession(wallet, account)
     expect(session).toMatchObject({ messaging: 'unsupported-browser', messagingKey: null })
     expect(session.signInWif).toBeTruthy()
+    expect(state.added).toEqual([])
+  })
+
+  it('adds nothing when the login dialog closes while the add waits behind another update', async () => {
+    let release = () => {}
+    state.lock = new Promise((resolve) => { release = resolve })
+    const attempt = new AbortController()
+    const session = preparePhraseSession(wallet, account, () => attempt.signal.aborted)
+    await vi.waitFor(() => expect(state.waiting).toBe(1))
+    attempt.abort()
+    release()
+    await expect(session).rejects.toThrow()
     expect(state.added).toEqual([])
   })
 

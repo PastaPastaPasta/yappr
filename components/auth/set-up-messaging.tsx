@@ -41,6 +41,12 @@ const HAND_OFF_POLL_MS = 3_000
 const CONFIRM_ATTEMPTS = 6
 const CONFIRM_DELAY_MS = 2_000
 
+/** A dialog attempt: its Close signal and the session it started in. */
+type Attempt = { signal: AbortSignal; session: number }
+
+const attemptIsLive = (attempt: Attempt, identityId: string) =>
+  !attempt.signal.aborted && sessionIsLive(identityId, attempt.session)
+
 type Phase =
   | { kind: 'loading' }
   | { kind: 'choose' }
@@ -74,8 +80,8 @@ function masterKeyFailure(error: unknown): string {
  * and the adopted key's WIF once Platform shows it as the current key.
  * `onAlreadySetUp` runs instead when the account has another messaging key
  * (made elsewhere, or by another device meanwhile): it is never replaced here.
- * `beginAttempt` comes from the dialog that owns Close: each update takes a
- * signal from it, aborted the moment the dialog closes or a newer attempt starts.
+ * `beginAttempt` comes from the dialog that owns Close: the account read, the wallet hand-off and each update take
+ * a signal from it, aborted the moment the dialog closes or a newer attempt starts.
  */
 export function SetUpMessaging({
   identityId,
@@ -116,9 +122,11 @@ export function SetUpMessaging({
     }
   }, [])
 
-  // Only while this dialog is open: if it closed first, the next opening finds the key current and adopts it.
-  const finish = useCallback((ready: MessagingKeyDraft) => {
-    if (finishedRef.current || !aliveRef.current) return
+  const startAttempt = useCallback((): Attempt => ({ signal: beginAttempt(), session: criticalKeySession() }), [beginAttempt])
+
+  // Only while this dialog attempt is live: if it closed first, the next opening finds the key current and adopts it.
+  const finish = useCallback((ready: MessagingKeyDraft, attempt: Attempt) => {
+    if (finishedRef.current || !aliveRef.current || !attemptIsLive(attempt, ready.identityId)) return
     let wif: string
     try {
       wif = adoptMessagingKey(ready)
@@ -152,11 +160,12 @@ export function SetUpMessaging({
       return
     }
     setDraft(next)
+    const attempt = startAttempt()
     Promise.all([anchorKeyState(next), loginKeyIsMaster(identityId)])
       .then(([state, master]) => {
         if (cancelled) return
         setLoginIsMaster(master)
-        if (state === 'this-key') finish(next)
+        if (state === 'this-key') finish(next, attempt)
         else if (state === 'other-key') alreadySetUp()
         else setPhase({ kind: 'choose' })
       })
@@ -167,7 +176,7 @@ export function SetUpMessaging({
     return () => {
       cancelled = true
     }
-  }, [identityId, finish, alreadySetUp, loadAttempt])
+  }, [identityId, finish, alreadySetUp, loadAttempt, startAttempt])
 
   // The wallet hand-off: build the request, then watch for the key to become current.
   const walletActive = phase.kind === 'wallet' && !phase.expired
@@ -176,6 +185,7 @@ export function SetUpMessaging({
     let cancelled = false
     let checking = false
     const started = Date.now()
+    const attempt = startAttempt()
     messagingKeyHandOffUri(draft)
       .then((uri) => {
         if (!cancelled) setPhase({ kind: 'wallet', uri, expired: false })
@@ -200,7 +210,7 @@ export function SetUpMessaging({
       anchorKeyState(draft)
         .then((state) => {
           if (cancelled) return
-          if (state === 'this-key') finish(draft)
+          if (state === 'this-key') finish(draft, attempt)
           // Another device set up messaging meanwhile: approving this request would replace its key.
           else if (state === 'other-key') alreadySetUp()
         })
@@ -213,14 +223,13 @@ export function SetUpMessaging({
       cancelled = true
       clearInterval(timer)
     }
-  }, [walletActive, draft, handOffAttempt, finish, alreadySetUp])
+  }, [walletActive, draft, handOffAttempt, finish, alreadySetUp, startAttempt])
 
   /** A MASTER-signed update (`add`), then wait for Platform to show the key as current. */
   const signWithMaster = useCallback(async (ready: MessagingKeyDraft, add: (cancelled: () => boolean) => Promise<void>, fromMasterKeyForm: boolean) => {
-    const signal = beginAttempt()
-    const session = criticalKeySession()
+    const attempt = startAttempt()
     // Asked once the update lock is held (it may wait behind another tab) and right before the broadcast.
-    const cancelled = () => signal.aborted || !aliveRef.current || !sessionIsLive(ready.identityId, session)
+    const cancelled = () => !aliveRef.current || !attemptIsLive(attempt, ready.identityId)
     setPhase({ kind: 'working' })
     setMasterKeyError(null)
     let failure: unknown = null
@@ -232,7 +241,7 @@ export function SetUpMessaging({
     // Closed, superseded or signed out since: whatever Platform shows next is not this attempt's to save.
     const stopped = () => {
       if (!cancelled()) return false
-      if (aliveRef.current && !signal.aborted) setPhase({ kind: 'choose' })
+      if (aliveRef.current && !attempt.signal.aborted) setPhase({ kind: 'choose' })
       return true
     }
     if (failure instanceof MessagingSetupCancelledError) {
@@ -243,14 +252,14 @@ export function SetUpMessaging({
     // A broadcast whose answer timed out may still land, so only a refusal before broadcast skips the wait.
     const message = failure instanceof Error ? failure.message : ''
     const refused = failure !== null && (message === IDENTITY_UPDATE_UNLOCKED || message === STALE_IDENTITY_ERROR || REFUSED_BEFORE_BROADCAST.test(message))
-    const attempts = refused ? 1 : CONFIRM_ATTEMPTS
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      if (attempt > 0) await sleep(CONFIRM_DELAY_MS)
+    const checks = refused ? 1 : CONFIRM_ATTEMPTS
+    for (let check = 0; check < checks; check++) {
+      if (check > 0) await sleep(CONFIRM_DELAY_MS)
       if (stopped()) return
       const state = await anchorKeyState(ready).catch(() => null)
       if (stopped()) return
       if (state === 'this-key') {
-        finish(ready)
+        finish(ready, attempt)
         return
       }
       if (state === 'other-key') {
@@ -267,7 +276,7 @@ export function SetUpMessaging({
     } else {
       setPhase({ kind: 'failed', message: 'Your change was sent but hasn\'t shown up yet. Try again in a minute.' })
     }
-  }, [beginAttempt, finish, alreadySetUp])
+  }, [startAttempt, finish, alreadySetUp])
 
   const signWithLoginKey = () => {
     if (!draft) return

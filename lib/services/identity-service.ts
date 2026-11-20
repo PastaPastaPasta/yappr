@@ -318,17 +318,23 @@ class IdentityService {
     }
   }
 
-  /** Whether the identity (read fresh) has key `keyId` with exactly `data`; false when not, or the read fails. */
-  private async hasPublicKey(identityId: string, keyId: number, data: Uint8Array): Promise<boolean> {
-    try {
-      const sdk = await getEvoSdk();
-      const identity = await sdk.identities.fetch(identityId);
-      const key = identity?.publicKeys.find((candidate) => candidate.keyId === keyId);
-      return key ? bytesEqual(requireBytes(key.data, 'identity key data'), data) : false;
-    } catch (error) {
-      logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
-      return false;
+  /**
+   * The revision of the first fresh read (a few, paced) whose identity has key `keyId` with exactly `data`,
+   * or null when none does.
+   */
+  private async keyReadBackRevision(identityId: string, keyId: number, data: Uint8Array): Promise<number | null> {
+    const sdk = await getEvoSdk();
+    for (let read = 0; read < FRESH_READS; read++) {
+      if (read > 0) await sleep(FRESH_READ_PAUSE_MS);
+      try {
+        const identity = await sdk.identities.fetch(identityId);
+        const key = identity?.publicKeys.find((candidate) => candidate.keyId === keyId);
+        if (identity && key && bytesEqual(requireBytes(key.data, 'identity key data'), data)) return Number(identity.revision ?? 0);
+      } catch (error) {
+        logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
+      }
     }
+    return null;
   }
 
   /**
@@ -505,6 +511,7 @@ class IdentityService {
 
       // Create signer with the master key (for signing the update transition)
       const signer = await signerService.createSigner(signingPrivateKeyWif);
+      let unanswered: { error: unknown } | null = null;
       let encryptionPrivateKeyObj: PrivateKey | undefined;
       try {
         // Also add the NEW encryption key's private key to the signer.
@@ -532,31 +539,22 @@ class IdentityService {
         } catch (updateError) {
           // No verdict (a timeout, or a result proof that could not be checked
           // during a quorum rotation): the key may be on the identity already.
-          if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
-            logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
-            noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
-            this.clearCache(identityId);
-            return { success: true, keyId: newKeyId };
-          }
-          logger.error('sdk.identities.update failed:', updateError);
-          if (updateError && typeof updateError === 'object') {
-            const wasmErr = updateError as Record<string, unknown>;
-            logger.error('WasmSdkError properties:');
-            try {
-              logger.error('  - kind:', wasmErr.kind);
-              logger.error('  - name:', wasmErr.name);
-              logger.error('  - message:', wasmErr.message);
-              logger.error('  - code:', wasmErr.code);
-              logger.error('  - retriable:', wasmErr.retriable);
-            } catch (e) {
-              logger.error('  - Could not read properties:', e);
-            }
-          }
-          throw updateError;
+          if (!sentWriteOutcomeUnknown(updateError)) throw updateError;
+          unanswered = { error: updateError };
         }
       } finally {
         encryptionPrivateKeyObj?.free();
         signer.free();
+      }
+
+      if (unanswered) {
+        // Still under the lock: the next update must not read a revision before this key's.
+        const revision = await this.keyReadBackRevision(identityId, newKeyId, publicKeyBytes);
+        if (revision === null) throw unanswered.error;
+        logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(unanswered.error)}" but the identity has it`);
+        noteProvedIdentityRevision(identityId, revision);
+        this.clearCache(identityId);
+        return { success: true, keyId: newKeyId };
       }
 
       logger.debug('Encryption key added successfully');

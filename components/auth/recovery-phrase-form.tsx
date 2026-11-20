@@ -52,7 +52,12 @@ function accountLabel(account: PhraseAccount): string {
  * password. It is emptied as soon as a valid phrase is submitted, whatever
  * happens next.
  */
-export function RecoveryPhraseForm({ onComplete, onBusyChange }: { onComplete: () => void; onBusyChange?: (busy: boolean) => void }) {
+export function RecoveryPhraseForm({ onComplete, onBusyChange, beginAttempt }: {
+  onComplete: () => void
+  onBusyChange?: (busy: boolean) => void
+  /** From the dialog that owns Close: a signal aborted the moment it closes. */
+  beginAttempt: () => AbortSignal
+}) {
   const inputId = useId()
   const noteId = useId()
   const { controller, loginWithRecoveryPhrase } = useAuth()
@@ -112,11 +117,13 @@ export function RecoveryPhraseForm({ onComplete, onBusyChange }: { onComplete: (
     // Taken once: a second click on the chooser finds nothing to sign in with.
     opened.current = null
     if (!wallet) return
+    const signal = beginAttempt()
+    const stopped = () => signal.aborted || superseded()
     setPhase({ kind: 'signing-in' })
     try {
       // Superseded, preparePhraseSession stops before adding the messaging key; `fail` ignores that once the dialog closed.
-      const session = await preparePhraseSession(wallet, account, superseded)
-      if (superseded()) {
+      const session = await preparePhraseSession(wallet, account, stopped)
+      if (stopped()) {
         session.messagingKey?.privateKey.fill(0)
         throw new SupersededSignInError()
       }

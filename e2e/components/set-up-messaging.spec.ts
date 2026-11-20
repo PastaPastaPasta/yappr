@@ -34,3 +34,15 @@ test('signing out while a sent messaging key awaits confirmation saves nothing',
   await page.evaluate(() => window.signOut?.())
   await expectNothingSavedAfterConfirmation(page)
 })
+
+test('closing the dialog while the wallet poll is under way saves nothing', async ({ page }) => {
+  await page.goto('/?fixture=set-up-messaging&wallet')
+  await page.getByRole('button', { name: 'Approve in your wallet' }).click()
+  await expect.poll(() => page.evaluate(() => window.walletPolls), { timeout: 15_000 }).toBe(1)
+  await page.getByRole('button', { name: 'Close dialog' }).click()
+  await expect(page.getByTestId('modal-state')).toHaveText('closed')
+  await page.evaluate(() => window.confirmMessagingKey?.())
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 500)))
+  expect(await setup(page)).toEqual({ sent: 0, adopted: 0, ready: 0 })
+  expect(await page.evaluate(() => localStorage.getItem('fixture-adopted-messaging-key'))).toBeNull()
+})
