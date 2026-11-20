@@ -147,25 +147,19 @@ export function oldestBlockTime(times: readonly (number | undefined)[]): number 
   return times.reduce<number>((oldest, time) => (time === undefined || !Number.isFinite(time) ? NaN : Math.min(oldest, time)), Infinity)
 }
 
-/** The block time of the newest of several proved answers (NaN when none carries one). */
-export function newestBlockTime(times: readonly (number | undefined)[]): number {
-  const known = times.filter((time): time is number => time !== undefined && Number.isFinite(time))
-  return known.length > 0 ? Math.max(...known) : NaN
-}
-
 /** Most documents of one type the dialog reads for an account. */
 export const MAX_ITEMS_PER_KIND = 5000
 
 /**
  * Every page of a listing, from the first, following `next` until a page has
  * none or `max` items are in. `onPage` sees the total so far after each page.
- * Returns the items, whether `max` cut the listing short, and the block times
- * of its oldest page (`at`) and its newest (`newest`; NaN when none has one).
+ * `onPage` also gets the page's block time as it lands. Returns the items,
+ * whether `max` cut the listing short, and the block time of its oldest page.
  */
 export async function readEveryPage(
   readPage: (startAfter?: string) => Promise<BulkPage>,
-  { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[]) => void } = {}
-): Promise<{ items: BulkItem[]; truncated: boolean; at: number; newest: number }> {
+  { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[], at: number | undefined) => void } = {}
+): Promise<{ items: BulkItem[]; truncated: boolean; at: number }> {
   const items: BulkItem[] = []
   const seen = new Set<string>()
   const times: (number | undefined)[] = []
@@ -179,13 +173,13 @@ export async function readEveryPage(
       seen.add(item.id)
       items.push(page.at !== undefined && Number.isFinite(page.at) ? { ...item, provedAt: page.at } : item)
     }
-    onPage?.(items)
+    onPage?.(items, page.at)
     // A cursor that does not move would read the same page forever; the
     // listing may go on past it, so it is reported as incomplete.
     stalled = page.next !== undefined && page.next === cursor
     cursor = page.next && !stalled ? page.next : undefined
   } while (cursor && items.length < max)
-  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times), newest: newestBlockTime(times) }
+  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times) }
 }
 
 /**
