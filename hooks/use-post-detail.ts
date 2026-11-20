@@ -16,10 +16,11 @@ import { useAppStore } from '@/lib/store'
 import { useAuth } from '@/contexts/auth-context'
 
 /**
- * How many reply pages the last thread had loaded, so the page mounted afresh
- * for a new viewer (a sign-in on it) loads as many again, read for that viewer.
+ * How many reply pages the last thread had loaded, and for whom, so the page
+ * mounted afresh for a new viewer (a sign-in on it) loads as many again, read
+ * for that viewer. Reopening the thread as the same viewer starts at page one.
  */
-let lastThreadPages: { rootId: string; pages: number } | null = null
+let lastThreadPages: { rootId: string; pages: number; viewerId: string | null } | null = null
 import { ProgressiveEnrichment } from '@/components/post/post-card'
 
 interface PostDetailState {
@@ -368,7 +369,8 @@ export function usePostDetail({
 
       threadRootIdRef.current = threadRootIdOf(loadedPost)
       pagesLoadedRef.current = 1
-      restorePagesRef.current = lastThreadPages?.rootId === threadRootIdRef.current ? lastThreadPages.pages - 1 : 0
+      restorePagesRef.current = lastThreadPages?.rootId === threadRootIdRef.current && lastThreadPages.viewerId !== viewerId ? lastThreadPages.pages - 1 : 0
+      lastThreadPages = { rootId: threadRootIdRef.current, pages: 1, viewerId }
 
       // If the loaded item is a reply, show the context it hangs off
       let replyChain: Post[] = []
@@ -556,7 +558,7 @@ export function usePostDetail({
         setIsLoadingReplies(false)
       }
     }
-  }, [postId, enabled, enrich, fetchReplyChain, router])
+  }, [postId, enabled, viewerId, enrich, fetchReplyChain, router])
 
   /**
    * Fetch the next page of the thread (v9 only — v2's `getReplies` covers one
@@ -590,7 +592,7 @@ export function usePostDetail({
       setHasMoreReplies(Boolean(result.nextCursor))
       setError(null)
       pagesLoadedRef.current += 1
-      lastThreadPages = { rootId, pages: pagesLoadedRef.current }
+      lastThreadPages = { rootId, pages: pagesLoadedRef.current, viewerId }
 
       setState(current => {
         if (!current.post) return current
@@ -606,7 +608,7 @@ export function usePostDetail({
     } finally {
       setIsLoadingMoreReplies(false)
     }
-  }, [isLoadingMoreReplies])
+  }, [isLoadingMoreReplies, viewerId])
 
   // Load again the pages the thread had before the page was mounted afresh.
   useEffect(() => {

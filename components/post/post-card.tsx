@@ -124,6 +124,10 @@ const CARD_MENU_ITEM = 'px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-9
  * own) renders as its target under an "X reposted" banner, the way a v9
  * `repost` document does, instead of as an empty quote card.
  */
+/** The card a signed-out reader tapped (Like, Repost, Reply…) to sign in, and when. */
+let signInFrom: { postId: string; at: number } | null = null
+const SIGN_IN_RETURN_MS = 5 * 60_000
+
 export function PostCard(props: PostCardProps) {
   return isBareRepost(props.post) ? <BareRepostCard {...props} /> : <PostCardView {...props} />
 }
@@ -277,9 +281,22 @@ function PostCardView({
   const router = useRouter()
   const { user } = useAuth()
   const { requireAuth } = useRequireAuth()
+  // Signing in from this card brings the reader back to it once the page is mounted for them.
+  const requireAuthHere = () => {
+    const signedIn = requireAuth()
+    if (!signedIn) signInFrom = { postId: post.id, at: Date.now() }
+    return signedIn
+  }
   const copy = useCopy()
   const viewerId = user?.identityId
   const isOwnPost = isOwnPostProp ?? viewerId === post.author.id
+  const cardRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!viewerId || signInFrom?.postId !== post.id || Date.now() - signInFrom.at > SIGN_IN_RETURN_MS) return
+    signInFrom = null
+    cardRef.current?.scrollIntoView({ block: 'center' })
+    cardRef.current?.focus({ preventScroll: true })
+  }, [viewerId, post.id])
 
   // Which document type this card shows. Every engagement dispatches on it: the
   // v9 topology gives posts and replies different interaction doctypes, and
@@ -490,12 +507,12 @@ function PostCardView({
     // A tombstone still exists on chain, so consensus accepts new engagement
     // with it; only undoing an existing like or repost is offered.
     if (isTombstoned && !engagement.liked) return
-    if (!requireAuth()) return
+    if (!requireAuthHere()) return
     return engagement.toggleLike()
   }
   const handleRepost = async () => {
     if (isTombstoned && !engagement.reposted) return
-    if (!requireAuth()) return
+    if (!requireAuthHere()) return
     // v10: undoing a quote WITH text deletes that text too, so the hook hands
     // it back instead, and it is confirmed like any other delete, quote shown.
     const quote = await engagement.toggleRepost()
@@ -510,11 +527,11 @@ function PostCardView({
     openDeleteModal(quotePost, () => engagement.removeOwnQuote(quote))
   }
   const handleBookmark = () => {
-    if (!requireAuth()) return
+    if (!requireAuthHere()) return
     return engagement.toggleBookmark()
   }
   const handleQuote = () => {
-    if (isTombstoned || !requireAuth()) return
+    if (isTombstoned || !requireAuthHere()) return
     // v10 allows one quote or repost per author and target; a second would be
     // refused (40105), so the viewer is taken to their quote (a bare repost
     // hides this item: it is undone from the Repost item instead).
@@ -525,7 +542,7 @@ function PostCardView({
     openCompose({ quotingPost: enrichedPost })
   }
   const handleReply = () => {
-    if (isTombstoned || !requireAuth()) return
+    if (isTombstoned || !requireAuthHere()) return
     if (replyBlockedReason) {
       toast.error(replyBlockedReason)
       return
@@ -556,12 +573,12 @@ function PostCardView({
   }
   const handleShare = () => copy(`${window.location.origin}${process.env.NEXT_PUBLIC_BASE_PATH || ''}/post/?id=${post.id}`, 'Link copied to clipboard')
   const handleTip = () => {
-    if (isTombstoned || !requireAuth()) return
+    if (isTombstoned || !requireAuthHere()) return
     openTipModal(enrichedPost)
   }
 
   const handleDelete = () => {
-    const authedUser = requireAuth()
+    const authedUser = requireAuthHere()
     if (!authedUser) return
     openDeleteModal(post, async () => {
       let ok: boolean
@@ -646,9 +663,11 @@ function PostCardView({
 
   return (
     <article
+      ref={cardRef}
+      tabIndex={-1}
       data-testid={`post-card-${post.id}`}
       onClick={handleCardClick}
-      className={cn('border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer', hiddenAsUnreadable && 'hidden')}
+      className={cn('focus:outline-none border-b border-gray-200 dark:border-gray-800 px-4 pt-3 pb-1 hover:bg-gray-50 dark:hover:bg-gray-950 transition-colors cursor-pointer', hiddenAsUnreadable && 'hidden')}
     >
       {post.repostedBy && (
         <Link href={`/user?id=${post.repostedBy.id}`} onClick={stopPropagation} className="flex items-center gap-2 text-sm text-gray-500 mb-2 ml-9 hover:underline">
@@ -756,7 +775,7 @@ function PostCardView({
                         data-testid={`report-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (requireAuth()) openReportModal({ kind: targetKindOf(enrichedPost), post: enrichedPost })
+                          if (requireAuthHere()) openReportModal({ kind: targetKindOf(enrichedPost), post: enrichedPost })
                         }}
                         className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
                       >

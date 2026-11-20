@@ -31,6 +31,9 @@ import { blogIsV7 } from '@/lib/constants'
 
 type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
+/** The search typed here and by whom, so the page mounted afresh for a new viewer (a sign-in on it) keeps it. */
+let typedSearch: { query: string; viewerId: string | null } | null = null
+
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
@@ -38,7 +41,12 @@ export default function ExplorePage() {
   const blogPostsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const [activeTab, setActiveTab] = useState<ExploreTab>('hashtags')
-  const [searchQuery, setSearchQuery] = useState('')
+  const viewerId = user?.identityId ?? null
+  const [searchQuery, setSearchQueryState] = useState(() => (typedSearch && typedSearch.viewerId !== viewerId ? typedSearch.query : ''))
+  const setSearchQuery = (query: string) => {
+    typedSearch = { query, viewerId }
+    setSearchQueryState(query)
+  }
   const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [searchResults, setSearchResults] = useState<Post[]>([])
   const [blogSearchResults, setBlogSearchResults] = useState<BlogPostWithAuthor[]>([])
