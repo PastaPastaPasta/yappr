@@ -471,6 +471,16 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(screen.queryByTestId('kx-error')).toBeNull();
     });
 
+    it('reads the outcome again when another restart cuts that read short, and finishes as signed in', async () => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.current').mockRejectedValueOnce(restarted()).mockResolvedValue(alice);
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('kx-error')).toBeNull();
+    });
+
     it('picks the request up again when the grant never landed, rather than showing an error', async () => {
       await open({ mode: 'qr' }, confirm());
       fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());

@@ -324,7 +324,7 @@ export async function acceptAccount(identityId: string): Promise<void> {
  * a renewal, whose request stays stored until its grant is, finds the same
  * answer again; a sign-in makes a new request.
  */
-async function settleRestartedAccept(gen: number, identityId: string): Promise<void> {
+async function settleRestartedAccept(gen: number, identityId: string, tries = 3): Promise<void> {
   const { renew } = get();
   let session: SessionDTO | null | undefined;
   try {
@@ -338,6 +338,8 @@ async function settleRestartedAccept(gen: number, identityId: string): Promise<v
     }
   } catch (error) {
     if (stale(gen)) return;
+    // Another restart cut the read short: the outcome is still unknown, so read it again on the next engine.
+    if (errorCode(error) === 'ENGINE_RESTARTED' && tries > 1) return settleRestartedAccept(gen, identityId, tries - 1);
     appendLog('warn', 'host', `Reading the session after the engine restarted failed: ${errorMessage(error)}`);
   }
   await resumeOnNewEngine(gen, true, session);
