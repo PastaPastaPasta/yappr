@@ -11,11 +11,13 @@ import { buildYapprStateTransitionUri } from 'platform-auth'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { KeyExchangeQR } from '@/components/auth/key-exchange-qr'
+import { HeldPaymentRequest } from '@/components/token/held-payment-request'
 import { useBuyYappModal } from '@/hooks/use-buy-yapp-modal'
 import { useAuth } from '@/contexts/auth-context'
 import { tokenService, MIN_YAPP_PURCHASE } from '@/lib/services/token-service'
 import { buildUnsignedDirectPurchaseTransition } from '@/lib/services/token-purchase-builder'
 import { identityService } from '@/lib/services/identity-service'
+import { checkShownRequest, clearShownRequest, loadShownRequest, saveShownRequest, type ShownPaymentRequest } from '@/lib/services/wallet-payment-request'
 import { tipService, CREDITS_PER_DASH as CREDITS_PER_DASH_NUM } from '@/lib/services/tip-service'
 import { YAPP_TOKEN_COSTS, getConfiguredNetwork } from '@/lib/constants'
 import { repostsAreQuotes } from '@/lib/contract-topology'
@@ -81,8 +83,8 @@ export function BuyYappModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletBaselineRef = useRef<bigint | null>(null)
-  // The QR this modal showed: shown again rather than a second one built while it may still be paid.
-  const shownRequestRef = useRef<{ key: string; uri: string } | null>(null)
+  // An unpaid wallet request holding this purchase back.
+  const [heldRequest, setHeldRequest] = useState<ShownPaymentRequest | null>(null)
   // Generation counter guarding handleWalletSign's async steps: bumped on every
   // start/back/close so a superseded invocation can't overwrite a fresh QR or
   // baseline after its awaits resolve.
@@ -108,7 +110,7 @@ export function BuyYappModal() {
       setWalletUri(null)
       setWalletExpired(false)
       walletBaselineRef.current = null
-      shownRequestRef.current = null
+      setHeldRequest(null)
       walletSessionRef.current++
     }
   }, [isOpen])
@@ -118,6 +120,8 @@ export function BuyYappModal() {
   const amountBig = /^\d+$/.test(amount) ? BigInt(amount) : BigInt(0)
   const costCredits = pricePerToken !== null ? pricePerToken * amountBig : null
   const costDashLabel = costCredits !== null ? formatCreditsAsDash(costCredits) : '—'
+  // Names this purchase's stored wallet request (`lib/services/wallet-payment-request.ts`).
+  const requestKey = `purchase:${amountBig}:${costCredits}`
 
   const handleAmountChange = (value: string) => {
     if (/^\d*$/.test(value)) {
@@ -147,10 +151,12 @@ export function BuyYappModal() {
   // signing): refresh the credit balance, tell other YAPP balance views (e.g.
   // the sidebar dropdown) to refresh, and show the success screen.
   const finishPurchase = useCallback(() => {
+    // Done: an earlier request for the same purchase must never count as this one's proof.
+    if (user) clearShownRequest(user.identityId, requestKey)
     refreshBalance().catch(err => logger.error('Failed to refresh balance:', err))
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('yapp-balance-changed'))
     setState('success')
-  }, [refreshBalance])
+  }, [user, requestKey, refreshBalance])
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
@@ -169,6 +175,11 @@ export function BuyYappModal() {
       // Purchases must be signed with the CRITICAL key and none is usable here.
       setError("That key can't approve this. Use your wallet instead.")
       setState('needKey')
+    } else if (result.error === PAYMENT_PENDING_ERROR) {
+      const held = loadShownRequest(user.identityId)
+      setError(held ? null : result.error)
+      setHeldRequest(held)
+      setState('confirming')
     } else {
       // Sent, but not confirmed: no "Try Again", which could buy twice.
       setState(result.errorCode === 'UNCONFIRMED' ? 'unconfirmed' : 'error')
@@ -201,16 +212,36 @@ export function BuyYappModal() {
     setError(null)
     setWalletUri(null)
     setWalletExpired(false)
-    const requestKey = `${amountBig}:${costCredits}`
-    if (shownRequestRef.current?.key === requestKey) {
-      setWalletUri(shownRequestRef.current.uri)
-      return
-    }
+    setHeldRequest(null)
+    const ownerId = user.identityId
     try {
+      // The same purchase's QR, while it may still be paid, is shown again with its own baseline.
+      const shown = await checkShownRequest(ownerId, requestKey)
+      if (walletSessionRef.current !== session) return
+      if (shown.kind === 'held') {
+        exitWalletSign(null)
+        setHeldRequest(shown.request)
+        return
+      }
+      if (shown.kind === 'same') {
+        walletBaselineRef.current = shown.request.purchase?.balanceBefore ?? null
+        setWalletUri(shown.request.uri)
+        return
+      }
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
-      const baseline = await tokenService.getBalance(user.identityId)
+      const baseline = await tokenService.getBalance(ownerId)
       if (walletSessionRef.current !== session) return
+      if (shown.kind === 'settled') {
+        // Its nonce can no longer execute: paid if the balance shows it, otherwise a fresh request.
+        clearShownRequest(ownerId, requestKey)
+        const paid = shown.request.purchase
+        if (paid && baseline >= paid.balanceBefore + paid.amount) {
+          setYappBalance(baseline)
+          finishPurchase()
+          return
+        }
+      }
       walletBaselineRef.current = baseline
       const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
@@ -219,12 +250,24 @@ export function BuyYappModal() {
         return
       }
       const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
-      shownRequestRef.current = { key: requestKey, uri }
+      saveShownRequest(ownerId, {
+        key: requestKey,
+        uri,
+        nonce: request.nonce,
+        description: `${costDashLabel} to buy ${amountBig.toString()} YAPP`,
+        purchase: { balanceBefore: baseline, amount: amountBig },
+      })
       setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet signing request:', err)
-      exitWalletSign(err instanceof Error && err.message === PAYMENT_PENDING_ERROR ? err.message : 'Could not prepare the wallet signing request — please try again')
+      if (err instanceof Error && err.message === PAYMENT_PENDING_ERROR) {
+        const held = loadShownRequest(ownerId)
+        exitWalletSign(held ? null : err.message)
+        setHeldRequest(held)
+        return
+      }
+      exitWalletSign('Could not prepare the wallet signing request — please try again')
     }
   }
 
@@ -405,6 +448,7 @@ export function BuyYappModal() {
                           <p className="text-xs text-gray-500">{formatCoverage(amountBig)}</p>
                         </div>
                         {error && <p className="text-red-500 text-sm">{error}</p>}
+                        {heldRequest && <HeldPaymentRequest key={heldRequest.key} request={heldRequest} />}
                         <div className="flex gap-3">
                           <Button onClick={() => { setState('input'); setError(null) }} variant="outline" className="flex-1">Back</Button>
                           {preferWallet ? (
@@ -439,6 +483,7 @@ export function BuyYappModal() {
                           <span className="font-medium">{costDashLabel}</span>
                         </div>
                         {error && <p className="text-red-500 text-sm">{error}</p>}
+                        {heldRequest && <HeldPaymentRequest key={heldRequest.key} request={heldRequest} />}
                         <div className="flex gap-3">
                           <Button
                             onClick={() => { setState('confirming'); setError(null) }}
