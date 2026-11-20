@@ -37,7 +37,9 @@ export interface TipResult {
      * still land — the UI must offer "check again", never a blind retry, or the
      * user sends their money twice.
      */
-    | 'UNCONFIRMED';
+    | 'UNCONFIRMED'
+    /** An earlier tip of the same kind may have gone through and can't be checked: send only once the user confirms. */
+    | 'MAY_HAVE_PAID';
 }
 
 /**

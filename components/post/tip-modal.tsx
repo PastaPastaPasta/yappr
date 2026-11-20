@@ -17,7 +17,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { tipService, MIN_TIP_CREDITS } from '@/lib/services/tip-service'
 import { tipHistoryService } from '@/lib/services/tip-history-service'
 import { tokenService } from '@/lib/services/token-service'
-import { holdWalletRequest, sendPastWalletRequest, type HeldWalletRequest, buildWalletTip, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
+import { MAY_HAVE_PAID_MESSAGE, buildWalletTip, clearPersistedWalletPayment, prepareWalletPayment, type WalletPayment } from '@/lib/services/wallet-payment-service'
 import { identityService } from '@/lib/services/identity-service'
 import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
@@ -50,6 +50,7 @@ type ModalState =
   | 'success'
   | 'save-prompt'
   | 'unconfirmed'
+  | 'mayHavePaid'
   | 'error'
 type PaymentTab = 'yapp' | 'credits' | 'crypto'
 type KeySource = 'prefilled' | 'manual' | null
@@ -158,8 +159,10 @@ export function TipModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletSessionRef = useRef(0)
-  const walletRequestsRef = useRef(new Map<string, HeldWalletRequest>())
-  const allowedPaymentsRef = useRef(new Set<string>())
+  const walletRequestsRef = useRef(new Map<string, WalletPayment>())
+  // The user chose, in this confirmation, to pay again past an earlier request that may have gone through.
+  const payAgainRef = useRef(false)
+  const retryPaymentRef = useRef<(() => void) | null>(null)
 
   // Transfer key persistence (credits tab only)
   const [keySource, setKeySource] = useState<KeySource>(null)
@@ -217,7 +220,8 @@ export function TipModal() {
   // Reset state when modal closes
   useEffect(() => {
     if (!isOpen) {
-      allowedPaymentsRef.current.clear()
+      payAgainRef.current = false
+      retryPaymentRef.current = null
       setAmount('')
       setYappAmount('1')
       setTipMessage('')
@@ -324,7 +328,7 @@ export function TipModal() {
   // Shared tail of both YAPP paths: refresh balances, drop the cached tip
   // pages so the new proof can show up, and land on the success screen.
   const finishYappTip = useCallback((payment?: WalletPayment) => {
-    allowedPaymentsRef.current.clear()
+    payAgainRef.current = false
     walletRequestsRef.current.delete(walletPaymentKey)
     if (user && payment) clearPersistedWalletPayment(user.identityId, payment.request.reservationId).catch(err => logger.error('Could not clear the completed wallet payment:', err))
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
@@ -340,7 +344,7 @@ export function TipModal() {
     if (!user || !recipientInfo) return
     setState('processing')
     setError(null)
-    let payment = walletRequestsRef.current.get(walletPaymentKey)?.payment
+    let payment = walletRequestsRef.current.get(walletPaymentKey)
     const result = await tipService.sendYappTipLocal(
       user.identityId,
       recipientInfo.id,
@@ -350,10 +354,12 @@ export function TipModal() {
       {
         key: walletPaymentKey,
         cached: payment,
-        allowAnother: allowedPaymentsRef.current,
+        payAgain: payAgainRef.current,
         onPrepared: prepared => {
-          payment = prepared
-          if (payment) walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'tip'))
+          if (prepared.unproven) return
+          payment = prepared.payment
+          if (prepared.completed) return
+          if (payment) walletRequestsRef.current.set(walletPaymentKey, payment)
           else walletRequestsRef.current.delete(walletPaymentKey)
         },
       }
@@ -373,6 +379,9 @@ export function TipModal() {
 
     if (result.success) {
       finishYappTip(payment)
+    } else if (result.errorCode === 'MAY_HAVE_PAID') {
+      retryPaymentRef.current = () => { handleSendYappTip().catch(err => logger.error('Failed to send tip:', err)) }
+      setState('mayHavePaid')
     } else if (result.errorCode === 'UNCONFIRMED') {
       // Broadcast went out, the proof has not shown up yet. Never offer a plain
       // retry here — a second press would move the money twice.
@@ -413,29 +422,28 @@ export function TipModal() {
     setWalletUri(null)
     setWalletExpired(false)
     try {
-      const existingPayment = walletRequestsRef.current.get(walletPaymentKey)?.payment
-      const prepared = await prepareWalletPayment(existingPayment, (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), {
-        ownerId: user.identityId, key: walletPaymentKey, allowAnother: allowedPaymentsRef.current,
+      const prepared = await prepareWalletPayment(walletRequestsRef.current.get(walletPaymentKey), (lockHeld) => buildWalletTip(user.identityId, recipientInfo.id, yappAmountBig, tipTarget, noteMessage, lockHeld), {
+        ownerId: user.identityId, key: walletPaymentKey, payAgain: payAgainRef.current,
         isCurrent: () => walletSessionRef.current === session,
         expose: payment => {
-          walletRequestsRef.current.set(walletPaymentKey, { payment, foreign: payment.key !== walletPaymentKey || payment.kind !== 'tip' })
+          walletRequestsRef.current.set(walletPaymentKey, payment)
           setWalletUri(buildYapprStateTransitionUri(payment.request.bytes, getConfiguredNetwork()))
         },
       })
+      // Left before the answer: a request proved paid stays stored, for the next check to show.
+      if (walletSessionRef.current !== session) return
       if (prepared.completed) {
-        if (walletSessionRef.current !== session) return
-        finishYappTip()
+        finishYappTip(prepared.payment)
         return
       }
-      const payment = prepared.payment
-      if (walletSessionRef.current !== session) {
+      if (prepared.unproven) {
+        retryPaymentRef.current = startWalletSign
+        setState('mayHavePaid')
         return
       }
-      walletRequestsRef.current.set(walletPaymentKey, holdWalletRequest(walletRequestsRef.current.get(walletPaymentKey), payment, payment.key !== walletPaymentKey || payment.kind !== 'tip'))
+      walletRequestsRef.current.set(walletPaymentKey, prepared.payment)
       if (prepared.unresolved) {
-        setError(prepared.different
-          ? "An earlier payment may still go through. Check your wallet's activity before trying again."
-          : "This payment may have gone through. Check your wallet's activity before trying again.")
+        setError("We couldn't check on this payment just now. Try again in a moment.")
         setState('unconfirmed')
         return
       }
@@ -456,9 +464,8 @@ export function TipModal() {
   // user spending YAPP elsewhere mid-flow. The wait has a silent budget; when
   // it runs out the QR gives way to a "check again" prompt, never a countdown.
   useEffect(() => {
-    const cached = walletRequestsRef.current.get(walletPaymentKey)
-    const payment = cached?.payment
-    if (state !== 'walletSign' || !walletUri || !user || !payment || cached?.foreign || payment.key !== walletPaymentKey || payment.kind !== 'tip') return
+    const payment = walletRequestsRef.current.get(walletPaymentKey)
+    if (state !== 'walletSign' || !walletUri || !user || !payment) return
 
     const budget = setTimeout(() => {
       setWalletUri(null)
@@ -1037,21 +1044,28 @@ export function TipModal() {
                         </Button>
                       )}
                     </div>
-                    {isYapp && walletRequestsRef.current.has(walletPaymentKey) && (
-                      <div className="space-y-2">
-                        <p className="text-xs text-gray-500">Sending another tip could pay twice.</p>
-                        <Button onClick={() => {
-                          const { past, keep } = sendPastWalletRequest(walletRequestsRef.current.get(walletPaymentKey))
-                          if (past) allowedPaymentsRef.current.add(past)
-                          if (keep) walletRequestsRef.current.set(walletPaymentKey, keep)
-                          else walletRequestsRef.current.delete(walletPaymentKey)
-                          setError(null)
-                          setState('input')
-                        }} variant="outline" className="w-full">
-                          Send another tip
-                        </Button>
-                      </div>
-                    )}
+                  </div>
+                )}
+
+                {/* An earlier tip of the same kind may have gone through and can't be checked: only the user decides */}
+                {state === 'mayHavePaid' && (
+                  <div className="py-4 text-center space-y-4">
+                    <ExclamationCircleIcon className="h-16 w-16 text-amber-500 mx-auto" />
+                    <div className="space-y-2">
+                      <p className="text-sm text-gray-600 dark:text-gray-400">{MAY_HAVE_PAID_MESSAGE}</p>
+                      <p className="text-lg font-medium">Pay again anyway?</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button onClick={close} variant="outline" className="flex-1">
+                        Close
+                      </Button>
+                      <Button onClick={() => {
+                        payAgainRef.current = true
+                        retryPaymentRef.current?.()
+                      }} className="flex-1">
+                        Pay again
+                      </Button>
+                    </div>
                   </div>
                 )}
 

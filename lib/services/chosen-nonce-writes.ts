@@ -1,4 +1,4 @@
-import { ChosenWriteNotSentError, chosenNonceSending } from './identity-nonce'
+import { ChosenWriteNotSentError } from './identity-nonce'
 import type { EvoSDK } from '@dashevo/evo-sdk'
 import {
   BatchTransition, BatchedTransition, ContractFeeClaim, ContractUserModeration,
@@ -19,7 +19,7 @@ type Tokens = EvoSDK['tokens']
 type Contracts = EvoSDK['contracts']
 
 /** Writes with an explicit nonce when a wallet or a dropped create still owns the next one. */
-export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, wif: string, identityKey: IdentityPublicKey, assertLive?: () => void) {
+export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, wif: string, identityKey: IdentityPublicKey, assertLive?: () => void, sending?: () => void) {
   let broadcastStarted = false
   function unsent<A extends unknown[], R>(operation: (...args: A) => Promise<R>) {
     return async (...args: A): Promise<R> => {
@@ -43,7 +43,7 @@ export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, w
     try {
       assertLive?.()
       transition.sign(privateKey, identityKey)
-      chosenNonceSending(ownerId, nonce)
+      sending?.()
       broadcastStarted = true
       return await (strict ? sdk.stateTransitions.broadcastAndWait(transition) : sdk.stateTransitions.broadcastAndWaitForAffectedState(transition))
     } finally {

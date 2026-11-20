@@ -69,7 +69,7 @@ describe('displayed wallet QR reservations (#777)', () => {
     expect(await settle(write(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))).toEqual({ value: 'sent 102' })
     expect(Date.now()).toBe(startedAt)
     expect(sdkWrite).not.toHaveBeenCalled()
-    expect(chosen).toHaveBeenCalledWith(BigInt(102))
+    expect(chosen).toHaveBeenCalledWith(BigInt(102), expect.any(Function))
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(101)])
     if (context === 'second tab') {
       expect(await settle(withSdkSignedWrite(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))).toEqual({ value: 'sent 103' })
