@@ -93,6 +93,21 @@ function useSignInExit(pathname: string): void {
   }, [pathname]);
 }
 
+const PENDING_LOOKUP_TRIES = 3;
+const PENDING_LOOKUP_BACKOFF_MS = 2_000;
+
+/** Looks again after a failed lookup (a timeout, say), a few times; a restart is retried when the engine is back. */
+async function lookupWithRetries<T>(lookup: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await lookup();
+    } catch (error) {
+      if (attempt >= PENDING_LOOKUP_TRIES || errorCode(error) === 'ENGINE_RESTARTED') throw error;
+      await new Promise((resolve) => setTimeout(resolve, PENDING_LOOKUP_BACKOFF_MS * attempt));
+    }
+  }
+}
+
 /** A switch or add started while the engine answered: the switch owns navigation, so a resume is dropped. */
 const switchUnderway = () => useAccounts.getState().transition !== null;
 
@@ -141,10 +156,11 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
     // App Connect builds keep their pending request apart from the legacy key exchange's, and
     // tell a plain sign-in from signing an account in again ("Sign in again").
     const appConnect = getCapabilities()?.walletSignIn === 'app-connect';
-    const pendingRequest: Promise<{ reauth: string | null } | null> = appConnect
-      ? engine.api.session.appConnectPendingSignIn()
-      : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
-    pendingRequest
+    const lookup = (): Promise<{ reauth: string | null } | null> =>
+      appConnect
+        ? engine.api.session.appConnectPendingSignIn()
+        : engine.api.session.pendingKeyExchange().then((request) => (request !== null ? { reauth: null } : null));
+    lookupWithRetries(lookup)
       .then((pending) => {
         if (signingIn()) {
           recover(true);
@@ -179,8 +195,8 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
           if (atLaunch) launchChecked.current = false;
           return;
         }
+        // A lookup that never answered says nothing about the request: stay put, keeping the Add account marker.
         appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
-        recover(false);
       });
   }, [ready, engineUp, status, transition]);
 }
