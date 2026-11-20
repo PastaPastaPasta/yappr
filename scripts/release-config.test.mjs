@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 import releaseConfig from './release-config.cjs'
+import { RELEASE_TESTNET_MAKER } from './app-connect-journal.mjs'
 
 const { assertReleaseConfig, storageScope } = releaseConfig
 const template = parseEnv(readFileSync(new URL('../.env.testnet.template', import.meta.url), 'utf8'))
@@ -451,21 +452,37 @@ describe('release build configuration', () => {
     expect(scripts[`build:${name}`]).toBe(`BASE_PATH=${build.basePath} node scripts/build-release.mjs ${build.envFile}`)
   })
 
-  it('requires social v19, blog v11 and storefront v12 in every testnet release set', () => {
+  it('requires social v20 for fresh release sets while retaining the registered v19 deployment', () => {
     const fresh = completeEnv()
-    expect(fresh.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v19')
+    expect(fresh.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v20')
     expect(fresh.NEXT_PUBLIC_BLOG_TOPOLOGY).toBe('v11')
     expect(fresh.NEXT_PUBLIC_STOREFRONT_TOPOLOGY).toBe('v12')
     expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_BLOG_TOPOLOGY: 'v10' })).toThrow('must be v11')
     expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' })).toThrow('must be v12')
-    for (const cut of ['v17', 'v18']) expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_CONTRACT_TOPOLOGY: cut })).toThrow('must be v19')
-    const registered = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    for (const cut of ['v17', 'v18', 'v19']) expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_CONTRACT_TOPOLOGY: cut })).toThrow('must be v20')
+    // The set registered on 2026-11-12 keeps the v19 its social contract was registered with (docs/SOCIAL_V20.md).
+    const registered = parseEnv(readFileSync(new URL('./fixtures/env-testnet-20261112.env', import.meta.url), 'utf8'))
     expect(registered.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v19')
+    expect(registered.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER).toBe(RELEASE_TESTNET_MAKER)
     expect(() => assertReleaseConfig(registered)).not.toThrow()
+    expect(() => assertReleaseConfig({ ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v20' })).toThrow('must be v19')
+    // Only that exact set: any other group, owner, anchor or social contract is a fresh set.
+    for (const key of ['NEXT_PUBLIC_APP_CONNECT_GROUP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER', 'NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_YAPPR_CONTRACT_ID']) {
+      expect(() => assertReleaseConfig({ ...registered, [key]: fresh[key] })).toThrow('must be v20')
+    }
+    // Social v20 appended to that group: the v19 member stays pinned, unused, and no contract variable names it.
+    const v20 = '63JuBhMjZKyBVJzj7ubCmGEacPsa8VtvgQomMsVrd36D'
+    const appended = { ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v20', NEXT_PUBLIC_YAPPR_CONTRACT_ID: v20,
+      NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: `${registered.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS},${v20}:1` }
+    expect(() => assertReleaseConfig(appended)).not.toThrow()
+    const withoutV19 = appended.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS.split(',').filter(pin => !pin.startsWith(registered.NEXT_PUBLIC_YAPPR_CONTRACT_ID)).join(',')
+    expect(() => assertReleaseConfig({ ...appended, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: withoutV19 })).toThrow(`must pin ${registered.NEXT_PUBLIC_YAPPR_CONTRACT_ID}`)
+    expect(() => assertReleaseConfig({ ...appended, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v19' })).toThrow('must be v20')
+    expect(() => assertReleaseConfig({ ...registered, NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS: appended.NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS })).toThrow(`unexpected member ${v20}`)
     // The retired 2026-10-21 v17 set (group 4MjVAxDY…) no longer builds.
     const retired = { ...registered, NEXT_PUBLIC_CONTRACT_TOPOLOGY: 'v17', NEXT_PUBLIC_BLOG_TOPOLOGY: 'v9', NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v10',
       NEXT_PUBLIC_APP_CONNECT_GROUP_ID: '4MjVAxDYjCdQqFBT48gzdvCsbVwFwtZzALEMWjns33pv', NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER: 'hbGEcFcXKJ2W9Di24ekiozTWfFszrjqkxbjfEep3D8A' }
-    expect(() => assertReleaseConfig(retired)).toThrow('must be v19')
+    expect(() => assertReleaseConfig(retired)).toThrow('must be v20')
   })
 
   it('the checked-in .env.testnet is the complete registered release, and `build` uses it', () => {
@@ -473,7 +490,9 @@ describe('release build configuration', () => {
     expect(Object.keys(release).sort()).toEqual(Object.keys(template).sort())
     expect(() => assertReleaseConfig(release)).not.toThrow()
     expect(release.NEXT_PUBLIC_RELEASE).toBe('1')
-    expect(storageScope('/staging', release.STORAGE_EPOCH)).toBe('testnet-release-2:staging')
+    // A cut-over to another contract set bumps the epoch (D21), so it is read from the file, never pinned here.
+    expect(release.STORAGE_EPOCH).toMatch(/^testnet-release-[1-9][0-9]*$/)
+    expect(storageScope('/staging', release.STORAGE_EPOCH)).toBe(`${release.STORAGE_EPOCH}:staging`)
     const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
     expect(scripts.build).toBe('npm run build:release')
     expect(scripts['build:staging']).toBe('BASE_PATH=/staging npm run build')

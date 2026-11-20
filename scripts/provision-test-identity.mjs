@@ -12,17 +12,13 @@
  * `retryAfter` on 429, and solve the captcha in the web UI when asked. This is a
  * rare manual operation — never run it from CI.
  *
- * Run:
- *   node scripts/provision-test-identity.mjs <index> [--dpns <label>] [--cap-token <t>]
- *   node scripts/provision-test-identity.mjs --topup <identityId> [--cap-token <t>]
+ * Run (the faucet pays Core addresses only; its old proof-serving endpoint is
+ * gone, so fund the asset lock yourself on testnet and devnet alike):
+ *   node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>   # prints the address to fund
+ *   # send tDASH to that address, then build the lock: scripts/build-asset-lock.mjs
+ *   node scripts/provision-test-identity.mjs <index> [--dpns <label>] --asset-lock-key-file <keyfile> --funding-outpoint <txid>:0
+ *   node scripts/provision-test-identity.mjs --topup <identityId> --asset-lock-key-file <keyfile> --funding-outpoint <txid>:0
  *   node scripts/provision-test-identity.mjs --check-balances
- *
- * When the faucet demands a captcha and no token is at hand, the request can be
- * made out-of-band (e.g. from the faucet page itself, where its CAP widget runs)
- * and the result fed back in, so the token never has to leave the browser:
- *   node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>   # prints the pubkey/address to fund
- *   # POST /api/asset-lock-proof elsewhere, save the JSON response, then:
- *   node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-proof-file <json>
  *
  * DEVNET (`NETWORK=devnet`) differs in two ways that matter:
  *
@@ -30,10 +26,9 @@
  *     bloom matcher never forwards the IS lock, so an InstantSend-funded lock
  *     silently burns the funds (dashpay/platform#4399). Only ChainLock proofs are
  *     built here.
- *  2. There is no proof-serving faucet API. Fund the asset-lock address printed by
- *     `--gen-asset-lock-key` from the devnet's own faucet (moutai:
- *     https://faucet.moutai.networks.dash.org/), then hand the resulting outpoint
- *     back with `--funding-outpoint <txid>:<vout>`. The script waits for that
+ *  2. Fund the asset-lock address printed by `--gen-asset-lock-key` from the
+ *     devnet's own faucet, then hand the resulting outpoint back with
+ *     `--funding-outpoint <txid>:<vout>`. The script waits for that
  *     transaction to be buried under a chain lock — Insight for the block height,
  *     DAPI `getStatus().chain.coreChainLockedHeight` for the lock — and only then
  *     builds `AssetLockProof.createChainAssetLockProof`.
@@ -275,7 +270,7 @@ function assetLockProofFromFaucet(proofHex, chainLockHeight) {
  */
 async function obtainFunding(sdk, args) {
   if (args.fundingOutPoint) {
-    // Devnet path: the asset-lock output was funded out of band, so all that is
+    // The asset-lock output was funded out of band, so all that is
     // left is to wait for its transaction to be chain-locked and claim the outpoint.
     const assetLock = loadAssetLockKeypair(args.assetLockKeyFile);
     const { txid, vout } = args.fundingOutPoint;
@@ -338,6 +333,15 @@ async function requestAssetLockProof(publicKeyHex, capToken) {
     throw new Error(
       `Faucet rate limit hit (retryAfter=${retryAfter}s). Stopping — do not retry automatically.` +
       (payload.requiresHardCaptcha ? '\n  A hard captcha is now required; use the web UI.' : '')
+    );
+  }
+  if (response.status === 404) {
+    throw new Error(
+      'The faucet no longer serves asset-lock proofs (404). Fund the lock yourself:\n' +
+      '  1. NETWORK=testnet node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>\n' +
+      '  2. Send tDASH to the printed assetLockAddress from the faucet\n' +
+      '  3. NETWORK=testnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>\n' +
+      '  4. Re-run with --asset-lock-key-file <keyfile> --funding-outpoint <assetLockTxid>:0'
     );
   }
   if (response.status === 503) {
@@ -432,7 +436,7 @@ async function checkBalances(sdk) {
 
   if (depleted.length > 0) {
     for (const identityId of depleted) {
-      console.error(`run scripts/provision-test-identity.mjs --topup ${identityId}`);
+      console.error(`run scripts/provision-test-identity.mjs --topup ${identityId} --asset-lock-key-file <keyfile> --funding-outpoint <txid>:0 (docs/TESTING.md, Top-ups)`);
     }
     process.exit(1);
   }
@@ -447,11 +451,11 @@ try {
 } catch (e) {
   console.error(e.message);
   console.error('Usage: node scripts/provision-test-identity.mjs <index> [--dpns <label>] [--cap-token <t>]');
-  console.error('       node scripts/provision-test-identity.mjs --topup <identityId> [--cap-token <t>]');
+  console.error('       node scripts/provision-test-identity.mjs --topup <identityId> --asset-lock-key-file <keyfile> --funding-outpoint <txid>:<vout>');
   console.error('       node scripts/provision-test-identity.mjs --check-balances');
   console.error('       node scripts/provision-test-identity.mjs --gen-asset-lock-key <keyfile>');
   console.error('       node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-proof-file <json>');
-  console.error('       NETWORK=devnet node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-outpoint <txid>:<vout>');
+  console.error('       node scripts/provision-test-identity.mjs <index> --asset-lock-key-file <keyfile> --funding-outpoint <txid>:<vout>');
   process.exit(1);
 }
 

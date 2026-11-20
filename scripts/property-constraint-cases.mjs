@@ -778,6 +778,7 @@ DELETE_CASES['yappr-storefront-contract-v11.json'] = DELETE_CASES['yappr-storefr
 
 for (const [newFile, baseFile] of [
   ['yappr-social-contract-v19.json', 'yappr-social-contract-v17.json'],
+  ['yappr-social-contract-v20.json', 'yappr-social-contract-v17.json'],
   ['yappr-blog-contract-v11.json', 'yappr-blog-contract.json'],
   ['yappr-storefront-contract-v12.json', 'yappr-storefront-contract.json'],
 ]) {

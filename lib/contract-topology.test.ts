@@ -24,6 +24,7 @@ import socialContractV16 from '@/contracts/yappr-social-contract-v16.json'
 import socialContractV17 from '@/contracts/yappr-social-contract-v17.json'
 import socialContractV18 from '@/contracts/yappr-social-contract-v18.json'
 import socialContractV19 from '@/contracts/yappr-social-contract-v19.json'
+import socialContractV20 from '@/contracts/yappr-social-contract-v20.json'
 import blogContractV10 from '@/contracts/yappr-blog-contract-v10.json'
 import storefrontContractV11 from '@/contracts/yappr-storefront-contract-v11.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
@@ -64,6 +65,7 @@ const V15 = socialContractV15.documentSchemas as unknown as Schemas
 const V16 = socialContractV16.documentSchemas as unknown as Schemas
 const V17 = socialContractV17.documentSchemas as unknown as Schemas
 const V19 = socialContractV19.documentSchemas as unknown as Schemas
+const V20 = socialContractV20.documentSchemas as unknown as Schemas
 const V18 = socialContractV18.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
@@ -80,7 +82,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15', 'v16', 'v17', 'v18', 'v19', 'v20'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -142,7 +144,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19], ['v20', V20]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -240,7 +242,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19], ['v20', V20]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -265,7 +267,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15], ['v16', V16], ['v17', V17], ['v19', V19], ['v20', V20]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -1563,16 +1565,47 @@ describe('contract topology', () => {
       expect(v19.liveValueFor('reply', true)).toBe(true)
     })
   })
+  describe('v20 (v19 whose reply removal record keeps the reply it answered, and whose targets must exist)', () => {
+    it('differs from v19 only in the reply\'s kept fields and three references', () => {
+      const expected = structuredClone(socialContractV19) as unknown as { documentSchemas: Record<string, { properties: Record<string, Record<string, unknown>>, moderatorAbilities?: unknown }> }
+      const abilities = expected.documentSchemas.reply.moderatorAbilities as { deleteKeepsFields: string[] }
+      abilities.deleteKeepsFields = ['rootPostId', 'replyToReplyId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight']
+      // A follow request's target and a report's target name an identity, an embed a data contract, each one that exists.
+      const references = [['followRequest', 'targetId', 'identity'], ['report', 'targetOwnerId', 'identity'], ['post', 'embedContractId', 'contract']] as const
+      for (const [docType, property, type] of references) {
+        expect(expected.documentSchemas[docType].properties[property].refersTo, `v19 ${docType}.${property}`).toBeUndefined()
+        expected.documentSchemas[docType].properties[property].refersTo = { type }
+      }
+      expect(socialContractV20).toEqual(expected)
+      // As `follow.followingId` always declared it. The embed's document type and id stay unchecked.
+      expect(V20.follow.properties.followingId.refersTo).toEqual({ type: 'identity' })
+      for (const property of ['embedDocType', 'embedId']) expect(V20.post.properties[property].refersTo, property).toBeUndefined()
+      // The kept property is the reply's own optional, immutable link to the reply it answers.
+      expect(V20.reply.properties.replyToReplyId).toBeDefined()
+      expect(V20.reply.required).not.toContain('replyToReplyId')
+    })
+
+    it('says a removed reply\'s record names its parent on v20 only, and changes nothing else of v19', async () => {
+      const v19 = await topologyModule('v19')
+      expect(v19.removedRepliesKeepTheirParent()).toBe(false)
+      const v20 = await topologyModule('v20')
+      expect(v20.removedRepliesKeepTheirParent()).toBe(true)
+      expect(v20.removalKeptFieldsFor('reply')).toEqual(['rootPostId', 'replyToReplyId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight'])
+      expect(v20.removalKeptFieldsFor('post')).toEqual(['tags', '$createdAt', '$updatedAt', '$updatedAtBlockHeight'])
+      expect(v20.topologyDescriptor()).toEqual({ ...(await topologyModule('v19')).topologyDescriptor(), topology: 'v20' })
+      for (const cut of ['v2', 'v10', 'v16', 'v17', 'v18']) expect((await topologyModule(cut)).removedRepliesKeepTheirParent(), cut).toBe(false)
+    })
+  })
   describe('v18 (hide, don\'t delete)', () => {
     const indexOf = (schemas: Schemas, docType: string, name: string) => schemas[docType].indices?.find((entry) => entry.name === name)
     const keys = (schemas: Schemas, docType: string, name: string) => indexOf(schemas, docType, name)?.properties.map((property) => Object.keys(property)[0])
     const BLOG10 = blogContractV10.documentSchemas as unknown as Schemas
     const STORE11 = storefrontContractV11.documentSchemas as unknown as Schemas
 
-    it('reports the v18 capabilities on v18 and none of them on v17 or v19', async () => {
+    it('reports the v18 capabilities on v18 and none of them on v17, v19 or v20', async () => {
       const flags = (m: Awaited<ReturnType<typeof topologyModule>>) => [m.listingsCarryModLane(), m.moderatorsCannotDelete(), m.authorsCanBeRestricted()]
       expect(flags(await topologyModule('v18'))).toEqual([true, true, true])
-      for (const cut of ['v17', 'v19']) expect(flags(await topologyModule(cut))).toEqual([false, false, false])
+      for (const cut of ['v17', 'v19', 'v20']) expect(flags(await topologyModule(cut))).toEqual([false, false, false])
     })
 
     it('lets no moderator delete in social, blog or storefront, and keeps warnings only', async () => {

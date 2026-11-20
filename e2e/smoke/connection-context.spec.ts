@@ -17,7 +17,7 @@ for (const kind of ['followers', 'following'] as const) {
       } else {
         await content.getByRole('button', { name: 'Explore Yappr' }).click()
         await expect(page).toHaveURL(appUrlPattern('/explore'))
-        await expect(page.getByPlaceholder('Search posts and blog articles')).toBeVisible()
+        await expect(page.getByRole('textbox', { name: 'Search Yappr' })).toBeVisible()
       }
     })
   }

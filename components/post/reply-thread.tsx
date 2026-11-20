@@ -55,22 +55,13 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, re
         </div>
       )}
 
-      {/* A reply proved deleted (v10) holds its place so its replies stay in the thread. */}
-      {content.deletedStub ? (
-        <RemovedPostStub documentId={content.id} kind="reply" variant="card" proven />
-      ) : content.hiddenStub ? (
-        // v18: a reply not shown here (hidden, or written while its author was
-        // restricted) with visible replies under it holds its place without its content.
-        <HiddenContentStub noun="reply" documentId={content.id} variant="card" text="This reply isn't shown." />
-      ) : (
-        <PostCard
-          post={postLike}
-          enrichment={getPostEnrichment?.(postLike)}
-          rootPostOwnerId={rootPostOwnerId}
-          replyBlockedReason={replyBlockedReason}
-          keepIfUnreadable
-        />
-      )}
+      <ReplyOrPlaceholder
+        content={content}
+        post={postLike}
+        enrichment={getPostEnrichment?.(postLike)}
+        rootPostOwnerId={rootPostOwnerId}
+        replyBlockedReason={replyBlockedReason}
+      />
 
       {/* Nested replies - flattened to a single indent level */}
       {nestedReplies.length > 0 && (
@@ -87,6 +78,35 @@ export function ReplyThreadItem({ thread, rootPostOwnerId, getPostEnrichment, re
         </div>
       )}
     </div>
+  )
+}
+
+interface ReplyOrPlaceholderProps {
+  content: ReplyThread['content']
+  post: Post
+  enrichment: ProgressiveEnrichment | undefined
+  rootPostOwnerId: string
+  replyBlockedReason?: string
+}
+
+/**
+ * A reply's card, or the placeholder that holds its place at any depth so the
+ * replies under it stay in the thread: a reply proved deleted (v10 onwards; a
+ * moderator's removal on v20 sits under the reply it answered, which its
+ * removal record keeps), or a v18 reply not shown here (hidden, or written
+ * while its author was restricted).
+ */
+function ReplyOrPlaceholder({ content, post, enrichment, rootPostOwnerId, replyBlockedReason }: ReplyOrPlaceholderProps) {
+  if (content.deletedStub) return <RemovedPostStub documentId={content.id} kind="reply" variant="card" proven />
+  if (content.hiddenStub) return <HiddenContentStub noun="reply" documentId={content.id} variant="card" text="This reply isn't shown." />
+  return (
+    <PostCard
+      post={post}
+      enrichment={enrichment}
+      rootPostOwnerId={rootPostOwnerId}
+      replyBlockedReason={replyBlockedReason}
+      keepIfUnreadable
+    />
   )
 }
 
@@ -110,12 +130,12 @@ function NestedReply({ thread, rootPostOwnerId, getPostEnrichment, replyBlockedR
 
   return (
     <div className="relative">
-      <PostCard
+      <ReplyOrPlaceholder
+        content={thread.content}
         post={postLike}
         enrichment={enrichment}
         rootPostOwnerId={rootPostOwnerId}
         replyBlockedReason={replyBlockedReason}
-        keepIfUnreadable
       />
 
       {/* Continuation affordance: refocuses the page on this reply, showing its

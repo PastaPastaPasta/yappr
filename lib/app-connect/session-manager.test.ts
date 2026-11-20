@@ -283,6 +283,72 @@ describe('AppConnectSessionManager across tabs', () => {
     save.mockRestore()
   })
 
+  it('revocationSettled() waits for the whole revoke sign-out, its discard and the listener included', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    const store = appConnectSessions.keyStore()
+    const realClear = store.clear.bind(store)
+    let proceed: () => void = () => undefined
+    const clear = vi.spyOn(store, 'clear').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { proceed = resolve })
+      return realClear(...args)
+    })
+
+    const revoking = appConnectSessions.signOutRevoked(old)
+    try {
+      await vi.waitFor(() => expect(clear).toHaveBeenCalled())
+      let settled = false
+      const waiting = appConnectSessions.revocationSettled().then(() => { settled = true })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      // The grant is already inactive here, but the sign-out it leads to has not run yet.
+      expect(appConnectSessions.current('alice')).toBeNull()
+      expect(settled).toBe(false)
+      expect(signedOut).not.toHaveBeenCalled()
+
+      proceed()
+      await waiting
+      expect(signedOut).toHaveBeenCalledWith('alice')
+    } finally {
+      proceed()
+      await revoking
+      clear.mockRestore()
+    }
+  })
+
+  it('revocationSettled() also waits for a revoke that starts while it waits', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    const store = appConnectSessions.keyStore()
+    const realLoad = store.load.bind(store)
+    const gates: (() => void)[] = []
+    const load = vi.spyOn(store, 'load').mockImplementation(async (...args) => {
+      await new Promise<void>((resolve) => { gates.push(resolve) })
+      return realLoad(...args)
+    })
+    try {
+      const first = appConnectSessions.signOutRevoked(old)
+      await vi.waitFor(() => expect(gates).toHaveLength(1))
+      let settled = false
+      const waiting = appConnectSessions.revocationSettled().then(() => { settled = true })
+      // A second check of the same grant reports it revoked while the sign-in waits.
+      const second = appConnectSessions.signOutRevoked(old)
+      await vi.waitFor(() => expect(gates).toHaveLength(2))
+      gates[0]()
+      await first
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(settled).toBe(false)
+      gates[1]()
+      await second
+      await waiting
+      expect(settled).toBe(true)
+    } finally {
+      for (const release of gates) release()
+      load.mockRestore()
+    }
+  })
+
   it('a revoke overtaken by a raw-key sign-in does not sign the new session out', async () => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')

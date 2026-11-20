@@ -5,7 +5,7 @@
  * the review regressions (shared list caches, stale thread refresh, tag
  * authenticity, repost ordering).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import bs58 from 'bs58'
 import type { Post, Reply, User } from '@/lib/types'
 
@@ -34,7 +34,7 @@ const m = vi.hoisted(() => ({
   charterReasonText: vi.fn(async (...args: [string, number | undefined]) => (args[1] === 4 ? 'Spam' : null)),
 }))
 
-const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'repliesOutliveTheirParent', 'replyThreadsCarryLiveMarker', 'referencesMayDangle']
+const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'repliesOutliveTheirParent', 'replyThreadsCarryLiveMarker', 'referencesMayDangle', 'removedRepliesKeepTheirParent']
 vi.mock('@/lib/contract-topology', async (load) => {
   const actual = await load<Record<string, unknown>>()
   return { ...actual, ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])) }
@@ -74,6 +74,7 @@ const { profiles } = await import('../../src/api/profiles')
 const { graph } = await import('../../src/api/graph')
 const { explore } = await import('../../src/api/explore')
 const { attachQuotedPosts, getCachedQuotedPost } = await import('@/lib/feed/resolve-quoted-posts')
+const { moderationService } = await import('@/lib/services/moderation-service')
 const { validate, engagementPage, page, postDTO, threadDTO, pollDTO } = await import('../../src/dto/validate')
 
 /** A 44-character base58 id. */
@@ -212,6 +213,63 @@ describe('posts.thread on flat threads (v9/v10)', () => {
       [id('Tomb'), 0, true, false], [id('Orphan'), 1, false, false],
       [id('Removed'), 0, true, true], [id('Under'), 1, false, false],
     ])
+  })
+
+  describe('where a removal record keeps the reply a removed reply answered (social v20)', () => {
+    const theirs = (r: Reply): Reply => ({ ...r, author: user(id('Other')) })
+    const removal = (replyToReplyId?: string) => ({
+      documentId: '', documentOwnerId: '', moderatorId: '', reason: '', removedAt: 1, documentHash: '', restoredAt: null, restoredBy: null,
+      kept: replyToReplyId ? { replyToReplyId } : {},
+    })
+    let getRemovals: MockInstance<typeof moderationService.getRemovals>
+
+    beforeEach(() => {
+      m.topology = { ...m.topology, replyThreadsCarryLiveMarker: true, removedRepliesKeepTheirParent: true }
+      getRemovals = vi.spyOn(moderationService, 'getRemovals')
+    })
+    afterEach(() => getRemovals.mockRestore())
+
+    it('puts a removed nested reply\'s stub back under the reply it answered, with the replies under it', async () => {
+      // Top > Removed > Under: the thread page lists Top and Under; Removed is gone, and its record names Top.
+      m.replyService.getReplies.mockResolvedValue({ documents: [theirs(reply('Top', 3)), theirs(reply('Under', 6, 'Removed'))] })
+      m.provenAbsent.mockResolvedValue(new Set([id('Removed')]))
+      getRemovals.mockResolvedValue(new Map([[id('Removed'), removal(id('Top'))]]))
+      const thread = await posts.thread(id('Root'))
+      expect(validate(threadDTO, thread)).toEqual([])
+      expect(getRemovals.mock.calls).toEqual([['reply', [id('Removed')]]])
+      expect(thread.replies.items.map(item => [item.id, item.depth, item.deletedStub ?? false])).toEqual([
+        [id('Top'), 0, false], [id('Removed'), 1, true], [id('Under'), 1, false],
+      ])
+    })
+
+    it('does the same on a continuation that reads only its new page, under a parent an earlier page holds', async () => {
+      m.replyService.getReplies.mockResolvedValueOnce({ documents: [theirs(reply('Top', 3))], nextCursor: id('Top') })
+      const first = await posts.thread(id('Root'))
+      expect(first.replies.cursor).not.toBeNull()
+      m.replyService.getReplies.mockResolvedValueOnce({ documents: [theirs(reply('Under', 6, 'Removed'))] })
+      m.provenAbsent.mockResolvedValue(new Set([id('Removed')]))
+      getRemovals.mockResolvedValue(new Map([[id('Removed'), removal(id('Top'))]]))
+      const more = await posts.thread(id('Root'), first.replies.cursor, { delta: true })
+      expect(getRemovals.mock.calls).toEqual([['reply', [id('Removed')]]])
+      // Only the rows the caller lacks, and where the whole thread now places them.
+      expect(more.replies.items.map(item => [item.id, item.depth, item.deletedStub ?? false])).toEqual([
+        [id('Removed'), 1, true], [id('Under'), 1, false],
+      ])
+      expect(more.layout?.map(row => [row.id, row.depth])).toEqual([[id('Top'), 0], [id('Removed'), 1], [id('Under'), 1]])
+    })
+
+    it('leaves the stub at the top when the record names no parent, and reads no record on a cut that keeps none', async () => {
+      m.replyService.getReplies.mockResolvedValue({ documents: [theirs(reply('Top', 3)), theirs(reply('Under', 6, 'Removed'))] })
+      m.provenAbsent.mockResolvedValue(new Set([id('Removed')]))
+      getRemovals.mockResolvedValue(new Map([[id('Removed'), removal()]]))
+      const top = [[id('Top'), 0, false], [id('Removed'), 0, true], [id('Under'), 1, false]]
+      const shape = async () => (await posts.thread(id('Root'))).replies.items.map(item => [item.id, item.depth, item.deletedStub ?? false])
+      expect(await shape()).toEqual(top)
+      getRemovals.mockClear()
+      m.topology = { ...m.topology, removedRepliesKeepTheirParent: false }
+      expect(await shape()).toEqual(top)
+      expect(getRemovals).not.toHaveBeenCalled()
+    })
   })
 
   it('keeps a reply under a parent the moderators hid below a hidden stub, withheld and never "deleted" (social v18)', async () => {

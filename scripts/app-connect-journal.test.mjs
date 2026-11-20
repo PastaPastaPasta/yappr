@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import releaseConfig from './release-config.cjs';
-import { TESTNET_REGISTERED_THROUGH, TESTNET_REHEARSAL_SET, appConnectEnvLines, entriesToCreate, planAppConnectSet, planRehearsalSet } from './app-connect-set.mjs';
+import { APP_CONNECT_ENTRIES, TESTNET_REGISTERED_THROUGH, TESTNET_RELEASE_SET, TESTNET_REHEARSAL_SET, appConnectEnvLines, entriesToCreate, planAppConnectSet, planRehearsalSet, planTestnetReleaseSet } from './app-connect-set.mjs';
 import { REGISTERED_TESTNET_MAKER, RELEASE_TESTNET_MAKER, appendNonces, checkJournal, isResumedAppend, journalIsComplete, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
 
 const MAKER = TESTNET_REHEARSAL_SET.makerId;
@@ -23,7 +23,7 @@ const check = (journal, policy, appendAfter = TESTNET_REGISTERED_THROUGH) =>
   () => checkJournal(journal, plan, { path: 'j.json', policy, appendAfter, network: 'testnet', generateId });
 
 describe('the testnet append guard', () => {
-  it('allows new testnet makers to register v19 and keeps the historical makers guarded', () => {
+  it('allows new testnet makers to register the release set and keeps the earlier makers guarded', () => {
     const fresh = { maker: '11111111111111111111111111111112' };
     expect(testnetAppendProblem('testnet', null, fresh)).toBeNull();
     expect(testnetAppendProblem('testnet', 'social', fresh)).toBeNull();
@@ -31,6 +31,7 @@ describe('the testnet append guard', () => {
     expect(testnetAppendProblem('testnet', null, { maker: REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
     expect(testnetAppendProblem('testnet', null, { maker: RELEASE_TESTNET_MAKER })).toMatch(/already holds the testnet release set/);
     expect(testnetAppendProblem('testnet', 'passkeyVault', { maker: RELEASE_TESTNET_MAKER })).toBeNull();
+    expect(testnetAppendProblem('testnet', 'storefront', { maker: RELEASE_TESTNET_MAKER })).toMatch(/--append-after passkeyVault/);
     expect(testnetAppendProblem('devnet', null)).toBeNull();
     expect(testnetAppendProblem('mainnet', null)).toBeNull();
   });
@@ -39,7 +40,7 @@ describe('the testnet append guard', () => {
     expect(plan.contracts.find((c) => c.name === 'social')?.file).toBe('yappr-social-contract-v17.json');
     expect(plan.contracts.find((c) => c.name === 'blog')?.file).toBe('yappr-blog-contract.json');
     expect(plan.contracts.find((c) => c.name === 'storefront')?.file).toBe('yappr-storefront-contract.json');
-    for (const file of ['yappr-social-contract-v19.json', 'yappr-blog-contract-v11.json', 'yappr-storefront-contract-v12.json']) expect(plan.contracts.some((c) => c.file === file)).toBe(false);
+    for (const file of ['yappr-social-contract-v19.json', 'yappr-social-contract-v20.json', 'yappr-blog-contract-v11.json', 'yappr-storefront-contract-v12.json']) expect(plan.contracts.some((c) => c.file === file)).toBe(false);
     expect(created.map((c) => [c.name, c.nonce])).toEqual([['socialV18', 9n], ['blogV10', 10n], ['storefrontV11', 11n]]);
     expect(plan.contracts.filter((e) => e.replacedBy).map((e) => [e.name, e.envKey, e.replacedBy])).toEqual([
       ['social', null, 'socialV18'], ['blog', null, 'blogV10'], ['storefront', null, 'storefrontV11'],
@@ -164,6 +165,47 @@ describe('the D36 rehearsal set', () => {
     expect(checkRehearsal(rehearsalJournal())).not.toThrow();
     const releasePlan = planAppConnectSet({ makerId: REHEARSAL, startNonce: 1n, generateId });
     expect(checkRehearsal(rehearsalJournal(), releasePlan)).toThrow(/prepared from another file/);
+  });
+});
+
+describe('the 2026-11-12 testnet release set', () => {
+  const release = planTestnetReleaseSet({ startNonce: 1n, generateId });
+  const releaseCreated = entriesToCreate(release.contracts, TESTNET_REGISTERED_THROUGH);
+  const releaseJournal = () => {
+    const contracts = {};
+    for (const c of release.contracts.filter((entry) => !releaseCreated.includes(entry))) {
+      contracts[c.name] = { nonce: String(c.nonce), id: c.id, file: c.file, sha256: c.sha256, state: 'verified' };
+    }
+    return { network: 'testnet', makerId: RELEASE_TESTNET_MAKER, startNonce: '1', groupId: release.groupId, ...journalPolicy(HOUR), contracts };
+  };
+  const checkRelease = (journal, against = release) =>
+    () => checkJournal(journal, against, { path: 'j.json', policy: HOUR, appendAfter: TESTNET_REGISTERED_THROUGH, network: 'testnet', generateId });
+
+  it('keeps social v19 as registered and appends the release social cut after the eight', () => {
+    expect(RELEASE_TESTNET_MAKER).toBe(TESTNET_RELEASE_SET.makerId);
+    expect(release.groupId).toBe(TESTNET_RELEASE_SET.groupId);
+    expect(release.contracts.map((c) => c.name)).toEqual([...APP_CONNECT_ENTRIES.map((e) => e.name), 'socialV20']);
+    const social = release.contracts.find((c) => c.name === 'social');
+    expect([social.file, social.sha256, social.envKey, social.replacedBy]).toEqual([
+      'yappr-social-contract-v19.json', 'bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971', null, 'socialV20']);
+    const releaseSocial = APP_CONNECT_ENTRIES.find((e) => e.name === 'social');
+    expect(releaseCreated.map((c) => [c.name, c.nonce, c.file, c.sha256, c.envKey])).toEqual([
+      ['socialV20', 9n, releaseSocial.file, releaseSocial.sha256, 'NEXT_PUBLIC_YAPPR_CONTRACT_ID']]);
+    expect(releaseSocial.file).toBe('yappr-social-contract-v20.json');
+    expect(() => planTestnetReleaseSet({ startNonce: 2n, generateId })).toThrow(/anchor is at maker nonce 1/);
+    expect(testnetAppendProblem('testnet', TESTNET_REGISTERED_THROUGH, { maker: RELEASE_TESTNET_MAKER })).toBeNull();
+  });
+
+  it('pins all nine members and names only social v20 as the social contract', () => {
+    const lines = appConnectEnvLines(release);
+    expect(lines.find((l) => l.startsWith('NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS=')).split('=')[1].split(',')).toHaveLength(9);
+    expect(lines.filter((l) => l.startsWith('NEXT_PUBLIC_YAPPR_CONTRACT_ID='))).toEqual([`NEXT_PUBLIC_YAPPR_CONTRACT_ID=${releaseCreated[0].id}`]);
+  });
+
+  it('resumes the 2026-11-12 journal, which the fresh-set plan refuses', () => {
+    expect(checkRelease(releaseJournal())).not.toThrow();
+    const freshPlan = planAppConnectSet({ makerId: RELEASE_TESTNET_MAKER, startNonce: 1n, generateId });
+    expect(checkRelease(releaseJournal(), freshPlan)).toThrow(/prepared from another file/);
   });
 });
 

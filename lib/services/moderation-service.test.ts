@@ -755,6 +755,12 @@ describe('removal records that keep fields (v11 deleteKeepsFields)', () => {
     expect(toRemoval(entry({ rootPostId: 'Root1', $createdAt: BigInt(1759100000000) })).kept).toEqual({ rootPostId: 'Root1', createdAt: 1759100000000 })
   })
 
+  it('carries the reply a removed nested reply answered (v20), and none for a direct reply', () => {
+    expect(toRemoval(entry({ rootPostId: 'Root1', replyToReplyId: 'Parent1', $createdAt: 1759100000000 })).kept)
+      .toEqual({ rootPostId: 'Root1', replyToReplyId: 'Parent1', createdAt: 1759100000000 })
+    expect(toKeptFields({ rootPostId: 'Root1', replyToReplyId: null })).toEqual({ rootPostId: 'Root1' })
+  })
+
   it('says when a removed post was written, with the year only when it is not this one', () => {
     const now = new Date(2026, 9, 1).getTime()
     expect(postedOnLabel(new Date(2026, 8, 30).getTime(), now)).toBe(new Date(2026, 8, 30).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))

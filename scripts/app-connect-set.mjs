@@ -103,6 +103,41 @@ export function planRehearsalSet({ startNonce, generateId }) {
 }
 
 /**
+ * The testnet release set registered on 2026-11-12 (docs/TESTNET_RELEASE.md,
+ * D46): maker 6dV6s3a6…, anchor nonce 1, group DrNB3VwK…, with social v19.
+ * `deleteKeepsFields` and `refersTo` are fixed at registration, so social v20
+ * (docs/SOCIAL_V20.md) joins this group as a new member after the eight
+ * (`--append-after passkeyVault`); the v19 member stays in the group, unused.
+ */
+export const TESTNET_RELEASE_SET = {
+  makerId: '6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog',
+  startNonce: 1n,
+  groupId: 'DrNB3VwKSv2zz1E7beNKFVMzyavhD2Nn1L6Lhz3K9ivR',
+  registeredSocial: { file: 'yappr-social-contract-v19.json', sha256: 'bae9bd60f16b917f39309a8ca2dcc495687ec35174fa9caa08a8b0311e318971' },
+};
+const RELEASE_SOCIAL = APP_CONNECT_ENTRIES.find((entry) => entry.name === 'social');
+const TESTNET_RELEASE_ENTRIES = [
+  ...APP_CONNECT_ENTRIES.map((entry) => (entry === RELEASE_SOCIAL
+    ? { ...entry, ...TESTNET_RELEASE_SET.registeredSocial, envKey: null, replacedBy: 'socialV20' }
+    : entry)),
+  { ...RELEASE_SOCIAL, name: 'socialV20' },
+];
+
+/**
+ * The 2026-11-12 testnet release group's nine-entry plan: its eight members
+ * as registered (social v19 marked replaced), then the release social cut
+ * appended. Throws unless `startNonce` is that anchor's and the derived group
+ * is that group.
+ */
+export function planTestnetReleaseSet({ startNonce, generateId }) {
+  const { makerId, groupId } = TESTNET_RELEASE_SET;
+  if (BigInt(startNonce) !== TESTNET_RELEASE_SET.startNonce) throw new Error(`the testnet release set's anchor is at maker nonce ${TESTNET_RELEASE_SET.startNonce}, not ${startNonce}`);
+  const plan = planSet(TESTNET_RELEASE_ENTRIES, { makerId, startNonce, generateId });
+  if (plan.groupId !== groupId) throw new Error(`the testnet release anchor derives group ${plan.groupId}, not ${groupId}`);
+  return plan;
+}
+
+/**
  * The entries a run creates: those after `appendAfter` (the last entry the
  * group already holds), or every entry when it is null. Throws on an unknown
  * name, and when nothing would be left to create.

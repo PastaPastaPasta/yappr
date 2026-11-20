@@ -122,7 +122,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const walletSignIn = useMemo(() => createWalletSignIn({
     controller,
     sessions: appConnectSessions,
-    settled: async () => { await revokeLogout.current },
+    settled: async () => {
+      await appConnectSessions.revocationSettled()
+      await revokeLogout.current
+    },
   }), [controller])
   /**
    * A revoke a renewal under way held back, with the session it was found on;
@@ -222,6 +225,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number): Promise<PlatformAuthIntent> => {
     const result = await walletSignIn.signIn(grant, since)
+    // Signed in again with the wallet: a "your wallet signed you out" notice from before it is out of date.
+    useAppConnectStatus.getState().dismissSignedOut()
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, walletSignIn])
@@ -296,7 +301,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Signed out meanwhile: the renewal signs back in, and a sign-in prompt that
     // sign-out opened has nothing left to ask.
     await loginWithAppConnect(grant)
-    useAppConnectStatus.getState().dismissSignedOut()
     useLoginModal.getState().close()
   }, [controller, loginWithAppConnect, walletSignIn])
 
