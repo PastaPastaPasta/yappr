@@ -7,6 +7,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { TOKEN_HISTORY_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants';
 import { loadWalletPayments, storeWalletPayments } from './identity-nonce';
 import { identifierToBase58 } from './sdk-helpers';
+import { identityContractNonceConsumed } from '@/lib/document-id';
 import { tipService } from './tip-service';
 import { buildUnsignedDirectPurchaseTransition } from './token-purchase-builder';
 import { buildUnsignedYappTipTransition } from './token-transfer-builder';
@@ -295,6 +296,35 @@ function restorePayment(ownerId: string, record: PersistedWalletPayment): Wallet
   return paymentFor(ownerId, request, record.data, record.key);
 }
 
+/**
+ * A stored request whose transition can no longer be read: a wallet may still
+ * hold its bytes, so it stays an earlier payment of unknown outcome, judged
+ * by its nonce alone, until that nonce is proved used.
+ */
+function unreadablePayment(ownerId: string, record: PersistedWalletPayment): WalletPayment {
+  const nonce = BigInt(record.nonce);
+  const checkLiveness = async () => {
+    const sdk = await getEvoSdk();
+    const current = await sdk.identities.contractNonceWithProof(ownerId, YAPPR_CONTRACT_ID);
+    if (!current.proof) throw new Error('Wallet payment nonce proof unavailable');
+    return { executable: !identityContractNonceConsumed(current.data, nonce) };
+  };
+  const observe = async (): Promise<PaymentObservation> => ({ outcome: 'unknown', executable: (await checkLiveness()).executable });
+  return {
+    key: record.key,
+    kind: record.data?.kind === 'purchase' ? 'purchase' : 'tip',
+    receiptId: '',
+    data: record.data,
+    request: {
+      bytes: new Uint8Array(), nonce, reservationId: record.reservationId, checkLiveness,
+      discard: async () => {},
+      sendWithNonce: () => { throw new Error('This earlier payment request can no longer be read'); },
+    },
+    checkOutcome: async () => 'unknown',
+    observe,
+  };
+}
+
 function reconcilePayment(payment: WalletPayment): Promise<PaymentObservation> {
   return payment.observe();
 }
@@ -369,9 +399,22 @@ async function preparePayment(
         let payment: WalletPayment;
         try { payment = restorePayment(context.ownerId, record); }
         catch (error) {
-          logger.warn('Setting aside an unreadable wallet payment request:', error);
-          drop(record);
-          continue;
+          logger.warn('Could not read an earlier wallet payment request:', error);
+          let unreadable: WalletPayment;
+          try { unreadable = unreadablePayment(context.ownerId, record); }
+          catch {
+            drop(record);
+            continue;
+          }
+          let used = false;
+          try { used = !(await unreadable.observe()).executable; }
+          catch (readError) { logger.debug('Could not read the earlier wallet payment nonce:', readError); }
+          if (used) {
+            drop(record);
+            continue;
+          }
+          if (context.allowAnother?.has(record.reservationId)) continue;
+          return settle({ completed: false, payment: unreadable, unresolved: true, ...(record.key !== context.key ? { different: true } : {}) });
         }
         let result: PaymentObservation;
         // Only a request proved absent is ever marked replaced, and that proof is final.
