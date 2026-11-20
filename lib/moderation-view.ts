@@ -188,6 +188,11 @@ export interface RecordedMarks {
   basis?: number
 }
 
+/** Whether `recorded` stays over a chain read's observation dated `at`: a proved change newer than what that read saw. */
+export function recordOutranks(recorded: RecordedMarks | undefined, at: number): boolean {
+  return recorded !== undefined && recorded.proved && recorded.at > at
+}
+
 let reads = 0
 
 /**

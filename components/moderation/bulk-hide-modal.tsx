@@ -194,8 +194,10 @@ export function BulkHideModal() {
     const counted: Promise<number | null> = changes.size === 0
       ? bulkHideService.count(authorId, other)
       : bulkHideService.readAll(authorId, other).then(({ items, truncated, at }) => {
-        listedAt(at)
-        if (!cancelled) scheduleStaleRead(at)
+        if (!cancelled) {
+          listedAt(at)
+          scheduleStaleRead(at)
+        }
         return truncated ? null : withRunChanges(items, other, changes, at).length
       })
     counted.then((count) => {
@@ -308,7 +310,7 @@ export function BulkHideModal() {
         }
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
-        recordMarks(item.id, change.marks === undefined ? asked : change.marks, { at: change.marks === undefined ? at : change.marks?.moderatedAt })
+        recordMarks(item.id, change.marks === undefined ? asked : change.marks, change.marks === undefined ? { at } : { at: change.marks?.moderatedAt ?? change.seenAt, observed: true })
       },
       // One that changed some other way (a tombstone, a legal hold) is not done, but is listed where the read found it.
       onSeen: (item, seen) => {
