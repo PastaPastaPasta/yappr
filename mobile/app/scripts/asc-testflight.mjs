@@ -131,7 +131,17 @@ async function waitForBuild(appId, version, buildNumber, timeoutMs) {
     '&filter[preReleaseVersion.platform]=IOS&limit=1';
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const build = (await api('GET', query)).data?.[0];
+    let build;
+    try {
+      build = (await api('GET', query)).data?.[0];
+    } catch (error) {
+      // Rate limits, server errors and timeouts are retried until the deadline; others fail.
+      const transient = [429, 500, 502, 503, 504].includes(error.status) || ['TimeoutError', 'AbortError', 'TypeError'].includes(error.name);
+      if (!transient || Date.now() > deadline) throw error;
+      console.error(`build lookup failed (${error.status ?? error.name}); retrying`);
+      await sleep(30_000);
+      continue;
+    }
     const state = build?.attributes.processingState;
     console.error(`build ${version} (${buildNumber}): ${state ?? 'not visible yet'}`);
     if (build && state !== 'PROCESSING') return build;

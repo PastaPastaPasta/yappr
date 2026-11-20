@@ -123,9 +123,18 @@ jobs:
 
       - name: Plan the build
         id: plan
+        env:
+          SIGNING_NAME_DENYLIST: ${{ secrets.SIGNING_NAME_DENYLIST }}
         run: |
           set -euo pipefail
           bundle_id="$(node -p "require('./src/variants.ts').resolveIosBundleId(process.env.APP_VARIANT, process.env.YAPPR_IOS_BUNDLE_ID)")"
+          # Screened like every other value before it reaches the summary.
+          BUNDLE_ID="$bundle_id" node -e '
+            const names = (process.env.SIGNING_NAME_DENYLIST || "").split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+            if (names.some((n) => process.env.BUNDLE_ID.toLowerCase().includes(n))) {
+              console.log("::error::The bundle id contains a denylisted name");
+              process.exit(1);
+            }'
           version="$(node -p "require('./package.json').version")"
           {
             echo "bundle_id=$bundle_id"
