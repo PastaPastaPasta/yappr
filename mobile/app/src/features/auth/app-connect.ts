@@ -320,7 +320,8 @@ export async function acceptAccount(identityId: string): Promise<void> {
 /**
  * The engine restarted while it took the confirmed answer. The old engine
  * may have adopted the grant before it went: the new one then restores that
- * session, and the sign-in is done. Otherwise the flow is picked up again:
+ * session, and the sign-in is done. A renewal is not reported done that way:
+ * the old keys restore the same session. Otherwise the flow is picked up again:
  * a renewal, whose request stays stored until its grant is, finds the same
  * answer again; a sign-in makes a new request.
  */
@@ -333,7 +334,9 @@ async function settleRestartedAccept(gen: number, identityId: string, tries = 3)
     const renewalWaits = landed && renew ? await engine.api.session.appConnectPending({ renew: true }) : false;
     if (stale(gen)) return;
     if (landed && !renewalWaits) {
-      set({ step: { name: 'done' } });
+      // A renewal's request can be gone with the old keys still in place (it ran out during the restart): claim nothing.
+      if (renew) set({ step: { name: 'error', title: copy.renew.unconfirmedTitle, message: copy.renew.unconfirmed } });
+      else set({ step: { name: 'done' } });
       return;
     }
   } catch (error) {

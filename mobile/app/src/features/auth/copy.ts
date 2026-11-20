@@ -106,6 +106,8 @@ export const copy = {
     renewed: 'Renewed',
     failed: "Couldn't renew",
     acceptFailed: "We couldn't finish renewing. Try again with a new request.",
+    unconfirmedTitle: 'Renewal not confirmed',
+    unconfirmed: "We couldn't confirm the renewal. Renew again to keep posting.",
     soon: "Yappr's allowance from your wallet is running low.",
     soonAction: 'Renew',
     signedOutTitle: 'Signed out from your wallet',

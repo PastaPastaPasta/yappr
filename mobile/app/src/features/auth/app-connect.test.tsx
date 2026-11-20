@@ -513,6 +513,16 @@ describe('the wallet sign-in on App Connect builds', () => {
       expect(useAppConnect.getState().step.name).toBe('done');
     });
 
+    it('claims no renewal when the new engine has the session but no request: the old keys may still be in place', async () => {
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      fakeEngine.method('session.current').mockResolvedValue(alice);
+      fakeEngine.method('session.appConnectPending').mockResolvedValue(false);
+      await open({ mode: 'wallet', renew: '1', resume: '1' }, confirm({ renew: true, flow: testFlow }));
+      await act(async () => {});
+      expect(useAppConnect.getState().step).toMatchObject({ name: 'error', title: 'Renewal not confirmed' });
+      expect(screen.queryByText('Renewed')).toBeNull();
+    });
+
     it('resumes a renewal whose request is still stored: the old keys still restored the session', async () => {
       fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
       fakeEngine.method('session.current').mockResolvedValue(alice);
