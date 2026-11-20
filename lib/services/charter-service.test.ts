@@ -1099,16 +1099,39 @@ describe("the leader's way out of a proposal stuck uncertain", () => {
     expect(builders.sign).toHaveBeenCalledTimes(2)
   })
 
-  it('counts an unreadable slot\'s reservation spent before it clears the slot: it may be that create', async () => {
-    const slot = `${OWNER}:submittedCharter:${TERMS.targetContractId}`
-    storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), '{"signed":')
-    nonces.load.mockReturnValue({ mark: 9n, floor: 0n, pending: [
-      { id: 'r-garbled', nonce: 9n, expiresAt: null, scope: slot },
-      { id: 'r-elsewhere', nonce: 8n, expiresAt: null, scope: `${OWNER}:reason:spam` },
-    ] })
-    await charterService.abandonProposal(OWNER, TERMS.targetContractId)
-    expect(nonces.release.mock.calls.map((call) => [call[2].id, call[3]])).toEqual([['r-garbled', 9n]])
-    expect(storage.getItem(slotKey('submittedCharter', TERMS.targetContractId))).toBeNull()
+  describe('an unreadable slot', () => {
+    const slot = () => `${OWNER}:submittedCharter:${TERMS.targetContractId}`
+    const garbled = () => {
+      storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), '{"signed":')
+      nonces.held = [
+        { id: 'r-garbled', nonce: 9n, expiresAt: null, scope: slot() },
+        { id: 'r-elsewhere', nonce: 8n, expiresAt: null, scope: `${OWNER}:reason:spam` },
+      ]
+    }
+
+    it('stays, with its reservation, while that nonce may still execute: it may be that create', async () => {
+      garbled()
+      builders.consumed.mockResolvedValue(false)
+      await expect(charterService.abandonProposal(OWNER, TERMS.targetContractId)).rejects.toMatchObject({ outcome: 'uncertain' })
+      expect(nonces.release).not.toHaveBeenCalled()
+      expect(nonces.held.map((p) => p.id)).toEqual(['r-garbled', 'r-elsewhere'])
+      expect(storage.getItem(slotKey('submittedCharter', TERMS.targetContractId))).toBe('{"signed":')
+    })
+
+    it('is cleared once Platform shows that nonce consumed, the reservation counted spent', async () => {
+      garbled()
+      builders.consumed.mockResolvedValue(true)
+      await charterService.abandonProposal(OWNER, TERMS.targetContractId)
+      expect(nonces.release.mock.calls.map((call) => [call[2].id, call[3]])).toEqual([['r-garbled', 9n]])
+      expect(storage.getItem(slotKey('submittedCharter', TERMS.targetContractId))).toBeNull()
+    })
+
+    it('is cleared as before when no reservation is left for it', async () => {
+      storage.setItem(slotKey('submittedCharter', TERMS.targetContractId), '{"signed":')
+      await charterService.abandonProposal(OWNER, TERMS.targetContractId)
+      expect(nonces.release).not.toHaveBeenCalled()
+      expect(storage.getItem(slotKey('submittedCharter', TERMS.targetContractId))).toBeNull()
+    })
   })
 
   it('releases the old reservation before it clears the slot, so a page dying in between leaves no reservation without its create', async () => {

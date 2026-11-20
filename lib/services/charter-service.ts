@@ -255,9 +255,13 @@ async function abandonSlot(ownerId: string, key: string): Promise<void> {
       const stored = loadSlot(key)
       if (stored && !isLanded(stored)) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, stored.reservation, BigInt(stored.signed.nonce))
     } catch {
-      // Unreadable: it may be the create of any reservation for this slot, each then counted spent the same way.
+      // Unreadable: it may be the create of any reservation for this slot. Each stays pending, and the slot with
+      // it, until Platform shows its nonce consumed; the slot is cleared only then, or when none is left.
+      const sdk = await getEvoSdk()
       for (const entry of loadReservation(ownerId, CHARTERS_CONTRACT_ID)?.pending ?? []) {
-        if (entry.scope === key && entry.nonce !== null) releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
+        if (entry.scope !== key || entry.nonce === null) continue
+        if (await charterNonceConsumed(sdk, ownerId, String(entry.nonce)).catch(() => null) !== true) throw new CharterActionError(MAY_STILL_LAND, 'uncertain')
+        releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry, entry.nonce)
       }
     }
     try {
