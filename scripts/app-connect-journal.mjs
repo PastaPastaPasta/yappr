@@ -33,7 +33,7 @@ export function testnetAppendProblem(network, appendAfter, { testnetSet = null, 
   }
   if (rehearsalMaker) return `${maker} is the D36 rehearsal maker: name its set with --testnet-set rehearsal`;
   if (maker === REGISTERED_TESTNET_MAKER) return 'the registered v17 maker already holds its release set; the release set requires a new maker, anchor and group (D46)';
-  if (maker === RELEASE_TESTNET_MAKER && appendAfter === null) return 'the 2026-11-12 release maker already holds the testnet release set: append to its group with --append-after (and --start-nonce 1), or register a fresh set from a new maker';
+  if (maker === RELEASE_TESTNET_MAKER && appendAfter !== TESTNET_REGISTERED_THROUGH) return `the 2026-11-12 release maker already holds the testnet release set through ${TESTNET_REGISTERED_THROUGH}: append to its group with --append-after ${TESTNET_REGISTERED_THROUGH} (and --start-nonce 1), or register a fresh set from a new maker`;
   if (!maker) return 'a fresh release set requires an explicit new maker (D46)';
   return null;
 }

@@ -31,6 +31,7 @@ describe('the testnet append guard', () => {
     expect(testnetAppendProblem('testnet', null, { maker: REGISTERED_TESTNET_MAKER })).toMatch(/requires a new maker/);
     expect(testnetAppendProblem('testnet', null, { maker: RELEASE_TESTNET_MAKER })).toMatch(/already holds the testnet release set/);
     expect(testnetAppendProblem('testnet', 'passkeyVault', { maker: RELEASE_TESTNET_MAKER })).toBeNull();
+    expect(testnetAppendProblem('testnet', 'storefront', { maker: RELEASE_TESTNET_MAKER })).toMatch(/--append-after passkeyVault/);
     expect(testnetAppendProblem('devnet', null)).toBeNull();
     expect(testnetAppendProblem('mainnet', null)).toBeNull();
   });

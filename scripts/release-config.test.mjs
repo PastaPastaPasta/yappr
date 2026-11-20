@@ -461,7 +461,7 @@ describe('release build configuration', () => {
     expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_STOREFRONT_TOPOLOGY: 'v11' })).toThrow('must be v12')
     for (const cut of ['v17', 'v18', 'v19']) expect(() => assertReleaseConfig({ ...fresh, NEXT_PUBLIC_CONTRACT_TOPOLOGY: cut })).toThrow('must be v20')
     // The set registered on 2026-11-12 keeps the v19 its social contract was registered with (docs/SOCIAL_V20.md).
-    const registered = parseEnv(readFileSync(new URL('../.env.testnet', import.meta.url), 'utf8'))
+    const registered = parseEnv(readFileSync(new URL('./fixtures/env-testnet-20261112.env', import.meta.url), 'utf8'))
     expect(registered.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v19')
     expect(registered.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER).toBe(RELEASE_TESTNET_MAKER)
     expect(() => assertReleaseConfig(registered)).not.toThrow()
