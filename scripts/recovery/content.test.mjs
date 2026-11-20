@@ -144,6 +144,42 @@ describe('replacement and untrusted sources', () => {
       expect(() => recoverCandidate(changed, postFixture.candidate, v19)).toThrow(/No serialization matches/);
     }
   });
+  it('rebuilds a social v20 nested reply, whose removal record also keeps the reply it answered', () => {
+    // `replyToReplyId` is content: the signed create supplies it and the record's hash commits to it.
+    // The v20 record repeats it, as it repeats `rootPostId`, so a reader can place the removed reply
+    // without recovering it; recovery neither needs nor trusts the kept copy.
+    const source = contractSource(readFileSync(new URL('../../contracts/yappr-social-contract-v20.json', import.meta.url), 'utf8'));
+    expect(source.documentSchemas.reply.moderatorAbilities.deleteKeepsFields).toEqual(['rootPostId', 'replyToReplyId', '$createdAt', '$updatedAt', '$updatedAtBlockHeight']);
+    const v20 = DataContract.fromJSON(registrationJson(source, { id: postFixture.contractId, ownerId: postFixture.record.documentOwnerId }), true, new PlatformVersion(postFixture.platformVersion));
+    // The fixture's signed post create, rewritten as a nested reply's create (same document, signer and signature).
+    const batch = BatchTransition.fromStateTransition(StateTransition.fromBytes(Buffer.from(postFixture.candidate.transitionBase64, 'base64'))).toObject();
+    const [rootPostId, replyToReplyId] = [new Uint8Array(32).fill(7), new Uint8Array(32).fill(9)];
+    const create = batch.transitions[0];
+    for (const key of Object.keys(create)) if (!key.startsWith('$')) delete create[key];
+    Object.assign(create, { $type: 'reply', content: 'a nested reply', rootPostId, replyToReplyId, live: true });
+    const candidate = { ...postFixture.candidate, transitionBase64: Buffer.from(BatchTransition.fromObject(batch).toStateTransition().toBytes()).toString('base64') };
+    const context = { ...structuredClone(postFixture), type: 'reply' };
+    const transition = selectTransition(Buffer.from(candidate.transitionBase64, 'base64'), context);
+    const system = { ...postFixture.system, $updatedAtBlockHeight: '668957' };
+    const expected = rebuild({ ...context, transition, system }, v20);
+    context.record.documentHash = sha256d(expected.bytes);
+    const keptTimes = { $createdAt: system.$createdAt, $updatedAt: system.$updatedAt, $updatedAtBlockHeight: system.$updatedAtBlockHeight };
+    const [root, parent] = [expected.document.rootPostId, expected.document.replyToReplyId];
+    context.record.keptFields = { rootPostId: root, replyToReplyId: parent, ...keptTimes };
+    const recovered = recoverCandidate(context, candidate, v20);
+    expect(sha256d(recovered.bytes)).toBe(context.record.documentHash);
+    expect([recovered.document.rootPostId, recovered.document.replyToReplyId]).toEqual([root, parent]);
+    expect(parent).not.toBe(root);
+    // A direct reply's record leaves `replyToReplyId` out; it recovers the same way.
+    delete create.replyToReplyId;
+    const direct = { ...candidate, transitionBase64: Buffer.from(BatchTransition.fromObject(batch).toStateTransition().toBytes()).toString('base64') };
+    const directContext = structuredClone(context);
+    directContext.record.keptFields = { rootPostId: root, ...keptTimes };
+    directContext.record.documentHash = sha256d(rebuild({ ...directContext, transition: selectTransition(Buffer.from(direct.transitionBase64, 'base64'), directContext), system }, v20).bytes);
+    expect(recoverCandidate(directContext, direct, v20).document).not.toHaveProperty('replyToReplyId');
+    // The nested reply's hash does not match the direct reply's bytes: the kept copy cannot stand in for the content.
+    expect(() => recoverCandidate(context, direct, v20)).toThrow(/No serialization matches/);
+  });
   it.each([
     ['blog', 'yappr-blog-contract-v11.json', '$updatedAtBlockHeight'],
     ['blogComment', 'yappr-blog-contract-v11.json', '$createdAtBlockHeight'],

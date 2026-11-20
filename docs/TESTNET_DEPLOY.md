@@ -27,8 +27,10 @@ landed before cut-over. The unified profile and system contracts are not group
 members; grant them separately.
 
 D46 registered that set on 2026-11-12 from a new maker, app and group, replacing
-the 2026-10-21 v17 set. The build gate accepts only the v19, blog v11 and
-storefront v12 topologies for a release build, so the retired v17 set no
+the 2026-10-21 v17 set. The build gate accepts social v19 only for that
+registered set (its group, owner, anchor and social contract) and requires
+social v20 ([SOCIAL_V20.md](SOCIAL_V20.md)) for any other release build, with
+blog v11 and storefront v12 in both, so the retired v17 set no
 longer builds (the `/staging-old` QA build keeps its own exception). See
 [TESTNET_RELEASE.md](TESTNET_RELEASE.md#registration-record-2026-11-12).
 

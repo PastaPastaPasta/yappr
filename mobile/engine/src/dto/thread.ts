@@ -1,4 +1,5 @@
 import type { Reply, ReplyThread } from '@/lib/types'
+import { holdsRemovedReply, threadParentOf } from '@/lib/feed/removed-reply-branches'
 
 /**
  * Thread assembly, ported from `hooks/use-post-detail.ts` (module-private
@@ -39,27 +40,37 @@ function countHiddenDescendants(rootId: string, childrenOf: Map<string, Reply[]>
   return count
 }
 
-function buildNestedThreads(parentId: string, childrenOf: Map<string, Reply[]>, exclude: Set<string>, depth: number): ReplyThread[] {
-  const atCap = depth >= MAX_NESTED_DEPTH
+function buildNestedThreads(
+  parentId: string, childrenOf: Map<string, Reply[]>, exclude: Set<string>, depth: number,
+  holds: (replyId: string) => boolean, only: (reply: Reply) => boolean = () => true,
+): ReplyThread[] {
+  // A removed reply's placeholder cannot be opened, so it never ends a branch, and a branch through one
+  // renders in place past the cap: a "Continue thread" page would not find it (`holdsRemovedReply`).
+  const inPlace = (reply: Reply) => reply.deletedStub === true || holds(reply.id)
   return (childrenOf.get(parentId) ?? [])
-    .filter(reply => !exclude.has(reply.id))
-    .map(reply => ({
-      content: reply,
-      isAuthorThread: false,
-      isThreadContinuation: false,
-      nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
-      hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0,
-    }))
+    .filter(reply => !exclude.has(reply.id) && only(reply))
+    .map(reply => {
+      const atCap = depth >= MAX_NESTED_DEPTH && !reply.deletedStub
+      const shownPastCap = atCap ? (childrenOf.get(reply.id) ?? []).filter(inPlace).map(child => child.id) : []
+      return {
+        content: reply,
+        isAuthorThread: false,
+        isThreadContinuation: false,
+        nestedReplies: buildNestedThreads(reply.id, childrenOf, exclude, depth + 1, holds, atCap ? inPlace : undefined),
+        hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, new Set([...exclude, ...shownPastCap])) : 0,
+      }
+    })
 }
 
 /** The author's thread first (one level, no nesting within it), then the other direct replies with their subtrees. */
 function buildReplyTree(authorThreadChain: Reply[], otherDirectReplies: Reply[], childrenOf: Map<string, Reply[]>): ReplyThread[] {
   const authorThreadIds = new Set(authorThreadChain.map(reply => reply.id))
+  const holds = holdsRemovedReply(childrenOf)
   const thread = (reply: Reply, isAuthorThread: boolean, isThreadContinuation: boolean): ReplyThread => ({
     content: reply,
     isAuthorThread,
     isThreadContinuation,
-    nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1),
+    nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1, holds),
   })
   return [
     ...authorThreadChain.map((reply, index) => thread(reply, true, index > 0)),
@@ -95,8 +106,10 @@ function inReadingOrder(starts: Reply[], continuationsOf: (replyId: string) => R
 export function assembleFlatThread(focus: { id: string; authorId: string; isReply: boolean }, allReplies: Reply[]): ReplyThread[] {
   const childrenOf = new Map<string, Reply[]>()
   const topOfThread: Reply[] = []
+  // v20: a removed reply's stub held at the top goes under its kept parent once that parent connects to the thread.
+  const parentOf = threadParentOf(focus.id, allReplies)
   for (const reply of [...allReplies].sort(byCreatedAtAsc)) {
-    const parentId = reply.replyToReplyId
+    const parentId = parentOf(reply)
     if (!parentId) {
       topOfThread.push(reply)
       continue

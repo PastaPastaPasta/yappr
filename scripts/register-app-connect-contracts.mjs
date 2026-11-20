@@ -58,9 +58,15 @@
  *                                    chain; --dry-run proves that too when given the file;
  *   --production                     is required by --live (and refused on a devnet);
  *   --journal                        must sit in a directory only its owner may enter (0700).
- * The default set has eight creates on every network, with social v19 (D46).
+ * The default set has eight creates on every network, with social v20 (D46, docs/SOCIAL_V20.md).
  * Testnet registers it from a new maker with a new anchor and group; the
- * historical v17 maker is refused. Later appends from the new group's maker are allowed.
+ * historical v17 maker is refused. Later appends from the new group's maker are allowed:
+ * that maker plans the group's nine entries (TESTNET_RELEASE_SET, social v19 kept as
+ * registered and social v20 after the eight, docs/SOCIAL_V20.md) and resumes its 2026-11-12 journal:
+ *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production \
+ *     --append-after passkeyVault --start-nonce 1 --journal <the 2026-11-12 journal> --maker 6dV6s3a6Qyr6n3fn1wWmjzc3FanqhnBV2V57469MiPog \
+ *     --maker-key-file <0600 file> --maker-key-id 1 --interim notYetUsable --election-windows 3600,3600 \
+ *     --election-delay 3600 --challenge-cool-down 1209600
  * The experimental "hide, don't delete" members (docs/SOCIAL_V18.md) are only
  * appended to the D36 /beta rehearsal group, resuming its 2026-10-18 journal:
  *   NETWORK=testnet node scripts/register-app-connect-contracts.mjs --live --production --testnet-set rehearsal \
@@ -99,7 +105,7 @@ import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
 import { checkJournal, isResumedAppend, journalIsComplete, journalPolicy, rebaseAppend, testnetAppendProblem } from './app-connect-journal.mjs';
-import { APP_CONNECT_GROUP, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, planRehearsalSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
+import { APP_CONNECT_GROUP, TESTNET_RELEASE_SET, appConnectEnvLines, contractFilePath, decideCreateOutcome, entriesToCreate, planAppConnectSet, planRehearsalSet, planTestnetReleaseSet, sameSchemas, sha256Hex } from './app-connect-set.mjs';
 import { STATE_TRANSITION_CAP, auditNodeRules, metaSchemaProblems } from './contract-probes.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { auditModeration, contractSource, registrationJson, withInterim } from './register-lib.mjs';
@@ -630,7 +636,9 @@ async function main() {
   }
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
-  const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId }) : planAppConnectSet({ makerId: maker.id, startNonce, generateId });
+  const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId })
+    : network() === 'testnet' && maker.id === TESTNET_RELEASE_SET.makerId ? planTestnetReleaseSet({ startNonce, generateId })
+    : planAppConnectSet({ makerId: maker.id, startNonce, generateId });
   // The entries this run creates: all of them, or (--append-after) those the group does not hold yet.
   let plan = planned;
   let created = entriesToCreate(planned.contracts, args.appendAfter);
@@ -670,9 +678,19 @@ async function main() {
   const estimates = new Map(created.map((entry) => [entry.name, prepare(entry, { plan, platformVersion, signing: null, policy, feeMultiplierPermille }).estimate]));
 
   // What this run would still pay for: a live run skips what its journal verified and stops at --upto.
-  // (A create a crashed run left `prepared` or `broadcasting` may have been paid already; it is counted again.)
+  // A create a crashed run left `prepared` or `broadcasting` is counted again unless its contract is on chain
+  // (then it was paid; registerLive verifies it without signing again).
   const last = args.upto ? plan.contracts.findIndex((c) => c.name === args.upto) : plan.contracts.length - 1;
-  const pending = plan.contracts.slice(0, last + 1).filter((c) => created.includes(c) && journal?.contracts?.[c.name]?.state !== 'verified');
+  const unverified = plan.contracts.slice(0, last + 1).filter((c) => created.includes(c) && journal?.contracts?.[c.name]?.state !== 'verified');
+  const pending = [];
+  for (const c of unverified) {
+    const saved = journal?.contracts?.[c.name];
+    if (handle && saved?.id && await readback(handle, () => handle.sdk.contracts.fetch(saved.id))) {
+      console.log(`${c.name}: ${saved.id} is on chain already (journal: ${saved.state}); not budgeted again`);
+      continue;
+    }
+    pending.push(c);
+  }
   const estimate = pending.reduce((sum, c) => sum + estimates.get(c.name), 0n);
   console.log(`\nestimated cost of ${pending.map((c) => c.name).join(', ') || 'nothing'}: ${formatCredits(estimate)}`);
   if (balance !== null) {

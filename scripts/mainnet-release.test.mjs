@@ -39,7 +39,7 @@ describe('mainnet release', () => {
   it('accepts the registrar mainnet release plan with explicit versions, refusing missing or reordered members', () => {
     const env = completeMainnet()
     expect(env.NEXT_PUBLIC_NETWORK).toBe('mainnet')
-    expect(env.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v19')
+    expect(env.NEXT_PUBLIC_CONTRACT_TOPOLOGY).toBe('v20')
     expect(env.NEXT_PUBLIC_BLOG_TOPOLOGY).toBe('v11')
     expect(env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY).toBe('v12')
     expect(() => releaseConfig.assertReleaseConfig(env)).not.toThrow()
@@ -143,7 +143,7 @@ describe('mainnet release', () => {
     const env = completeMainnet()
     expect(snapshotEnvFiles('mainnet')).toEqual(['.env.mainnet'])
     const ids = snapshotContractIds([{ ...env, NEXT_PUBLIC_SOCIAL_V18_CONTRACT_ID: read('.env.beta').NEXT_PUBLIC_YAPPR_CONTRACT_ID }],
-      '', env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID, ['v19'])
+      '', env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID, ['v20'])
     expect(ids).toEqual([...plan.contracts.map(contract => contract.id), ...systemKeys.map(key => template[key])].sort())
     const snapshot = { network: 'mainnet', contracts: Object.fromEntries(ids.map(id => [id, { version: 1, bytes: 'fixture' }])) }
     expect(() => releaseConfig.assertSnapshotPins(snapshot, env)).not.toThrow()

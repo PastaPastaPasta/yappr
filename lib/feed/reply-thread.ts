@@ -1,6 +1,7 @@
 import type { Post, Reply, ReplyThread } from '@/lib/types'
 import { targetKindOf } from '@/lib/contract-topology'
 import { pruneHiddenTombstones } from './hidden-tombstones'
+import { holdsRemovedReply, threadParentOf } from './removed-reply-branches'
 
 export const byCreatedAtAsc = (a: Reply, b: Reply) => a.createdAt.getTime() - b.createdAt.getTime()
 
@@ -54,26 +55,35 @@ function countHiddenDescendants(
 /**
  * Build the nested subtree under one reply, recursing down to MAX_NESTED_DEPTH.
  * A node at the cap that still has known children records them as
- * `hiddenReplyCount` instead. On v2 `childrenOf` only holds one level, so the
- * recursion naturally stops early and hidden counts stay 0 — the renderer falls
- * back to enrichment counts there.
+ * `hiddenReplyCount` instead, behind its "Continue thread" row. A removed
+ * reply's placeholder cannot be opened, so it never ends a branch, and a
+ * branch through one renders in place past the cap (`holdsRemovedReply`):
+ * that row's page would not find it. On v2 `childrenOf` only holds one level,
+ * so the recursion naturally stops early and hidden counts stay 0 — the
+ * renderer falls back to enrichment counts there.
  */
 function buildNestedThreads(
   parentId: string,
   childrenOf: Map<string, Reply[]>,
   exclude: Set<string>,
-  depth: number
+  depth: number,
+  holds: (replyId: string) => boolean,
+  only: (reply: Reply) => boolean = () => true
 ): ReplyThread[] {
-  const atCap = depth >= MAX_NESTED_DEPTH
+  const inPlace = (reply: Reply) => reply.deletedStub === true || holds(reply.id)
   return (childrenOf.get(parentId) ?? [])
-    .filter(reply => !exclude.has(reply.id))
-    .map(reply => ({
-      content: reply,
-      isAuthorThread: false,
-      isThreadContinuation: false,
-      nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
-      hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0
-    }))
+    .filter(reply => !exclude.has(reply.id) && only(reply))
+    .map(reply => {
+      const atCap = depth >= MAX_NESTED_DEPTH && !reply.deletedStub
+      const shownPastCap = atCap ? (childrenOf.get(reply.id) ?? []).filter(inPlace).map(child => child.id) : []
+      return {
+        content: reply,
+        isAuthorThread: false,
+        isThreadContinuation: false,
+        nestedReplies: buildNestedThreads(reply.id, childrenOf, exclude, depth + 1, holds, atCap ? inPlace : undefined),
+        hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, new Set([...exclude, ...shownPastCap])) : 0
+      }
+    })
 }
 
 /**
@@ -91,6 +101,7 @@ export function buildReplyTree(
 ): ReplyThread[] {
   const threads: ReplyThread[] = []
   const authorThreadIds = new Set(authorThreadChain.map(r => r.id))
+  const holds = holdsRemovedReply(childrenOf)
 
   // Add author's thread first - all at same level (no nesting within thread)
   authorThreadChain.forEach((reply, index) => {
@@ -98,7 +109,7 @@ export function buildReplyTree(
       content: reply,
       isAuthorThread: true,
       isThreadContinuation: index > 0,
-      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1)
+      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1, holds)
     })
   })
 
@@ -108,7 +119,7 @@ export function buildReplyTree(
       content: reply,
       isAuthorThread: false,
       isThreadContinuation: false,
-      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1)
+      nestedReplies: buildNestedThreads(reply.id, childrenOf, authorThreadIds, 1, holds)
     })
   })
 
@@ -128,9 +139,11 @@ export function assembleFlatThread(mainPost: Post, allReplies: Reply[]): ReplyTh
   const childrenOf = new Map<string, Reply[]>()
   const topOfThread: Reply[] = []
 
+  // v20: a removed reply's stub held at the top goes under its kept parent once that parent connects to the thread.
+  const parentOf = threadParentOf(mainPost.id, allReplies)
   // v11: a tombstoned reply goes unless a reply still nests under it.
   for (const reply of pruneHiddenTombstones(allReplies).sort(byCreatedAtAsc)) {
-    const parentId = reply.replyToReplyId
+    const parentId = parentOf(reply)
     if (!parentId) {
       topOfThread.push(reply)
       continue
