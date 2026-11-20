@@ -96,6 +96,8 @@ export function BulkHideModal() {
   /** The last list read that came back, and whether the other tab's count is still being read: a re-read waits for both. */
   const settledReadRef = useRef(0)
   const countingRef = useRef(false)
+  /** Drops the other tab's count read still out, so it cannot repaint a badge cleared since. */
+  const dropCountRef = useRef(() => {})
   /** The newest block time a list read this opening was proved at: a run's by-ID reads are no older. */
   const listedAtRef = useRef(-Infinity)
   /** Moves on with every opening and closing: a run started under another ignores itself. */
@@ -187,6 +189,10 @@ export function BulkHideModal() {
     if (!isOpen || !authorId) return
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
+    dropCountRef.current = () => {
+      cancelled = true
+      countingRef.current = false
+    }
     const changes = runChangesRef.current
     // Once a run changed something the count comes from the list, with the
     // changes its read predates; a list too long to read whole has no count.
@@ -334,6 +340,7 @@ export function BulkHideModal() {
     staleReadsRef.current = 0
     readRef.current++
     setList({ status: 'loading', count: 0 })
+    dropCountRef.current()
     setCounts(NO_COUNTS)
     await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
     if (current()) setReadEpoch((epoch) => epoch + 1)
