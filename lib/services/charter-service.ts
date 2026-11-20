@@ -274,11 +274,10 @@ const CREATE_SLOT_TYPES: ReadonlySet<string> = new Set<CharterDocumentType>([
  * Under the charters write lock, held across tabs (none without Web Locks):
  * frees each create reservation whose slot no longer holds a signed create
  * under it. That is left only when a page died between reserving a nonce and
- * storing the create, so it was never sent; a slot is cleared only once its
- * reservation is released ({@link abandonSlot}), or once its create is
- * refused or landed. None of these can still take the nonce, so it is not
- * counted spent: the next SDK-signed write may sign that very nonce, and must
- * then be settled by it.
+ * storing the create, so it was never sent: a slot's create is replaced or
+ * cleared (refused, landed or abandoned) only once its reservation is
+ * released. So its nonce is not counted spent: the next SDK-signed write may
+ * sign that very nonce, and must then be settled by it.
  */
 function releaseOrphanedReservations(ownerId: string): void {
   // Only under a lock every tab shares: the per-tab fallback can run between another tab's reservation and its stored create.
@@ -1017,16 +1016,20 @@ class CharterService {
     await abandonSlot(ownerId, `${ownerId}:electedCharter:${targetContractId}`)
   }
 
-  /** Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its nonce is spent. */
+  /**
+   * Drops a slot's signed create (only while storage still holds it), telling the nonce coordinator whether its
+   * nonce is spent first: a page that dies in between leaves the create stored, never a reservation without it.
+   */
   private release(ownerId: string, key: string, entry: PendingCreate, spent: boolean): void {
-    forgetPendingCreate(key, entry)
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, spent ? BigInt(entry.signed.nonce) : undefined)
+    forgetPendingCreate(key, entry)
   }
 
   /** A create proved landed: its slot keeps a landed marker for a while (see {@link LandedCreate}), its nonce is spent. */
   private proved(ownerId: string, key: string, entry: PendingCreate): string {
-    markLanded(key, entry)
+    // Spent first, as in release: a marker never stands in a slot beside its own reservation.
     releaseNonce(ownerId, CHARTERS_CONTRACT_ID, entry.reservation, BigInt(entry.signed.nonce))
+    markLanded(key, entry)
     return entry.signed.id
   }
 

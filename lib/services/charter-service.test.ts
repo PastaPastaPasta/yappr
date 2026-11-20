@@ -232,6 +232,23 @@ describe('a refusal', () => {
 
   const seatedE5 = { electedCharterId: 'e5', submittedCharterId: 'p1' }
 
+  it('records a verdict with the nonce coordinator before the slot gives up the create: a page that dies in between leaves it stored', async () => {
+    const slotAtRelease: unknown[] = []
+    nonces.release.mockImplementation(() => { slotAtRelease.push(stored('addedModerator', 'e5:m1')) })
+    sdk.stateTransitions.broadcastAndWait.mockRejectedValueOnce(Object.assign(new Error('refused'), { code: 40120 }))
+    builders.consumed.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused' })
+    expect(nonces.release).toHaveBeenCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r1' }), 1n)
+    builders.exists.mockResolvedValue(true)
+    await expect(charterService.addMember(OWNER, seatedE5, 'm1')).resolves.toBe('doc-2')
+    expect(nonces.release).toHaveBeenLastCalledWith(OWNER, expect.any(String), expect.objectContaining({ id: 'r2' }), 2n)
+    expect(slotAtRelease).toEqual([
+      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r1' }) }),
+      expect.objectContaining({ reservation: expect.objectContaining({ id: 'r2' }) }),
+    ])
+    expect(stored('addedModerator', 'e5:m1')).toMatchObject({ landed: 'doc-2' })
+  })
+
   it('drops the bytes of a unique write on a refusal at broadcast, freeing the nonce reservation unspent', async () => {
     sdk.stateTransitions.broadcastAndWait.mockRejectedValue(Object.assign(new Error('refused'), { code: 40120 }))
     await expect(charterService.addMember(OWNER, seatedE5, 'm1')).rejects.toMatchObject({ outcome: 'refused', code: 40120 })
