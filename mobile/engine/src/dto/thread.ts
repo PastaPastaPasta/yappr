@@ -40,16 +40,19 @@ function countHiddenDescendants(rootId: string, childrenOf: Map<string, Reply[]>
 }
 
 function buildNestedThreads(parentId: string, childrenOf: Map<string, Reply[]>, exclude: Set<string>, depth: number): ReplyThread[] {
-  const atCap = depth >= MAX_NESTED_DEPTH
   return (childrenOf.get(parentId) ?? [])
     .filter(reply => !exclude.has(reply.id))
-    .map(reply => ({
-      content: reply,
-      isAuthorThread: false,
-      isThreadContinuation: false,
-      nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
-      hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0,
-    }))
+    .map(reply => {
+      // A removed reply's placeholder cannot be opened, so it never ends a branch: its replies render below it.
+      const atCap = depth >= MAX_NESTED_DEPTH && !reply.deletedStub
+      return {
+        content: reply,
+        isAuthorThread: false,
+        isThreadContinuation: false,
+        nestedReplies: atCap ? [] : buildNestedThreads(reply.id, childrenOf, exclude, depth + 1),
+        hiddenReplyCount: atCap ? countHiddenDescendants(reply.id, childrenOf, exclude) : 0,
+      }
+    })
 }
 
 /** The author's thread first (one level, no nesting within it), then the other direct replies with their subtrees. */
@@ -95,8 +98,10 @@ function inReadingOrder(starts: Reply[], continuationsOf: (replyId: string) => R
 export function assembleFlatThread(focus: { id: string; authorId: string; isReply: boolean }, allReplies: Reply[]): ReplyThread[] {
   const childrenOf = new Map<string, Reply[]>()
   const topOfThread: Reply[] = []
+  // v20: a removed reply's stub held at the top goes under its kept parent once the thread holds it.
+  const present = new Set([focus.id, ...allReplies.map(reply => reply.id)])
   for (const reply of [...allReplies].sort(byCreatedAtAsc)) {
-    const parentId = reply.replyToReplyId
+    const parentId = reply.replyToReplyId ?? (reply.keptParentId && present.has(reply.keptParentId) ? reply.keptParentId : undefined)
     if (!parentId) {
       topOfThread.push(reply)
       continue
