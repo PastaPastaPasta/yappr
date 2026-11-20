@@ -189,14 +189,11 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
         } else router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => {
-        // A restart cut the lookup short: the answer is unknown, so look again once the engine is back.
-        if (errorCode(error) === 'ENGINE_RESTARTED') {
-          checked.current = false;
-          if (atLaunch) launchChecked.current = false;
-          return;
-        }
-        // A lookup that never answered says nothing about the request: stay put, keeping the Add account marker.
-        appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
+        // The answer is unknown (a restart cut the lookup short, or every try failed): stay put, keeping the
+        // Add account marker, and look again on the next engine.
+        if (errorCode(error) !== 'ENGINE_RESTARTED') appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
+        checked.current = false;
+        if (atLaunch) launchChecked.current = false;
       });
   }, [ready, engineUp, status, transition]);
 }
