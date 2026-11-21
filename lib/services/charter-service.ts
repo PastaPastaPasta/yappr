@@ -45,7 +45,7 @@ import { CHARTERS_CONTRACT_ID, CHARTER_KEYS, isCharterKey, type RewardSplit } fr
 import {
   charterIdBytes, charterKeyInCreation, charterNonceConsumed, charterStepExists, signCharterCreate, type CharterDocumentType, type SignedCharterCreate,
 } from '@/lib/moderation-charters/transitions.mjs'
-import { withIdentityWriteLock } from '@/lib/identity-write-lock'
+import { IDENTITY_UPDATE_UNLOCKED, crossTabLocks, withIdentityUpdateLock, withIdentityWriteLock } from '@/lib/identity-write-lock'
 import {
   deriveCharterKey, forgetCharterKeys, heldCharterKey, holdCharterKey, keyMatches, readPrivateKeyInput, type CharterRole,
 } from '@/lib/moderation-charters/charter-keys'
@@ -56,6 +56,7 @@ import { WRITE_PRECONDITION_FAILED, allocateNonce, awaitNonce, releaseNonce, res
 import { stateTransitionService } from './state-transition-service'
 import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
+import { STALE_IDENTITY_ERROR, identityForUpdate, noteProvedIdentityRevision } from './identity-service'
 
 /** A join request as the leader's list shows it (its message is read separately). */
 export interface JoinRequest {
@@ -563,6 +564,7 @@ class CharterService {
     if (!onChain && !create) {
       throw new CharterActionError(role === 'leader' ? "This account has no charter key, so join messages can't be read here." : 'Set up your charter key first.', 'refused')
     }
+    if (!onChain && !crossTabLocks()) throw new CharterActionError(IDENTITY_UPDATE_UNLOCKED, 'refused')
     const isMaster = (wif: string) => matchIdentityKey(wif, identity.publicKeys, {
       network: keyNetwork(), purpose: KeyPurpose.AUTHENTICATION, allowedSecurityLevels: [SecurityLevel.MASTER],
     }).ok
@@ -617,7 +619,7 @@ class CharterService {
     const key = unlock(input)
     if (!key) throw new CharterActionError("That key doesn't fit this account.", 'refused')
     try {
-      if (!onChain) await this.addCharterKey(identityId, identity, role, readPrivateKeyInput(input), key, generation)
+      if (!onChain) await this.addCharterKey(identityId, role, readPrivateKeyInput(input), key, generation, identity.revision)
       // Now on the account: kept for the sign-in it was added in while this page lasts, even when the view
       // that asked has moved on.
       if (this.keysGeneration === keysGeneration && this.signInHolds(generation, identityId)) holdCharterKey(identityId, role, key)
@@ -631,44 +633,62 @@ class CharterService {
 
   private async addCharterKey(
     identityId: string,
-    identity: Awaited<ReturnType<typeof fetchIdentity>>,
     role: CharterRole,
     master: Uint8Array,
     charterKey: Uint8Array,
     generation: CharterSession,
+    seenRevision: bigint | number | undefined,
   ): Promise<void> {
     // The MASTER key's bytes are zeroed whatever throws, from the first line on.
     try {
-      const sdk = await getEvoSdk()
-      const w = await wasmModule()
-      // The SDK setup awaited: a session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
-      this.assertSameSession(generation, identityId)
-      const { purpose, documentType } = CHARTER_KEYS[role]
-      const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
-      const publicKey = secp256k1.getPublicKey(charterKey, true)
-      const signer = new w.IdentitySigner()
-      const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
-      // The new key signs its own ownership proof.
-      const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
-      try {
-        signer.addKey(masterKey)
-        signer.addKey(newKey)
-        // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
-        await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
-      } catch (error) {
-        if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
-        logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
-      } finally {
-        signer.free()
-        masterKey.free()
-        newKey.free()
-      }
-      for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
-        const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
-        if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) return
-        await sleep(PROOF_PAUSE_MS)
-      }
-      throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
+      await withIdentityUpdateLock(identityId, async () => {
+        const sdk = await getEvoSdk()
+        const w = await wasmModule()
+        // Read under the lock, at least as fresh as the last update proved here and the read the prompt was built on:
+        // this one picks the next key id and revision.
+        const identity = await identityForUpdate(identityId, seenRevision).catch((error: unknown) => {
+          if (error instanceof Error && error.message === STALE_IDENTITY_ERROR) throw new CharterActionError(STALE_IDENTITY_ERROR, 'refused')
+          throw error
+        })
+        if (!identity) throw new CharterActionError("Your account couldn't be read. Try again in a moment.", 'refused')
+        // A session forgotten meanwhile adds no key (and pays no fee). Nothing below awaits until the update.
+        this.assertSameSession(generation, identityId)
+        const { purpose, documentType } = CHARTER_KEYS[role]
+        // The role's current key, as charterKey picks it: added from somewhere else meanwhile, it is used only when it is this one.
+        const current = identity.publicKeys.filter((key) => isCharterKey(key, purpose, documentType)).sort((a, b) => b.keyId - a.keyId)[0]
+        if (current && keyMatches(charterKey, keyData(current))) return
+        if (current) throw new CharterActionError('A charter key was just added to this account from somewhere else. Try again to unlock it.', 'refused')
+        const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1
+        const publicKey = secp256k1.getPublicKey(charterKey, true)
+        const signer = new w.IdentitySigner()
+        const masterKey = w.PrivateKey.fromWIF(privateKeyToWif(master, keyNetwork()))
+        // The new key signs its own ownership proof.
+        const newKey = w.PrivateKey.fromWIF(privateKeyToWif(charterKey, keyNetwork()))
+        try {
+          signer.addKey(masterKey)
+          signer.addKey(newKey)
+          // The SDK signs and sends inside this one call: a sign-out during it can no longer stop it (checked just above).
+          await sdk.identities.update({ identity, addPublicKeys: [charterKeyInCreation(w, { keyId, purpose, documentType, publicKey })], signer })
+          // Accepted: the next update (any tab) waits for a read at this revision even when the readback below lags.
+          noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1)
+        } catch (error) {
+          if (!sentWriteOutcomeUnknown(error)) throw charterActionError('charter-key', error)
+          logger.warn('charters: adding the charter key reported no verdict; checking the identity', extractErrorMessage(error))
+        } finally {
+          signer.free()
+          masterKey.free()
+          newKey.free()
+        }
+        for (let attempt = 0; attempt < PROOF_ATTEMPTS; attempt++) {
+          const fresh = await sdk.identities.fetch(identityId).catch(() => undefined)
+          if (fresh?.publicKeys.some((key) => key.keyId === keyId && isCharterKey(key, purpose, documentType) && keyMatches(charterKey, keyData(key)))) {
+            noteProvedIdentityRevision(identityId, fresh.revision)
+            return
+          }
+          await sleep(PROOF_PAUSE_MS)
+        }
+        throw new CharterActionError(CHARTER_UNCERTAIN_MESSAGE, 'uncertain')
+      })
     } finally {
       master.fill(0)
     }
