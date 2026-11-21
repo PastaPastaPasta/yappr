@@ -156,8 +156,12 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
   --maker-key-file <0600 file> --maker-key-id <id>
 NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --upto app --journal <journal> \
   --maker <MAKER> --start-nonce <N> $POLICY --maker-key-file <0600 file> --maker-key-id <id>
-# read back the group (owner = maker, no admins, name Yappr), then the members:
-NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --journal <journal> ...same flags...
+# read back the group (owner = maker, no admins, name Yappr), then ONE member per run,
+# checking the journal's nonce and id after each (step 4):
+for M in social blocks dmV5 blog pollr storefront passkeyVault; do
+  NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --upto "$M" --journal <journal> ...same flags...
+  # stop here unless $M landed at its planned nonce and id
+done
 ```
 
 1. [ ] `--plan`: record APP_ID, GROUP_ID and the eight planned ids. **Start
@@ -174,8 +178,15 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
        `NOTE: … takes nonce …, not the planned …`, derives the id from the
        actual nonce and carries on, so one `--live` for all members could land
        permanent ids that the prepared charter manifests don't name.
-5. [ ] `NETWORK=mainnet node scripts/verify-appconnect.mjs --only g1,g2,g3,a1`
-       with the eight `id:1` pins: expect **32/0**.
+5. [ ] Verify the group with the journal's values. The script reads pins
+       only from its arguments or the process environment, never from
+       `.env.mainnet` (which is filled later, in section 7):
+       ```sh
+       NETWORK=mainnet node scripts/verify-appconnect.mjs --only g1,g2,g3,a1 \
+         --contract <APP_ID> --group <GROUP_ID> --owner <MAKER> \
+         --members <anchor>:1,<social>:1,<blocks>:1,<dmV5>:1,<blog>:1,<pollr>:1,<storefront>:1,<passkeyVault>:1
+       ```
+       Expect **32/0**.
 6. [ ] One proved read per index family (testnet: all 95 indexes answered).
 7. [ ] Journal backed up off the machine (0600 copy). **[O]** End the nonce freeze.
 8. [ ] YAPP id = `tokens.calculateId(social, 0)`, total supply 0, authority
@@ -192,6 +203,13 @@ given, and broadcasts need `--production`.
       **[O] decide the mainnet reasons, share and split.**
 - [ ] `--plan`, `--dry-run`, then `--live --production --prepare` per team
       (add `--prior-journal` for shared actors).
+- [ ] **Stop gate before the anchor create:** `--prepare` must succeed for
+      all three teams on mainnet. The filer itself reads the charters contract
+      with `sdk.contracts.fetch(EG7RGfV8…)` and aborts if that read comes back
+      absent, which is what the same call returned on 2026-11-21 (section 4).
+      An independent proof that the contract exists is not enough: if the
+      filer's own read fails, fix and validate the filer first, and don't
+      register.
 - [ ] Arm `--live --production --wait-registration 600` before the creates.
       `--wait-registration` bounds only the poll for the target contract to
       appear (600 s). Once it is found, the filer waits for the election to
@@ -204,10 +222,22 @@ given, and broadcasts need `--production`.
       journal, so two live filers sharing an actor can use the same
       moderation-charters nonce. Before each invocation import the latest
       journal of every team that shares an actor with it. Only teams with
-      disjoint actors may be armed in parallel. Because the filer waits out
-      the delay, a mainnet plan with shared actors files one team per delay
-      period unless teams are staffed disjointly. **[O] staff the three
-      teams with disjoint actors** if all three should open together.
+      disjoint actors may be armed in parallel.
+- [ ] **Schedule.** Every target's election opens at its own creation time +
+      604,800 s, and its join window closes one join window later; the
+      filer refuses an application once joining is closed
+      (`file-release-charters.mjs`, "joining is closed"). The filer returns
+      after the application lands, not after seating.
+  - *Disjoint teams:* arm all three filers before the creates; each waits
+    for its own target to open and files.
+  - *Shared-actor teams:* arm only the first team's filer. When it returns
+    (application proved), start the next team at once, importing every
+    journal written so far, then the third the same way. Before each start,
+    compare the target's proved opening time and join cutoff with chain
+    time, and allow enough of the join window for the proposal, the members'
+    joins and the application. With the three targets created minutes apart,
+    all three filings fit inside the first one-day join windows; don't wait
+    for another delay period, which would land after joining has closed.
 - [ ] `--watch --targets social=…,blog=…,storefront=…` through the join (and,
       if contested, vote) windows.
 - [ ] Seating proved for all three (`seated`, winner = our leader, members as
@@ -291,4 +321,5 @@ given, and broadcasts need `--production`.
 9. Which wallet build signs in on mainnet (Android and iOS).
 10. Whether launch is web-only (mobile mainnet needs the Rust engine).
 11. v20's reference-read fees, and the testnet-capable tooling to measure them and run the v20 probes.
-12. Whether the three charter teams are staffed with disjoint actors (else they file one after another).
+12. Whether the three charter teams are staffed with disjoint actors (else they file back to back inside the join windows).
+13. Whether the charter filer's own `contracts.fetch` of the charters contract works on mainnet (the stop gate in section 6).

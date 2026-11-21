@@ -51,7 +51,13 @@ On 2026-11-11, read-only `EvoSDK.mainnetTrusted()` queries with
 | Token history | `43gujrzZgXqcKBiScLa4T8XTDnRhenR9BLx8GWVHjPxF` | 2 | `transfer`, `mint`, `burn` and other token events |
 
 These are the template's only filled ids. No keys, signatures or broadcasts
-are needed to repeat the reads. The runtime DashPay constant uses the same id.
+are needed to repeat the reads.
+
+On 2026-11-21 the same sequence (SDK 5.0.0-rc.4) returned DPNS but *absent*
+for DashPay, token history and the moderation-charters contract, on mainnet
+and on testnet alike. The cause is not established, so re-verify these ids
+right before registration
+([MAINNET_V20_CHECKLIST.md](MAINNET_V20_CHECKLIST.md#4-pre-registration-gates)). The runtime DashPay constant uses the same id.
 
 ## Contract snapshot
 
