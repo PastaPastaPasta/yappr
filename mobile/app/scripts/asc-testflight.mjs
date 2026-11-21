@@ -321,6 +321,47 @@ async function listAll(path) {
 
 const BLOCKED_INTERNAL_STATES = ['PROCESSING', 'PROCESSING_EXCEPTION', 'MISSING_EXPORT_COMPLIANCE', 'IN_EXPORT_COMPLIANCE_REVIEW', 'EXPIRED'];
 
+// Internal testers must be App Store Connect users on the team; anyone else is reported, not invited.
+async function inviteTeamUser(appId, group, email) {
+  const label = `Tester ${maskEmail(email)}`;
+  const users = await listAll(`/v1/users?filter[username]=${encodeURIComponent(email)}&limit=200`);
+  const user = users.find((u) => String(u.attributes.username).toLowerCase() === email);
+  if (!user) {
+    fail(`${label}: not a user on this App Store Connect team, so Apple can't add it as an internal tester (users lookup returned ${users.length} matches)`);
+    return;
+  }
+  field(`${label} team roles`, (user.attributes.roles ?? []).join(', ') || 'none');
+  const inGroup = async () =>
+    (await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`)).find((t) => String(t.attributes.email).toLowerCase() === email);
+  let tester = await inGroup();
+  if (tester) {
+    field(label, 'already in the group');
+  } else {
+    const u = user.attributes;
+    await api('POST', '/v1/betaTesters', {
+      data: {
+        type: 'betaTesters',
+        attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
+        relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
+      },
+    });
+    tester = await inGroup();
+    if (!tester) throw new Error(`${label} was added but is not listed in the group`);
+    field(label, 'added to the group');
+  }
+  await api('POST', '/v1/betaTesterInvitations', {
+    data: {
+      type: 'betaTesterInvitations',
+      relationships: {
+        app: { data: { type: 'apps', id: appId } },
+        betaTester: { data: { type: 'betaTesters', id: tester.id } },
+      },
+    },
+  });
+  const t = (await inGroup())?.attributes ?? tester.attributes;
+  field(`${label} invite`, `sent; inviteType ${t.inviteType ?? 'n/a'}, state ${t.state ?? 'n/a'}`);
+}
+
 async function distribute() {
   const buildNumber = env('BUILD_NUMBER');
   const groupName = env('BETA_GROUP', 'Yappr Internal');
@@ -365,6 +406,11 @@ async function distribute() {
   field('Build in group', inGroup ? 'yes (already)' : 'yes (added now)');
 
   out('### Testers');
+  const email = process.env.TESTER_EMAIL?.trim().toLowerCase();
+  if (email) {
+    await inviteTeamUser(app.id, group, email);
+    return;
+  }
   let testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);
   if (testers.length === 0) {
     // An empty internal group gets the team's account holder, who is always an App Store Connect user.
