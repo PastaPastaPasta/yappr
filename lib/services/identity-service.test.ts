@@ -19,8 +19,8 @@ const identityWithKey = (data: string, disabledAt?: number) => ({
 
 beforeEach(() => {
   fetch.mockReset()
-  byPublicKeyHash.mockReset().mockResolvedValue(undefined)
-  byNonUniquePublicKeyHash.mockReset().mockResolvedValue([])
+  byPublicKeyHash.mockReset()
+  byNonUniquePublicKeyHash.mockReset().mockRejectedValue(new Error('no proof in result'))
   identityService.clearCache()
 })
 
@@ -49,23 +49,22 @@ describe('identityService.getIdentity', () => {
   })
 })
 
-describe('identityService.getIdentityIdByPublicKeyHash', () => {
+describe('identityService.getIdentityIdByMasterKeyHash', () => {
   const hash = new Uint8Array(20)
-  const wasmError = (message: string) => Object.assign(Object.create(null), { message })
 
-  it('answers none when no identity holds the hash and Platform sends no proof', async () => {
-    byNonUniquePublicKeyHash.mockRejectedValueOnce(wasmError('no proof in result'))
-    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).resolves.toBeNull()
-  })
-
-  it('still throws any other failure', async () => {
-    byNonUniquePublicKeyHash.mockRejectedValueOnce(wasmError('DAPI unavailable'))
-    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).rejects.toMatchObject({ message: 'DAPI unavailable' })
-  })
-
-  it('answers the identity holding a unique key without the non-unique read', async () => {
+  it('answers the identity holding the unique key', async () => {
     byPublicKeyHash.mockResolvedValueOnce({ id: { toBase58: () => IDENTITY } })
-    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).resolves.toBe(IDENTITY)
+    await expect(identityService.getIdentityIdByMasterKeyHash(hash)).resolves.toBe(IDENTITY)
+  })
+
+  it('answers none for an unheld key without reading the non-unique index', async () => {
+    byPublicKeyHash.mockResolvedValueOnce(undefined)
+    await expect(identityService.getIdentityIdByMasterKeyHash(hash)).resolves.toBeNull()
     expect(byNonUniquePublicKeyHash).not.toHaveBeenCalled()
+  })
+
+  it('still throws a failed unique read', async () => {
+    byPublicKeyHash.mockRejectedValueOnce(new Error('DAPI unavailable'))
+    await expect(identityService.getIdentityIdByMasterKeyHash(hash)).rejects.toThrow('DAPI unavailable')
   })
 })

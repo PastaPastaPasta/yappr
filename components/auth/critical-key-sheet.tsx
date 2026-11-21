@@ -105,7 +105,7 @@ function CriticalKeyForm({ request }: { request: CriticalKeyRequest }) {
     const { openRecoveryPhrase, PhraseSignInError } = await import('@/lib/auth/recovery-phrase-sign-in')
     try {
       const wallet = await openRecoveryPhrase(typed)
-      return fits(await criticalKeyFromPhrase(wallet, identity.publicKeys, network, (hash) => identityService.getIdentityIdByPublicKeyHash(hash)))
+      return fits(await criticalKeyFromPhrase(wallet, identity.publicKeys, network, (hash) => identityService.getIdentityIdByMasterKeyHash(hash)))
     } catch (failure) {
       if (failure instanceof PhraseSignInError) return { ok: false, error: failure.message }
       throw failure
