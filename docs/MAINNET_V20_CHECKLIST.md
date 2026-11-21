@@ -156,12 +156,11 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --signed-dry-run
   --maker-key-file <0600 file> --maker-key-id <id>
 NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --upto app --journal <journal> \
   --maker <MAKER> --start-nonce <N> $POLICY --maker-key-file <0600 file> --maker-key-id <id>
-# read back the group (owner = maker, no admins, name Yappr), then ONE member per run,
-# checking the journal's nonce and id after each (step 4):
-for M in social blocks dmV5 blog pollr storefront passkeyVault; do
-  NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --upto "$M" --journal <journal> ...same flags...
-  # stop here unless $M landed at its planned nonce and id
-done
+# read back the group (owner = maker, no admins, name Yappr). Then run this once per
+# member, in order (social, blocks, dmV5, blog, pollr, storefront, passkeyVault), by hand:
+NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --production --upto <member> --journal <journal> ...same flags...
+# CHECKPOINT: read <member>'s nonce and id from the journal. Do not run the next
+# member unless both equal the plan (step 4). Don't script this as a loop.
 ```
 
 1. [ ] `--plan`: record APP_ID, GROUP_ID and the eight planned ids. **Start
@@ -223,21 +222,25 @@ given, and broadcasts need `--production`.
       moderation-charters nonce. Before each invocation import the latest
       journal of every team that shares an actor with it. Only teams with
       disjoint actors may be armed in parallel.
-- [ ] **Schedule.** Every target's election opens at its own creation time +
-      604,800 s, and its join window closes one join window later; the
-      filer refuses an application once joining is closed
-      (`file-release-charters.mjs`, "joining is closed"). The filer returns
-      after the application lands, not after seating.
+- [ ] **Schedule.** A target accepts its first application from its
+      creation time + 604,800 s. There is no join cutoff until an elected
+      application starts the contest: Drive sets the join deadline from that
+      block, and the filer reads it from the contest poll (`joinClosesAtMs`).
+      The filer refuses an application once a contest has left the joining
+      phase ("joining is closed"), and it returns after the application
+      lands, not after seating.
   - *Disjoint teams:* arm all three filers before the creates; each waits
     for its own target to open and files.
   - *Shared-actor teams:* arm only the first team's filer. When it returns
     (application proved), start the next team at once, importing every
     journal written so far, then the third the same way. Before each start,
-    compare the target's proved opening time and join cutoff with chain
-    time, and allow enough of the join window for the proposal, the members'
-    joins and the application. With the three targets created minutes apart,
-    all three filings fit inside the first one-day join windows; don't wait
-    for another delay period, which would land after joining has closed.
+    check eligibility against that target's creation time + the delay. If
+    `--watch` shows no contender on the target, there is no cutoff yet and
+    the first application is still open. If an application (ours or a
+    rival's) has already started a contest, use that poll's proved join
+    deadline and leave enough of it for the proposal, the joins and the
+    application. Don't wait for another delay period: a rival's application
+    may have started the clock in the meantime.
 - [ ] `--watch --targets social=…,blog=…,storefront=…` through the join (and,
       if contested, vote) windows.
 - [ ] Seating proved for all three (`seated`, winner = our leader, members as
