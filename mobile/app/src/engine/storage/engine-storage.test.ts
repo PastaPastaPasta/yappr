@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as mmkv from 'react-native-mmkv';
 
 import { createEngineStorage } from './engine-storage';
-import { decodeSecureKey, encodeSecureKey, identityInKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
+import { decodeSecureKey, encodeSecureKey, identityInKey, isSharedKey, SECURE_CHUNK_CHARS, secureItemName } from './secure-keys';
 
 const keychain = (SecureStore as unknown as { __items: Map<string, string> }).__items;
 /** The jest.setup.js MMKV: a new process, or an uninstall (its files go, Keychain items stay). */
@@ -54,6 +54,15 @@ describe('secure key names', () => {
     expect(secureItemName('', 'k', 'a', 1)).toMatch(/^[A-Za-z0-9._-]+$/);
   });
 
+  it('keeps only App Connect sign-in requests in the shared bucket by name', () => {
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_login')).toBe(true);
+    expect(isSharedKey('staging:yappr_secure_ac_secret_devnet_pending_request_reauth')).toBe(true);
+    expect(isSharedKey(`yappr_secure_ac_secret_testnet_pending_request_${ALICE}`)).toBe(false);
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_login_x')).toBe(false);
+    expect(isSharedKey('yappr_secure_ac_secret_testnet_pending_request_active_sign_in')).toBe(true);
+    expect(isSharedKey('yappr:pf:feed_seed')).toBe(false);
+  });
+
   it('reads the identity only from lib secret-store keys', () => {
     expect(identityInKey(`yappr_secure_pk_${ALICE}`)).toBe(ALICE);
     expect(identityInKey(`yappr_secure_ek_type_${BOB}`)).toBe(BOB);
@@ -98,6 +107,52 @@ describe('engine storage', () => {
     });
     expect((await storage.snapshot()).secure).toEqual({ 'yappr:pf:feed_seed': 'bob-seed' });
     expect(storage.stats()).toMatchObject({ secureKeys: 4, identities: 2 });
+  });
+
+  it('keeps pending wallet sign-ins in the shared bucket, even from a boot bound to an account', async () => {
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.snapshot(ALICE);
+    const login = 'yappr_secure_ac_secret_testnet_pending_request_login';
+    const reauth = 'yappr_secure_ac_secret_testnet_pending_request_reauth';
+    const active = 'yappr_secure_ac_secret_testnet_pending_request_active_sign_in';
+    const renewal = `yappr_secure_ac_secret_testnet_pending_request_${ALICE}`;
+    await storage.apply({
+      area: 'secure',
+      seq: 2,
+      ops: [
+        ['set', login, 'login'],
+        ['set', reauth, 'reauth'],
+        ['set', active, 'login'],
+        ['set', renewal, 'renewal'],
+      ],
+    });
+    storage.apply({ area: 'local', seq: 3, ops: [['del', 'yappr_session']] });
+
+    const signedOut = { [login]: 'login', [reauth]: 'reauth', [active]: 'login' };
+    expect((await storage.snapshot(null)).secure).toEqual(signedOut);
+    expect((await storage.snapshot(BOB)).secure).toEqual(signedOut);
+    expect((await storage.snapshot(ALICE)).secure).toMatchObject({ [renewal]: 'renewal' });
+    await storage.apply({ area: 'secure', seq: 4, ops: [['del', reauth]] });
+    expect((await storage.snapshot(null)).secure).toEqual({ [login]: 'login', [active]: 'login' });
+  });
+
+  it('reads and deletes a pending sign-in only as the shared copy, and deletes one an older build left with an account', async () => {
+    const login = 'yappr_secure_ac_secret_testnet_pending_request_login';
+    // An older build filed it under the account the boot was bound to.
+    const mmkvKey = keychain.get('pr.yap.app.engine-keys:yappr.mmkv-key.testnet');
+    const index = mmkv.createMMKV({ id: 'yappr.engine-index.testnet', encryptionKey: mmkvKey });
+    index.set('index', JSON.stringify({ [ALICE]: { [login]: { n: 1, slot: 'a' } } }));
+    keychain.set(`${SERVICE}:${secureItemName(ALICE, login, 'a', 0)}`, 'legacy');
+
+    storage.apply({ area: 'local', seq: 1, ops: [['set', 'yappr_session', session(ALICE)]] });
+    await storage.snapshot(ALICE);
+    await storage.apply({ area: 'secure', seq: 2, ops: [['set', login, 'fresh']] });
+    expect((await storage.snapshot(ALICE)).secure).toEqual({ [login]: 'fresh' });
+
+    await storage.apply({ area: 'secure', seq: 3, ops: [['del', login]] });
+    expect((await storage.snapshot(null)).secure).toEqual({});
+    expect((await storage.snapshot(ALICE)).secure).toEqual({});
+    expect(secretItems()).toEqual([]);
   });
 
   it('chunks long values and replaces them without leaving items behind', async () => {

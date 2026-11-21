@@ -333,6 +333,22 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
   });
 
+  it('drops a renewal whose lookup answers after an account switch started, and offers it once the switch fails', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
+    let answer: (pending: boolean) => void = () => undefined;
+    fakeEngine.method('session.appConnectPending').mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    mount('/');
+    await flush();
+    act(() => useAccounts.setState({ transition: { kind: 'switch', label: 'Switching to @bob' } }));
+    await act(async () => answer(true));
+    expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+    fakeEngine.method('session.appConnectPending').mockResolvedValue(true);
+    act(() => useAccounts.setState({ transition: null }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect?renew=1'));
+  });
+
   it('looks again once the engine is back when a restart cut the lookup short', async () => {
     useSessionStore.setState({ status: 'signed-in', session: wallet, accounts: [] });
     fakeEngine.method('session.appConnectPending').mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
@@ -355,5 +371,188 @@ describe('a renewal the last launch was killed in (the wallet was open)', () => 
     act(() => useSessionStore.setState({ status: 'signed-in', session: { ...wallet, identityId: 'bob' }, accounts: [] }));
     await act(async () => answer(true));
     expect(router.push).not.toHaveBeenCalledWith(expect.stringContaining('/sign-in/connect'));
+  });
+});
+
+describe('a wallet sign-in the last launch was killed in, on App Connect builds', () => {
+  /** Where `accounts.ts` keeps an "Add account" in progress across an app kill. */
+  const ADDING_KEY = 'yappr.accounts.adding.devnet-test';
+
+  beforeEach(() => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    useAccounts.setState({ transition: null, returnTo: null, reauth: null });
+    fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { walletSignIn: 'app-connect' } as never } });
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => syncStorage.removeItem(ADDING_KEY));
+
+  it('reopens "Sign in again" for its account, still able to go back to the parked one', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?mode=(wallet|qr)&resume=1$/));
+    expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'bob' });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
+
+  it('reopens "Sign in again" with nobody parked', async () => {
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'alice' });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?mode=(wallet|qr)&resume=1$/));
+    expect(useAccounts.getState().reauth).toBe('alice');
+  });
+
+  it('reopens a plain sign-in as itself, even when the interrupted flow was "Sign in again"', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: null });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+    expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: null });
+  });
+
+  it('looks again after a restart cut the lookup short, rather than going back to the parked account', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine
+      .method('session.appConnectPendingSignIn')
+      .mockRejectedValueOnce(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+    await act(async () => fakeEngine.setStatus({ state: 'starting', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+    await act(async () => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
+
+  it('drops a lookup that answers after an account switch started', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.appConnectPendingSignIn').mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    mount('/');
+    await flush();
+    act(() => useAccounts.setState({ transition: { kind: 'switch', label: 'Switching to @bob' } }));
+    answer({ reauth: 'alice' });
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(useAccounts.getState().reauth).toBeNull();
+
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'alice' });
+    act(() => useAccounts.setState({ transition: null }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+  });
+
+  it('looks again after a lookup that timed out, rather than going back to the parked account', async () => {
+    jest.useFakeTimers();
+    try {
+      syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+      fakeEngine
+        .method('session.appConnectPendingSignIn')
+        .mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }))
+        .mockResolvedValueOnce({ reauth: 'bob' });
+      mount('/');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(1);
+      expect(router.push).not.toHaveBeenCalled();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2_000);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(2);
+      expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+      expect(useAccounts.getState().reauth).toBe('bob');
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('gives an engine that comes up during the backoff its own lookup, and lets the old one make no call', async () => {
+    jest.useFakeTimers();
+    try {
+      syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+      fakeEngine
+        .method('session.appConnectPendingSignIn')
+        .mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }))
+        .mockResolvedValue({ reauth: 'bob' });
+      mount('/');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(1);
+
+      act(() => fakeEngine.setStatus({ state: 'starting', epoch: 1 }));
+      act(() => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(2);
+      expect(router.push).toHaveBeenCalledTimes(1);
+      expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+      expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'bob' });
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(10_000);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(2);
+      expect(router.push).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('stays put, keeping the Add account marker, when every lookup fails, and asks the next engine', async () => {
+    jest.useFakeTimers();
+    try {
+      syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+      fakeEngine.method('session.appConnectPendingSignIn').mockRejectedValue(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }));
+      mount('/');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(10_000);
+      });
+      expect(fakeEngine.method('session.appConnectPendingSignIn')).toHaveBeenCalledTimes(3);
+      expect(router.push).not.toHaveBeenCalled();
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+      expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+
+      // The next engine is asked again, and the request reopens with the parked account to go back to.
+      fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue({ reauth: 'bob' });
+      act(() => fakeEngine.setStatus({ state: 'starting', epoch: 1 }));
+      act(() => fakeEngine.setStatus({ state: 'ready', epoch: 2, info: { capabilities: { walletSignIn: 'app-connect' } as never } }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/connect\?/));
+      expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'bob' });
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('goes back to the parked account when no sign-in is stored', async () => {
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: 'bob' }));
+    fakeEngine
+      .method('session.accounts')
+      .mockResolvedValue([{ identityId: 'alice', username: 'alice.dash', method: 'app-connect', lastUsedAt: new Date(0), active: false }]);
+    fakeEngine.method('session.appConnectPendingSignIn').mockResolvedValue(null);
+    mount('/');
+    await flush();
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
   });
 });

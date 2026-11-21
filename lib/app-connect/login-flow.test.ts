@@ -36,6 +36,7 @@ function harness(options: {
   network?: 'mainnet' | 'testnet' | 'devnet'
   carriers?: readonly ['dashpay' | 'dash-key', ...('dashpay' | 'dash-key')[]]
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
+  beforeHandout?: () => Promise<boolean>
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
@@ -61,6 +62,7 @@ function harness(options: {
     },
     origin: 'https://yap.pr',
     basePath: '/devnet',
+    ...(options.beforeHandout ? { beforeHandout: options.beforeHandout } : {}),
     now: () => clock.now,
     // Each sleep advances the clock instead of waiting.
     sleep: async (ms) => {
@@ -249,6 +251,25 @@ describe('AppConnectLogin', () => {
     await untrusted.login.start()
     expect(last(untrusted)).toEqual({ phase: 'unavailable', reason: 'untrusted' })
     expect(untrusted.records.value).toBeNull()
+  })
+
+  it('asks before handing out a request it has chosen, and hands out none it is refused', async () => {
+    const asked: (StoredAppConnectRequest | null)[] = []
+    const ok = harness({ beforeHandout: async () => { asked.push(ok.records.value); return true } })
+    await ok.login.start()
+    expect(asked).toEqual([ok.records.value])
+    expect(last(ok)).toMatchObject({ phase: 'waiting' })
+
+    const refused = harness({ beforeHandout: async () => false })
+    await refused.login.start()
+    expect(last(refused)).toEqual({ phase: 'unavailable', reason: 'storage' })
+    expect(refused.states.some((state) => state.phase === 'waiting')).toBe(false)
+    await refused.flush()
+    expect(refused.records.value).toBeNull()
+
+    const offline = harness({ protocolVersion: 13, beforeHandout: async () => { throw new Error('not asked') } })
+    await offline.login.start()
+    expect(last(offline)).toEqual({ phase: 'unavailable', reason: 'network-not-ready' })
   })
 })
 

@@ -147,7 +147,7 @@ export default function ConnectScreen() {
     body = <StatusBlock tone="done" title={renew ? copy.renew.renewed : copy.signin.signedIn} testID="kx-signed-in" />;
   } else if (step.name === 'error') {
     body = <StatusBlock tone="error" title={step.title} body={step.message} testID="kx-error" />;
-    footer = tryAgain;
+    footer = step.interrupted ? <Button label={copy.renew.close} size="block" onPress={cancel} testID="kx-close" /> : tryAgain;
   } else if (flow?.phase === 'unavailable') {
     const text = copy.connect.unavailable[flow.reason];
     body = <StatusBlock tone="error" title={text.title} body={text.body} testID="ac-unavailable" />;

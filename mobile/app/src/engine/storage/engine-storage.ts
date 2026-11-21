@@ -7,6 +7,7 @@ import { wipeKeychainServices } from '../../../modules/background-flush';
 
 import {
   identityInKey,
+  isSharedKey,
   isAuthKeyOf,
   SECURE_CHUNK_CHARS,
   secureItemName,
@@ -200,7 +201,7 @@ export function createEngineStorage(
   const ownerNow = () => epochIdentity ?? sessionIdentity();
 
   const setSecret = async (key: string, value: string, owner: string | null) => {
-    const bucket = identityInKey(key) ?? owner ?? SHARED_BUCKET;
+    const bucket = identityInKey(key) ?? (isSharedKey(key) ? SHARED_BUCKET : owner) ?? SHARED_BUCKET;
     const previous = readIndex()[bucket]?.[key];
     // Write the other slot, then point the index at it: a crash leaves the old value whole.
     const chunks = chunk(value);
@@ -234,6 +235,11 @@ export function createEngineStorage(
       // Signing out an account that is not the active one deletes its keys by name;
       // its private-feed keys name no identity, so the whole bucket goes with it.
       if (named !== sessionIdentity() && isAuthKeyOf(key, named)) await purgeBucket(named);
+      return;
+    }
+    // A signed-out sign-in request lives in the shared bucket; an older build may have left one in an account's too.
+    if (isSharedKey(key)) {
+      for (const bucket of new Set([SHARED_BUCKET, owner, lastActive])) if (bucket !== null) await removeFromBucket(bucket, key);
       return;
     }
     const index = readIndex();
@@ -297,6 +303,7 @@ export function createEngineStorage(
       for (const bucket of new Set([SHARED_BUCKET, identityId])) {
         if (bucket === null) continue;
         for (const [key, stored] of Object.entries(index[bucket] ?? {})) {
+          if (bucket !== SHARED_BUCKET && isSharedKey(key)) continue;
           const value = await readSecret(bucket, key, stored);
           if (value !== null) secure[key] = value;
         }

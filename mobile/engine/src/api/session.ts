@@ -24,7 +24,7 @@ import type { AppConnectHealth } from '@/lib/app-connect/session-health'
 import { walletKeyRows, type WalletKeyRow } from '@/lib/app-connect/wallet-keys'
 import { RpcError } from '../protocol/envelope'
 import { createAccountRegistry, type SignInMethod } from '../session/accounts'
-import { createAppConnectFlow, type AppConnectFlowDTO, type AppConnectReturn } from '../session/app-connect'
+import { createAppConnectFlow, type AppConnectFlowDTO, type AppConnectRequestKind, type AppConnectReturn } from '../session/app-connect'
 import { engineKeyRingBackend, forgetEngineRing } from '../session/app-connect-store'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { assertWalletKeyEnabled, verifySignInKey } from '../session/keys'
@@ -83,13 +83,14 @@ export interface AppConnectStatusDTO {
 /** One key a wallet granted Yappr for this account (Settings): what it may do, its allowance and expiry. */
 export type WalletConnectionDTO = WalletKeyRow
 
-/** How accepting a wallet's answer ended. `reload`: the account was parked here, and the host restarts the engine into it. */
+/** How accepting a wallet's answer ended. `reload`: this boot did not load the account's secrets, and the host restarts the engine into it. */
 export type AppConnectAcceptDTO =
   | { status: 'signed-in'; session: SessionDTO; reload: boolean }
   | { status: 'renewed'; session: SessionDTO }
 
 export interface SessionEvents {
-  'session.changed': { session: SessionDTO | null; reason: SessionChangeReason }
+  /** `reload`: a sign-in whose secrets this boot did not load; the host restarts into it even if the accept reply never reaches it. */
+  'session.changed': { session: SessionDTO | null; reason: SessionChangeReason; reload?: true }
   'session.keyRequired': { identityId: string | null; purpose: 'auth' | 'encryption' }
   /** Every change of the App Connect sign-in or renewal in progress. */
   'session.appConnect': AppConnectFlowDTO
@@ -132,6 +133,13 @@ export interface SessionModuleOptions {
    * module adds to it; the controller and `dm.unlock` read it.
    */
   unhydrated?: Set<string>
+  /**
+   * Shared with {@link createMobileAuthController}: the identities a wallet
+   * signed in that the host must reload into (an account this boot did not
+   * load). Their post-login tasks wait for the reloaded engine, so none
+   * writes to the bucket the host is still bound to.
+   */
+  awaitingReload?: Set<string>
 }
 
 /** A Platform identity id: 32 bytes in base58. */
@@ -159,15 +167,24 @@ const toCredits = (balance: number): bigint => BigInt(Math.trunc(balance))
  * counts one as stored and never writes its derived key over an imported
  * one. The host restarts the engine after such a sign-in, which loads the
  * stored keys (`dm.unlock` can then derive one if none was stored).
+ * `awaitingReload` (the session module's): those identities skip the
+ * post-login tasks, which the reloaded engine runs on restore.
  */
-export function createMobileAuthController({ unhydrated }: { unhydrated?: ReadonlySet<string> } = {}): PlatformAuthController {
+export function createMobileAuthController(
+  { unhydrated, awaitingReload }: { unhydrated?: ReadonlySet<string>; awaitingReload?: ReadonlySet<string> } = {},
+): PlatformAuthController {
   const deps = createYapprPlatformAuthDependencies()
   const secretStore: typeof deps.secretStore = unhydrated
     ? { ...deps.secretStore, hasEncryptionKey: identityId => unhydrated.has(identityId) || deps.secretStore.hasEncryptionKey(identityId) }
     : deps.secretStore
+  const postLogin = deps.sideEffects
+  const sideEffects: typeof deps.sideEffects = awaitingReload && postLogin
+    ? { ...postLogin, runPostLogin: (identityId, context) => awaitingReload.has(identityId) ? undefined : postLogin.runPostLogin(identityId, context) }
+    : postLogin
   return new PlatformAuthController({
     ...deps,
     secretStore,
+    sideEffects,
     features: {
       ...deps.features,
       usernameGate: false,
@@ -234,12 +251,13 @@ export function createSessionModule(options: SessionModuleOptions) {
   const storage = options.storage ?? localStorage
   // lib's App Connect key ring lives in the engine's storage (the device's secure storage), not IndexedDB.
   appConnectSessions.useKeyRingBackend(engineKeyRingBackend(localStorage))
-  const controller = options.controller ?? createMobileAuthController()
+  const unhydrated = options.unhydrated ?? new Set<string>()
+  const awaitingReload = options.awaitingReload ?? new Set<string>()
+  const controller = options.controller ?? createMobileAuthController({ unhydrated, awaitingReload })
   // The engine has no React AuthProvider; services read this controller's live state.
   const releaseIdentity = bindCurrentIdentity(() => controller.getState().user?.identityId ?? null)
   const registry = createAccountRegistry(storage)
   const stopDm = options.stopDm ?? (async () => stopDmEngine())
-  const unhydrated = options.unhydrated ?? new Set<string>()
 
   function toDTO(user: AuthUser | null): SessionDTO | null {
     if (!user) return null
@@ -253,18 +271,21 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
   }
 
-  function announce(reason: SessionChangeReason): SessionDTO | null {
+  function announce(reason: SessionChangeReason, reload = false): SessionDTO | null {
     const session = toDTO(controller.getState().user)
-    options.emit('session.changed', { session, reason })
+    options.emit('session.changed', reload ? { session, reason, reload: true } : { session, reason })
     return session
   }
 
   let restoring: Promise<SessionDTO | null> | null = null
+  /** The account whose secrets the host loaded for this boot (with the shared ones) and still binds to, if any. */
+  let hydratedIdentity: string | null = null
   /** Restores lib's saved session once per engine boot; every session call waits for it. */
   function restored(): Promise<SessionDTO | null> {
     restoring ??= (async () => {
       const switched = registry.takeSwitchMarker()
       const storedIdentity = registry.activeIdentityId()
+      hydratedIdentity = storedIdentity
       const hadSession = storedIdentity !== null
       const user = await controller.restoreSession()
       if (!user) {
@@ -276,7 +297,12 @@ export function createSessionModule(options: SessionModuleOptions) {
         }
         return null
       }
-      if (!registry.get(user.identityId)) registry.upsert(user.identityId, { username: user.username ?? null })
+      // A session restored from its key ring is a wallet session, even when a sign-in was killed before it recorded that.
+      const entry = registry.get(user.identityId)
+      const wallet = appConnectSessions.current(user.identityId) !== null
+      if (!entry || (wallet && entry.method !== 'app-connect')) {
+        registry.upsert(user.identityId, { username: entry?.username ?? user.username ?? null, ...(wallet ? { method: 'app-connect' as const } : {}) })
+      }
       return announce(switched ? 'switched' : 'restored')
     })()
     return restoring
@@ -331,12 +357,14 @@ export function createSessionModule(options: SessionModuleOptions) {
     options.tickets?.requireRestart()
   }
 
-  async function signedIn(identityId: string, method: SignInMethod): Promise<SessionDTO> {
+  async function signedIn(identityId: string, method: SignInMethod, reload = false): Promise<SessionDTO> {
     const user = controller.getState().user
     registry.upsert(identityId, { username: user?.username ?? null, method })
     await options.secureDurable?.()
-    const session = announce('signed-in')
+    const session = announce('signed-in', reload)
     if (!session) throw new RpcError('Sign-in did not establish a session', 'NOT_SIGNED_IN')
+    // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
+    if (reload) requireRestart()
     return session
   }
 
@@ -392,7 +420,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     },
   })
 
-  const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state) })
+  const appConnect = createAppConnectFlow({ emit: state => options.emit('session.appConnect', state), durable: options.secureDurable })
   /** Bumped by every App Connect start and cancel, so a start still waiting for the restore can tell it was overtaken. */
   let appConnectStarts = 0
   /** The generation the last cancel took. */
@@ -448,7 +476,7 @@ export function createSessionModule(options: SessionModuleOptions) {
     // The app was killed while the wallet answered a renewal: the host resumes that renewal at launch.
     // The lookup is async, so what it finds counts only if no flow started or ended meanwhile.
     const flowBefore = appConnect.state().flow
-    appConnect.pending(identityId)
+    appConnect.pending({ identityHint: identityId, renew: true })
       .catch(() => false)
       .then(waiting => {
         if (appConnectSessions.current(identityId)) return
@@ -492,10 +520,13 @@ export function createSessionModule(options: SessionModuleOptions) {
     }
     // A renewal whose account was signed out meanwhile (the wallet disabled the old keys first) signs it back in.
     assertSlotFree(identityId)
-    const parked = isParked(identityId)
+    // An account known here whose secrets this boot did not load (parked, or signed out to sign in again), or any
+    // account while the host is still bound to another one's bucket (its restore failed).
+    const unloaded = identityId !== hydratedIdentity && (hydratedIdentity !== null || registry.get(identityId) !== undefined)
     const grant = appConnect.accept(identityId)
     if (!grant) throw new RpcError('That answer is no longer available. Try again.', 'BAD_REQUEST')
-    const hold = parked ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
+    const hold = unloaded ? options.holdSecure?.(key => key.endsWith(`_${identityId}`)) : undefined
+    if (unloaded) awaitingReload.add(identityId)
     let succeeded = false
     try {
       const ring = await appConnectSessions.adopt(grant)
@@ -514,16 +545,15 @@ export function createSessionModule(options: SessionModuleOptions) {
       }
       succeeded = true
     } finally {
+      if (!succeeded) awaitingReload.delete(identityId)
       hold?.release(succeeded)
     }
     if (revokedSignOut === identityId) {
       revokedSignOut = null
       emitAppConnectStatus()
     }
-    const session = await signedIn(identityId, 'app-connect')
-    // Its other stored secrets were never loaded here: nothing more runs until the host restarts into it.
-    if (parked) requireRestart()
-    return { status: 'signed-in', session, reload: parked }
+    const session = await signedIn(identityId, 'app-connect', unloaded)
+    return { status: 'signed-in', session, reload: unloaded }
   }
 
   /** The keys the wallets granted the active account, with this device's marked (Settings). */
@@ -570,6 +600,14 @@ export function createSessionModule(options: SessionModuleOptions) {
     const identityId = opts.identityId ?? active
     if (!identityId) return
     const isActive = identityId === active
+    // Its pending renewal and "Sign in again" requests go first, so a later launch never resumes a request of an
+    // account the user signed out. A parked account's renewal is in its own bucket, which this boot did not load.
+    // A plain sign-in request left over in this signed-in engine was this account's; a signed-out engine's may be an Add account's.
+    const kinds: AppConnectRequestKind[] = [{ identityHint: identityId, renew: true }, { identityHint: identityId }]
+    if (isActive) kinds.push({})
+    for (const kind of kinds) await appConnect.forget(kind)
+    if (identityId !== hydratedIdentity) await appConnect.drop({ identityHint: identityId, renew: true })
+    await options.secureDurable?.()
     if (isActive) {
       // Keys and session first: if logout fails, the account stays fully signed in.
       await stopDm()
@@ -590,6 +628,8 @@ export function createSessionModule(options: SessionModuleOptions) {
     if (appConnect.renewing() === identityId) appConnect.cancel()
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
+    // Its auth key is gone, so the host no longer binds this boot to its bucket.
+    if (identityId === hydratedIdentity) hydratedIdentity = null
     if (isActive) announce('signed-out')
   }
 
@@ -681,8 +721,9 @@ export function createSessionModule(options: SessionModuleOptions) {
       await restored()
       const overtaken = start !== appConnectStarts
       const active = registry.activeIdentityId()
+      const renew = opts?.renew === true
       let identityHint: string | undefined
-      if (opts?.renew) {
+      if (renew) {
         // A renewal a revoke is waiting for (resumed after the app was killed) may go on without a ring.
         if (!active || (!appConnectSessions.current(active) && deferredRevoke !== active)) {
           throw new RpcError('Only an account signed in with a wallet can renew', 'BAD_REQUEST')
@@ -698,15 +739,15 @@ export function createSessionModule(options: SessionModuleOptions) {
       }
       if (overtaken) {
         // Cancelled, and nothing started since: the stored request this would have resumed is abandoned too.
-        if (appConnectStarts === cancelledStart) await appConnect.forget(identityHint)
+        if (appConnectStarts === cancelledStart) await appConnect.forget({ identityHint, renew })
         return appConnect.state()
       }
-      const started = appConnect.start({ identityHint, renew: opts?.renew === true, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
+      const started = appConnect.start({ identityHint, renew, fresh: opts?.fresh === true, returnTo: opts?.returnTo })
       // A new flow replaces a renewal a revoke was waiting for.
       settleDeferredRevoke()
       const flow = await started
       // Cancelled during the start's own checks, before it took up the stored request (and nothing started since).
-      if (cancelledStart > start && appConnectStarts === cancelledStart) await appConnect.forget(identityHint)
+      if (cancelledStart > start && appConnectStarts === cancelledStart) await appConnect.forget({ identityHint, renew })
       return flow
     },
 
@@ -721,9 +762,20 @@ export function createSessionModule(options: SessionModuleOptions) {
      */
     async appConnectPending(opts: { renew?: boolean } = {}): Promise<boolean> {
       await restored()
-      if (!opts?.renew) return appConnect.pending()
+      if (!opts?.renew) return appConnect.pending({})
       const active = registry.activeIdentityId()
-      return active !== null && appConnect.pending(active)
+      return active !== null && appConnect.pending({ identityHint: active, renew: true })
+    },
+
+    /**
+     * The sign-in a signed-out launch resumes (the app was killed while the
+     * wallet was open): a plain one (`reauth: null`), or signing `reauth` in
+     * again. Null when none is stored, or someone is signed in.
+     */
+    async appConnectPendingSignIn(): Promise<{ reauth: string | null } | null> {
+      await restored()
+      if (registry.activeIdentityId() !== null) return null
+      return appConnect.pendingSignIn()
     },
 
     /** Poll now: the app came back, or the wallet's return link named `requestHash` (hex). False when no flow takes it. */
