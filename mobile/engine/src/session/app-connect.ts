@@ -91,14 +91,16 @@ const ACTIVE_SIGN_IN = 'pending-request:active-sign-in'
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-/** Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. */
-async function markActiveSignIn(slot: string, durable?: () => Promise<void>): Promise<void> {
+/** Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. False if it could not be saved. */
+async function markActiveSignIn(slot: string, durable?: () => Promise<void>): Promise<boolean> {
   const bytes = encoder.encode(slot)
   try {
     await appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, bytes)
     await durable?.()
+    return true
   } catch (error) {
     logger.warn('App Connect: could not record the sign-in in progress:', error)
+    return false
   }
 }
 
@@ -232,6 +234,16 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         set({ flow: id, renew: input.renew === true, phase: 'unavailable', reason: 'not-configured' })
         return state
       }
+      if (!input.renew) {
+        const marked = await markActiveSignIn(slotOf(input) ?? 'login', options.durable)
+        // Cancelled, or started again, while the mark was saved.
+        if (flow !== id) return state
+        // Without the mark a kill while the wallet answers could resume the other request: hand none out.
+        if (!marked) {
+          set({ flow: id, renew: false, phase: 'unavailable', reason: 'storage' })
+          return state
+        }
+      }
       hint = input.identityHint
       renewFor = input.renew ? input.identityHint : undefined
       const instance = new AppConnectLogin({
@@ -249,11 +261,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))
-      if (!input.renew) {
-        await markActiveSignIn(slotOf(input) ?? 'login', options.durable)
-        // Cancelled, or started again, while the mark was saved.
-        if (login !== instance) return state
-      }
       await instance.start({ identityHint: input.identityHint, fresh: input.fresh })
       return state
     },
