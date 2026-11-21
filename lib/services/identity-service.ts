@@ -11,6 +11,16 @@ import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
 
+/**
+ * Platform answers a non-unique key hash that no identity holds without a
+ * proof, which the SDK raises as "no proof in result" instead of an empty
+ * list (rc.8 testnet). Every recovery-phrase lookup past the wallet's last
+ * identity asks for such a hash, so this one error means "none".
+ */
+function isMissingNonUniqueKeyProof(error: unknown): boolean {
+  return /\bno proof in result\b/i.test(extractErrorMessage(error));
+}
+
 export interface IdentityPublicKey {
   id: number;
   type: number;
@@ -154,7 +164,10 @@ class IdentityService {
     const sdk = await getEvoSdk();
     const identity = await sdk.identities.byPublicKeyHash(publicKeyHash);
     if (identity) return identity.id.toBase58();
-    const shared = await sdk.identities.byNonUniquePublicKeyHash(publicKeyHash);
+    const shared = await sdk.identities.byNonUniquePublicKeyHash(publicKeyHash).catch((error: unknown) => {
+      if (isMissingNonUniqueKeyProof(error)) return [];
+      throw error;
+    });
     return shared.length === 1 ? shared[0].id.toBase58() : null;
   }
 

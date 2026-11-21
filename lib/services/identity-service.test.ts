@@ -4,8 +4,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const fetch = vi.hoisted(() => vi.fn())
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch } }) }))
+const { fetch, byPublicKeyHash, byNonUniquePublicKeyHash } = vi.hoisted(() => ({
+  fetch: vi.fn(), byPublicKeyHash: vi.fn(), byNonUniquePublicKeyHash: vi.fn(),
+}))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { fetch, byPublicKeyHash, byNonUniquePublicKeyHash } }) }))
 vi.mock('./signer-service', () => ({ signerService: {} }))
 
 import { identityService } from './identity-service'
@@ -17,6 +19,8 @@ const identityWithKey = (data: string, disabledAt?: number) => ({
 
 beforeEach(() => {
   fetch.mockReset()
+  byPublicKeyHash.mockReset().mockResolvedValue(undefined)
+  byNonUniquePublicKeyHash.mockReset().mockResolvedValue([])
   identityService.clearCache()
 })
 
@@ -42,5 +46,26 @@ describe('identityService.getIdentity', () => {
     await identityService.getIdentity(IDENTITY)
     fetch.mockRejectedValueOnce(new Error('DAPI unavailable'))
     await expect(identityService.getIdentity(IDENTITY, { fresh: true })).rejects.toThrow('DAPI unavailable')
+  })
+})
+
+describe('identityService.getIdentityIdByPublicKeyHash', () => {
+  const hash = new Uint8Array(20)
+  const wasmError = (message: string) => Object.assign(Object.create(null), { message })
+
+  it('answers none when no identity holds the hash and Platform sends no proof', async () => {
+    byNonUniquePublicKeyHash.mockRejectedValueOnce(wasmError('no proof in result'))
+    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).resolves.toBeNull()
+  })
+
+  it('still throws any other failure', async () => {
+    byNonUniquePublicKeyHash.mockRejectedValueOnce(wasmError('DAPI unavailable'))
+    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).rejects.toMatchObject({ message: 'DAPI unavailable' })
+  })
+
+  it('answers the identity holding a unique key without the non-unique read', async () => {
+    byPublicKeyHash.mockResolvedValueOnce({ id: { toBase58: () => IDENTITY } })
+    await expect(identityService.getIdentityIdByPublicKeyHash(hash)).resolves.toBe(IDENTITY)
+    expect(byNonUniquePublicKeyHash).not.toHaveBeenCalled()
   })
 })
