@@ -159,6 +159,19 @@ class IdentityService {
   }
 
   /**
+   * Find the identity whose unique key has this hash160, or null when none
+   * does. For a recovery phrase's DIP-13 master key, which wallets register as
+   * an ECDSA_SECP256K1 key and Platform indexes as unique, so the non-unique
+   * index is never consulted (on testnet it answers a hash nobody holds with
+   * "no proof in result" instead of an empty list).
+   */
+  async getIdentityIdByMasterKeyHash(publicKeyHash: Uint8Array): Promise<string | null> {
+    const sdk = await getEvoSdk();
+    const identity = await sdk.identities.byPublicKeyHash(publicKeyHash);
+    return identity ? identity.id.toBase58() : null;
+  }
+
+  /**
    * Get identity balance
    */
   async getBalance(identityId: string): Promise<IdentityBalance> {

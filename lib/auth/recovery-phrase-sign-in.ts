@@ -99,7 +99,7 @@ export async function findPhraseAccounts(wallet: Dip13Wallet): Promise<PhraseAcc
   for (let identityIndex = 0, misses = 0; misses < IDENTITY_GAP_LIMIT; identityIndex++) {
     const key = wallet.derive(identityAuthKeyPath(network, identityIndex, MASTER_KEY_INDEX))
     key.privateKey.fill(0)
-    const identityId = await identityService.getIdentityIdByPublicKeyHash(hash160(key.publicKey))
+    const identityId = await identityService.getIdentityIdByMasterKeyHash(hash160(key.publicKey))
     if (!identityId) {
       misses++
       continue
