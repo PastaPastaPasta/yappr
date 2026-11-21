@@ -25,6 +25,7 @@ import { targetKindOf, yappIsLocked } from '@/lib/contract-topology'
 import { creditTipsEnabled } from '@/lib/feature-flags'
 import { PaymentSchemeIcon, getPaymentLabel, truncateAddress, PAYMENT_SCHEME_LABELS } from '@/components/ui/payment-icons'
 import { PaymentQRCodeDialog } from '@/components/ui/payment-qr-dialog'
+import { hasRealProfile } from '@/components/post/post-author-line'
 import type { ParsedPaymentUri } from '@/lib/types'
 import {
   getTransferKey,
@@ -119,7 +120,7 @@ export function TipModal() {
     if (post) {
       return {
         id: post.author.id,
-        displayName: post.author.displayName,
+        displayName: hasRealProfile(post.author.displayName, post.author.id) ? post.author.displayName : undefined,
         username: post.author.username,
       }
     }
@@ -589,7 +590,7 @@ export function TipModal() {
   const hasPaymentUris = paymentUris !== null && paymentUris.length > 0
   const tabCount = [yappTips, creditTips, hasPaymentUris].filter(Boolean).length
   const dashAmount = parseFloat(amount) || 0
-  const recipientName = recipientInfo.displayName || recipientInfo.username || 'this user'
+  const recipientName = recipientInfo.displayName || recipientInfo.username?.replace(/\.dash$/, '') || 'this user'
   const amountLabel = isYapp ? `${yappAmountBig.toString()} YAPP` : `${dashAmount} DASH`
 
   // The confirm step's primary action: which tab is open, and for YAPP whether

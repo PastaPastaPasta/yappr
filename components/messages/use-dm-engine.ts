@@ -101,8 +101,5 @@ export function useUserDetails(ids: string[]): ReadonlyMap<string, UserDetails> 
 }
 
 export function displayNameOf(details: ReadonlyMap<string, UserDetails>, id: string): string {
-  const found = details.get(id)
-  if (found?.displayName && !found.displayName.startsWith('User ')) return found.displayName
-  if (found?.username) return found.username.replace(/\.dash$/, '')
-  return `${id.slice(0, 8)}...`
+  return details.get(id)?.displayName ?? `${id.slice(0, 8)}...`
 }
