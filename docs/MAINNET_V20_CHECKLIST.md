@@ -122,24 +122,26 @@ changes consume identity nonces and move every planned id.
   - [x] Proved epoch reports **protocol 14**, fee multiplier 1000‰ (epoch 89,
         first block 2026-11-18T00:52Z; read 2026-11-21 with
         `EvoSDK.mainnetTrusted()`).
-  - [ ] DPNS, DashPay v2 and token history present at the ids in
-        `.env.mainnet.template`. **Conflicting observations:**
-        [MAINNET_RELEASE.md](MAINNET_RELEASE.md#system-contracts) records
-        DashPay v2 and token history v2 read on mainnet on 2026-11-11 with
-        `sdk.connect()` then `sdk.contracts.fetch(id)`. On 2026-11-21 the same
-        sequence (SDK 5.0.0-rc.4, `EvoSDK.mainnetTrusted()` and
-        `scripts/sdk-env.mjs` `connectSdk()`) returned DPNS v2 but *absent* for
-        DashPay, token history and moderation-charters, on mainnet **and** on
-        testnet, where testnet's seated charter teams show the charters
-        contract exists. The cause is not established. Re-verify each id
-        independently (for example a proved document query against the
-        contract) right before registration; don't rely on either reading
-        alone.
-  - [ ] Moderation-charters system contract `EG7RGfV8…UmN88` present on
-        mainnet (the charter tooling and `/moderation-teams` hard-code it,
-        `lib/moderation-charters/rules.mjs`). **UNKNOWN**, same reason.
+  - [x] System contracts present on mainnet, read 2026-11-21 with SDK
+        **5.0.0-rc.4** through the snapshot tool's own path (one DPNS
+        `contracts.fetch` to warm the connection, then `contracts.getMany`)
+        and again with `contracts.fetch` per id: DPNS v2, DashPay v2
+        `Bwr4WHCP…`, token history v2 `43gujrzZ…` and moderation-charters v1
+        `EG7RGfV8…` all present. The same probe on testnet also returned social
+        v20 `63JuBhMj…`. (An earlier run that day reported them absent because
+        it ran against a stale `node_modules` holding evo-sdk 3.1.0-dev.8;
+        that SDK can't even see social v20 on testnet. Run every probe from a
+        checkout installed at the pinned `5.0.0-rc.4`.)
+  - [ ] **Stop gate:** repeat that read-only probe right before the anchor
+        create, from the release checkout (pinned SDK, `NETWORK=mainnet`,
+        `scripts/sdk-env.mjs` `connectSdk()`), with the snapshot tool's DPNS
+        warm-up and `getMany` over the DPNS, DashPay and token-history ids it
+        will snapshot, plus the charters contract. Don't register unless all
+        four come back present: otherwise `contracts:snapshot` can't build the
+        bundle after registration and the filer can't prepare.
   - [ ] Mainnet Drive/DAPI version is compatible with SDK 5.0.0-rc.4 (testnet
-        runs Drive 5.0.0-rc.8). **UNKNOWN.**
+        runs Drive 5.0.0-rc.8). Proved epoch, contract and `getMany` reads
+        work as above; writes are untested. **UNKNOWN for writes.**
   - [ ] Maker nonce and balance as expected; none of the planned ids or the
         group exist yet (`--dry-run` proves this).
 
@@ -205,9 +207,9 @@ given, and broadcasts need `--production`.
 - [ ] **Stop gate before the anchor create:** `--prepare` must succeed for
       all three teams on mainnet. The filer itself reads the charters contract
       with `sdk.contracts.fetch(EG7RGfV8…)` and aborts if that read comes back
-      absent, which is what the same call returned on 2026-11-21 (section 4).
-      An independent proof that the contract exists is not enough: if the
-      filer's own read fails, fix and validate the filer first, and don't
+      absent. That read succeeded on mainnet with SDK 5.0.0-rc.4 on 2026-11-21
+      (section 4), but only a successful `--prepare` proves the filer's own
+      path. If it fails, fix and validate the filer first, and don't
       register.
 - [ ] Arm `--live --production --wait-registration 600` before the creates.
       `--wait-registration` bounds only the poll for the target contract to
@@ -241,8 +243,10 @@ given, and broadcasts need `--production`.
     deadline and leave enough of it for the proposal, the joins and the
     application. Don't wait for another delay period: a rival's application
     may have started the clock in the meantime.
-- [ ] `--watch --targets social=…,blog=…,storefront=…` through the join (and,
-      if contested, vote) windows.
+- [ ] `--watch --targets social=…,blog=…,storefront=…` prints one snapshot
+      and exits: **rerun it periodically** (at least every few hours) through
+      the join and, if contested, vote windows to catch rival contenders,
+      phase changes and seating.
 - [ ] Seating proved for all three (`seated`, winner = our leader, members as
       filed), then one real moderated write on each contract.
 
@@ -307,7 +311,7 @@ given, and broadcasts need `--production`.
 | No masternode majority on mainnet | A rival can contest and win a moderation seat | File promptly after the delay; have a plan if a rival seats |
 | Seven-day election delay | No posting for ≈8 days after registration | Register well ahead of launch |
 | v20 reference-read fees unmeasured | Follow requests, reports and posts with embeds cost more than the offline estimate | Measure on testnet (section 4) |
-| System-contract readback inconclusive | Charter tooling or DashPay profile reads may fail on mainnet | Fix the probe; prove each system contract before registering |
+| Probing with the wrong SDK | A stale install misreports system contracts as absent (seen 2026-11-21) | Probe only from a checkout at the pinned SDK; repeat the section 4 stop gate |
 | Payment nonce handling (#929) unresolved | A wallet QR plus a local fallback could pay twice | Land or gate #929 before tips/purchases go live on mainnet |
 | Credit tips | Credit tips stay `off` (D23); YAPP is non-purchasable and non-transferable | Keep the flag off |
 
@@ -317,12 +321,12 @@ given, and broadcasts need `--production`.
 2. Election windows and cool-down to freeze (delay is fixed at 604,800 s).
 3. Mainnet charter leaders and members, reasons, moderators' share and reward split.
 4. Sponsorship float size and alert floor.
-5. Whether DashPay, token history and moderation-charters system contracts are present on mainnet (the 2026-11-11 and 2026-11-21 readbacks disagree).
-6. Mainnet Drive version vs SDK 5.0.0-rc.4.
+5. ~~System contracts on mainnet~~: present (2026-11-21, SDK rc.4); re-check at the stop gate.
+6. Mainnet Drive version vs SDK 5.0.0-rc.4 for writes (reads work).
 7. The mainnet voting URL.
 8. Where mainnet is hosted, its deploy job and rollback.
 9. Which wallet build signs in on mainnet (Android and iOS).
 10. Whether launch is web-only (mobile mainnet needs the Rust engine).
 11. v20's reference-read fees, and the testnet-capable tooling to measure them and run the v20 probes.
 12. Whether the three charter teams are staffed with disjoint actors (else they file back to back inside the join windows).
-13. Whether the charter filer's own `contracts.fetch` of the charters contract works on mainnet (the stop gate in section 6).
+13. Whether the charter filer's `--prepare` succeeds on mainnet (the stop gate in section 6; its contract read already works).
