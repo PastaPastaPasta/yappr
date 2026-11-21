@@ -234,16 +234,6 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         set({ flow: id, renew: input.renew === true, phase: 'unavailable', reason: 'not-configured' })
         return state
       }
-      if (!input.renew) {
-        const marked = await markActiveSignIn(slotOf(input) ?? 'login', options.durable)
-        // Cancelled, or started again, while the mark was saved.
-        if (flow !== id) return state
-        // Without the mark a kill while the wallet answers could resume the other request: hand none out.
-        if (!marked) {
-          set({ flow: id, renew: false, phase: 'unavailable', reason: 'storage' })
-          return state
-        }
-      }
       hint = input.identityHint
       renewFor = input.renew ? input.identityHint : undefined
       const instance = new AppConnectLogin({
@@ -258,6 +248,9 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         basePath: returnTo.webBasePath,
         callbackUrl: (hash) => appConnectReturnUrl(returnTo, hash),
         onError: (message, error) => logger.warn(message, error),
+        // A signed-out request is marked opened last once it is chosen, before the wallet can see it; without the
+        // mark a kill while the wallet answers could resume the other one, so none is handed out.
+        ...(input.renew ? {} : { beforeHandout: () => markActiveSignIn(slotOf(input) ?? 'login', options.durable) }),
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))

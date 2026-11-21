@@ -48,7 +48,6 @@ const { appConnectPlatformPort } = await import('@/lib/app-connect/platform-port
 const { appConnectSessions, useAppConnectStatus } = await import('@/lib/app-connect/session-manager')
 const { AppConnectKeyRingStore } = await import('@/lib/app-connect/key-ring-store')
 const { requestRecordsFor } = await import('@/lib/app-connect/pending-request')
-const { AppConnectLogin } = await import('@/lib/app-connect/login-flow')
 const { documentSigningRequest } = await import('@/lib/app-connect/signing-plan')
 const { resolveSigningKey, SigningUnavailableError, RENEW_IN_WALLET_MESSAGE, NEEDS_WALLET_MESSAGE, SIGNED_OUT_MESSAGE } = await import('@/lib/auth/signing-keys')
 const { getEncryptionKey } = await import('@/lib/secure-storage')
@@ -807,6 +806,25 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(reopened.requestHash).toBe(plain.requestHash)
   })
 
+  const activeMark = async () => {
+    const mark = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), 'pending-request:active-sign-in')
+    return mark && new TextDecoder().decode(mark)
+  }
+
+  it('leaves the mark on the request opened last when another start fails before it has a request', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    expect(await activeMark()).toBe('login')
+    vi.mocked(appConnectPlatformPort.chainStatus).mockRejectedValueOnce(new Error('offline'))
+    expect(await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'offline' })
+    expect(await activeMark()).toBe('login')
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+  })
+
   it('hands out no request whose mark it could not save, leaving the other one marked', async () => {
     const engine = await signedOut()
     const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
@@ -818,18 +836,14 @@ describe('App Connect requests across kills and engine restarts', () => {
       if (name === 'pending-request:active-sign-in') throw new Error('storage failed')
       await save(network, name, bytes)
     })
-    const starts = vi.spyOn(AppConnectLogin.prototype, 'start')
     emitted = []
     try {
       expect(await engine.appConnectStart({ returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'storage' })
+      expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
     } finally {
       saves.mockRestore()
-      starts.mockRestore()
     }
-    expect(starts).not.toHaveBeenCalled()
-    expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
-    const mark = await store.loadSecret(appConnectSessions.network(), 'pending-request:active-sign-in')
-    expect(mark && new TextDecoder().decode(mark)).toBe('reauth')
+    expect(await activeMark()).toBe('reauth')
     const next = boot()
     session = next
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
