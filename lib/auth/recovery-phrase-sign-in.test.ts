@@ -8,18 +8,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { privateKeyToWif } from '@/lib/crypto/wif'
-import type { Dip13Key, Dip13Wallet } from '@/lib/crypto/dip13'
+import { IDENTITY_GAP_LIMIT, type Dip13Key, type Dip13Wallet } from '@/lib/crypto/dip13'
 
 const identity = vi.hoisted(() => ({ publicKeys: [] as unknown[] }))
+const lookups = vi.hoisted(() => ({ byMasterKeyHash: vi.fn(), byPublicKeyHash: vi.fn() }))
 vi.mock('@/lib/services/identity-service', () => ({
-  identityService: { getIdentity: async () => ({ id: 'Id1', balance: 0, revision: 0, publicKeys: identity.publicKeys }) },
+  identityService: {
+    getIdentity: async () => ({ id: 'Id1', balance: 0, revision: 0, publicKeys: identity.publicKeys }),
+    getIdentityIdByMasterKeyHash: lookups.byMasterKeyHash,
+    getIdentityIdByPublicKeyHash: lookups.byPublicKeyHash,
+  },
 }))
-vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: {} }))
+vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: { resolveUsername: async () => 'alice.dash' } }))
 vi.mock('@/lib/services/messaging-key-service', () => ({}))
 vi.mock('@/lib/crypto/encryption-key-lookup', () => ({}))
 vi.mock('@/lib/app-connect/config', () => ({ messagingAnchorId: () => null }))
 
-import { preparePhraseSession } from './recovery-phrase-sign-in'
+import { findPhraseAccounts, preparePhraseSession } from './recovery-phrase-sign-in'
 
 const derivedAt = (keyIndex: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * 17 + keyIndex * 3) % 251 + 1)
 const wallet: Dip13Wallet = {
@@ -36,6 +41,18 @@ const wifAt = (keyIndex: number) => privateKeyToWif(derivedAt(keyIndex), 'testne
 
 beforeEach(() => {
   identity.publicKeys = []
+  lookups.byMasterKeyHash.mockReset()
+  lookups.byPublicKeyHash.mockReset()
+})
+
+describe('findPhraseAccounts', () => {
+  it('walks past the last identity through the unique index only', async () => {
+    lookups.byMasterKeyHash.mockResolvedValueOnce('Id1').mockResolvedValue(null)
+    const accounts = await findPhraseAccounts(wallet)
+    expect(accounts).toEqual([{ identityIndex: 0, identityId: 'Id1', username: 'alice.dash' }])
+    expect(lookups.byMasterKeyHash).toHaveBeenCalledTimes(1 + IDENTITY_GAP_LIMIT)
+    expect(lookups.byPublicKeyHash).not.toHaveBeenCalled()
+  })
 })
 
 describe('preparePhraseSession', () => {
