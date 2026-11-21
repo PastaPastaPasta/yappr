@@ -2,6 +2,7 @@
 
 import { filterPaymentUris } from '@/lib/utils/payment-uri'
 import { logger } from '@/lib/logger';
+import { PAYMENT_PENDING_ERROR } from '@/lib/error-utils';
 import toast from 'react-hot-toast'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -19,7 +20,8 @@ import { tipHistoryService, matchesSentTip, type SentTipMatch } from '@/lib/serv
 import { tokenService } from '@/lib/services/token-service'
 import { buildUnsignedYappTipTransition } from '@/lib/services/token-transfer-builder'
 import { identityService } from '@/lib/services/identity-service'
-import { MIN_YAPP_TIP, getConfiguredNetwork } from '@/lib/constants'
+import { MIN_YAPP_TIP, YAPPR_CONTRACT_ID, getConfiguredNetwork } from '@/lib/constants'
+import { walletRequestLive } from '@/lib/services/identity-nonce'
 import { TIP_MESSAGE_MAX_LENGTH, type TipTargetKind } from '@/lib/tip-note'
 import { targetKindOf, yappIsLocked } from '@/lib/contract-topology'
 import { creditTipsEnabled } from '@/lib/feature-flags'
@@ -163,6 +165,17 @@ export function TipModal() {
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
   const walletMatchRef = useRef<SentTipMatch | null>(null)
+  // The QR this modal session built, shown again by "Check again" while it may still execute.
+  const shownRequestRef = useRef<{ ownerId: string; key: string; uri: string; nonce: bigint; match: SentTipMatch | null } | null>(null)
+
+  // An account switch ends the modal session: the QR and any wallet work in flight belong to the old identity.
+  const sessionIdentity = user?.identityId
+  const identityRef = useRef(sessionIdentity)
+  useEffect(() => {
+    if (identityRef.current === sessionIdentity) return
+    identityRef.current = sessionIdentity
+    close()
+  }, [sessionIdentity, close])
   const walletSessionRef = useRef(0)
 
   // Transfer key persistence (credits tab only)
@@ -238,6 +251,7 @@ export function TipModal() {
       setYappBalance(null)
       setCanSignLocally(null)
       walletMatchRef.current = null
+      shownRequestRef.current = null
       walletSessionRef.current++
       usedTransferKeyRef.current = null
     }
@@ -327,6 +341,7 @@ export function TipModal() {
   // Shared tail of both YAPP paths: refresh balances, drop the cached tip
   // pages so the new proof can show up, and land on the success screen.
   const finishYappTip = useCallback(() => {
+    shownRequestRef.current = null
     if (user) tokenService.getBalance(user.identityId).then(setYappBalance).catch(() => {})
     // The transfer also burned a little DASH in fees, so the credit balance the
     // auth context caches is stale too.
@@ -434,7 +449,25 @@ export function TipModal() {
     setError(null)
     setWalletUri(null)
     setWalletExpired(false)
+    const key = JSON.stringify([recipientInfo.id, yappAmountBig.toString(), tipTarget ?? null, noteMessage ?? null])
     try {
+      // This session's QR, while it may still execute, is shown again for the same tip with its own match
+      // and holds any other back; it is kept until a new one replaces it or it is proved retired.
+      const shown = shownRequestRef.current?.ownerId === user.identityId ? shownRequestRef.current : null
+      if (shown) {
+        const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
+        if (walletSessionRef.current !== session) return
+        if (live && shown.key !== key) {
+          exitWalletSign(PAYMENT_PENDING_ERROR)
+          return
+        }
+        if (live) {
+          walletMatchRef.current = shown.match
+          setWalletUri(shown.uri)
+          return
+        }
+        if (shownRequestRef.current === shown) shownRequestRef.current = null
+      }
       // Recipient, amount, post and message all have to agree before a row
       // counts as this tip, plus a time floor so an identical earlier tip to
       // the same author isn't mistaken for the wallet's. The margin absorbs
@@ -457,11 +490,13 @@ export function TipModal() {
         await request.discard()
         return
       }
-      setWalletUri(buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork()))
+      const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
+      shownRequestRef.current = { ownerId: user.identityId, key, uri, nonce: request.nonce, match: walletMatchRef.current }
+      setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
       logger.error('Failed to build wallet tip request:', err)
-      exitWalletSign('Could not prepare the wallet signing request — please try again')
+      exitWalletSign(err instanceof Error && err.message === PAYMENT_PENDING_ERROR ? err.message : 'Could not prepare the wallet signing request — please try again')
     }
   }
 

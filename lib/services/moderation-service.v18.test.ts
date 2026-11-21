@@ -42,7 +42,13 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 // Signed in as the identity whose key is read (lib/auth/critical-key.ts checks it).
 const live = vi.hoisted(() => ({ signedOut: false }))
 vi.mock('@/lib/auth/active-identity', () => ({ currentIdentityId: () => (live.signedOut ? null : sdk.identities.fetch.mock.lastCall?.[0] ?? null) }))
-vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (_who: string, _contract: string, write: () => Promise<unknown>) => write() }))
+const nonceMode = vi.hoisted(() => ({ chosen: undefined as bigint | undefined }))
+vi.mock('./identity-nonce', () => ({
+  withSdkSignedWrite: (...args: [string, string, () => Promise<unknown>, string?, (() => Promise<boolean>)?, ((nonce: bigint) => Promise<unknown>)?]) => {
+    if (nonceMode.chosen !== undefined && args[5]) return args[5](nonceMode.chosen)
+    return args[2]()
+  },
+}))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
 vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => false }))
@@ -65,6 +71,7 @@ beforeEach(() => {
   }
   for (const fn of [restrictions.read, restrictions.refresh, built.buildDocumentForCreate, built.buildSignedCreateTransition]) fn.mockReset()
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
+  nonceMode.chosen = undefined
   live.signedOut = false
   sdk.contracts.moderatorChangeDocumentFields.mockResolvedValue({})
   restrictions.refresh.mockResolvedValue(null)
@@ -174,6 +181,17 @@ describe('a profile extension as a hide target', () => {
 })
 
 describe('restrict and lift', () => {
+  it('uses the reserved chosen nonce for a restriction create while a wallet QR is outstanding', async () => {
+    nonceMode.chosen = BigInt(102)
+    restrictions.read.mockResolvedValue(null)
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(100))
+    expect(await moderationServiceFor('social').restrict(MODERATOR, AUTHOR, 3)).toEqual({ success: true })
+    expect(built.buildDocumentForCreate.mock.calls[0][4]).toMatchObject({ identityContractNonce: BigInt(102) })
+    expect(built.buildSignedCreateTransition.mock.calls[0][0]).toMatchObject({ identityContractNonce: BigInt(102) })
+    expect(sdk.identities.contractNonce).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastStateTransition).toHaveBeenCalledOnce()
+  })
+
   it('creates the restriction document the first time: target bytes, state 1, the reason', async () => {
     restrictions.read.mockResolvedValue(null)
     sdk.identities.contractNonce.mockResolvedValue(BigInt(6))
