@@ -6,6 +6,7 @@
   "build": {
     "base": {
       "node": "22.20.0",
+      "ios": { "image": "macos-tahoe-26.6-xcode-27.2" },
       "android": {
         "gradleCommand": ":app:bundleRelease -PreactNativeArchitectures=arm64-v8a"
       }

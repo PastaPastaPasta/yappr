@@ -92,7 +92,8 @@ jobs:
   testflight:
     name: Build, sign and upload
     if: ${{ !inputs.distribute_only }}
-    runs-on: macos-26
+    # App Store Connect requires the iOS 27 SDK from April 2027 (ITMS-90725); pin a release Xcode.
+    runs-on: xcode-27
     timeout-minutes: 150
     environment: testflight
     defaults:
@@ -109,6 +110,7 @@ jobs:
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
       APPLE_EXPECTED_ORG_NAME: ${{ vars.APPLE_EXPECTED_ORG_NAME }}
       YAPPR_COMMIT: ${{ github.sha }}
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
     steps:
@@ -164,6 +166,9 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+
+      - name: Check Xcode
+        run: scripts/check-xcode.sh 27 27B52 | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node.js
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0

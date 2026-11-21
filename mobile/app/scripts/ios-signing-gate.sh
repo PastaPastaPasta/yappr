@@ -115,6 +115,8 @@ check_app() { # <Info.plist> <bundle id> <version> <build>
   expect 'CFBundleIdentifier' "$(plist_value "$1" CFBundleIdentifier)" "$2"
   expect 'CFBundleShortVersionString' "$(plist_value "$1" CFBundleShortVersionString)" "$3"
   expect 'CFBundleVersion' "$(plist_value "$1" CFBundleVersion)" "$4"
+  evidence 'DTSDKName' "$(plist_value "$1" DTSDKName)"
+  evidence 'DTXcode' "$(plist_value "$1" DTXcode)"
   # App Store Connect refuses non-exempt encryption without its documentation code (ITMS-90592).
   local encryption code
   encryption="$(plist_value "$1" ITSAppUsesNonExemptEncryption)"
