@@ -30,6 +30,10 @@ on:
         description: 'Skip the build (ignores dry_run): put build_number in the internal group and email tester invites'
         type: boolean
         default: false
+      tester_email:
+        description: 'distribute_only: invite this App Store Connect team user to the internal group (masked in logs); empty = existing testers'
+        type: string
+        required: false
 
 run-name: >-
   iOS TestFlight ${{ inputs.variant }}${{ inputs.distribute_only && format(' distribute build {0}', inputs.build_number) || (inputs.dry_run && ' (dry run)' || '') }}
@@ -80,6 +84,10 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] || { echo '::error::distribute_only needs build_number'; exit 1; }
+          # Read from the event file, not an expression, so the address never appears in a step header.
+          TESTER_EMAIL="$(jq -r '.inputs.tester_email // ""' "$GITHUB_EVENT_PATH")"
+          [[ -z "$TESTER_EMAIL" ]] || echo "::add-mask::$TESTER_EMAIL"
+          export TESTER_EMAIL
           BUNDLE_ID="$(node -p "require('./src/variants.ts').resolveIosBundleId(process.env.APP_VARIANT, process.env.YAPPR_IOS_BUNDLE_ID)")"
           export BUNDLE_ID
           keys="$RUNNER_TEMP/private_keys"
