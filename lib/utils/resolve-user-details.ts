@@ -18,10 +18,13 @@ export async function resolveUserDetailsBatch(identityIds: string[]): Promise<Ma
   const { loadIdentityBatch } = await import('@/lib/services/identity-batch')
   const { usernames, profiles } = await loadIdentityBatch(identityIds)
   const byOwner = new Map(profiles.map(profile => [profile.$ownerId, profile]))
-  return new Map(identityIds.map(id => [id, {
-    id,
-    username: usernames.get(id) || undefined,
-    displayName: byOwner.get(id)?.displayName || `User ${id.slice(-6)}`,
-    hasDpns: !!usernames.get(id),
-  }]))
+  return new Map(identityIds.map(id => {
+    const username = usernames.get(id) || undefined
+    return [id, {
+      id,
+      username,
+      displayName: byOwner.get(id)?.displayName || username?.replace(/\.dash$/, '') || `User ${id.slice(-6)}`,
+      hasDpns: !!username,
+    }]
+  }))
 }

@@ -536,7 +536,7 @@ function UserProfileView({ requestedUserId, userId }: { requestedUserId: string 
   const handleTipUser = () => {
     const authedUser = requireAuth()
     if (!authedUser || !userId) return
-    openTipModal({ id: userId, displayName: profile?.displayName, username: username || undefined })
+    openTipModal({ id: userId, displayName, username: username || undefined })
   }
 
   const refreshUsernames = useCallback(async () => {
