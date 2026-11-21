@@ -91,18 +91,25 @@ changes consume identity nonces and move every planned id.
       `npm run test` (includes `scripts/recoverable-contracts.test.mjs`,
       `lib/contract-topology.test.ts`, `scripts/mainnet-release.test.mjs`,
       `scripts/registration-policy.test.mjs`).
-- [ ] **v20-specific network proof on testnet** (SOCIAL_V20.md says none of
-      this has run on a network yet):
+- [ ] **v20-specific network proof** (SOCIAL_V20.md says none of this has run
+      on a network yet). **Tooling gap:** `verify-v10.mjs` and
+      `measure-social-fees.mjs` are devnet batteries (`measure-social-fees.mjs`
+      builds its SDK with `devnetConfig()`/`devnetSdk()` regardless of
+      `NETWORK`), and `measure-social-fees.mjs` never writes a `followRequest`
+      or a post with `embedContractId`. Either run them on a devnet v20
+      registration, or extend them to testnet and to those shapes first.
   - [ ] `verify-v10.mjs` probes `d1e`, `r1z3a`, `c1e` (expect 40120 for a
         follow request to / account report of / embed from something that does
-        not exist) and `c1f` (an embed naming a real contract) against
-        `63JuBhMj…`;
-  - [ ] a moderator removal of a **nested** reply on testnet v20 whose record
-        keeps `replyToReplyId`, and of a direct reply whose record omits it,
-        then `scripts/recover-deleted.mjs recover` + `verify` on both;
-  - [ ] `measure-social-fees.mjs` on v20 for the three new reference reads
-        (follow request, report, post with embed). The offline estimate does
-        not count reference reads.
+        not exist) and `c1f` (an embed naming a real contract) against a v20
+        contract;
+  - [ ] a moderator removal of a **nested** reply on v20 whose record keeps
+        `replyToReplyId`, and of a direct reply whose record omits it, then
+        `scripts/recover-deleted.mjs recover` + `verify` on both (testnet
+        `63JuBhMj…` has a seated team, so this one can run there);
+  - [ ] fees of the three new reference reads (follow request, report, post
+        with embed), measured by a procedure that actually writes those three
+        shapes. The offline estimate does not count reference reads.
+        **UNKNOWN until that procedure exists.**
 - [ ] **Live /staging QA green** on v20 (web smoke matrix, App Connect with a
       real DashPay wallet). See the 2026-11-21 QA report on the PR that adds
       this file.
@@ -116,14 +123,18 @@ changes consume identity nonces and move every planned id.
         first block 2026-11-18T00:52Z; read 2026-11-21 with
         `EvoSDK.mainnetTrusted()`).
   - [ ] DPNS, DashPay v2 and token history present at the ids in
-        `.env.mainnet.template`. **UNKNOWN today:** on 2026-11-21 the
-        documented readback (`sdk.contracts.fetch(id)` after `sdk.connect()`,
-        SDK 5.0.0-rc.4) returned DPNS v2 but *absent* for DashPay, token
-        history and the moderation-charters contract on **both** mainnet and
-        testnet, where those contracts certainly exist. The readback method is
-        wrong for system contracts, so presence on mainnet is unproven. Fix
-        the probe (or use a proved document query against each contract)
-        before relying on it.
+        `.env.mainnet.template`. **Conflicting observations:**
+        [MAINNET_RELEASE.md](MAINNET_RELEASE.md#system-contracts) records
+        DashPay v2 and token history v2 read on mainnet on 2026-11-11 with
+        `sdk.connect()` then `sdk.contracts.fetch(id)`. On 2026-11-21 the same
+        sequence (SDK 5.0.0-rc.4, `EvoSDK.mainnetTrusted()` and
+        `scripts/sdk-env.mjs` `connectSdk()`) returned DPNS v2 but *absent* for
+        DashPay, token history and moderation-charters, on mainnet **and** on
+        testnet, where testnet's seated charter teams show the charters
+        contract exists. The cause is not established. Re-verify each id
+        independently (for example a proved document query against the
+        contract) right before registration; don't rely on either reading
+        alone.
   - [ ] Moderation-charters system contract `EG7RGfV8…UmN88` present on
         mainnet (the charter tooling and `/moderation-teams` hard-code it,
         `lib/moderation-charters/rules.mjs`). **UNKNOWN**, same reason.
@@ -154,9 +165,15 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
 2. [ ] `--dry-run` and `--signed-dry-run` produce the same ids, nonces and
        file pins; the balance gate passes.
 3. [ ] Charter filers prepared and **armed before** the member creates (section 6).
-4. [ ] `--live --upto app`, group readback, then `--live` for the members.
-       Check each landed id against the plan; on drift take the id from the
-       journal and stop to reassess.
+4. [ ] `--live --upto app`, then read back the group. Then create the
+       members **one at a time** with `--live --upto <member>` (social,
+       blocks, dmV5, blog, pollr, storefront, passkeyVault), and after each
+       one read its nonce and id from the journal. Stop before the next create
+       if either differs from the plan. The tool hard-stops only when the
+       anchor's nonce drifts: for a later member it prints
+       `NOTE: … takes nonce …, not the planned …`, derives the id from the
+       actual nonce and carries on, so one `--live` for all members could land
+       permanent ids that the prepared charter manifests don't name.
 5. [ ] `NETWORK=mainnet node scripts/verify-appconnect.mjs --only g1,g2,g3,a1`
        with the eight `id:1` pins: expect **32/0**.
 6. [ ] One proved read per index family (testnet: all 95 indexes answered).
@@ -175,10 +192,22 @@ given, and broadcasts need `--production`.
       **[O] decide the mainnet reasons, share and split.**
 - [ ] `--plan`, `--dry-run`, then `--live --production --prepare` per team
       (add `--prior-journal` for shared actors).
-- [ ] Arm `--live --production --wait-registration 600` per target before the
-      creates; the proposal can only land once the seven-day election delay
-      has passed, so the filer must be re-run or kept waiting that long.
-      **UNKNOWN:** whether one invocation can wait seven days; plan to re-arm.
+- [ ] Arm `--live --production --wait-registration 600` before the creates.
+      `--wait-registration` bounds only the poll for the target contract to
+      appear (600 s). Once it is found, the filer waits for the election to
+      open on proved chain time with no bound, so one invocation can sit
+      through the seven-day delay. A process exit or network failure means
+      resuming the same journal, not re-arming from scratch.
+- [ ] **Teams that share a leader or member file sequentially**, never
+      concurrently: each invocation reads the other journals' nonce floors
+      (`--prior-journal`) only at startup, and its lock covers only its own
+      journal, so two live filers sharing an actor can use the same
+      moderation-charters nonce. Before each invocation import the latest
+      journal of every team that shares an actor with it. Only teams with
+      disjoint actors may be armed in parallel. Because the filer waits out
+      the delay, a mainnet plan with shared actors files one team per delay
+      period unless teams are staffed disjointly. **[O] staff the three
+      teams with disjoint actors** if all three should open together.
 - [ ] `--watch --targets social=…,blog=…,storefront=…` through the join (and,
       if contested, vote) windows.
 - [ ] Seating proved for all three (`seated`, winner = our leader, members as
@@ -240,7 +269,8 @@ given, and broadcasts need `--production`.
 | --- | --- | --- |
 | Everything in section 2 and every contract schema is frozen at create; `refersTo` and `deleteKeepsFields` can never be added later | A mistake needs a new contract, new group membership, new YAPP and a storage reset | Finish the section 4 network proofs on testnet v20 first |
 | Group membership is append-only | A wrong member or extra create stays in the group forever; App Connect refuses builds whose pins differ (`unexpected-members` / `missing-members`) | Nonce freeze, `--signed-dry-run` before `--live`, short window between create and deploy |
-| Maker spends a nonce between `--plan` and `--live` | Every planned id shifts | Nonce freeze; the tool hard-stops on drift |
+| Maker spends a nonce between `--plan` and `--live` | Every planned id shifts | Nonce freeze; the tool hard-stops only on anchor drift, so create members one `--upto` at a time and check each (section 5) |
+| Charter filers sharing an actor run concurrently | Duplicate moderation-charters nonces, interrupted filing | File shared-actor teams sequentially (section 6) |
 | No masternode majority on mainnet | A rival can contest and win a moderation seat | File promptly after the delay; have a plan if a rival seats |
 | Seven-day election delay | No posting for ≈8 days after registration | Register well ahead of launch |
 | v20 reference-read fees unmeasured | Follow requests, reports and posts with embeds cost more than the offline estimate | Measure on testnet (section 4) |
@@ -254,10 +284,11 @@ given, and broadcasts need `--production`.
 2. Election windows and cool-down to freeze (delay is fixed at 604,800 s).
 3. Mainnet charter leaders and members, reasons, moderators' share and reward split.
 4. Sponsorship float size and alert floor.
-5. Whether DashPay, token history and moderation-charters system contracts are present on mainnet (current readback can't tell).
+5. Whether DashPay, token history and moderation-charters system contracts are present on mainnet (the 2026-11-11 and 2026-11-21 readbacks disagree).
 6. Mainnet Drive version vs SDK 5.0.0-rc.4.
 7. The mainnet voting URL.
 8. Where mainnet is hosted, its deploy job and rollback.
 9. Which wallet build signs in on mainnet (Android and iOS).
 10. Whether launch is web-only (mobile mainnet needs the Rust engine).
-11. Whether the filer can wait out the seven-day delay in one run.
+11. v20's reference-read fees, and the testnet-capable tooling to measure them and run the v20 probes.
+12. Whether the three charter teams are staffed with disjoint actors (else they file one after another).
