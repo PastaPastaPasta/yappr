@@ -35,6 +35,7 @@ import { network } from './sdk-env.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { describeValue, feeAgreement, manualCreate, settle } from './social-battery-lib.mjs';
 import { actionFeeOf, socialShapes } from './social-shapes.mjs';
+import { NONCE_SEQUENCE_MASK } from './seed/seed-lib.mjs';
 import { connectNetworkSdk, randomIdBytes, readback } from './verify-lib.mjs';
 
 const REFERENCE_NOT_FOUND = /\bcode"?\s*[=:]\s*40120\b|referenced .{0,80}not found|referencedentitynotfound/i;
@@ -53,9 +54,11 @@ try {
 } catch {
   throw new Error(`${values.out} exists or can't be created; evidence files are never overwritten`);
 }
+let checkpoint = 0;
 const save = () => {
-  writeFileSync(`${values.out}.tmp`, describeValue(evidence), { mode: 0o600 });
-  renameSync(`${values.out}.tmp`, values.out);
+  const temporary = `${values.out}.${process.pid}.${checkpoint++}.tmp`;
+  writeFileSync(temporary, describeValue(evidence), { flag: 'wx', mode: 0o600 });
+  renameSync(temporary, values.out);
 };
 const verdict = (label, ok, detail = '') => {
   evidence.verdicts.push({ label, ok, detail });
@@ -110,11 +113,24 @@ async function stableBalance(floorHeight, changedFrom) {
   throw new Error(`the balance of ${author.ownerId} did not settle`);
 }
 
+const contractNonce = async () => BigInt((await readback(() => sdk.identities.contractNonce(author.ownerId, values.contract))) ?? 0n) & NONCE_SEQUENCE_MASK;
+
+/** The author's contract nonce once it has moved past `from`; more than one step means another writer used this author. */
+async function nextNonce(from) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const nonce = await contractNonce();
+    if (nonce > from) return nonce;
+    await settle();
+  }
+  throw new Error(`the contract nonce of ${author.ownerId} did not move past ${from}`);
+}
+
 let lastHeight = 0;
 /** One create with the author's proved balance around it. `refusedOn` makes a 40120 citing that property the expected outcome. */
 async function measuredCreate(key, docType, data, refusedOn) {
   const fee = actionFeeOf(schemas, docType);
   const agreement = fee ? (await feeAgreement(ctx, fee)).agreement : undefined;
+  const nonceBefore = await contractNonce();
   const before = await stableBalance(lastHeight);
   const outcome = await manualCreate(ctx, author, { docType, data, agreement });
   const refused = !outcome.ok && REFERENCE_NOT_FOUND.test(String(outcome.error)) && refusedOn?.test(String(outcome.error));
@@ -125,6 +141,10 @@ async function measuredCreate(key, docType, data, refusedOn) {
     throw new Error(`${key}: neither landed nor refused as expected; check ${author.ownerId}'s ${docType} documents before rerunning: ${String(outcome.error).slice(0, 300)}`);
   }
   const after = await stableBalance(before.height + 1, before.credits);
+  const nonceAfter = await nextNonce(nonceBefore);
+  if (nonceAfter !== nonceBefore + 1n) {
+    throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter}; another writer used this author, so the fee can't be attributed`);
+  }
   lastHeight = after.height;
   Object.assign(entry, {
     balanceBefore: String(before.credits), heightBefore: before.height,
