@@ -28,7 +28,7 @@
  * before any write if the author already follows-requests or reports --target.
  * Refuses NETWORK=mainnet and any contract that is not social v20.
  */
-import { existsSync, renameSync, writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import bs58 from 'bs58';
 import { network } from './sdk-env.mjs';
@@ -46,9 +46,13 @@ const { values } = parseArgs({ options: Object.fromEntries(REQUIRED.map((name) =
 if (network() === 'mainnet') throw new Error('prove-v20-references writes; it never runs on mainnet');
 const missing = REQUIRED.filter((name) => !values[name]);
 if (missing.length) throw new Error(`missing ${missing.map((name) => `--${name}`).join(', ')}`);
-if (existsSync(values.out)) throw new Error(`${values.out} exists; evidence files are never overwritten`);
 
 const evidence = { network: network(), contract: values.contract, startedAt: new Date().toISOString(), writes: [], removals: [], verdicts: [] };
+try {
+  writeFileSync(values.out, '', { flag: 'wx', mode: 0o600 });
+} catch {
+  throw new Error(`${values.out} exists or can't be created; evidence files are never overwritten`);
+}
 const save = () => {
   writeFileSync(`${values.out}.tmp`, describeValue(evidence), { mode: 0o600 });
   renameSync(`${values.out}.tmp`, values.out);
@@ -74,6 +78,7 @@ async function actor(file, keyId) {
 const author = await actor(values.author, AUTHOR_KEY_ID);
 const moderator = await actor(values.moderator, MODERATOR_KEY_ID);
 const moderatorIdentity = await readback(() => sdk.identities.fetch(moderator.ownerId));
+if (!moderatorIdentity) throw new Error(`--moderator ${moderator.ownerId} is not an identity`);
 evidence.author = author.ownerId;
 evidence.moderator = moderator.ownerId;
 
@@ -94,13 +99,13 @@ async function provedBalance(ownerId) {
   return { credits: BigInt(response.data), height: Number(response.metadata.height) };
 }
 
-/** Two equal proved balances above `floorHeight`; with `changedFrom`, they must differ from it (a landed write always pays). */
+/** Two equal proved balances at or above `floorHeight`; with `changedFrom`, they must differ from it (every write in this run pays). */
 async function stableBalance(floorHeight, changedFrom) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const first = await provedBalance(author.ownerId);
     await settle();
     const second = await provedBalance(author.ownerId);
-    if (first.credits === second.credits && second.height > floorHeight && second.credits !== changedFrom) return second;
+    if (first.credits === second.credits && second.height >= floorHeight && second.credits !== changedFrom) return second;
   }
   throw new Error(`the balance of ${author.ownerId} did not settle`);
 }
@@ -119,7 +124,7 @@ async function measuredCreate(key, docType, data, refusedOn) {
   if (!outcome.ok && !refused) {
     throw new Error(`${key}: neither landed nor refused as expected; check ${author.ownerId}'s ${docType} documents before rerunning: ${String(outcome.error).slice(0, 300)}`);
   }
-  const after = await stableBalance(before.height, outcome.ok ? before.credits : undefined);
+  const after = await stableBalance(before.height + 1, before.credits);
   lastHeight = after.height;
   Object.assign(entry, {
     balanceBefore: String(before.credits), heightBefore: before.height,
