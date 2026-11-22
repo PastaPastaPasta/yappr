@@ -18,7 +18,7 @@
  *
  * Run:
  *   NETWORK=devnet|testnet|mainnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
- * then (NETWORK is process-local — repeat it, or provisioning targets testnet):
+ * then repeat the same NETWORK on the provisioning command (there is no default):
  *   NETWORK=devnet|testnet|mainnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
  *     --funding-outpoint <printedTxid>:0 [--chain-lock <height>]
  */
