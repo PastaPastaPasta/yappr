@@ -37,6 +37,7 @@ import { describeValue, feeAgreement, manualCreate, settle } from './social-batt
 import { actionFeeOf, socialShapes } from './social-shapes.mjs';
 import { NONCE_SEQUENCE_MASK } from './seed/seed-lib.mjs';
 import { connectNetworkSdk, randomIdBytes, readback } from './verify-lib.mjs';
+import { CHARTERS_CONTRACT_ID } from '../lib/moderation-charters/rules.mjs';
 
 const REFERENCE_NOT_FOUND = /\bcode"?\s*[=:]\s*40120\b|referenced .{0,80}not found|referencedentitynotfound/i;
 const AUTHOR_KEY_ID = 2;
@@ -84,6 +85,22 @@ const moderatorIdentity = await readback(() => sdk.identities.fetch(moderator.ow
 if (!moderatorIdentity) throw new Error(`--moderator ${moderator.ownerId} is not an identity`);
 evidence.author = author.ownerId;
 evidence.moderator = moderator.ownerId;
+
+const team = await readback(() => sdk.moderationCharters.team(values.contract));
+if (!team) throw new Error(`${values.contract} has no seated moderation team; the removals must come from a seated moderator`);
+try {
+  if (!team.contains(moderator.ownerId)) throw new Error(`--moderator ${moderator.ownerId} is not on ${values.contract}'s seated team`);
+  if (team.contains(author.ownerId)) throw new Error(`--author ${author.ownerId} is on the seated team; team content can't be moderated, pick a non-member`);
+  evidence.seatedCharter = { elected: team.electedCharterId.toBase58(), submitted: team.submittedCharterId.toBase58() };
+} finally {
+  team.free();
+}
+await readback(() => sdk.contracts.fetch(CHARTERS_CONTRACT_ID));
+const charter = await readback(() => sdk.documents.get(CHARTERS_CONTRACT_ID, 'submittedCharter', evidence.seatedCharter.submitted));
+const charterReasons = (charter?.toJSON().reasons ?? []).map(String);
+if (!charterReasons.includes(values['reason-doc'])) {
+  throw new Error(`--reason-doc ${values['reason-doc']} is not a reason of the seated charter ${evidence.seatedCharter.submitted}`);
+}
 
 const query = (documentTypeName, where) => readback(async () => (await sdk.documents.query({ dataContractId: values.contract, documentTypeName, where, limit: 1 })).size);
 const targetBytes = bs58.decode(values.target);
@@ -133,6 +150,9 @@ async function measuredCreate(key, docType, data, refusedOn) {
   const nonceBefore = await contractNonce();
   const before = await stableBalance(lastHeight);
   const outcome = await manualCreate(ctx, author, { docType, data, agreement });
+  if (outcome.nonce !== nonceBefore + 1n) {
+    throw new Error(`${key}: signed nonce ${outcome.nonce}, expected ${nonceBefore + 1n}; another writer used this author, so the fee can't be attributed`);
+  }
   const refused = !outcome.ok && REFERENCE_NOT_FOUND.test(String(outcome.error)) && refusedOn?.test(String(outcome.error));
   const entry = { key, docType, ok: outcome.ok, id: outcome.ok ? outcome.id : null, error: outcome.ok ? null : outcome.error, actionFeeModerators: fee ? String(fee.moderators) : '0' };
   evidence.writes.push(entry);
@@ -142,8 +162,8 @@ async function measuredCreate(key, docType, data, refusedOn) {
   }
   const after = await stableBalance(before.height + 1, before.credits);
   const nonceAfter = await nextNonce(nonceBefore);
-  if (nonceAfter !== nonceBefore + 1n) {
-    throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter}; another writer used this author, so the fee can't be attributed`);
+  if (nonceAfter !== outcome.nonce) {
+    throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter} around the write signed at ${outcome.nonce}; another writer used this author, so the fee can't be attributed`);
   }
   lastHeight = after.height;
   Object.assign(entry, {
@@ -183,6 +203,15 @@ const nested = await measuredCreate('nested-reply', 'reply', SOCIAL.reply({
 }));
 
 const fetchReply = (id) => readback(async () => (await sdk.documents.get(values.contract, 'reply', id)) ?? null);
+/** The reply as proved at or above `floorHeight` (null when absent). */
+async function fetchReplyFrom(id, floorHeight) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const response = await readback(() => sdk.documents.getWithProof(values.contract, 'reply', id));
+    if (Number(response.metadata.height) >= floorHeight) return response.data ?? null;
+    await settle();
+  }
+  throw new Error(`no proof of reply ${id} at or above height ${floorHeight}`);
+}
 async function removalRecord(id) {
   const snapshot = (await readback(() => sdk.contracts.documentRemovalsWithProof({ contractId: values.contract, documentTypeName: 'reply', documentIds: [id] }))).toJSON();
   return { record: snapshot.data.removals.find((item) => item.documentId === id) ?? null, height: Number(snapshot.metadata.height) };
@@ -214,7 +243,7 @@ for (const [key, reply] of [['direct-reply', direct], ['nested-reply', nested]])
     proved.record ? `record at proof height ${proved.height}` : (removal.error ?? 'no removal record'));
   verdict(`the ${key} record keeps exactly ${expected.join(', ')}`, describeValue(Object.keys(kept).sort()) === describeValue([...expected].sort()), describeValue(kept));
   verdict(`the ${key} record's kept values are the stored document's`, expected.every((field) => String(kept[field]) === String(stored[field])), describeValue(stored));
-  verdict(`the ${key} is gone`, (await fetchReply(reply.id)) === null);
+  verdict(`the ${key} is gone`, (await fetchReplyFrom(reply.id, proved.height)) === null);
 }
 
 const failures = evidence.verdicts.filter((item) => !item.ok).length;
