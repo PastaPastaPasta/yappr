@@ -92,8 +92,10 @@ that was never there. v20 gives each the same check:
 - **Cost.** One more billed read on the write: the identity's revision for a
   follow request and for every report, the contract for a post that carries an
   embed (a post without one reads nothing more). The offline estimate
-  (`validate-contract-offline.mjs --cost`) does not count reference reads, and
-  the fees have not been measured on a network.
+  (`validate-contract-offline.mjs --cost`) does not count reference reads. On
+  testnet (2026-11-22, SDK 5.0.0-rc.4) the read added ≈13–15k credits per
+  write: see MAINNET_V20_CHECKLIST.md, section 12, item 9. A rerun on SDK
+  5.0.3 is still open.
 - **Client.** Nothing changes: the app asks to follow a profile it has loaded,
   reports an account or content it shows, and embeds a poll of the Pollr
   contract (`lib/poll-embed.ts`) or a quoted blog post of the blog contract
@@ -239,6 +241,7 @@ read off the file's `deleteKeepsFields`.
   --strict-size --network testnet` and `--network mainnet` pass (full
   validation on the rc.4 wasm-sdk, the node rules on wasm-dpp2).
 
-No removal record has been written under v20 on a network: the kept value of a
-nested reply and the omission for a direct one follow from Platform's rule for
-kept fields and are covered offline only.
+On testnet (2026-11-22, SDK 5.0.0-rc.4) a moderator removed a direct and a
+nested reply under v20: the nested record kept `replyToReplyId`, the direct one
+omitted it, and both were recovered and hash-verified (MAINNET_V20_CHECKLIST.md,
+section 12, item 9). A rerun on SDK 5.0.3 is still open.

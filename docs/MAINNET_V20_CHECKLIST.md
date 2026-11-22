@@ -123,8 +123,9 @@ changes consume identity nonces and move every planned id.
         `EG7RGfV8…` all present. The same probe on testnet also returned social
         v20 `63JuBhMj…`. (An earlier run that day reported them absent because
         it ran against a stale `node_modules` holding evo-sdk 3.1.0-dev.8;
-        that SDK can't even see social v20 on testnet. Run every probe from a
-        checkout installed at the pinned `5.0.0-rc.4`.)
+        that SDK can't even see social v20 on testnet. These results are from
+        `5.0.0-rc.4`; run every later probe from a checkout installed from the
+        release commit's lockfile, so it uses the SDK that will register.)
   - [ ] **Stop gate:** repeat that read-only probe right before the anchor
         create, from the release checkout (pinned SDK, `NETWORK=mainnet`,
         `scripts/sdk-env.mjs` `connectSdk()`), with the snapshot tool's DPNS
@@ -342,9 +343,12 @@ Updated 2026-11-22 after the testnet rehearsal (section 12).
 1. Who the mainnet maker is, and how it is funded. **[O]** The asset-lock
    route and top-ups work (rehearsed), and need #972 on mainnet.
 2. Election windows and cool-down to freeze (delay is fixed at 604,800 s).
-   **[O]** The tool refuses anything else on mainnet (rehearsed offline:
-   3600 s windows or a 3600 s delay are refused; 86,400 s and 604,800 s plan
-   the same ids as the testnet policy).
+   **[O]** On mainnet the tool requires each window between 86,400 s and
+   2,419,200 s, a cool-down between 1,209,600 s and 94,608,000 s, and the delay at exactly
+   604,800 s. Rehearsed offline with the minimum windows: 3600 s windows or a
+   3600 s delay are refused, and 86,400 s / 604,800 s plan the same ids as the
+   testnet policy. The window and cool-down values are the operator's choice
+   within those ranges.
 3. Mainnet charter leaders and members, reasons, moderators' share and reward split. **[O]**
 4. Sponsorship float size and alert floor. **[O]** Still unmeasured: the
    testnet release maker was topped up between reads, so no drain rate can be
@@ -425,5 +429,6 @@ per-index reader (section 5, step 6).
 - **Wallets:** a mainnet DashPay build that completes App Connect sign-in,
   renewal and revoke against the production anchor; confirm web-only launch.
 - **Open payment/nonce PRs** (#929 and the rest in section 4): land or defer
-  them deliberately.
+  them deliberately. Deferring #929 means tips and purchases stay gated on
+  mainnet until it lands (section 10).
 - **Sponsorship float and alert floor** for the maker.
