@@ -349,7 +349,7 @@ async function inviteTeamUser(app, group, email) {
       visible = await listAll(`/v1/users/${user.id}/visibleApps?fields[apps]=bundleId&limit=200`);
     } catch (error) {
       if (error.status !== 403) throw error;
-      fail(`${label} has access to specific apps only, and this key can't read which. ${GRANT_APP_ACCESS}`);
+      fail(`${label} has access to specific apps only, and this key can't read which (403). In App Store Connect → Users and Access → People → this user → Apps, confirm ${app.attributes.name} is listed (add it if not), then add the tester under TestFlight → ${group.attributes.name} → Testers or rerun with a key that can read user access`);
       return;
     }
     const sees = visible.some((a) => a.id === app.id);
@@ -365,8 +365,8 @@ async function inviteTeamUser(app, group, email) {
   if (tester) {
     field(label, 'already in the group');
   } else {
-    // Link the team's existing tester record for this address if there is one, otherwise create it in the group.
-    const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&limit=200`))
+    // Reuse a tester record associated with this app, otherwise create it in the group.
+    const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&filter[apps]=${encodeURIComponent(app.id)}&limit=200`))
       .find((t) => String(t.attributes.email).toLowerCase() === email);
     try {
       if (own) {
