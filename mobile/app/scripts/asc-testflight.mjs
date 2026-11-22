@@ -82,7 +82,7 @@ let failed = false;
 const out = (line = '') => lines.push(line);
 const fail = (message) => {
   failed = true;
-  out(`- **FAILED:** ${message}`);
+  out(`- **FAILED:** ${isDenied(message) ? 'a failure message mentioned a denylisted name (withheld)' : message}`);
 };
 // Fetched metadata is checked before it is printed; a hit prints the label only.
 const field = (label, value) => {
@@ -324,7 +324,7 @@ const BLOCKED_INTERNAL_STATES = ['PROCESSING', 'PROCESSING_EXCEPTION', 'MISSING_
 const INTERNAL_TESTER_ROLES = ['ACCOUNT_HOLDER', 'ADMIN', 'APP_MANAGER', 'DEVELOPER', 'MARKETING'];
 const GRANT_APP_ACCESS =
   'An Account Holder or Admin opens App Store Connect → Users and Access → People → this user → Apps, ' +
-  'turns on Access to All Apps or adds the app with Edit, saves, and reruns this workflow';
+  'turns on Access to All Apps or adds the app, saves, and reruns this workflow';
 
 // Internal testers must be App Store Connect users on the team who can see the app; anyone else is reported, not invited.
 async function inviteTeamUser(app, group, email) {
@@ -365,8 +365,8 @@ async function inviteTeamUser(app, group, email) {
   if (tester) {
     field(label, 'already in the group');
   } else {
-    // Tester records are per app: link this app's record if one exists, otherwise create it in the group.
-    const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&filter[apps]=${app.id}&limit=200`))
+    // Link the team's existing tester record for this address if there is one, otherwise create it in the group.
+    const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&limit=200`))
       .find((t) => String(t.attributes.email).toLowerCase() === email);
     try {
       if (own) {
@@ -382,16 +382,16 @@ async function inviteTeamUser(app, group, email) {
         });
       }
     } catch (error) {
-      if (error.status !== 409) throw error;
+      if (error.status !== 409 && error.status !== 422) throw error;
       tester = await inGroup();
       if (!tester) {
-        fail(`${label}: ${redactEmails(error.message)} (${own ? `linking this app's tester record ${own.id}` : 'creating a tester record'}; the user can see the app, so check in App Store Connect → Users and Access that the team invitation is accepted, then TestFlight → Yappr Internal → Testers)`);
+        fail(`${label}: ${redactEmails(error.message)} (${own ? `linking existing tester record ${own.id}` : 'creating a tester record'}; the user has an eligible role and can see the app, so check App Store Connect → TestFlight → ${group.attributes.name} → Testers)`);
         return;
       }
     }
     tester = tester ?? (await inGroup());
     if (!tester) throw new Error(`${label} was added but is not listed in the group`);
-    field(label, own ? "added to the group (this app's existing tester record)" : 'added to the group');
+    field(label, own ? 'added to the group (existing tester record)' : 'added to the group');
   }
   await api('POST', '/v1/betaTesterInvitations', {
     data: {
