@@ -82,7 +82,7 @@ let failed = false;
 const out = (line = '') => lines.push(line);
 const fail = (message) => {
   failed = true;
-  out(`- **FAILED:** ${message}`);
+  out(`- **FAILED:** ${isDenied(message) ? 'a failure message mentioned a denylisted name (withheld)' : message}`);
 };
 // Fetched metadata is checked before it is printed; a hit prints the label only.
 const field = (label, value) => {
@@ -321,39 +321,83 @@ async function listAll(path) {
 
 const BLOCKED_INTERNAL_STATES = ['PROCESSING', 'PROCESSING_EXCEPTION', 'MISSING_EXPORT_COMPLIANCE', 'IN_EXPORT_COMPLIANCE_REVIEW', 'EXPIRED'];
 
-// Internal testers must be App Store Connect users on the team; anyone else is reported, not invited.
-async function inviteTeamUser(appId, group, email) {
+const INTERNAL_TESTER_ROLES = ['ACCOUNT_HOLDER', 'ADMIN', 'APP_MANAGER', 'DEVELOPER', 'MARKETING'];
+const GRANT_APP_ACCESS =
+  'An Account Holder or Admin opens App Store Connect → Users and Access → People → this user → Apps, ' +
+  'adds this app to the user\'s list, saves, and reruns this workflow';
+
+// Internal testers must be App Store Connect users on the team who can see the app; anyone else is reported, not invited.
+async function inviteTeamUser(app, group, email) {
   const label = `Tester ${maskEmail(email)}`;
-  const users = await listAll(`/v1/users?filter[username]=${encodeURIComponent(email)}&limit=200`);
+  const users = await listAll(`/v1/users?filter[username]=${encodeURIComponent(email)}&fields[users]=username,firstName,lastName,roles,allAppsVisible&limit=200`);
   const user = users.find((u) => String(u.attributes.username).toLowerCase() === email);
   if (!user) {
     fail(`${label}: not a user on this App Store Connect team, so Apple can't add it as an internal tester (users lookup returned ${users.length} matches)`);
     return;
   }
-  field(`${label} team roles`, (user.attributes.roles ?? []).join(', ') || 'none');
+  const roles = user.attributes.roles ?? [];
+  field(`${label} team roles`, roles.join(', ') || 'none');
+  if (!roles.some((r) => INTERNAL_TESTER_ROLES.includes(r))) {
+    fail(`${label}: no role that internal testing accepts (${INTERNAL_TESTER_ROLES.join(', ')})`);
+    return;
+  }
   const inGroup = async () =>
     (await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`)).find((t) => String(t.attributes.email).toLowerCase() === email);
   let tester = await inGroup();
   if (tester) {
     field(label, 'already in the group');
+  } else if (user.attributes.allAppsVisible) {
+    field(`${label} app access`, 'all apps');
   } else {
-    const u = user.attributes;
-    await api('POST', '/v1/betaTesters', {
-      data: {
-        type: 'betaTesters',
-        attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
-        relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
-      },
-    });
-    tester = await inGroup();
+    let visible;
+    try {
+      visible = await listAll(`/v1/users/${user.id}/visibleApps?fields[apps]=bundleId&limit=200`);
+    } catch (error) {
+      if (error.status !== 403) throw error;
+      fail(`${label} has access to specific apps only, and this key can't read which (403). In App Store Connect → Users and Access → People → this user → Apps, confirm ${app.attributes.name} is listed (add it if not), then add the tester under TestFlight → ${group.attributes.name} → Testers or rerun with a key that can read user access`);
+      return;
+    }
+    const sees = visible.some((a) => a.id === app.id);
+    field(`${label} app access`, `${visible.length} specific apps, ${sees ? 'including' : 'not including'} ${app.attributes.name}`);
+    if (!sees) {
+      fail(`${label} can't see ${app.attributes.name}, so Apple refuses it as an internal tester (409 "Tester(s) cannot be assigned"). ${GRANT_APP_ACCESS}`);
+      return;
+    }
+  }
+  if (!tester) {
+    // Reuse a tester record associated with this app, otherwise create it in the group.
+    const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&filter[apps]=${encodeURIComponent(app.id)}&limit=200`))
+      .find((t) => String(t.attributes.email).toLowerCase() === email);
+    try {
+      if (own) {
+        await api('POST', `/v1/betaGroups/${group.id}/relationships/betaTesters`, { data: [{ type: 'betaTesters', id: own.id }] });
+      } else {
+        const u = user.attributes;
+        await api('POST', '/v1/betaTesters', {
+          data: {
+            type: 'betaTesters',
+            attributes: { email: u.username, firstName: u.firstName, lastName: u.lastName },
+            relationships: { betaGroups: { data: [{ type: 'betaGroups', id: group.id }] } },
+          },
+        });
+      }
+    } catch (error) {
+      if (error.status !== 409 && error.status !== 422) throw error;
+      tester = await inGroup();
+      if (!tester) {
+        fail(`${label}: ${redactEmails(error.message)} (${own ? `linking existing tester record ${own.id}` : 'creating a tester record'}; the user has an eligible role and can see the app, so check App Store Connect → TestFlight → ${group.attributes.name} → Testers)`);
+        return;
+      }
+    }
+    tester = tester ?? (await inGroup());
     if (!tester) throw new Error(`${label} was added but is not listed in the group`);
-    field(label, 'added to the group');
+    field(label, own ? 'added to the group (existing tester record)' : 'added to the group');
   }
   await api('POST', '/v1/betaTesterInvitations', {
     data: {
       type: 'betaTesterInvitations',
       relationships: {
-        app: { data: { type: 'apps', id: appId } },
+        app: { data: { type: 'apps', id: app.id } },
         betaTester: { data: { type: 'betaTesters', id: tester.id } },
       },
     },
@@ -408,7 +452,7 @@ async function distribute() {
   out('### Testers');
   const email = process.env.TESTER_EMAIL?.trim().toLowerCase();
   if (email) {
-    await inviteTeamUser(app.id, group, email);
+    await inviteTeamUser(app, group, email);
     return;
   }
   let testers = await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`);

@@ -243,6 +243,18 @@ export async function commitStep(sdk, state, name, save, make) {
   return step;
 }
 
+/** Proved identity reads can lag the update that added a key: poll for up to 60 s, as document steps do. */
+async function waitForBoundKey(sdk, identityId, keyId, purpose, type, pk) {
+  for (let attempt = 0; attempt <= 12; attempt++) {
+    try {
+      const identity = await sdk.identities.fetch(identityId);
+      if (identity?.publicKeys.some((k) => k.keyId === keyId && isCharterKey(k, purpose, type) && k.getPublicKeyHash() === pk.getPublicKeyHash())) return true;
+    } catch { /* a failed proved read only delays the check */ }
+    if (attempt < 12) await sleep(5000);
+  }
+  return false;
+}
+
 async function prepareBoundKey(sdk, actor, purpose, type, state, dir, save, prepare) {
   const name = `${actor.identityId}-${purpose.toLowerCase()}`;
   const file = resolve(dir, `${name}.json`);
@@ -271,9 +283,11 @@ async function prepareBoundKey(sdk, actor, purpose, type, state, dir, save, prep
     const key = charterKeyInCreation(w, { keyId, purpose, documentType: type, publicKey: pk.getPublicKey().toBytes() });
     const signer = new w.IdentitySigner(); signer.addKey(actor.loadMaster()); signer.addKey(pk);
     state.keys[name] = { keyId, file, state: 'broadcasting' }; save();
-    await sdk.identities.update({ identity, addPublicKeys: [key], signer });
-    identity = await sdk.identities.fetch(actor.identityId);
-    if (!identity.publicKeys.some((k) => k.keyId === keyId && isCharterKey(k, purpose, type) && k.getPublicKeyHash() === pk.getPublicKeyHash())) throw new Error(`${name}: new bound key could not be proved`);
+    let updateError;
+    try { await sdk.identities.update({ identity, addPublicKeys: [key], signer }); } catch (error) { updateError = safeError(error); }
+    if (!(await waitForBoundKey(sdk, actor.identityId, keyId, purpose, type, pk))) {
+      throw new Error(`${name}: new bound key not proved after 60s; inspect the proved identity before retrying (no automatic new nonce)${updateError ? `: ${updateError}` : ''}`);
+    }
   }
   state.keys[name] = { keyId, file, state: 'verified' }; save();
   return pk;
