@@ -22,7 +22,7 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID, criticalAuthKey, deriveIdentityKeys, loadIdentityIds } from './derive-identities.mjs';
 import { describeErr } from './owner-keys.mjs';
 import { createdId, deriveDocumentIdBytes, findRecentByValues } from './seed/seed-lib.mjs';
-import { devnetConfig, devnetSdk } from './sdk-env.mjs';
+import { buildSdk, devnetConfig, devnetSdk } from './sdk-env.mjs';
 export { TOKEN_COST } from './seed/seed-lib.mjs';
 const SDK_TIMEOUT_MS = 30000;
 /** Reads settle behind the write quorum; give the chain a beat before asserting. */
@@ -125,6 +125,15 @@ async function connectBattery(contractId, makeSdk = batterySdk) {
   const first = await buildConnectedSdk(contractId);
   activeSdk = first.sdk;
   return { ...first, sdk: sdkHandle };
+}
+
+/**
+ * Connects NETWORK's SDK (testnet, mainnet or devnet, via sdk-env) behind the
+ * same reconnecting handle as the batteries, so `readback` and the write
+ * helpers rebuild this network's instance on a transport collapse.
+ */
+export function connectNetworkSdk(contractId) {
+  return connectBattery(contractId, () => ({ sdk: buildSdk({ timeoutMs: SDK_TIMEOUT_MS }), devnetName: null, addresses: [] }));
 }
 
 /**
