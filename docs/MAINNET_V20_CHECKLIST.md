@@ -199,10 +199,12 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
        newest window), plus `count` on countable indexes and `ranked` on
        ranked ones (oldest open window when windowed). Pins take a stored
        document's values when the type has one, else typed placeholders, which
-       prove the index answers empty. Three `like` indexes are count-only on
-       the node (two `summableOffCountIndex`, and windowed indexes on an
-       indexOnly type can't return documents), so they're read by `count` and
-       `ranked` alone. Rehearsal result: section 12, item 15.
+       prove the node serves the index (empty), not that writes land in it; on
+       a fresh mainnet set every index answers empty. The six indexes of the
+       indexOnly `like` and `likeReply` types are read by `count` (and
+       `ranked`) alone: an indexOnly type stores no documents to query. A ranked or
+       count read of a window nothing has landed in can't be proved empty;
+       the summary counts those separately. Rehearsal result: section 12, item 15.
 7. [ ] Journal backed up off the machine (0600 copy). **[O]** End the nonce freeze.
        Back up by copying once the run is done. The tool replaces the
        journal with `rename`, so a journal turned into a symlink mid-run
@@ -416,7 +418,7 @@ Differences from mainnet, all forced by the clock or the network:
 | 12. Release config | A `.env.mainnet`-shaped file built from the journal passed `loadReleaseEnv(…, 'mainnet')`: env validation only rejects ids known from other networks, so fresh testnet ids get through. Before #971 the mainnet build then exported without a snapshot; since #971 it requires `lib/contracts/bundled/mainnet.json` matching the pins (section 7). Only `contracts:snapshot` reads mainnet: `NETWORK=mainnet contracts:snapshot` refused: the eight ids are missing there, the three system contracts present. The same values as `.env.testnet` passed the testnet release config. |
 | 13. Root build | `contracts:snapshot --prune` (testnet, 13 contracts), then the root release build (`BASE_PATH` empty, `STORAGE_EPOCH=testnet-mainnet-rehearsal-1`). The static export served at `/` loaded the home page, the feed and Moderation teams with 0 console errors. It read the rehearsal set live: the election banner gave this set's own apply-from times. The `build:mainnet` export of the mainnet-shaped env also completed (49 files), before #971 made that impossible without a snapshot. |
 | 14. Maker top-up after registration | Asset lock +49.99e9 → 174.23e9; nonce still 8. |
-| 15. Per-index read (section 5, step 6) | `read-contract-indexes.mjs --journal <journal>` (SDK 5.0.0-rc.4, read 2026-11-22): **95/95 indexes answered** across the eight contracts (app 1, social 37, blocks 3, DM v5 4, blog 18, pollr 3, storefront 28, passkey vault 1), every query, count and ranked read proved. Pins came from stored documents for the four social types the v20 proofs wrote (followRequest, report, post, reply), which answered with rows; the rest answered empty. |
+| 15. Per-index read (section 5, step 6) | `read-contract-indexes.mjs --journal <journal>` (SDK 5.0.0-rc.4, read 2026-11-22): **95/95 indexes answered** across the eight contracts (app 1, social 37, blocks 3, DM v5 4, blog 18, pollr 3, storefront 28, passkey vault 1), every query, count and ranked read proved (no document query on the six `like`/`likeReply` indexes, which are indexOnly). Pins came from stored documents for the four social types the v20 proofs wrote (followRequest, report, post, reply); six of their indexes answered with rows (`followRequest.pair`/`target`, `post.ownerAndTime`/`timeline`, `reply.ownerAndTime`, `report.byTarget`), the rest empty. No cold windows. |
 
 Gaps found and fixed: #970 (filer readback), #971 (mainnet build without a
 snapshot), #972 (asset lock network). Open: the SDK pin (section 4).
