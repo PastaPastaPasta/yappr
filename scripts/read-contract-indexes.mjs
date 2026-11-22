@@ -130,6 +130,9 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
   const lastIsArray = schema.properties?.[last]?.type === 'array' && !schema.properties[last].byteArray;
   const base = { dataContractId: contractId, documentTypeName: type };
   const result = {};
+  if (index.integerRange) {
+    return { window: { ok: false, errors: ['integerRange windows are not read by this tool; check this index by hand'] } };
+  }
 
   const prefix = pins(names.slice(0, -1), schema, sample, ownerId);
   const full = pins(names, schema, sample, ownerId);
@@ -185,6 +188,13 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
     }]);
   }
 
+  if (index.rankedSummable && index.summable) {
+    result.rankedSum = await firstAnswer([{
+      label: `groupBy ${last}, sum(${index.summable})${prefix.length ? `, ${prefix.length} pins` : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(prefix.length ? { where: prefix } : {}) })).entries.length,
+    }]);
+  }
+
   if (Object.values(result).every((outcome) => outcome.skipped)) {
     result.query = await firstAnswer([
       { label: `${full.length} pins (index entries)`, run: async () => sizeOf(await sdk.documents.query({ ...base, where: full, limit: 2 })) },
@@ -205,6 +215,7 @@ async function sampleDocument(contractId, type) {
   }
 }
 
+if (values.out) writeFileSync(values.out, '', { flag: 'wx', mode: 0o600 });
 sdk = await connectSdk();
 await sdk.epoch.current();
 const report = { network: process.env.NETWORK, readAt: new Date().toISOString(), contracts: [] };
@@ -245,7 +256,7 @@ for (const { name, id } of contractSet()) {
   }
 }
 Object.assign(report, { indexes, failed, missingContracts: missing, coldWindowIndexes: cold });
-if (values.out) writeFileSync(values.out, `${JSON.stringify(report, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2)}\n`);
+if (values.out) writeFileSync(values.out, `${JSON.stringify(report, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2)}\n`, { flag: 'r+' });
 console.log(`${indexes - failed}/${indexes} indexes answered${failed ? `, ${failed} FAILED` : ''}` +
   `${cold ? `; ${cold} hit an unproved window` : ''}${missing ? `; ${missing} contract(s) NOT FOUND` : ''}`);
 process.exitCode = failed || missing ? 1 : 0;

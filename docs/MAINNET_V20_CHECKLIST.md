@@ -140,9 +140,9 @@ changes consume identity nonces and move every planned id.
         pins evo-sdk **5.0.0-rc.4**, while npm `latest` has been 5.0.3 since
         2026-11-03. Reads from rc.4 work on mainnet (above, and the 2026-11-22
         snapshot attempt); no write from rc.4 to a 5.0.x Drive has run
-        anywhere. **[A] Before go:** move the SDK pin to 5.0.3 in its own PR,
-        then rerun section 12 on testnet with it. Until then this stays
-        **UNKNOWN for writes**.
+        anywhere. The pin moved to 5.0.3 in #978. **[A] Before go:** rerun
+        section 12 on testnet from it. Until then this stays **UNKNOWN for
+        writes**.
   - [ ] Maker nonce and balance as expected; none of the planned ids or the
         group exist yet (`--dry-run` proves this).
 
@@ -422,7 +422,7 @@ Differences from mainnet, all forced by the clock or the network:
 | 15. Per-index read (section 5, step 6) | `read-contract-indexes.mjs --journal <journal>` (SDK 5.0.0-rc.4, read 2026-11-22): **95/95 indexes answered** across the eight contracts (app 1, social 37, blocks 3, DM v5 4, blog 18, pollr 3, storefront 28, passkey vault 1), every read proved, with at least one real read per index (no document query on the six `like`/`likeReply` indexes, which are indexOnly; counts pin every property; the two storefront rating indexes also ranked by average). Pins came from stored documents for the four social types the v20 proofs wrote (followRequest, report, post, reply); six of their indexes answered with rows (`followRequest.pair`/`target`, `post.ownerAndTime`/`timeline`, `reply.ownerAndTime`, `report.byTarget`), the rest empty. No cold windows. |
 
 Gaps found and fixed: #970 (filer readback), #971 (mainnet build without a
-snapshot), #972 (asset lock network). Open: the SDK pin (section 4).
+snapshot), #972 (asset lock network). The SDK pin moved to 5.0.3 in #978; open: the testnet rerun from it (section 4).
 
 ## 13. What still needs a human
 
