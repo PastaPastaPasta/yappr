@@ -108,7 +108,7 @@ async function firstAnswer(shapes) {
       return { ok: true, label, answer: await read(run) };
     } catch (e) {
       const message = describeErr(e);
-      if (COLD_BUCKET.test(message)) return { ok: true, cold: true, label: `${label}, cold window (no proof of the empty bucket)`, answer: 0 };
+      if (COLD_BUCKET.test(message)) return { ok: false, cold: true, errors: [`${label}: no proved answer for this window (axis-descent error): ${message.slice(0, 200)}`] };
       errors.push(`${label}: ${message.slice(0, 300)}`);
     }
   }
@@ -138,9 +138,9 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
   const rangeable = index.rangeCountable && (SYSTEM_TIMES.has(last) || lastType === 'integer' || lastType === 'number');
   const unwindowed = pins(names.filter((name) => name !== index.timeRange?.on), schema, sample, ownerId);
   if (index.summableOffCountIndex) {
-    result.query = { ok: true, label: `n/a, count-only (summableOffCountIndex ${index.summableOffCountIndex})`, answer: '-' };
+    result.query = { ok: true, skipped: true, label: `n/a, count-only (summableOffCountIndex ${index.summableOffCountIndex})`, answer: '-' };
   } else if (schema.indexOnly) {
-    result.query = { ok: true, label: 'n/a, indexOnly type stores no documents (count and ranked only)', answer: '-' };
+    result.query = { ok: true, skipped: true, label: 'n/a, indexOnly type stores no documents (count and ranked only)', answer: '-' };
   } else if (index.timeRange) {
     result.query = await firstAnswer([
       { label: `${unwindowed.length} pins, newest window`, run: async () => sizeOf(await sdk.documents.query({ ...base, where: unwindowed, ...window('newest'), limit: 2 })) },
@@ -159,7 +159,6 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
       ? [{ label: `${unwindowed.length} pins, oldest window`, run: async () => countOf(await sdk.documents.count({ ...base, where: unwindowed, ...window('oldest') })) }]
       : [
           ...(rangeable ? [{ label: `${prefix.length} pins, ${last} > 0`, run: async () => countOf(await sdk.documents.count({ ...base, where: [...prefix, [last, '>', 0]] })) }] : []),
-          { label: `${prefix.length} pins`, run: async () => countOf(await sdk.documents.count({ ...base, where: prefix })) },
           { label: `${full.length} pins`, run: async () => countOf(await sdk.documents.count({ ...base, where: full })) },
         ]);
   }
@@ -175,6 +174,20 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
         run: async () => (await sdk.documents.ranked({ ...base, groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
       };
     }));
+  }
+  if (index.rankedAverageable && index.averageable) {
+    const where = prefix;
+    result.rankedAvg = await firstAnswer([{
+      label: `groupBy ${last}, avg(${index.averageable})${where.length ? `, ${where.length} pins` : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: index.averageable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}) })).entries.length,
+    }]);
+  }
+
+  if (Object.values(result).every((outcome) => outcome.skipped)) {
+    result.query = await firstAnswer([
+      { label: `${full.length} pins (index entries)`, run: async () => sizeOf(await sdk.documents.query({ ...base, where: full, limit: 2 })) },
+      { label: `${prefix.length} pins, orderBy ${last} (index entries)`, run: async () => sizeOf(await sdk.documents.query({ ...base, where: prefix, orderBy: [[last, 'asc']], limit: 2 })) },
+    ]);
   }
   return result;
 }
@@ -232,5 +245,5 @@ for (const { name, id } of contractSet()) {
 Object.assign(report, { indexes, failed, missingContracts: missing, coldWindowIndexes: cold });
 if (values.out) writeFileSync(values.out, `${JSON.stringify(report, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2)}\n`);
 console.log(`${indexes - failed}/${indexes} indexes answered${failed ? `, ${failed} FAILED` : ''}` +
-  `${cold ? `; ${cold} read a cold window (empty, not proved)` : ''}${missing ? `; ${missing} contract(s) NOT FOUND` : ''}`);
+  `${cold ? `; ${cold} hit an unproved window` : ''}${missing ? `; ${missing} contract(s) NOT FOUND` : ''}`);
 process.exitCode = failed || missing ? 1 : 0;
