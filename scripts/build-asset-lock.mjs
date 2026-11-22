@@ -17,14 +17,14 @@
  * material is created and .devnet-locks.local already covers recovery.
  *
  * Run:
- *   NETWORK=devnet|testnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
+ *   NETWORK=devnet|testnet|mainnet node scripts/build-asset-lock.mjs --key-file <keyfile> --outpoint <txid>:<vout>
  * then (NETWORK is process-local — repeat it, or provisioning targets testnet):
- *   NETWORK=devnet|testnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
+ *   NETWORK=devnet|testnet|mainnet node scripts/provision-test-identity.mjs <idx> --asset-lock-key-file <keyfile> \
  *     --funding-outpoint <printedTxid>:0 [--chain-lock <height>]
  */
 import { readFileSync } from 'node:fs';
 import dashcore from '@dashevo/dashcore-lib';
-import { insightUrl } from './sdk-env.mjs';
+import { insightUrl, keyNetwork } from './sdk-env.mjs';
 
 const { PrivateKey, Transaction, Script, Address, Opcode } = dashcore;
 const FEE_DUFFS = 500;
@@ -49,8 +49,8 @@ const fundingVout = Number(fundingVoutRaw);
 
 const hex = readFileSync(keyFile, 'utf8').trim();
 if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error(`${keyFile} is not a 64-hex private key`);
-const privateKey = new PrivateKey(hex, 'testnet'); // devnets use testnet prefixes
-const address = privateKey.toAddress('testnet');
+const privateKey = new PrivateKey(hex, keyNetwork()); // devnets use testnet prefixes
+const address = privateKey.toAddress(keyNetwork());
 
 // Pull the UTXO being spent (script + value) and sanity-check it pays our key.
 const utxos = await (await fetch(`${insightBase()}/addr/${address}/utxo`)).json();
