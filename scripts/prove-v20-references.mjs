@@ -106,9 +106,12 @@ async function measuredCreate(key, docType, data) {
     balanceAfter: String(after.credits), heightAfter: after.height, paid: String(before.credits - after.credits),
     at: new Date().toISOString(),
   };
-  journal[key] = entry;
-  save();
-  console.log(`${key}: ${entry.ok ? `landed ${entry.id}` : 'refused'}; paid ${entry.paid} credits (heights ${entry.heightBefore}→${entry.heightAfter})`);
+  const settled = entry.ok || REFERENCE_NOT_FOUND.test(String(entry.error));
+  if (settled) {
+    journal[key] = entry;
+    save();
+  }
+  console.log(`${key}: ${entry.ok ? `landed ${entry.id}` : settled ? 'refused' : 'failed (not journaled; rerun retries)'}; paid ${entry.paid} credits (heights ${entry.heightBefore}→${entry.heightAfter})`);
   return entry;
 }
 
