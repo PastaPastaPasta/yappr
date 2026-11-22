@@ -82,8 +82,9 @@ serialized contracts from testnet.
 Run lint, unit/script tests, dead-code checks and both builds before proposing
 activation. The mainnet build runs only after registration and the snapshot;
 before then, `scripts/mainnet-release.test.mjs` covers the configuration. A
-successful build proves static export and the pins' presence on mainnet, not
-wallet interoperability.
+successful build proves the static export and that the committed snapshot
+matches the pins. Only `contracts:snapshot` reads mainnet, so rerun it right
+before an activation build. Neither proves wallet interoperability.
 
 There is no mainnet deployment job. A separate activation change needs reviewed
 registered pins and snapshot, a chosen deployment path and storage epoch,
