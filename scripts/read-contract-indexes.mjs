@@ -2,8 +2,10 @@
  * Proved read of every declared index of a registered contract set: for each
  * document type and each index, one `documents.query` that only that index can
  * answer (equality pins on every property but the last, ordered by the last),
- * plus `documents.count` on countable indexes and `documents.ranked` on ranked
- * ones (over the oldest open window on a `timeRange` index). Pins take a stored
+ * plus `documents.count` on countable indexes (every property pinned, or a
+ * range on the last) and `documents.ranked` on ranked ones, by count or by
+ * average (over the oldest open window on a `timeRange` index). An index passes
+ * only on at least one proved read; an unproved window fails it. Pins take a stored
  * document's values when the type has one, so a populated set answers with
  * rows; otherwise typed placeholder values prove the index answers empty.
  *
