@@ -1,8 +1,9 @@
 # Mainnet v20 readiness checklist
 
 **Status: preparation only. Nothing here has run on mainnet.** On
-2026-11-22 the whole mainnet path ran on **testnet** from a fresh maker,
-with the same scripts and switches ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22));
+2026-11-22 the mainnet path from a fresh maker through registration, charter
+seating and a root export ran on **testnet**, with the same scripts and
+switches; the per-index readback (step 5.6) was not covered ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22));
 what still needs a person is [section 13](#13-what-still-needs-a-human). Mainnet
 registration, the root site and `master` are held for QuantumExplorer's
 go-ahead. This file lists what has to be true, run, configured and funded
@@ -188,8 +189,9 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
          --members <anchor>:1,<social>:1,<blocks>:1,<dmV5>:1,<blog>:1,<pollr>:1,<storefront>:1,<passkeyVault>:1
        ```
        Expect **32/0**.
-6. [ ] One proved read per index family (testnet: all 95 indexes answered).
-       **No committed tool does this.** The 2026-11-12 read was ad hoc. A
+6. [ ] One proved read per index family. **Not yet done on a v20 set.** The
+       only full readback (95 indexes answered) was the ad hoc 2026-11-12 read
+       of the v19 testnet set. **No committed tool does this.** A
        generic orderBy/count/ranked probe on the rehearsal set answered only
        the indexes without a pinned prefix: `live`-keyed, typed-array and
        derived-owner indexes need a `where` value per index. **[A]** Write the
@@ -211,8 +213,12 @@ given, and broadcasts need `--production`.
       ids, `expected` matching section 2 exactly, a leader and three members,
       reasons (testnet: SPM, ABU, ILG), `moderatorsShare` and `rewardSplit`.
       **[O] decide the mainnet reasons, share and split.**
-- [ ] `--plan`, `--dry-run`, then `--live --production --prepare` per team
-      (add `--prior-journal` for shared actors). Key files must be **regular
+- [ ] `--plan`, `--dry-run`, then `--live --production --prepare` per team.
+      When teams share an actor, run the live prepares **one after another**
+      too (a prepare can spend the leader's moderation-charters nonce on
+      reason documents), passing each completed journal to the next live
+      command with `--prior-journal` (the CLI rejects it with `--plan` and
+      `--dry-run`). Key files must be **regular
       files**: the filer refuses a symlink (`lstat`), so pass the resolved
       path of a key kept in a secret store, and keep the generated
       `<id>-decryption.json` / `<id>-encryption.json` as regular 0600 files in
