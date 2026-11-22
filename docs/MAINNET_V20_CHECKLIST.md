@@ -194,16 +194,19 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
        NETWORK=mainnet node scripts/read-contract-indexes.mjs --journal <journal> --out <operator dir>/index-reads.json
        ```
        Expect **95/95 indexes answered** on the v20 set. Each index gets a
-       `documents.query` only it can serve (equality pins on every property
-       but the last, ordered by the last; a `timeRange` index is read over its
+       `documents.query` shaped to it (equality pins on every property
+       but the last, ordered by the last; Drive picks the index whose
+       properties match exactly, so a shorter index such as `vote.byPoll`
+       is read by itself, not by a longer sibling with the same prefix; a `timeRange` index is read over its
        newest window), plus `count` on countable indexes and `ranked` on
        ranked ones (oldest open window when windowed). Pins take a stored
        document's values when the type has one, else typed placeholders, which
        prove the node serves the index (empty), not that writes land in it; on
        a fresh mainnet set every index answers empty. The six indexes of the
-       indexOnly `like` and `likeReply` types are read by `count` (and
-       `ranked`) alone: an indexOnly type stores no documents to query. Counts pin every
-       property (or a range on the last), so a sibling index can't answer;
+       indexOnly `like` and `likeReply` types, and the count-only
+       (`summableOffCountIndex`) ones, are read by `count` (and `ranked`)
+       alone: there are no documents to query. Counts pin every
+       property (or a range on the last), so a longer sibling index can't answer;
        averageable indexes are also ranked by average; a window read the node
        can't prove fails the index. Rehearsal result: section 12, item 15.
 7. [ ] Journal backed up off the machine (0600 copy). **[O]** End the nonce freeze.

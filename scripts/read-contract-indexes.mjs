@@ -1,10 +1,12 @@
 /**
  * Proved read of every declared index of a registered contract set: for each
- * document type and each index, one `documents.query` that only that index can
- * answer (equality pins on every property but the last, ordered by the last),
- * plus `documents.count` on countable indexes (every property pinned, or a
- * range on the last) and `documents.ranked` on ranked ones, by count or by
- * average (over the oldest open window on a `timeRange` index). An index passes
+ * document type and each index, one `documents.query` shaped to that index
+ * (equality pins on every property but the last, ordered by the last; Drive
+ * picks the index whose properties match exactly, so a shorter index isn't
+ * answered by a longer sibling), plus `documents.count` on countable indexes
+ * (every property pinned, or a range on the last) and `documents.ranked` on
+ * ranked ones, by count, by average or by sum (over the oldest open window on
+ * a `timeRange` index). An index passes
  * only on at least one proved read; an unproved window fails it. Pins take a stored
  * document's values when the type has one, so a populated set answers with
  * rows; otherwise typed placeholder values prove the index answers empty.
@@ -183,15 +185,15 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
   if (index.rankedAverageable && index.averageable) {
     const where = prefix;
     result.rankedAvg = await firstAnswer([{
-      label: `groupBy ${last}, avg(${index.averageable})${where.length ? `, ${where.length} pins` : ''}`,
-      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: index.averageable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}) })).entries.length,
+      label: `groupBy ${last}, avg(${index.averageable})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: index.averageable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
     }]);
   }
 
   if (index.rankedSummable && index.summable) {
     result.rankedSum = await firstAnswer([{
-      label: `groupBy ${last}, sum(${index.summable})${prefix.length ? `, ${prefix.length} pins` : ''}`,
-      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(prefix.length ? { where: prefix } : {}) })).entries.length,
+      label: `groupBy ${last}, sum(${index.summable})${prefix.length ? `, ${prefix.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(prefix.length ? { where: prefix } : {}), ...window('oldest') })).entries.length,
     }]);
   }
 
@@ -215,6 +217,7 @@ async function sampleDocument(contractId, type) {
   }
 }
 
+const targets = contractSet();
 if (values.out) writeFileSync(values.out, '', { flag: 'wx', mode: 0o600 });
 sdk = await connectSdk();
 await sdk.epoch.current();
@@ -223,7 +226,7 @@ let indexes = 0;
 let failed = 0;
 let missing = 0;
 let cold = 0;
-for (const { name, id } of contractSet()) {
+for (const { name, id } of targets) {
   const contract = await read(() => sdk.contracts.fetch(id));
   if (!contract) {
     console.log(`FAIL ${name} ${id}: contract not found`);
