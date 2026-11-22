@@ -72,6 +72,9 @@ if (!contract) throw new Error(`contract ${values.contract} not found`);
 const schemas = contract.toJSON().documentSchemas;
 const keeps = schemas.reply?.moderatorAbilities?.deleteKeepsFields ?? [];
 if (!keeps.includes('replyToReplyId')) throw new Error(`${values.contract} is not social v20: its reply removals do not keep replyToReplyId`);
+for (const [type, property, kind] of [['followRequest', 'targetId', 'identity'], ['report', 'targetOwnerId', 'identity'], ['post', 'embedContractId', 'contract']]) {
+  if (schemas[type]?.properties?.[property]?.refersTo?.type !== kind) throw new Error(`${values.contract} is not social v20: ${type}.${property} does not declare refersTo ${kind}`);
+}
 const SOCIAL = socialShapes(contract.toJSON());
 const ctx = { sdk, contractId: values.contract };
 
@@ -103,6 +106,7 @@ if (!charterReasons.includes(values['reason-doc'])) {
 }
 
 const query = (documentTypeName, where) => readback(async () => (await sdk.documents.query({ dataContractId: values.contract, documentTypeName, where, limit: 1 })).size);
+if (values.target === author.ownerId) throw new Error('--target must differ from --author; pick another identity');
 const targetBytes = bs58.decode(values.target);
 if (!(await readback(() => sdk.identities.fetch(values.target)))) throw new Error(`--target ${values.target} is not an identity`);
 if (!(await readback(() => sdk.contracts.fetch(values['embed-contract'])))) throw new Error(`--embed-contract ${values['embed-contract']} not found`);
@@ -130,16 +134,20 @@ async function stableBalance(floorHeight, changedFrom) {
   throw new Error(`the balance of ${author.ownerId} did not settle`);
 }
 
-const contractNonce = async () => BigInt((await readback(() => sdk.identities.contractNonce(author.ownerId, values.contract))) ?? 0n) & NONCE_SEQUENCE_MASK;
+async function provedNonce() {
+  const response = await readback(() => sdk.identities.contractNonceWithProof(author.ownerId, values.contract));
+  return { nonce: BigInt(response.data ?? 0n) & NONCE_SEQUENCE_MASK, height: Number(response.metadata.height) };
+}
+const contractNonce = async () => (await provedNonce()).nonce;
 
-/** The author's contract nonce once it has moved past `from`; more than one step means another writer used this author. */
-async function nextNonce(from) {
+/** The author's contract nonce proved at or above `floorHeight` once it has moved past `from`. */
+async function nextNonce(from, floorHeight) {
   for (let attempt = 0; attempt < 10; attempt++) {
-    const nonce = await contractNonce();
-    if (nonce > from) return nonce;
+    const { nonce, height } = await provedNonce();
+    if (nonce > from && height >= floorHeight) return nonce;
     await settle();
   }
-  throw new Error(`the contract nonce of ${author.ownerId} did not move past ${from}`);
+  throw new Error(`the contract nonce of ${author.ownerId} did not move past ${from} at or above height ${floorHeight}`);
 }
 
 let lastHeight = 0;
@@ -161,7 +169,7 @@ async function measuredCreate(key, docType, data, refusedOn) {
     throw new Error(`${key}: neither landed nor refused as expected; check ${author.ownerId}'s ${docType} documents before rerunning: ${String(outcome.error).slice(0, 300)}`);
   }
   const after = await stableBalance(before.height + 1, before.credits);
-  const nonceAfter = await nextNonce(nonceBefore);
+  const nonceAfter = await nextNonce(nonceBefore, after.height);
   if (nonceAfter !== outcome.nonce) {
     throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter} around the write signed at ${outcome.nonce}; another writer used this author, so the fee can't be attributed`);
   }
