@@ -1,6 +1,9 @@
 # Mainnet v20 readiness checklist
 
-**Status: preparation only. Nothing here has run on mainnet.** Mainnet
+**Status: preparation only. Nothing here has run on mainnet.** On
+2026-11-22 the whole mainnet path ran on **testnet** from a fresh maker,
+with the same scripts and switches ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22));
+what still needs a person is [section 13](#13-what-still-needs-a-human). Mainnet
 registration, the root site and `master` are held for QuantumExplorer's
 go-ahead. This file lists what has to be true, run, configured and funded
 before and after that go-ahead, and calls out what is still unknown. It
@@ -69,11 +72,11 @@ window. Plan the announcement around that, not around registration day.
 
 | Need | Amount | Status |
 | --- | --- | --- |
-| **Mainnet maker** (new identity, never used for anything else; signs with an enabled CRITICAL AUTHENTICATION key from a 0600 key file) | registration ≈275.6e9 + the tool's balance-gate margin (testnet's v20 gate asked 111.53e9 for a 92.94e9 estimate, ≈1.2×) ≈ **335e9 (≈3.35 DASH)** | **UNKNOWN: no mainnet maker is named.** [O] create, back up (two encrypted copies, named holders), fund. |
+| **Mainnet maker** (new identity, never used for anything else; signs with an enabled CRITICAL AUTHENTICATION key from a 0600 key file) | registration ≈275.6e9 + the tool's balance-gate margin ≈ **335e9 (≈3.35 DASH)**. Rehearsal: the eight-create gate asked **335.43e9** for a 279.53e9 estimate; the creates cost **275.62e9** (≈16,537¢) | **UNKNOWN: no mainnet maker is named.** [O] create, back up (two encrypted copies, named holders), fund. |
 | **Sponsorship float** on the maker (it pays gas for YAPP-sponsored post/reply/like: D4) | unmeasured on mainnet; testnet monitoring floor was 200e9 | **UNKNOWN: size it.** [O] decide float and alert floor. |
 | **Charter leaders** (social, blog, storefront; one leader may serve several with separate journals) | ≥ 0.51 DASH each per application (0.5 DASH contest deposit + gas): **≥ 1.53 DASH** for three | **UNKNOWN: who leads on mainnet.** Testnet leaders were rehearsal personas; mainnet needs real people. |
 | **Charter members** (≥ 2 per team, 3 recommended) | ≥ 0.001 DASH reserve each, plus key-add gas | **UNKNOWN: the mainnet teams.** |
-| **Funding route** | testnet funded the maker by identity credit transfer from the old maker | **UNKNOWN on mainnet:** asset lock from a Core wallet, or a credit transfer from an existing mainnet identity. [O] |
+| **Funding route** | testnet funded the 2026-11-12 maker by identity credit transfer from the old maker; the 2026-11-22 rehearsal created a brand-new maker, leader and members **by asset lock** and topped the maker up twice the same way | **[O] choose:** asset lock (`scripts/build-asset-lock.mjs` + `provision-test-identity.mjs`; mainnet needs #972, which makes the lock follow `NETWORK`) or a credit transfer from an existing mainnet identity. A top-up by asset lock spends **no** identity nonce (rehearsal: nonce 0 before `--plan`, 8 after the creates and a later top-up), so it is safe inside the nonce freeze; a credit transfer out of the maker is not. |
 | **Masternode votes** (only if an election is contested) | 2M credits per landed vote, paid from the contest fund | **RISK:** on testnet the owner's masternodes decide contested elections. On mainnet Yappr does not control a masternode majority. A rival contender can win a seat. |
 
 Key-change rule: make every key change on the maker **before** `--plan`. Key
@@ -139,9 +142,15 @@ changes consume identity nonces and move every planned id.
         will snapshot, plus the charters contract. Don't register unless all
         four come back present: otherwise `contracts:snapshot` can't build the
         bundle after registration and the filer can't prepare.
-  - [ ] Mainnet Drive/DAPI version is compatible with SDK 5.0.0-rc.4 (testnet
-        runs Drive 5.0.0-rc.8). Proved epoch, contract and `getMany` reads
-        work as above; writes are untested. **UNKNOWN for writes.**
+  - [ ] Mainnet Drive/DAPI version is compatible with the SDK for writes.
+        Read 2026-11-22 (`system.status`, read-only): **mainnet runs Drive and
+        DAPI 5.0.3**, protocol 14, epoch 89; testnet runs 5.0.0-rc.8. The repo
+        pins evo-sdk **5.0.0-rc.4**, while npm `latest` has been 5.0.3 since
+        2026-11-03. Reads from rc.4 work on mainnet (above, and the 2026-11-22
+        snapshot attempt); no write from rc.4 to a 5.0.x Drive has run
+        anywhere. **[A] Before go:** move the SDK pin to 5.0.3 in its own PR,
+        then rerun section 12 on testnet with it. Until then this stays
+        **UNKNOWN for writes**.
   - [ ] Maker nonce and balance as expected; none of the planned ids or the
         group exist yet (`--dry-run` proves this).
 
@@ -189,7 +198,16 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
        ```
        Expect **32/0**.
 6. [ ] One proved read per index family (testnet: all 95 indexes answered).
+       **No committed tool does this.** The 2026-11-12 read was ad hoc. A
+       generic orderBy/count/ranked probe on the rehearsal set answered only
+       the indexes without a pinned prefix: `live`-keyed, typed-array and
+       derived-owner indexes need a `where` value per index. **[A]** Write the
+       per-index reader (or reuse the read halves of the `verify-*`
+       batteries) before go.
 7. [ ] Journal backed up off the machine (0600 copy). **[O]** End the nonce freeze.
+       Back up by copying once the run is done. The tool replaces the
+       journal with `rename`, so a journal turned into a symlink mid-run
+       stops being the backed-up file.
 8. [ ] YAPP id = `tokens.calculateId(social, 0)`, total supply 0, authority
        = the maker.
 
@@ -203,7 +221,14 @@ given, and broadcasts need `--production`.
       reasons (testnet: SPM, ABU, ILG), `moderatorsShare` and `rewardSplit`.
       **[O] decide the mainnet reasons, share and split.**
 - [ ] `--plan`, `--dry-run`, then `--live --production --prepare` per team
-      (add `--prior-journal` for shared actors).
+      (add `--prior-journal` for shared actors). Key files must be **regular
+      files**: the filer refuses a symlink (`lstat`), so pass the resolved
+      path of a key kept in a secret store, and keep the generated
+      `<id>-decryption.json` / `<id>-encryption.json` as regular 0600 files in
+      the journal directory. In the rehearsal, the first `--prepare` stopped
+      with `new bound key could not be proved` even though the key had landed;
+      the filer read it back once. #970 polls for 60 s, and the rerun adopted
+      the landed key.
 - [ ] **Stop gate before the anchor create:** `--prepare` must succeed for
       all three teams on mainnet. The filer itself reads the charters contract
       with `sdk.contracts.fetch(EG7RGfV8…)` and aborts if that read comes back
@@ -263,7 +288,12 @@ given, and broadcasts need `--production`.
       `testnet`/`devnet` URL. **[O]**
 - [ ] `NETWORK=mainnet npm run contracts:snapshot` writes
       `lib/contracts/bundled/mainnet.json` (it prunes and checks the pins).
-      Commit env and snapshot together.
+      Commit env and snapshot together. Since #971 a mainnet release build
+      **refuses to start without this snapshot**. The release config only
+      rejects ids the repo knows from other networks: in the rehearsal, a
+      mainnet-shaped env holding the fresh testnet set's ids passed it, and a
+      mainnet build of it exported. Only the snapshot refused it
+      (`Missing contracts on mainnet; snapshot unchanged: <the eight ids>`).
 - [ ] `npm run lint`, `npm run test`, `npm run lint:dead`, `npm run build` and
       `npm run build:mainnet` pass.
 - [ ] **Hosting: UNKNOWN.** There is no mainnet deploy job
@@ -317,16 +347,92 @@ given, and broadcasts need `--production`.
 
 ## 11. Unknowns to resolve (summary)
 
-1. Who the mainnet maker is, and how it is funded.
+Updated 2026-11-22 after the testnet rehearsal (section 12).
+
+1. Who the mainnet maker is, and how it is funded. **[O]** The asset-lock
+   route and top-ups work (rehearsed), and need #972 on mainnet.
 2. Election windows and cool-down to freeze (delay is fixed at 604,800 s).
-3. Mainnet charter leaders and members, reasons, moderators' share and reward split.
-4. Sponsorship float size and alert floor.
-5. ~~System contracts on mainnet~~: present (2026-11-21, SDK rc.4); re-check at the stop gate.
-6. Mainnet Drive version vs SDK 5.0.0-rc.4 for writes (reads work).
-7. The mainnet voting URL.
-8. Where mainnet is hosted, its deploy job and rollback.
-9. Which wallet build signs in on mainnet (Android and iOS).
-10. Whether launch is web-only (mobile mainnet needs the Rust engine).
-11. v20's reference-read fees, and the testnet-capable tooling to measure them and run the v20 probes.
-12. Whether the three charter teams are staffed with disjoint actors (else they file back to back inside the join windows).
-13. Whether the charter filer's `--prepare` succeeds on mainnet (the stop gate in section 6; its contract read already works).
+   **[O]** The tool refuses anything else on mainnet (rehearsed offline:
+   3600 s windows or a 3600 s delay are refused; 86,400 s and 604,800 s plan
+   the same ids as the testnet policy).
+3. Mainnet charter leaders and members, reasons, moderators' share and reward split. **[O]**
+4. Sponsorship float size and alert floor. **[O]** Still unmeasured: the
+   testnet release maker was topped up between reads, so no drain rate can be
+   derived from its balance.
+5. ~~System contracts on mainnet~~: present (2026-11-21, SDK rc.4; again
+   2026-11-22 through `contracts:snapshot`). Re-check at the stop gate.
+6. SDK versus mainnet Drive for writes: mainnet runs **5.0.3**, the pin is
+   rc.4 (section 4). **[A]** Bump the pin to 5.0.3 and rerun the rehearsal.
+7. The mainnet voting URL. **[O]**
+8. Where mainnet is hosted, its deploy job and rollback. **[O]** The root
+   build itself is rehearsed (section 12).
+9. Which wallet build signs in on mainnet (Android and iOS). **[O]**
+10. Whether launch is web-only (mobile mainnet needs the Rust engine). **[O]**
+11. ~~v20's reference-read fees and network probes~~: proved on testnet (section 12, item 9); the reference read costs ≈0.001¢ per write.
+12. ~~Whether teams can share actors~~: they can. The rehearsal filed three
+    teams with one leader and the same three members, back to back with
+    `--prior-journal`, in about 4 minutes from the window opening. Disjoint
+    teams are still the safer choice against a rival opening a contest.
+13. Whether the charter filer's `--prepare` succeeds on mainnet: it works on
+    testnet with #970; it remains the mainnet stop gate.
+14. A per-index proved reader for step 5.6 does not exist yet. **[A]**
+
+## 12. Testnet rehearsal of the mainnet path (2026-11-22)
+
+Run from staging `15fb0e98` plus #970, SDK 5.0.0-rc.4, against testnet
+(PV14, Drive 5.0.0-rc.8, fee multiplier 1000‰), by the same scripts and
+switches as section 5. Everything is throwaway testnet state; the operator
+directory and key files are kept privately, outside the repository.
+
+Differences from mainnet, all forced by the clock or the network:
+- Policy `--interim notYetUsable --election-windows 3600,3600 --election-delay 3600 --challenge-cool-down 1209600`,
+  so seating fits in one night. The mainnet policy (86,400 s windows,
+  604,800 s delay) was run through `--plan` offline with the same maker and
+  start nonce: same ids and file pins, and short windows or delays are refused.
+- Teams are throwaway identities (one leader, the same three members on all
+  three teams, so they filed sequentially).
+- Testnet funds came from the faucet; nothing touched mainnet except
+  read-only queries (status, `contracts:snapshot`).
+
+| Step | Result |
+| --- | --- |
+| 1. New maker, leader, three members | Created by asset lock from faucet tDASH (`provision-test-identity.mjs` + `build-asset-lock.mjs`). Maker `BiGPyD6DotrMgBgutxXtbQEGixiihkixZdyERFkBTfNB`, nonce 0. |
+| 2. Maker top-up before `--plan` | Asset lock +150e9 → 399.86e9 credits; nonce unchanged. |
+| 3. Offline contract gates | `validate-contract-offline.mjs --strict-size --network mainnet`: 8/8 ok (social v20 ≈18,361 B). |
+| 4. `--plan` / `--dry-run` / `--signed-dry-run` | Same ids, nonces 1–8 and file pins in all three. Balance gate: needs 335.43e9 (estimate 279.53e9 + 20%), PASS. |
+| 5. Charter `--prepare` before any create | Social stopped once: `new bound key could not be proved`, though the key had landed (a single lagging readback). Fixed in #970; the reruns of all three, with `--prior-journal`, proved the bound keys and the reasons SPM/ABU/ILG. |
+| 6. `--live --upto app`, then one member at a time | App `3ZipbzKa7fgmRLX87V8H3YHFQBi53WJjv3ob2zrL5ZjV` (nonce 1), group `6tkUDtedA7UiJKHhKuo6aP1cn7wyP25bUUCL7J27nzum`. The social filer was armed (`--wait-registration 600`) before social's create. After each create the journal's nonce and id were compared with the plan before the next: 8/8 equal, every create landed on its first broadcast, 02:41:08Z–02:43:14Z. |
+| 7. Fees (maker's proved delta) | app 13.10e9, social v20 91.79e9, blocks 19.11e9, DM v5 22.18e9, blog 38.43e9, pollr 17.16e9, storefront 60.75e9, passkey vault 13.09e9: **275.62e9 (≈16,537¢)**. These match the 2026-11-12 set within 0.01%. |
+| 8. `verify-appconnect --only g1,g2,g3,a1` | **32/0** with the journal's values. YAPP `DSvFQYi43aJkdhcWqJFdHChUZih6VauCPAefoh141ak6` = `tokens.calculateId(social, 0)`, supply 0, minting `noOne`. |
+| 9. v20 network proofs | PASS (`scripts/prove-v20-references.mjs`, #975). **Recoverable removal:** the seated leader removed a direct and a nested reply by a non-member (SPM); each kept record holds `rootPostId` and the `$` fields, the nested one also `replyToReplyId`; `recover-deleted.mjs` rebuilt and hash-verified 2/2. A seated member's own reply is refused (41102: team content can't be moderated). **Reference checks:** a follow request and an account report to a missing identity, and a post embedding a missing contract, are refused with 40120; an embed of the real Pollr contract lands (v19 accepted all three missing targets). **Fees:** follow request ≈54.0M, account report ≈32.4M (20M moderator fee), post with embed ≈104.2M; the reference read adds ≈13–15k credits (≈0.001¢), so the offline estimate stands. |
+| 10. Charter filing | Social opened at 03:41:43Z (chain time); proposal, three joins and the elected application proved within 40 s. Blog and storefront filed right after it, each importing the other journals: three applications proved by 03:44Z. |
+| 11. Seating | All three seated at the first block after their join windows closed, sole contender, no votes needed: social 04:42:05Z (block 724,324, charter `9JKyMWgP…`), blog 04:43:27Z (724,344, `3akpqZ4h…`), storefront 04:43:39Z (724,349, `AD3jto8H…`). `--watch` shows winner = the leader and the three members on each team. |
+| 12. Release config | A `.env.mainnet`-shaped file built from the journal passed `loadReleaseEnv(…, 'mainnet')`, which is the gap #971 closes (see section 7). `NETWORK=mainnet contracts:snapshot` read mainnet and refused: the eight ids are missing there, the three system contracts present. The same values as `.env.testnet` passed the testnet release config. |
+| 13. Root build | `contracts:snapshot --prune` (testnet, 13 contracts), then the root release build (`BASE_PATH` empty, `STORAGE_EPOCH=testnet-mainnet-rehearsal-1`). The static export served at `/` loaded the home page, the feed and Moderation teams with 0 console errors. It read the rehearsal set live: the election banner gave this set's own apply-from times. The `build:mainnet` export of the mainnet-shaped env also completed (49 files), before #971 made that impossible without a snapshot. |
+| 14. Maker top-up after registration | Asset lock +49.99e9 → 174.23e9; nonce still 8. |
+
+Gaps found and fixed: #970 (filer readback), #971 (mainnet build without a
+snapshot), #972 (asset lock network). Open: the SDK pin (section 4), the
+per-index reader (section 5, step 6).
+
+## 13. What still needs a human
+
+- **QuantumExplorer's sign-off** on mainnet registration, and **Pasta's go**.
+- **The mainnet maker:** a new identity, its key file (CRITICAL key, 0600)
+  with two encrypted backups held by named people, and **≈3.35 DASH** for the
+  registration (≈2.76 DASH spent, plus the 20% gate), plus the sponsorship
+  float on top. Choose the funding route (asset lock or credit transfer).
+- **The frozen policy:** election windows (≥ 86,400 s each) and the
+  challenge cool-down. The delay is fixed at 604,800 s, so posting opens no
+  earlier than about 8 days after registration.
+- **Three charter teams of real people:** leaders with **≥ 0.51 DASH** each per
+  application (≥ 1.53 DASH in all), at least two members each (three
+  recommended), and the reasons, moderators' share and reward split.
+- **The mainnet voting URL** (`NEXT_PUBLIC_MASTERNODE_VOTE_URL`).
+- **Hosting:** where mainnet is served, the gated deploy job, Cloudflare
+  headers and the rollback plan.
+- **Wallets:** a mainnet DashPay build that completes App Connect sign-in,
+  renewal and revoke against the production anchor; confirm web-only launch.
+- **Open payment/nonce PRs** (#929 and the rest in section 4): land or defer
+  them deliberately.
+- **Sponsorship float and alert floor** for the maker.
