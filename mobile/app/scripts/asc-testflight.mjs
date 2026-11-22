@@ -324,7 +324,7 @@ const BLOCKED_INTERNAL_STATES = ['PROCESSING', 'PROCESSING_EXCEPTION', 'MISSING_
 const INTERNAL_TESTER_ROLES = ['ACCOUNT_HOLDER', 'ADMIN', 'APP_MANAGER', 'DEVELOPER', 'MARKETING'];
 const GRANT_APP_ACCESS =
   'An Account Holder or Admin opens App Store Connect → Users and Access → People → this user → Apps, ' +
-  'turns on Access to All Apps or adds the app, saves, and reruns this workflow';
+  'adds this app to the user\'s list, saves, and reruns this workflow';
 
 // Internal testers must be App Store Connect users on the team who can see the app; anyone else is reported, not invited.
 async function inviteTeamUser(app, group, email) {
@@ -341,7 +341,12 @@ async function inviteTeamUser(app, group, email) {
     fail(`${label}: no role that internal testing accepts (${INTERNAL_TESTER_ROLES.join(', ')})`);
     return;
   }
-  if (user.attributes.allAppsVisible) {
+  const inGroup = async () =>
+    (await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`)).find((t) => String(t.attributes.email).toLowerCase() === email);
+  let tester = await inGroup();
+  if (tester) {
+    field(label, 'already in the group');
+  } else if (user.attributes.allAppsVisible) {
     field(`${label} app access`, 'all apps');
   } else {
     let visible;
@@ -359,12 +364,7 @@ async function inviteTeamUser(app, group, email) {
       return;
     }
   }
-  const inGroup = async () =>
-    (await listAll(`/v1/betaGroups/${group.id}/betaTesters?limit=200`)).find((t) => String(t.attributes.email).toLowerCase() === email);
-  let tester = await inGroup();
-  if (tester) {
-    field(label, 'already in the group');
-  } else {
+  if (!tester) {
     // Reuse a tester record associated with this app, otherwise create it in the group.
     const own = (await listAll(`/v1/betaTesters?filter[email]=${encodeURIComponent(email)}&filter[apps]=${encodeURIComponent(app.id)}&limit=200`))
       .find((t) => String(t.attributes.email).toLowerCase() === email);
