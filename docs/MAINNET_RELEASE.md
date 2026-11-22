@@ -69,16 +69,22 @@ and writes `lib/contracts/bundled/mainnet.json`; it never signs or broadcasts.
 The script always prunes on mainnet, rejects `CONTRACT_IDS` overrides, and
 checks the exact release membership and versions before writing. A missing
 contract leaves the previous file intact. Review and commit the public env
-and snapshot together. A mainnet build checks any existing snapshot against
-its env pins and loads it as the SDK cache; before a snapshot exists, the app
-fetches contracts from mainnet instead. Never use placeholder ids as release
-pins or copy serialized contracts from testnet.
+and snapshot together. A mainnet release build refuses to start without the
+snapshot, checks it against its env pins and loads it as the SDK cache. The
+config checks only reject ids the repo knows from other networks, so the
+snapshot is what proves every pin exists on mainnet: a 2026-11-22 rehearsal
+built a mainnet-shaped env holding a fresh testnet set's ids, and only the
+snapshot refused it. Never use placeholder ids as release pins or copy
+serialized contracts from testnet.
 
 ## Activation
 
 Run lint, unit/script tests, dead-code checks and both builds before proposing
-activation. A successful build with dummy ids proves configuration and static
-export only; it does not prove chain registration or wallet interoperability.
+activation. The mainnet build runs only after registration and the snapshot;
+before then, `scripts/mainnet-release.test.mjs` covers the configuration. A
+successful build proves the static export and that the committed snapshot
+matches the pins. Only `contracts:snapshot` reads mainnet, so rerun it right
+before an activation build. Neither proves wallet interoperability.
 
 There is no mainnet deployment job. A separate activation change needs reviewed
 registered pins and snapshot, a chosen deployment path and storage epoch,

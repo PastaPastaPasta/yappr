@@ -131,7 +131,12 @@ module.exports = (phase) => {
   // out of application module scope and out of next dev / lint / unit tests.
   if (phase === PHASE_PRODUCTION_BUILD) {
     assertReleaseConfig(process.env)
-    if (process.env.NEXT_PUBLIC_RELEASE === '1' && process.env.NEXT_PUBLIC_NETWORK === 'mainnet' && existsSync(mainnetSnapshotPath)) {
+    if (process.env.NEXT_PUBLIC_RELEASE === '1' && process.env.NEXT_PUBLIC_NETWORK === 'mainnet') {
+      // Config checks only reject ids the repo already knows from other networks; the snapshot is
+      // what proves every pin exists on mainnet at its version.
+      if (!existsSync(mainnetSnapshotPath)) {
+        throw new Error('A mainnet release build needs lib/contracts/bundled/mainnet.json: run NETWORK=mainnet npm run contracts:snapshot after registration (docs/MAINNET_RELEASE.md)')
+      }
       assertSnapshotPins(JSON.parse(readFileSync(mainnetSnapshotPath, 'utf8')), process.env)
     }
   }
