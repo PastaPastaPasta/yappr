@@ -23,6 +23,7 @@
  *   NETWORK=testnet node scripts/prove-v20-references.mjs <step> --contract ID --author KEYFILE \
  *     --state FILE [--target ID] [--embed-contract ID] [--moderator KEYFILE --reason-doc ID]
  *
+ * Run one step at a time per --state file: the journal is not locked.
  * Results are journaled in --state per network, contract and author, and skipped
  * on a re-run. An attempt is journaled before it is broadcast; if a run ends
  * without a landed write or the expected refusal, the next run stops on it until
@@ -32,7 +33,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import bs58 from 'bs58';
-import { connectSdk, network } from './sdk-env.mjs';
+import { connectSdk, devnetName, network } from './sdk-env.mjs';
 import { describeErr, resolveKeyFileOwner, signerFor } from './owner-keys.mjs';
 import { describeValue, feeAgreement, manualCreate, settle } from './social-battery-lib.mjs';
 import { actionFeeOf, socialShapes } from './social-shapes.mjs';
@@ -108,7 +109,8 @@ async function actor(file, keyId) {
   return { ...owner, ...(await signerFor(sdk, owner)) };
 }
 const author = await actor(values.author, AUTHOR_KEY_ID);
-const scope = `${network()}:${values.contract}:${author.ownerId}`;
+const scope = `${network() === 'devnet' ? `devnet-${devnetName()}` : network()}:${values.contract}:${author.ownerId}`;
+let lastHeight = 0;
 state[scope] ??= {};
 const journal = state[scope];
 
@@ -136,7 +138,8 @@ async function stableBalance(ownerId, floorHeight, changedFrom) {
  */
 async function measuredCreate(key, docType, data, refusedOn) {
   if (journal[key]?.pending) {
-    throw new Error(`${key}: an earlier attempt (${journal[key].at}) ended without a landed write or the expected refusal; ` +
+    const landed = journal[key].id ? ` (it landed as ${journal[key].id}; its fee was not recorded)` : '';
+    throw new Error(`${key}: an earlier attempt (${journal[key].at}) did not finish${landed}; ` +
       `check ${author.ownerId}'s ${docType} documents on ${values.contract}, then delete "${key}" under "${scope}" in ${values.state}`);
   }
   if (journal[key]) {
@@ -145,10 +148,14 @@ async function measuredCreate(key, docType, data, refusedOn) {
   }
   const fee = actionFeeOf(schemas, docType);
   const agreement = fee ? (await feeAgreement(ctx, fee)).agreement : undefined;
-  const before = await stableBalance(author.ownerId, 0);
+  const before = await stableBalance(author.ownerId, lastHeight);
   journal[key] = { key, docType, pending: true, balanceBefore: String(before.credits), heightBefore: before.height, at: new Date().toISOString() };
   save();
   const outcome = await manualCreate(ctx, author, { docType, data, agreement });
+  if (outcome.ok) {
+    Object.assign(journal[key], { id: outcome.id });
+    save();
+  }
   const after = await stableBalance(author.ownerId, before.height, outcome.ok ? before.credits : undefined);
   const entry = {
     key, docType, ok: outcome.ok, id: outcome.ok ? outcome.id : null, error: outcome.ok ? null : outcome.error,
@@ -157,6 +164,7 @@ async function measuredCreate(key, docType, data, refusedOn) {
     balanceAfter: String(after.credits), heightAfter: after.height, paid: String(before.credits - after.credits),
     at: new Date().toISOString(),
   };
+  lastHeight = after.height;
   const settled = entry.ok || (refusedOn && REFERENCE_NOT_FOUND.test(String(entry.error)) && refusedOn.test(String(entry.error)));
   if (settled) {
     journal[key] = entry;
@@ -229,7 +237,10 @@ if (step === 'remove') {
     if (!reply?.ok) throw new Error(`run thread first: no ${key} in the state file`);
     const removal = journal[`remove:${key}`] ??= {};
     const stored = await fetchReply(reply.id);
-    if (stored) removal.stored = stored.toJSON();
+    if (stored) {
+      removal.stored = stored.toJSON();
+      save();
+    }
     if (stored && !(await removalRecord(reply.id)).record) {
       removal.error = null;
       removal.at = new Date().toISOString();
