@@ -217,10 +217,10 @@ export async function manualCreate(ctx, who, { docType, data, agreement, payment
   for (let poll = 0; poll < 3; poll++) {
     await settle();
     if ((await fetchDocument(sdk, contractId, docType, probeId)) !== null) {
-      return { ok: true, error: null, id: probeId, derivedId: bs58.encode(derivedId), resultId, fromResult: resultId !== null };
+      return { ok: true, error: null, id: probeId, derivedId: bs58.encode(derivedId), resultId, fromResult: resultId !== null, nonce };
     }
   }
-  return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId };
+  return { ok: false, error: error ?? 'the SDK reported no error, but the write is not on chain', id: probeId, derivedId: bs58.encode(derivedId), resultId, nonce };
 }
 
 /**

@@ -23,6 +23,7 @@
     "scripts/monitoring/run.mjs",
     "scripts/prove-merged-counts.mjs",
     "scripts/prove-v18-moderation.mjs",
+    "scripts/prove-v20-references.mjs",
     "scripts/provision-test-identity.mjs",
     "scripts/recover-deleted.mjs",
     "scripts/register-app-connect-contracts.mjs",
