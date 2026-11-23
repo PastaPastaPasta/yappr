@@ -1,4 +1,4 @@
-import type { AppConnectFlowDTO } from '@engine/api';
+import type { AppConnectFlowDTO, SessionDTO } from '@engine/api';
 import { create } from 'zustand';
 
 import { config } from '~/config';
@@ -37,7 +37,7 @@ export type AppConnectStep =
   | { name: 'flow' }
   | { name: 'accepting' }
   | { name: 'done' }
-  | { name: 'error'; title: string; message: string };
+  | { name: 'error'; title: string; message: string; interrupted?: boolean };
 
 interface AppConnectState {
   mode: AppConnectMode;
@@ -147,6 +147,13 @@ function listen(): void {
     if (flow.flow <= floor || (current && flow.flow < current.flow) || flow.renew !== renew) return;
     receive(flow);
   });
+  // A sign-in the engine cannot finish loading: restart into it. While the accept still waits, it is kept for
+  // the accept to settle, so no restart cuts its reply off; a reply that never comes (it timed out) still reloads.
+  onEngineEvent('session.changed', ({ session, reload }) => {
+    if (!reload || !session) return;
+    if (get().step.name === 'accepting') announcedReload = { session, epoch: engineSupervisor.getStatus().epoch };
+    else reloadInto(session);
+  });
   engineSupervisor.subscribeStatus(() => {
     const { state, epoch } = engineSupervisor.getStatus();
     if (state !== 'ready' && state !== 'degraded') return;
@@ -161,6 +168,21 @@ function listen(): void {
       startAppConnect(mode, { renew, reauth, resume }).catch(() => undefined);
     }
   });
+}
+
+/** A reload the engine announced while the accept waited for its reply, and that engine's epoch. */
+let announcedReload: { session: SessionDTO; epoch: number } | null = null;
+
+function takeAnnouncedReload(): { session: SessionDTO; epoch: number } | null {
+  const announced = announcedReload;
+  announcedReload = null;
+  return announced;
+}
+
+function reloadInto(session: SessionDTO): void {
+  loadSignedInAgain(session).catch((error: unknown) =>
+    appendLog('warn', 'host', `Reloading the signed-in account failed: ${errorMessage(error)}`),
+  );
 }
 
 function receive(flow: AppConnectFlowDTO): void {
@@ -261,14 +283,28 @@ export async function acceptAccount(identityId: string): Promise<void> {
   if (get().step.name === 'accepting' || get().flow?.phase !== 'confirm') return;
   const gen = next();
   const { renew } = get();
+  announcedReload = null;
   set({ step: { name: 'accepting' } });
   try {
     const result = await engine.api.session.appConnectAccept({ identityId });
+    announcedReload = null;
     if (result.status === 'signed-in' && result.reload) await loadSignedInAgain(result.session);
     if (stale(gen)) return;
     set({ step: { name: 'done' } });
   } catch (error) {
+    // The engine announced a reload before the reply was lost: it still has to happen, unless that engine was
+    // replaced, since the replacement boots into the durable sign-in on its own.
+    const announced = takeAnnouncedReload();
+    const replaced = errorCode(error) === 'ENGINE_RESTARTED' || announced?.epoch !== engineSupervisor.getStatus().epoch;
+    if (announced && !replaced) reloadInto(announced.session);
     if (stale(gen)) return;
+    // The engine restarted or timed out while it took the answer: whether the grant landed is unknown here, so claim neither.
+    const code = errorCode(error);
+    if (code === 'ENGINE_RESTARTED' || code === 'RPC_TIMEOUT') {
+      const text = renew ? copy.renew.interrupted : copy.signin.interrupted;
+      set({ step: { name: 'error', title: text.title, message: text.body, interrupted: true } });
+      return;
+    }
     appendLog('warn', 'host', `Wallet sign-in failed: ${errorMessage(error)}`);
     // Refused because an account is signed in already: say so; anything else, start over.
     const slotTaken = errorCode(error) === 'BAD_REQUEST' && /signed in/i.test(errorMessage(error));

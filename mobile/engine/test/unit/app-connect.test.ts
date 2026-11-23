@@ -7,17 +7,16 @@
  * profile's own crypto (`sealAppConnectPayload`); the first sign-in answers
  * the request of the test vectors (vendor/platform-auth/src/app-connect/vectors.json).
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import bs58 from 'bs58'
 import * as secp256k1 from '@noble/secp256k1'
 
 // Post-login tasks read the network; they are covered by web.
+const syncFollowedFeeds = vi.hoisted(() => vi.fn<(identityId: string) => Promise<{ synced: string[]; failed: string[]; upToDate: string[] }>>(async () => ({ synced: [], failed: [], upToDate: [] })))
 vi.mock('@/lib/services/block-service', () => ({ blockService: { initializeBlockData: async () => undefined } }))
-vi.mock('@/lib/services/private-feed-follower-service', () => ({
-  privateFeedFollowerService: { syncFollowedFeeds: async () => ({ synced: [], failed: [], upToDate: [] }) },
-}))
+vi.mock('@/lib/services/private-feed-follower-service', () => ({ privateFeedFollowerService: { syncFollowedFeeds } }))
 vi.mock('@/lib/services/dashpay-contacts-service', () => ({ dashPayContactsService: { getUnfollowedContacts: async () => ({ contacts: [] }) } }))
 
 const { createEngineStorage, installEngineStorage, isSecureStorageKey } = await import('../../src/shims/storage')
@@ -26,11 +25,19 @@ installEngineStorage(engineStorage)
 Object.assign(globalThis, { window: globalThis })
 /** Secure deletes as the host is asked for them. */
 const secureDeletes: string[] = []
+/** Secure batches the host has not acknowledged yet, while a test holds its acknowledgements back. */
+let heldAcks: number[] | null = null
 engineStorage.onBatch(batch => {
   if (batch.area !== 'secure') return
   for (const op of batch.ops) if (op[0] === 'del') secureDeletes.push(op[1])
-  queueMicrotask(() => engineStorage.ack(batch.seq))
+  if (heldAcks) heldAcks.push(batch.seq)
+  else queueMicrotask(() => engineStorage.ack(batch.seq))
 })
+function releaseAcks(): void {
+  const held = heldAcks ?? []
+  heldAcks = null
+  for (const seq of held) engineStorage.ack(seq)
+}
 
 const auth = await import('platform-auth')
 const { createSessionModule, createMobileAuthController } = await import('../../src/api/session')
@@ -50,6 +57,7 @@ const { evoSdkService } = await import('@/lib/services/evo-sdk-service')
 const { bytesToHex, hexToBytes } = await import('@/lib/bytes')
 const { privateKeyToWif } = await import('@/lib/crypto/wif')
 const { YAPPR_CONTRACT_ID, DASHPAY_CONTRACT_ID, keyNetwork } = await import('@/lib/constants')
+const { SESSION_STORAGE_KEY } = await import('@/lib/storage-scope')
 
 type Session = ReturnType<typeof createSessionModule>
 type ChainKey = import('platform-auth').AppConnectIdentityKey
@@ -80,10 +88,11 @@ let emitted: { event: string; payload: unknown }[] = []
 const emit = (event: string, payload: unknown) => { emitted.push({ event, payload }) }
 const flows = () => emitted.filter(e => e.event === 'session.appConnect').map(e => e.payload as Flow)
 
-function boot(): Session {
+function boot(controller?: ReturnType<typeof createMobileAuthController>, awaitingReload?: Set<string>): Session {
   return createSessionModule({
     emit,
-    controller: createMobileAuthController(),
+    controller,
+    awaitingReload,
     secureDurable: () => engineStorage.secureDurable(),
     holdSecure: matches => engineStorage.holdSecure(matches),
   })
@@ -559,5 +568,380 @@ describe('App Connect sign-in', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('App Connect requests across kills and engine restarts', () => {
+  const LOGIN_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_login'
+  const REAUTH_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_reauth'
+  const RENEWAL_SLOT = `yappr_secure_ac_secret_testnet_pending_request_${OWNER}`
+  const ACTIVE_SLOT = 'yappr_secure_ac_secret_testnet_pending_request_active_sign_in'
+  const stored = () => Object.keys(engineStorage.snapshot().secure)
+  const settle = () => new Promise(resolve => setTimeout(resolve, 50))
+
+  afterEach(() => {
+    releaseAcks()
+  })
+
+  /** A launch with nobody signed in and no request stored: only the shared bucket is loaded. */
+  async function signedOut(): Promise<Session> {
+    const before = boot()
+    if (await before.restore()) await before.signOut()
+    for (const slot of [LOGIN_SLOT, REAUTH_SLOT, RENEWAL_SLOT, ACTIVE_SLOT]) localStorage.removeItem(slot)
+    await engineStorage.secureDurable()
+    const engine = boot()
+    session = engine
+    await engine.restore()
+    return engine
+  }
+
+  async function untilPhase(engine: Session, phase: Flow['phase']): Promise<Flow> {
+    for (let i = 0; i < 500; i++) {
+      const flow = await engine.appConnectState()
+      if (flow.phase === phase) return flow
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw new Error(`timed out waiting for ${phase}`)
+  }
+
+  /** The wallet answers `uri` for OWNER with fresh keys, superseding its earlier auth keys. */
+  async function walletGrants(uri: string, ids: [number, number]): Promise<void> {
+    const granted = [randomKey(), randomKey(), vectors.inputs.slotPrivateKeys.map(hex => hexToBytes(hex))[2]]
+    const previous = chain.get(OWNER) ?? []
+    const anchor = previous.find(key => key.id === 7)
+    chain.set(OWNER, [
+      ...previous.filter(key => key.id !== 7).map(key => ({ ...key, disabledAt: key.disabledAt ?? Date.now() })),
+      ...grantKeys([ids[0], ids[1], 7], granted, anchor),
+    ])
+    await walletAnswers(uri, OWNER, granted)
+  }
+
+  /** Starts a request on `on` and has the wallet answer it for OWNER, up to "Continue as". */
+  async function answered(on: Session, ids: [number, number], start: { reauth?: string; renew?: boolean } = {}): Promise<void> {
+    const started = await on.appConnectStart({ returnTo: RETURN_TO, fresh: true, ...start })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    await walletGrants(started.uri, ids)
+    await on.appConnectPollNow()
+    await untilPhase(on, 'confirm')
+  }
+
+  /** Signs OWNER in through the wallet, with fresh key ids; the engine the host restarts into, if it must. */
+  async function walletSignIn(on: Session, ids: [number, number]): Promise<Session> {
+    await answered(on, ids)
+    const result = await on.appConnectAccept({ identityId: OWNER })
+    if (result.status !== 'signed-in') throw new Error('not signed in')
+    if (!result.reload) return on
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    return next
+  }
+
+  it('keeps a parked account listed until its renewal is deleted from the bucket this boot did not load', async () => {
+    const engine = await walletSignIn(await signedOut(), [58, 59])
+    await engine.prepareAddAccount()
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    secureDeletes.length = 0
+    heldAcks = []
+    const signingOut = next.signOut({ identityId: OWNER })
+    await until(() => secureDeletes.includes(RENEWAL_SLOT), 'the parked renewal deletion on its way to the host')
+    await settle()
+    expect((await next.accounts()).map(account => account.identityId)).toContain(OWNER)
+    releaseAcks()
+    await signingOut
+    expect((await next.accounts()).map(account => account.identityId)).not.toContain(OWNER)
+  })
+
+  it('reloads the account\'s secrets after "Sign in again" on a launch that loaded only the shared ones', async () => {
+    await walletSignIn(await signedOut(), [44, 45])
+    // Its session no longer restores: the slot is freed and the account kept, to be signed in again.
+    const controller = createMobileAuthController()
+    vi.spyOn(controller, 'restoreSession').mockResolvedValueOnce(null)
+    const failed = boot(controller)
+    expect(await failed.restore()).toBeNull()
+    expect((await failed.accounts()).map(account => account.identityId)).toContain(OWNER)
+    // Killed while the wallet was open: the next launch has nobody signed in, so it loads only the shared bucket.
+    const next = boot()
+    session = next
+    expect(await next.restore()).toBeNull()
+    await answered(next, [46, 47], { reauth: OWNER })
+    expect(await next.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: true })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
+  /** A launch whose session slot names a new account that does not restore: the host stays bound to its bucket. */
+  async function failedRestore(): Promise<{ engine: Session; alice: string }> {
+    await signedOut()
+    const alice = bs58.encode(crypto.getRandomValues(new Uint8Array(32)))
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ user: { identityId: alice } }))
+    const awaitingReload = new Set<string>()
+    const controller = createMobileAuthController({ awaitingReload })
+    vi.spyOn(controller, 'restoreSession').mockResolvedValueOnce(null)
+    const engine = boot(controller, awaitingReload)
+    session = engine
+    expect(await engine.restore()).toBeNull()
+    return { engine, alice }
+  }
+
+  it('reloads a new account signed in on a launch still bound to another account whose session did not restore', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [60, 61])
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: true })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
+  it('asks the host to reload once the sign-in is durable, even if the accept reply never reaches it', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [70, 71])
+    heldAcks = []
+    emitted = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the sign-in on its way to the host')
+    await settle()
+    expect(emitted.some(e => e.event === 'session.changed')).toBe(false)
+    releaseAcks()
+    const result = await accepting
+    expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: result.status === 'signed-in' ? result.session : null, reason: 'signed-in', reload: true } })
+    await expect(engine.signOut()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await reloaded.signOut()
+  })
+
+  it('leaves the post-login tasks of an account it must reload into to the reloaded engine', async () => {
+    const { engine } = await failedRestore()
+    await answered(engine, [66, 67])
+    syncFollowedFeeds.mockClear()
+    heldAcks = []
+    const accepting = engine.appConnectAccept({ identityId: OWNER })
+    await until(() => heldAcks?.length, 'the sign-in on its way to the host')
+    await settle()
+    releaseAcks()
+    expect(await accepting).toMatchObject({ status: 'signed-in', reload: true })
+    await settle()
+    expect(syncFollowedFeeds).not.toHaveBeenCalled()
+    const reloaded = boot()
+    session = reloaded
+    expect(await reloaded.restore()).toMatchObject({ identityId: OWNER })
+    await until(() => syncFollowedFeeds.mock.calls.some(([id]) => id === OWNER), 'the private-feed sync on restore')
+    await reloaded.signOut()
+  })
+
+  it('signs a new account in without a reload on a launch bound to nobody, or whose account signed out', async () => {
+    const engine = await signedOut()
+    await answered(engine, [62, 63])
+    syncFollowedFeeds.mockClear()
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    await until(() => syncFollowedFeeds.mock.calls.some(([id]) => id === OWNER), 'the private-feed sync after sign-in')
+    await engine.signOut()
+
+    const { engine: next, alice } = await failedRestore()
+    await next.signOut({ identityId: alice })
+    await answered(next, [64, 65])
+    expect(await next.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    await next.signOut()
+  })
+
+  it('keeps "Sign in again" where a signed-out launch finds it, and a cancel of the resumed request forgets it', async () => {
+    const engine = await walletSignIn(await signedOut(), [56, 57])
+    await engine.signOut()
+    const started = await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    if (started.phase !== 'waiting') throw new Error('not waiting')
+    expect(stored()).toContain(REAUTH_SLOT)
+    expect(stored()).not.toContain(RENEWAL_SLOT)
+
+    // Killed: a signed-out launch finds it, resumes it, and a cancel then forgets it.
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
+    await next.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    await next.appConnectCancel()
+    expect(await next.appConnectPendingSignIn()).toBeNull()
+    expect(stored()).not.toContain(REAUTH_SLOT)
+  })
+
+  it('resumes the signed-out request opened last, not the one made last', async () => {
+    const engine = await signedOut()
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    const again = await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    if (again.phase !== 'waiting') throw new Error('not waiting')
+    const reopened = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (reopened.phase !== 'waiting') throw new Error('not waiting')
+    expect(reopened.requestHash).toBe(plain.requestHash)
+    expect(stored()).toEqual(expect.arrayContaining([LOGIN_SLOT, REAUTH_SLOT]))
+
+    // Killed while the wallet answered the reopened plain request.
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+    const resumed = await next.appConnectStart({ returnTo: RETURN_TO })
+    if (resumed.phase !== 'waiting') throw new Error('not waiting')
+    expect(resumed.requestHash).toBe(plain.requestHash)
+  })
+
+  it('hands a reopened request out only once the mark that it was opened last is on the host', async () => {
+    const engine = await signedOut()
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    heldAcks = []
+    emitted = []
+    const reopening = engine.appConnectStart({ returnTo: RETURN_TO })
+    await until(() => heldAcks?.length, 'the mark on its way to the host')
+    await settle()
+    expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
+    releaseAcks()
+    const reopened = await reopening
+    if (reopened.phase !== 'waiting') throw new Error('not waiting')
+    expect(reopened.requestHash).toBe(plain.requestHash)
+  })
+
+  const activeMark = async () => {
+    const mark = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), 'pending-request:active-sign-in')
+    return mark && new TextDecoder().decode(mark)
+  }
+
+  it('leaves the mark on the request opened last when another start fails before it has a request', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    expect(await activeMark()).toBe('login')
+    vi.mocked(appConnectPlatformPort.chainStatus).mockRejectedValueOnce(new Error('offline'))
+    expect(await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'offline' })
+    expect(await activeMark()).toBe('login')
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+  })
+
+  it('hands out no request whose mark it could not save, leaving the other one marked', async () => {
+    const engine = await signedOut()
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const store = appConnectSessions.keyStore()
+    const save = store.saveSecret.bind(store)
+    const saves = vi.spyOn(store, 'saveSecret').mockImplementation(async (network, name, bytes) => {
+      if (name === 'pending-request:active-sign-in') throw new Error('storage failed')
+      await save(network, name, bytes)
+    })
+    emitted = []
+    try {
+      expect(await engine.appConnectStart({ returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'storage' })
+      expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
+    } finally {
+      saves.mockRestore()
+    }
+    expect(await activeMark()).toBe('reauth')
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
+  })
+
+  it('puts the mark back when a start is overtaken while its mark is on its way to the host', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    expect(await activeMark()).toBe('login')
+    heldAcks = []
+    emitted = []
+    const reopening = engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    await until(() => heldAcks?.length, 'the mark on its way to the host')
+    vi.mocked(appConnectPlatformPort.chainStatus).mockRejectedValueOnce(new Error('offline'))
+    expect(await engine.appConnectStart({ returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'offline' })
+    releaseAcks()
+    await reopening
+    await settle()
+    expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
+    expect(await activeMark()).toBe('login')
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+  })
+
+  it('answers a launch whose pending sign-in read failed with an error, not an empty slot, and finds it on the next read', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const next = boot()
+    session = next
+    const store = appConnectSessions.keyStore()
+    const load = vi.spyOn(store, 'loadSecret').mockRejectedValueOnce(new Error('storage failed'))
+    try {
+      await expect(next.appConnectPendingSignIn()).rejects.toThrow('storage failed')
+    } finally {
+      load.mockRestore()
+    }
+    const decrypt = vi.spyOn(globalThis.crypto.subtle, 'decrypt').mockRejectedValueOnce(new Error('device key unavailable'))
+    try {
+      await expect(next.appConnectPendingSignIn()).rejects.toThrow('device key unavailable')
+    } finally {
+      decrypt.mockRestore()
+    }
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
+    expect(stored()).toContain(REAUTH_SLOT)
+  })
+
+  it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
+    const engine = await walletSignIn(await signedOut(), [32, 33])
+    const renewal = await engine.appConnectStart({ renew: true, returnTo: RETURN_TO })
+    if (renewal.phase !== 'waiting') throw new Error('not waiting')
+    const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
+    try {
+      await expect(engine.signOut()).rejects.toThrow('storage failed')
+    } finally {
+      deletes.mockRestore()
+    }
+    expect(await engine.current()).toMatchObject({ identityId: OWNER })
+    expect(stored()).toContain(RENEWAL_SLOT)
+    // Signed out only once the host has deleted the request.
+    heldAcks = []
+    const signingOut = engine.signOut()
+    await until(() => heldAcks?.length, 'the request deletion on its way to the host')
+    await settle()
+    expect(await engine.current()).toMatchObject({ identityId: OWNER })
+    releaseAcks()
+    await signingOut
+    expect(await engine.current()).toBeNull()
+    expect(stored()).not.toContain(RENEWAL_SLOT)
+  })
+
+  it('deletes a plain sign-in request left over from an accepted sign-in when the account signs out', async () => {
+    const engine = await signedOut()
+    await answered(engine, [68, 69])
+    const leftover = localStorage.getItem(LOGIN_SLOT)
+    expect(leftover).not.toBeNull()
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in', reload: false })
+    localStorage.setItem(LOGIN_SLOT, leftover ?? '')
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER })
+    expect(stored()).toContain(LOGIN_SLOT)
+    await next.signOut()
+    expect(stored()).not.toContain(LOGIN_SLOT)
+    expect(await next.appConnectPendingSignIn()).toBeNull()
+  })
+
+  it('restores a wallet session killed before it recorded its method as a wallet session', async () => {
+    const engine = await signedOut()
+    await answered(engine, [24, 25])
+    expect(await engine.appConnectAccept({ identityId: OWNER })).toMatchObject({ status: 'signed-in' })
+    // Killed after the session and its ring were stored, before the registry heard how it signed in.
+    localStorage.removeItem('yappr_engine_accounts')
+    const next = boot()
+    session = next
+    expect(await next.restore()).toMatchObject({ identityId: OWNER, method: 'app-connect' })
+    await next.signOut()
   })
 })

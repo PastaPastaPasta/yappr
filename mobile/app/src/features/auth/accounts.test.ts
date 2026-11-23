@@ -368,6 +368,17 @@ it('after signing an account in again, restarts into it so its other stored keys
   expect(useToastStore.getState().current).toBeNull();
 });
 
+it('restarts once when the reload is asked for again while it runs', async () => {
+  const bob = session('bob', 'bob');
+  useSessionStore.setState({ status: 'signed-in', session: bob, accounts: [account('alice'), account('bob', true)] });
+  bootsAs(bob);
+  const first = loadSignedInAgain(bob);
+  const second = loadSignedInAgain(bob);
+  await expect(first).resolves.toEqual(bob);
+  await expect(second).resolves.toEqual(bob);
+  expect(restart).toHaveBeenCalledTimes(1);
+});
+
 it('keeps the signed-in session when the restart after signing in again fails', async () => {
   bootsAs(null);
   await expect(loadSignedInAgain(session('alice'))).resolves.toEqual(session('alice'));

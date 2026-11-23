@@ -96,6 +96,12 @@ export interface AppConnectLoginDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   verify?: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
   onError?: (message: string, error: unknown) => void
+  /**
+   * Runs once a start has its request and before the request is shown; false hands nothing out (a storage failure).
+   * `current` turns false once a newer start, a finish or a dispose overtakes this start, which then hands nothing
+   * out either, so the hook can undo what it recorded.
+   */
+  beforeHandout?: (current: () => boolean) => Promise<boolean>
 }
 
 /** How long a lagging identity read may keep a candidate in "not visible yet". */
@@ -213,6 +219,12 @@ export class AppConnectLogin {
       if (!current()) return
       const resumable = stored && stored.identityHint === options.identityHint ? stored : null
       record = resumable ?? await this.newRecord(options.identityHint, current)
+      if (record && current() && this.deps.beforeHandout && !(await this.deps.beforeHandout(current))) {
+        if (!current()) return
+        if (!resumable) this.clearRecord(record)
+        this.set({ phase: 'unavailable', reason: 'storage' })
+        return
+      }
     } catch (error) {
       if (!current()) return
       this.deps.onError?.('App Connect: could not prepare the request', error)

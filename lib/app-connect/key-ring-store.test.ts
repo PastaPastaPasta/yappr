@@ -122,6 +122,26 @@ describe('AppConnectKeyRingStore', () => {
     expect(await store.loadSecret('devnet', 'request')).toBeNull()
   })
 
+  it('throws on a strict secret read that fails, and reads a secret the device key does not open as absent', async () => {
+    const backend = memoryBackend()
+    const store = new AppConnectKeyRingStore(backend)
+    await store.saveSecret('devnet', 'request', new TextEncoder().encode('{}'))
+    const get = backend.get
+    backend.get = async () => { throw new Error('storage failed') }
+    await expect(store.loadSecret('devnet', 'request', { strict: true })).rejects.toThrow('storage failed')
+    backend.get = get
+
+    const failing = new AppConnectKeyRingStore(backend, {
+      ...globalThis.crypto.subtle,
+      decrypt: async () => { throw new Error('crypto unavailable') },
+    } as unknown as SubtleCrypto)
+    await expect(failing.loadSecret('devnet', 'request', { strict: true })).rejects.toThrow('crypto unavailable')
+    expect(await failing.loadSecret('devnet', 'request')).toBeNull()
+
+    backend.data.set('secret:devnet:other', backend.data.get('secret:devnet:request'))
+    expect(await store.loadSecret('devnet', 'other', { strict: true })).toBeNull()
+  })
+
   it('keeps one connection id per network across logout', async () => {
     const store = new AppConnectKeyRingStore(memoryBackend())
     const first = await store.connectionId('devnet')

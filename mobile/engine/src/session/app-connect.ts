@@ -2,7 +2,12 @@ import type { AppConnectGrant } from 'platform-auth'
 import { YAPPR_APP_SCHEMES } from '@/lib/app-connect/callback-channel'
 import type { AppConnectCarrierUris } from '@/lib/app-connect/carrier'
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config'
-import { AppConnectLogin, type AppConnectLoginState, type AppConnectUnavailableReason } from '@/lib/app-connect/login-flow'
+import {
+  AppConnectLogin,
+  type AppConnectLoginState,
+  type AppConnectUnavailableReason,
+  type StoredAppConnectRequest,
+} from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
@@ -21,6 +26,13 @@ import { RpcError } from '../protocol/envelope'
  * The request (its ephemeral key wrapped under the key ring's device key) is
  * kept in the secure area until it is answered or runs out, so an app killed
  * while the wallet is open resumes it (`start` without `fresh`).
+ *
+ * Each kind of request has its own slot. A renewal's names its account, so
+ * the host files it with that account's secrets, which only its own boot
+ * reads. A sign-in, and signing an account in again ("Sign in again"), happen
+ * signed out, so theirs are in slots that name no account, which the host
+ * keeps in the shared bucket every signed-out boot reads; the account a
+ * "Sign in again" is for is the request's own identity hint.
  */
 
 export interface AppConnectCandidateDTO {
@@ -56,6 +68,95 @@ export interface AppConnectReturn {
   scheme: string
 }
 
+/** Which stored request: a renewal of `identityHint`, or a sign-in (as `identityHint` only, when it names one). */
+export interface AppConnectRequestKind {
+  identityHint?: string
+  renew?: boolean
+}
+
+const REAUTH_SLOT = 'reauth'
+
+function slotOf({ identityHint, renew }: AppConnectRequestKind): string | undefined {
+  if (renew) return identityHint
+  return identityHint === undefined ? undefined : REAUTH_SLOT
+}
+
+function slotName(kind: AppConnectRequestKind): string {
+  return `pending-request:${slotOf(kind) ?? 'login'}`
+}
+
+/** Which signed-out request (`login` or `reauth`) was opened last: the one a killed launch was answering. */
+const ACTIVE_SIGN_IN = 'pending-request:active-sign-in'
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+/** Mark writes run one at a time, so a start that puts back the mark it overtook never lands after a newer mark. */
+let marks: Promise<unknown> = Promise.resolve()
+
+/**
+ * Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. False if it
+ * could not be saved, or if the start was overtaken while it was saved (`current`): the mark of the request opened
+ * before is then put back, so an overtaken start leaves no mark of its own.
+ */
+function markActiveSignIn(slot: string, current: () => boolean, durable?: () => Promise<void>): Promise<boolean> {
+  const run = marks.then(() => writeActiveSignIn(slot, current, durable))
+  marks = run.catch(() => undefined)
+  return run
+}
+
+async function writeActiveSignIn(slot: string, current: () => boolean, durable?: () => Promise<void>): Promise<boolean> {
+  if (!current()) return false
+  const store = appConnectSessions.keyStore()
+  const network = appConnectSessions.network()
+  let previous: Uint8Array | null = null
+  try {
+    try {
+      previous = await store.loadSecret(network, ACTIVE_SIGN_IN, { strict: true })
+      await store.saveSecret(network, ACTIVE_SIGN_IN, encoder.encode(slot))
+      await durable?.()
+    } catch (error) {
+      logger.warn('App Connect: could not record the sign-in in progress:', error)
+      return false
+    }
+    if (current()) return true
+    try {
+      if (previous) await store.saveSecret(network, ACTIVE_SIGN_IN, previous)
+      else await store.deleteSecret(network, ACTIVE_SIGN_IN)
+      await durable?.()
+    } catch (error) {
+      logger.warn('App Connect: could not put back the sign-in in progress:', error)
+    }
+    return false
+  } finally {
+    previous?.fill(0)
+  }
+}
+
+/** Throws when the mark cannot be read, so a launch never takes a failed read for no mark. */
+async function activeSignIn(): Promise<string | null> {
+  const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, { strict: true })
+  if (!bytes) return null
+  try {
+    return decoder.decode(bytes)
+  } finally {
+    bytes.fill(0)
+  }
+}
+
+function recordsFor(kind: AppConnectRequestKind): ReturnType<typeof requestRecordsFor> {
+  return requestRecordsFor(slotOf(kind))
+}
+
+/**
+ * The stored request of this kind, if it is still answerable. A "Sign in again" slot holds one account's at a time.
+ * `strict`: a failed read throws rather than reading as no request.
+ */
+async function loadRequest(kind: AppConnectRequestKind, strict = false): Promise<StoredAppConnectRequest | null> {
+  const records = recordsFor(kind)
+  const record = await (strict ? records.loadStrict() : records.load())
+  return record && record.identityHint === kind.identityHint ? record : null
+}
+
 const WEB_ORIGIN = 'https://yap.pr'
 const BASE_PATH = /^(?:\/[a-z0-9-]+)?$/
 
@@ -81,7 +182,7 @@ function checkReturn(target: unknown): AppConnectReturn {
   return { webBasePath, scheme }
 }
 
-export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): void }) {
+export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): void; durable?: () => Promise<void> }) {
   let login: AppConnectLogin | null = null
   /** The identity a renewal is for; undefined for a sign-in. */
   let renewFor: string | undefined
@@ -176,11 +277,14 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         // Proved again before every sign-in, so a group widened since boot blocks it.
         trust: () => appConnectSessions.trust({ fresh: true }),
         connectionId: () => appConnectSessions.connectionId(),
-        records: requestRecordsFor(input.identityHint),
+        records: recordsFor({ identityHint: input.identityHint, renew: input.renew }),
         origin: WEB_ORIGIN,
         basePath: returnTo.webBasePath,
         callbackUrl: (hash) => appConnectReturnUrl(returnTo, hash),
         onError: (message, error) => logger.warn(message, error),
+        // A signed-out request is marked opened last once it is chosen, before the wallet can see it; without the
+        // mark a kill while the wallet answers could resume the other one, so none is handed out.
+        ...(input.renew ? {} : { beforeHandout: (current) => markActiveSignIn(slotOf(input) ?? 'login', current, options.durable) }),
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))
@@ -221,21 +325,43 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     },
 
     /** Forgets the stored request of this kind (see `pending`) without a running flow. */
-    async forget(identityHint?: string): Promise<void> {
+    async forget(kind: AppConnectRequestKind): Promise<void> {
       if (!isAppConnectBuild() || !appConnectPins()) return
-      const records = requestRecordsFor(identityHint)
-      const record = await records.load()
-      if (record) await records.clear(record)
+      const record = await loadRequest(kind)
+      if (record) await recordsFor(kind).clear(record)
+    },
+
+    /** Deletes the stored request of this kind by name, unread: one in an account bucket this boot did not load. */
+    async drop(kind: AppConnectRequestKind): Promise<void> {
+      if (!isAppConnectBuild() || !appConnectPins()) return
+      await appConnectSessions.keyStore().deleteSecret(appConnectSessions.network(), slotName(kind))
     },
 
     /**
-     * Whether a request is still stored and answerable (the app was killed
-     * while the wallet was open): a sign-in's, or with `identityHint` the
-     * request only that identity may answer (a renewal's).
+     * Whether a request of this kind is still stored and answerable (the app
+     * was killed while the wallet was open).
      */
-    async pending(identityHint?: string): Promise<boolean> {
+    async pending(kind: AppConnectRequestKind): Promise<boolean> {
       if (!isAppConnectBuild() || !appConnectPins()) return false
-      return (await requestRecordsFor(identityHint).load()) !== null
+      return (await loadRequest(kind)) !== null
+    },
+
+    /**
+     * The sign-in a signed-out launch should resume, if one is stored: a
+     * plain one (`reauth: null`), or signing `reauth` in again. When both
+     * are, the one opened last (the newer one if that is unknown). Throws
+     * when a slot or the mark cannot be read: that is no answer, not an empty slot.
+     */
+    async pendingSignIn(): Promise<{ reauth: string | null } | null> {
+      if (!isAppConnectBuild() || !appConnectPins()) return null
+      const plain = await loadRequest({}, true)
+      const again = await requestRecordsFor(REAUTH_SLOT).loadStrict()
+      const reauth = again?.identityHint
+      if (!again || reauth === undefined) return plain ? { reauth: null } : null
+      if (!plain) return { reauth }
+      const active = await activeSignIn()
+      const againLast = active === null ? again.createdAt > plain.createdAt : active === REAUTH_SLOT
+      return againLast ? { reauth } : { reauth: null }
     },
   }
 }

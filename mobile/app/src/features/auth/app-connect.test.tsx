@@ -197,6 +197,54 @@ describe('the wallet sign-in on App Connect builds', () => {
     expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
   });
 
+  it('loads it again once, from the reply, when the engine announces the reload while the accept waits', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockImplementation(async () => {
+      fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true });
+      return { status: 'signed-in', session: alice, reload: true };
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('kx-signed-in')).toBeTruthy();
+  });
+
+  it('loads it again once when the engine announced the reload before the accept timed out', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockImplementation(async () => {
+      fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true });
+      throw Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' });
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
+    expect(screen.queryByTestId('kx-try-again')).toBeNull();
+  });
+
+  it('leaves the reload to the replacement engine when the announcing engine died before the reply', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockImplementation(async () => {
+      fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true });
+      throw Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' });
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+    expect(screen.queryByTestId('kx-try-again')).toBeNull();
+    expect(loadSignedInAgain).not.toHaveBeenCalled();
+  });
+
+  it('loads it again when the sign-in lands after its accept timed out, keeping the interrupted state', async () => {
+    await open({ mode: 'qr' }, flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: null }] }));
+    fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }));
+    await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+    expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+    expect(loadSignedInAgain).not.toHaveBeenCalled();
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in', reload: true }));
+    expect(loadSignedInAgain).toHaveBeenCalledTimes(1);
+    expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
+    expect(screen.queryByTestId('kx-try-again')).toBeNull();
+  });
+
   it('offers a chooser when several accounts answered, and "None of these are me" starts over', async () => {
     const bob = 'BobIdentity22222222222222222222222222222222';
     await open({ mode: 'qr' }, flow({
@@ -310,6 +358,42 @@ describe('the wallet sign-in on App Connect builds', () => {
     fireEvent.press(screen.getByText('Cancel'));
     expect(fakeEngine.method('session.appConnectCancel')).toHaveBeenCalled();
     expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  describe('cut short by an engine restart while it takes the answer', () => {
+    const restarted = () => Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' });
+    const confirm = (extra: Partial<AppConnectFlowDTO> = {}) =>
+      flow({ phase: 'confirm', uri: URI, requestHash: HASH, candidates: [{ identityId: alice.identityId, username: 'alice' }], ...extra } as never);
+
+    it('says the sign-in was interrupted, claiming neither success nor failure', async () => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+      expect(screen.queryByTestId('kx-signed-in')).toBeNull();
+    });
+
+    it('never reports a renewal done that it cannot confirm', async () => {
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(restarted());
+      await open({ mode: 'wallet', renew: '1' }, confirm({ renew: true }));
+      await act(async () => {});
+      expect(screen.getByText('Renewal was interrupted')).toBeTruthy();
+      expect(screen.queryByText('Renewed')).toBeNull();
+    });
+
+    it.each([
+      { cause: 'an engine restart', failure: restarted },
+      { cause: 'a timeout', failure: () => Object.assign(new Error('timed out'), { code: 'RPC_TIMEOUT' }) },
+    ])('offers only Close, never a fresh request, after $cause leaves the outcome unknown', async ({ failure }) => {
+      await open({ mode: 'qr' }, confirm());
+      fakeEngine.method('session.appConnectAccept').mockRejectedValueOnce(failure());
+      await act(async () => fireEvent.press(screen.getByTestId('ac-continue')));
+      expect(screen.getByText('Sign-in was interrupted')).toBeTruthy();
+      expect(screen.queryByTestId('kx-try-again')).toBeNull();
+      fireEvent.press(screen.getByTestId('kx-close'));
+      expect(mockGoBack).toHaveBeenCalled();
+      expect(fakeEngine.method('session.appConnectStart')).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('says why wallet sign-in is not available, and retries only what a retry can fix', async () => {

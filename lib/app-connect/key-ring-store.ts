@@ -125,11 +125,16 @@ export class AppConnectKeyRingStore {
     }
   }
 
-  private async unwrap(wrapped: WrappedBytes, label: string): Promise<Uint8Array | null> {
+  /**
+   * Null when the device key or the decryption fails. `strict` throws instead, except for a blob the device key
+   * does not authenticate (`OperationError`), which no retry can open: that is null, as an unreadable record.
+   */
+  private async unwrap(wrapped: WrappedBytes, label: string, strict = false): Promise<Uint8Array | null> {
     try {
       const additionalData = toArrayBuffer(encoder.encode(label))
       return new Uint8Array(await this.subtle.decrypt({ name: 'AES-GCM', iv: toArrayBuffer(wrapped.iv), additionalData }, await this.deviceKey(), wrapped.data))
-    } catch {
+    } catch (error) {
+      if (strict && (error as { name?: unknown } | null)?.name !== 'OperationError') throw error
       return null
     }
   }
@@ -208,9 +213,10 @@ export class AppConnectKeyRingStore {
     await this.backend.put(secretKey(network, name), await this.wrap(plaintext, `yappr:app-connect:secret:v1|${network}|${name}`))
   }
 
-  async loadSecret(network: string, name: string): Promise<Uint8Array | null> {
+  /** Null when nothing is stored or the secret does not unwrap; `strict` throws when it cannot be read (see `unwrap`). */
+  async loadSecret(network: string, name: string, options: { strict?: boolean } = {}): Promise<Uint8Array | null> {
     const wrapped = await this.backend.get<WrappedBytes>(secretKey(network, name))
-    return wrapped ? this.unwrap(wrapped, `yappr:app-connect:secret:v1|${network}|${name}`) : null
+    return wrapped ? this.unwrap(wrapped, `yappr:app-connect:secret:v1|${network}|${name}`, options.strict) : null
   }
 
   async deleteSecret(network: string, name: string): Promise<void> {
