@@ -3,7 +3,9 @@
 **Status: preparation only. Nothing here has run on mainnet.** On
 2026-11-22 the mainnet path from a fresh maker through registration, charter
 seating and a root export ran on **testnet**, with the same scripts and
-switches ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22)); the per-index readback (step 5.6) was added afterwards and read the same set (section 12, item 15);
+switches ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22)); the per-index readback (step 5.6) was added afterwards and read the same set (section 12, item 15).
+The whole rehearsal was rerun the same day with the SDK at 5.0.3 against
+testnet Drive 5.0.3, the version mainnet runs ([section 12.1](#121-rerun-with-sdk-503-2026-11-22));
 what still needs a person is [section 13](#13-what-still-needs-a-human). Mainnet
 registration, the root site and `master` are held for QuantumExplorer's
 go-ahead. This file lists what has to be true, run, configured and funded
@@ -102,8 +104,10 @@ changes consume identity nonces and move every planned id.
       `verify` on both; fees of the three reference-read shapes (≈13–15k
       credits each over v19, so the offline estimate stands). The harness is
       `scripts/prove-v20-references.mjs` (#975), which refuses mainnet.
-  - [ ] **Rerun the same proofs on testnet after the SDK bump** to 5.0.3
-        (section 11, item 6), with `prove-v20-references.mjs`.
+  - [x] **Rerun the same proofs on testnet after the SDK bump** to 5.0.3
+        (section 11, item 6), with `prove-v20-references.mjs`: all PASS on
+        a fresh set registered from 5.0.3 (section 12.1). The seated-member
+        41102 refusal from section 12 was not part of the rerun.
 - [ ] **Live /staging QA green** on v20 (web smoke matrix, App Connect with a
       real DashPay wallet). See the 2026-11-21 QA report on the PR that adds
       this file.
@@ -134,15 +138,14 @@ changes consume identity nonces and move every planned id.
         will snapshot, plus the charters contract. Don't register unless all
         four come back present: otherwise `contracts:snapshot` can't build the
         bundle after registration and the filer can't prepare.
-  - [ ] Mainnet Drive/DAPI version is compatible with the SDK for writes.
+  - [x] Mainnet Drive/DAPI version is compatible with the SDK for writes.
         Read 2026-11-22 (`system.status`, read-only): **mainnet runs Drive and
-        DAPI 5.0.3**, protocol 14, epoch 89; testnet runs 5.0.0-rc.8. The repo
-        pins evo-sdk **5.0.0-rc.4**, while npm `latest` has been 5.0.3 since
-        2026-11-03. Reads from rc.4 work on mainnet (above, and the 2026-11-22
-        snapshot attempt); no write from rc.4 to a 5.0.x Drive has run
-        anywhere. The pin moved to 5.0.3 in #978. **[A] Before go:** rerun
-        section 12 on testnet from it. Until then this stays **UNKNOWN for
-        writes**.
+        DAPI 5.0.3**, protocol 14, epoch 89. The pin moved from 5.0.0-rc.4 to
+        **5.0.3** (#978), and by the rerun testnet ran Drive 5.0.3 too (it ran
+        5.0.0-rc.8 for the first rehearsal). Section 12.1 registered all eight
+        contracts, filed three charters, and ran the v20 writes and moderator
+        removals from SDK 5.0.3 against Drive 5.0.3. No write has touched
+        mainnet itself; the stop gate's read-only probe stays.
   - [ ] Maker nonce and balance as expected; none of the planned ids or the
         group exist yet (`--dry-run` proves this).
 
@@ -349,7 +352,7 @@ given, and broadcasts need `--production`.
 | Charter filers sharing an actor run concurrently | Duplicate moderation-charters nonces, interrupted filing | File shared-actor teams sequentially (section 6) |
 | No masternode majority on mainnet | A rival can contest and win a moderation seat | File promptly after the delay; have a plan if a rival seats |
 | Seven-day election delay | No posting for ≈8 days after registration | Register well ahead of launch |
-| v20 reference-read fees | Follow requests, reports and posts with embeds cost slightly more than the offline estimate | Measured on testnet: ≈13–15k credits (≈0.001¢) per write (section 12, item 9); recheck after the SDK bump |
+| v20 reference-read fees | Follow requests, reports and posts with embeds cost slightly more than the offline estimate | Measured on testnet: ≈13–15k credits (≈0.001¢) per write (section 12, item 9); after the SDK bump the whole writes cost within 1% of before on a second pass (section 12.1) |
 | Probing with the wrong SDK | A stale install misreports system contracts as absent (seen 2026-11-21) | Probe only from a checkout at the pinned SDK; repeat the section 4 stop gate |
 | Payment nonce handling (#929) unresolved | A wallet QR plus a local fallback could pay twice | Land or gate #929 before tips/purchases go live on mainnet |
 | Credit tips | Credit tips stay `off` (D23); YAPP is non-purchasable and non-transferable | Keep the flag off |
@@ -373,8 +376,8 @@ Updated 2026-11-22 after the testnet rehearsal (section 12).
    derived from its balance.
 5. ~~System contracts on mainnet~~: present (2026-11-21, SDK rc.4; again
    2026-11-22 through `contracts:snapshot`). Re-check at the stop gate.
-6. SDK versus mainnet Drive for writes: mainnet runs **5.0.3**, the pin is
-   rc.4 (section 4). **[A]** Bump the pin to 5.0.3 and rerun the rehearsal.
+6. ~~SDK versus mainnet Drive for writes~~: the pin is 5.0.3 (#978), and the
+   rehearsal reran from it against testnet Drive 5.0.3 (section 12.1).
 7. The mainnet voting URL. **[O]**
 8. Where mainnet is hosted, its deploy job and rollback. **[O]** The root
    build itself is rehearsed (section 12).
@@ -425,7 +428,34 @@ Differences from mainnet, all forced by the clock or the network:
 | 15. Per-index read (section 5, step 6) | `read-contract-indexes.mjs --journal <journal>` (SDK 5.0.0-rc.4, read 2026-11-22): **95/95 indexes answered** across the eight contracts (app 1, social 37, blocks 3, DM v5 4, blog 18, pollr 3, storefront 28, passkey vault 1), every read proved, with at least one real read per index (no document query on the six `like`/`likeReply` indexes, which are indexOnly; counts pin every property; the two storefront rating indexes also ranked by average). Pins came from stored documents for the four social types the v20 proofs wrote (followRequest, report, post, reply); six of their indexes answered with rows (`followRequest.pair`/`target`, `post.ownerAndTime`/`timeline`, `reply.ownerAndTime`, `report.byTarget`), the rest empty. No cold windows. |
 
 Gaps found and fixed: #970 (filer readback), #971 (mainnet build without a
-snapshot), #972 (asset lock network). The SDK pin moved to 5.0.3 in #978; open: the testnet rerun from it (section 4).
+snapshot), #972 (asset lock network). The SDK pin is done (#978,
+section 12.1).
+
+### 12.1 Rerun with SDK 5.0.3 (2026-11-22)
+
+Same day, from staging `f6e644a2` (SDK **5.0.3**, #978) plus #975 and #977,
+against testnet now on **Drive 5.0.3**: the same scripts, switches and
+election policy as section 12, a new maker (`EphL37fJ…`, faucet-funded,
+249.87e9 → 399.86e9 before `--plan`), and the same leader and members.
+Operator directory and keys are kept privately, as before.
+
+| Step | Result | Versus section 12 |
+| --- | --- | --- |
+| Offline gates, `--plan` (testnet and mainnet policy), `--dry-run`, `--signed-dry-run` | 8/8; same ids and nonces in all four; mainnet policy refuses the 3,600 s delay; balance gate needs 335.43e9, PASS | Same |
+| Charter `--prepare` | Three teams prepared; the reused actors' bound keys and reasons proved on resume | The bound-key files from the first run had to be copied into the new charters directory first (`a bound key exists; supply its private half` until then): an operator reusing team identities carries those files over |
+| Registration, nonces 1–8 | Every create landed on its first broadcast, id equal to the plan. App `AdnD68vR…`, group `DY23NQBV…`, social `2t8D4GKr…` | Same |
+| Fees | app 13.10e9, social 91.79e9, blocks 19.11e9, DM v5 22.18e9, blog 38.43e9, pollr 17.16e9, storefront 60.75e9, passkey vault 13.09e9: **275,619,546,470** | −1,195,220 credits (−0.0004%) |
+| `verify-appconnect --only g1,g2,g3,a1` | **32/0**; YAPP `98EExoC6…` = `calculateId(social, 0)`, supply 0, minting `noOne` | Same |
+| Per-index read (step 5.6) | 95/95 right after registration, and 95/95 again after the proofs, with the same six indexes answering rows | Same |
+| Charter filing and seating | Social proposal, joins and application proved ≈30 s after its window opened (15:45:48Z); all three applications by 15:47:14Z. Seated at the first block after the join windows: social 16:46:03Z (728,004), blog 16:46:54Z (728,008), storefront 16:47:14Z (728,010); winner = the leader with three members on each | Same shape (≈40 s before) |
+| v20 proofs (`prove-v20-references.mjs`, with the per-write nonce check) | All PASS on five runs, each against a new target, the last two from #975 as merged (the post-write balance is read only after the proved nonce includes the write, and the nonce is proved again at the balance's height): `d1e`, `r1z3a`, `c1e` refused 40120 on the named property; follow request, report and `c1f` embed land; the moderator removed the direct and nested replies with the expected kept fields; `recover-deleted.mjs` recovered and verified 2/2. Each of the ten writes, refusals included, moved the author's contract nonce by exactly one | Same verdicts for these checks. The 41102 refusal of a moderator removing a seated member's reply (section 12, item 9) was not rerun: the harness refuses a seated author and tests only the 40120 refusals |
+| Write fees | follow request 53.89M, report 38.84M, plain post 102.48M, direct reply 121.77M, nested reply 82.96M; refusals 9.91M / 1.35M / 1.34M | Accepted writes within 0.5% of section 12, except the first of each kind on the fresh contract: the report (38.84M against 32.35M) and `c1f` (153.4M, the author's first post; the thread post was first in section 12) pay for new index trees. A second pass on the same set against another target (with the seated-team and signed-nonce checks) gave report 32.55M (+0.6% on section 12), `c1f` 105.06M (+0.8%), follow request 54.08M and refusals 1.29M / 1.36M / 1.35M. These are whole-write balance changes: they show no fee jump from the bump, not that the reference-read share alone is unchanged |
+| Release config and root build | Both env files pass `loadReleaseEnv`; `contracts:snapshot --prune` (13 contracts); root build (`STORAGE_EPOCH=testnet-mainnet-rehearsal-2`) served home, feed and Moderation teams with 0 console errors and this set's apply-from times; `build:mainnet` refuses without the mainnet snapshot (#971) | The `NETWORK=mainnet contracts:snapshot` read was not repeated; it is read-only and is covered by the stop gate (section 4) |
+
+No regression from the SDK bump on this path. One regression elsewhere:
+5.0.3 can't verify the key-hash identity lookup from `/devnet`'s older Drive,
+so key-only sign-in there fails until that devnet upgrades (#979). Testnet
+and mainnet are unaffected.
 
 ## 13. What still needs a human
 
