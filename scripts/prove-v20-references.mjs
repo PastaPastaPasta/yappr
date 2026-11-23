@@ -144,7 +144,7 @@ const contractNonce = async () => (await provedNonce()).nonce;
 async function nextNonce(from, floorHeight) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const { nonce, height } = await provedNonce();
-    if (nonce > from && height >= floorHeight) return nonce;
+    if (nonce > from && height >= floorHeight) return { nonce, height };
     await settle();
   }
   throw new Error(`the contract nonce of ${author.ownerId} did not move past ${from} at or above height ${floorHeight}`);
@@ -168,11 +168,11 @@ async function measuredCreate(key, docType, data, refusedOn) {
   if (!outcome.ok && !refused) {
     throw new Error(`${key}: neither landed nor refused as expected; check ${author.ownerId}'s ${docType} documents before rerunning: ${String(outcome.error).slice(0, 300)}`);
   }
-  const after = await stableBalance(before.height + 1, before.credits);
-  const nonceAfter = await nextNonce(nonceBefore, after.height);
+  const { nonce: nonceAfter, height: nonceHeight } = await nextNonce(nonceBefore, before.height + 1);
   if (nonceAfter !== outcome.nonce) {
     throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter} around the write signed at ${outcome.nonce}; another writer used this author, so the fee can't be attributed`);
   }
+  const after = await stableBalance(nonceHeight, before.credits);
   lastHeight = after.height;
   Object.assign(entry, {
     balanceBefore: String(before.credits), heightBefore: before.height,
