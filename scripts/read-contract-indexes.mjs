@@ -183,22 +183,23 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
     }));
   }
   const rankedPrefix = prefix.filter(([field]) => field !== index.timeRange?.on);
-  const unread = (kind) => ({ ok: false, errors: [`declares a ${kind} ranking without its ${kind} property on this index; check it by hand`] });
-  if (index.rankedAverageable && !index.averageable) result.rankedAvg = unread('average');
-  if (index.rankedSummable && !index.summable) result.rankedSum = unread('sum');
-  if (index.rankedAverageable && index.averageable) {
+  const unread = (kind) => ({ ok: false, errors: [`declares a ${kind} ranking without a summable or averageable property on this index; check it by hand`] });
+  const aggregated = index.summable ?? index.averageable;
+  if (index.rankedAverageable && !aggregated) result.rankedAvg = unread('average');
+  if (index.rankedSummable && !aggregated) result.rankedSum = unread('sum');
+  if (index.rankedAverageable && aggregated) {
     const where = rankedPrefix;
     result.rankedAvg = await firstAnswer([{
-      label: `groupBy ${last}, avg(${index.averageable})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
-      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: index.averageable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
+      label: `groupBy ${last}, avg(${aggregated})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: aggregated }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
     }]);
   }
 
-  if (index.rankedSummable && index.summable) {
+  if (index.rankedSummable && aggregated) {
     const where = rankedPrefix;
     result.rankedSum = await firstAnswer([{
-      label: `groupBy ${last}, sum(${index.summable})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
-      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
+      label: `groupBy ${last}, sum(${aggregated})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: aggregated }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
     }]);
   }
 
