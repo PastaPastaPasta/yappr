@@ -147,10 +147,18 @@ export function LoginModal() {
   /** The recovery phrase or private key form is signing in: the other options wait, so it isn't unmounted mid-flight. */
   const [signingIn, setSigningIn] = useState(false)
   const toggleAdvanced = (section: AdvancedSection) => setAdvanced((current) => (current === section ? null : section))
+  /** The recovery phrase sign-in under way: aborted by Close at once, so one waiting for the identity update lock sends nothing. */
+  const phraseAttempt = useRef<AbortController | null>(null)
+  const beginPhraseAttempt = useCallback(() => {
+    phraseAttempt.current?.abort()
+    phraseAttempt.current = new AbortController()
+    return phraseAttempt.current.signal
+  }, [])
 
   // Reset to the first view whenever the dialog closes.
   useEffect(() => {
     if (isOpen) return
+    phraseAttempt.current?.abort()
     setShowWallet(false)
     setRenewing(false)
     setShowAdvanced(false)
@@ -171,6 +179,7 @@ export function LoginModal() {
   }
 
   const handleClose = useCallback(() => {
+    phraseAttempt.current?.abort()
     close()
     // Cancelling on /login leaves it. Once signed in, closing only dismisses the sheet: /login is already going on.
     // Next's pathname omits the deployment base path; exports add a trailing slash.
@@ -214,7 +223,7 @@ export function LoginModal() {
                 label="Sign in with your recovery phrase"
                 disabled={signingIn}
               >
-                <RecoveryPhraseForm onComplete={close} onBusyChange={setSigningIn} />
+                <RecoveryPhraseForm onComplete={close} onBusyChange={setSigningIn} beginAttempt={beginPhraseAttempt} />
               </Disclosure>
             )}
             <Disclosure

@@ -5,8 +5,8 @@
  * identity and contract never overlap, a failure does not wedge the queue, and
  * unrelated identities or contracts are not held up.
  */
-import { describe, expect, it } from 'vitest'
-import { withIdentityWriteLock } from './identity-write-lock'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { IDENTITY_UPDATE_UNLOCKED, withIdentityUpdateLock, withIdentityWriteLock } from './identity-write-lock'
 
 function deferred() {
   let resolve!: () => void
@@ -52,5 +52,16 @@ describe('withIdentityWriteLock', () => {
     await expect(withIdentityWriteLock('carol', 'dm', async () => 'other contract')).resolves.toBe('other contract')
     gate.resolve()
     await held
+  })
+})
+
+describe('withIdentityUpdateLock', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('signs no identity update where no lock reaches the other tabs', async () => {
+    vi.stubGlobal('navigator', {})
+    let ran = false
+    await expect(withIdentityUpdateLock('alice', async () => { ran = true })).rejects.toThrow(IDENTITY_UPDATE_UNLOCKED)
+    expect(ran).toBe(false)
   })
 })

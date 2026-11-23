@@ -13,7 +13,7 @@ const sdk = vi.hoisted(() => ({
   stateTransitions: { broadcastAndWait: vi.fn() },
   documents: { delete: vi.fn() },
 }))
-const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn(), consumed: vi.fn() }))
+const builders = vi.hoisted(() => ({ sign: vi.fn(), exists: vi.fn(), consumed: vi.fn(), keyInCreation: vi.fn(() => ({})) }))
 const storage = vi.hoisted(() => {
   const items = new Map<string, string>()
   const local = {
@@ -28,6 +28,8 @@ const storage = vi.hoisted(() => {
 const settle = vi.hoisted(() => vi.fn())
 const nonces = vi.hoisted(() => ({ reserve: vi.fn(), release: vi.fn(), next: 1n }))
 const locks = vi.hoisted(() => vi.fn())
+const updateLocks = vi.hoisted(() => vi.fn())
+const webLocks = vi.hoisted(() => ({ available: true }))
 const sdkLocks = vi.hoisted(() => vi.fn())
 const sdkPreconditions = vi.hoisted(() => [] as Array<(() => Promise<boolean>) | undefined>)
 const keys = vi.hoisted(() => ({ match: vi.fn(), stepUp: vi.fn() }))
@@ -50,10 +52,15 @@ vi.mock('@/lib/moderation-charters/transitions.mjs', () => ({
   charterStepExists: builders.exists,
   charterNonceConsumed: builders.consumed,
   charterIdBytes: () => new Uint8Array(32),
-  charterKeyInCreation: () => ({}),
+  charterKeyInCreation: builders.keyInCreation,
 }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { settleCreate: settle } }))
-vi.mock('@/lib/identity-write-lock', () => ({ withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() } }))
+vi.mock('@/lib/identity-write-lock', () => ({
+  withIdentityWriteLock: async (_o: string, _c: string, write: () => Promise<unknown>) => { await locks(); return write() },
+  withIdentityUpdateLock: async (_i: string, update: () => Promise<unknown>) => { await updateLocks(); return update() },
+  crossTabLocks: () => (webLocks.available ? {} : undefined),
+  IDENTITY_UPDATE_UNLOCKED: "This browser can't safely add a key here. Update your browser or use another one.",
+}))
 vi.mock('./identity-nonce', () => ({
   awaitNonce: async () => { hooks.onAwaitNonce?.(); return { current: 0n, value: nonces.next++ } },
   allocateNonce: () => 1n,
@@ -91,6 +98,8 @@ const { charterService } = await import('./charter-service')
 const { CHARTERS_CONTRACT_ID } = await import('@/lib/moderation-charters/rules.mjs')
 const { CharterActionError } = await import('@/lib/moderation-charters/refusals')
 const sharedKeys = await import('@/lib/auth/critical-key')
+const { noteProvedIdentityRevision } = await import('./identity-service')
+const { getConfiguredNetwork } = await import('@/lib/constants')
 sharedKeys.bindCriticalKeySession(() => auth.epoch)
 
 /** The app-wide CRITICAL-key sheet, mounted: records each request and answers it as told (null closes it). */
@@ -127,6 +136,7 @@ const stored = (type: string, slot: string) => {
 }
 
 beforeEach(() => {
+  webLocks.available = true
   wallet.appConnect = false
   sharedKeys.forgetCriticalKey(OWNER)
   auth.identity = OWNER
@@ -1047,5 +1057,116 @@ describe("the leader's way out of an application stuck uncertain", () => {
     expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(true)
     await charterService.abandonApplication(OWNER, 'target-stuck')
     expect(charterService.hasPendingApplication(OWNER, 'target-stuck')).toBe(false)
+  })
+})
+
+describe('a charter key added from two tabs at once', () => {
+  const revisionKey = `yappr:identity-revision:${getConfiguredNetwork()}:${OWNER}`
+  const masterHex = Buffer.from(new Uint8Array(32).fill(5)).toString('hex')
+  const charterKeyOnChain = (keyId: number, data: Uint8Array, role: 'leader' | 'member') => ({
+    keyId, purpose: role === 'leader' ? 'DECRYPTION' : 'ENCRYPTION', securityLevel: 'MEDIUM', keyType: 'ECDSA_SECP256K1', data,
+    contractBounds: { toJSON: () => ({ $type: 'documentType', id: CHARTERS_CONTRACT_ID, documentTypeName: role === 'leader' ? 'submittedCharter' : 'joinRequest' }) },
+  })
+  const leaderKey = async () => {
+    const { deriveCharterKey } = await import('@/lib/moderation-charters/charter-keys')
+    const { getPublicKey } = await import('@noble/secp256k1')
+    const key = deriveCharterKey(new Uint8Array(32).fill(5), OWNER, 'leader')
+    return { key, publicKey: getPublicKey(key, true) }
+  }
+
+  it('picks its key id from the identity read under the update lock, past a key another tab just added', async () => {
+    const { key, publicKey } = await leaderKey()
+    const before = { publicKeys: [{ keyId: 2 }] }
+    const memberAdded = { publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(memberAdded)
+      .mockResolvedValue({ publicKeys: [...memberAdded.publicKeys, charterKeyOnChain(4, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(updateLocks).toHaveBeenCalledTimes(1)
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 4 }))
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: memberAdded }))
+  })
+
+  it('adds nothing when the other tab already added the same charter key', async () => {
+    const { key, publicKey } = await leaderKey()
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+
+  it('adds nothing and uses no older key when the role has a newer, different one by the time the lock is held', async () => {
+    const { publicKey } = await leaderKey()
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, publicKey, 'leader'), charterKeyOnChain(4, new Uint8Array(33).fill(1), 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'refused' })
+    expect(sdk.identities.update).not.toHaveBeenCalled()
+  })
+
+  it('waits for a read as fresh as the last key update proved here before picking a key id', async () => {
+    const { key, publicKey } = await leaderKey()
+    localStorage.setItem(revisionKey, '3')
+    const proved = { revision: 3, publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ revision: 2, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce({ revision: 2, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce(proved)
+      .mockResolvedValue({ revision: 4, publicKeys: [...proved.publicKeys, charterKeyOnChain(4, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: proved }))
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 4 }))
+    expect(localStorage.getItem(revisionKey)).toBe('4')
+  })
+
+  it('never builds on a locked read older than the one the prompt was built on', async () => {
+    const { key, publicKey } = await leaderKey()
+    const seen = { revision: 5n, publicKeys: [{ keyId: 2 }, charterKeyOnChain(5, new Uint8Array(33).fill(1), 'member')] }
+    sdk.identities.fetch
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValueOnce({ revision: 4n, publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValueOnce(seen)
+      .mockResolvedValue({ revision: 6n, publicKeys: [...seen.publicKeys, charterKeyOnChain(6, publicKey, 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).resolves.toEqual(key)
+    expect(sdk.identities.update).toHaveBeenCalledWith(expect.objectContaining({ identity: seen }))
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 6 }))
+  })
+
+  it('keeps the revision an accepted update left the identity at, even when no read shows the key yet', async () => {
+    const { publicKey } = await leaderKey()
+    sdk.identities.fetch.mockResolvedValue({ revision: 7, publicKeys: [{ keyId: 2 }] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'uncertain' })
+    expect(builders.keyInCreation).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ keyId: 3, publicKey }))
+    expect(localStorage.getItem(revisionKey)).toBe('8')
+  })
+
+  it('keeps the floor by chain and identity, where every build on this origin reads it', () => {
+    noteProvedIdentityRevision(OWNER, 9)
+    expect(localStorage.getItem(revisionKey)).toBe('9')
+  })
+
+  it('asks for no MASTER key where no lock reaches the other tabs, and says why', async () => {
+    webLocks.available = false
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({
+      outcome: 'refused', message: "This browser can't safely add a key here. Update your browser or use another one.",
+    })
+    expect(keys.stepUp).not.toHaveBeenCalled()
+  })
+
+  it('adds no second charter key of the role when another one appeared meanwhile', async () => {
+    sdk.identities.fetch
+      .mockResolvedValueOnce({ publicKeys: [{ keyId: 2 }] })
+      .mockResolvedValue({ publicKeys: [{ keyId: 2 }, charterKeyOnChain(3, new Uint8Array(33).fill(1), 'leader')] })
+    keys.stepUp.mockImplementationOnce(async () => masterHex)
+    await expect(charterService.charterKey(OWNER, 'leader', { create: true })).rejects.toMatchObject({ outcome: 'refused' })
+    expect(sdk.identities.update).not.toHaveBeenCalled()
   })
 })

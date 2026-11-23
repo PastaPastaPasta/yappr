@@ -24,6 +24,7 @@
 import bs58 from 'bs58'
 import { messagingAnchorId } from '@/lib/app-connect/config'
 import { keyNetwork } from '@/lib/constants'
+import { crossTabLocks } from '@/lib/identity-write-lock'
 import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { hash160 } from '@/lib/crypto/hash'
 import {
@@ -123,6 +124,8 @@ export type PhraseMessaging =
   | 'not-set-up'
   /** The account has none, and the phrase doesn't hold the MASTER key that could add it. */
   | 'no-master-key'
+  /** The account has none, and this browser can't add one safely (no Web Locks). */
+  | 'unsupported-browser'
   /** This build has no messaging anchor. */
   | 'unavailable'
 
@@ -165,7 +168,8 @@ async function addMessagingKey(draft: MessagingKeyDraft, master: PhraseKey, canc
   if (refused) return state
   // Added, but the current-key read still lags: the identity's own newest anchor key decides.
   const identity = await identityService.getIdentity(draft.identityId, { fresh: true }).catch(() => null)
-  return identity && phraseMessagingState([draft.publicKey], null, identity.publicKeys, draft.anchorId).state === 'current' ? 'this-key' : state
+  if (!identity || phraseMessagingState([draft.publicKey], null, identity.publicKeys, draft.anchorId).state !== 'current') return state
+  return await identityService.recordKeyRevision(draft.identityId, draft.publicKey).catch(() => false) ? 'this-key' : 'pending'
 }
 
 /**
@@ -218,6 +222,7 @@ export async function preparePhraseSession(
     if (state === 'absent') {
       const master = masterKey(held)
       if (!master) return { ...session, messagingKey: null, messaging: 'no-master-key' }
+      if (!crossTabLocks()) return { ...session, messagingKey: null, messaging: 'unsupported-browser' }
       if (cancelled()) throw new PhraseSignInCancelled()
       const added = await addMessagingKey(messagingKey, master, cancelled)
       // Another device may have set messaging up meanwhile: say which.

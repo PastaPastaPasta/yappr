@@ -27,10 +27,17 @@ const state = vi.hoisted(() => ({
   current: null as Uint8Array | null,
   added: [] as Uint8Array[],
   afterAdd: null as ((publicKey: Uint8Array) => void) | null,
+  /** The identity update lock, held by another update until it resolves. */
+  lock: null as Promise<void> | null,
+  waiting: 0,
+  recorded: true,
 }))
 
 vi.mock('@/lib/services/identity-service', () => ({
-  identityService: { getIdentity: async () => ({ id: IDENTITY, balance: 0, revision: 0, publicKeys: state.publicKeys }) },
+  identityService: {
+    getIdentity: async () => ({ id: IDENTITY, balance: 0, revision: 0, publicKeys: state.publicKeys }),
+    recordKeyRevision: async () => state.recorded,
+  },
 }))
 vi.mock('@/lib/services/dpns-service', () => ({ dpnsService: {} }))
 vi.mock('@/lib/app-connect/config', () => ({ messagingAnchorId: () => ANCHOR }))
@@ -39,18 +46,24 @@ vi.mock('@/lib/crypto/encryption-key-lookup', async (importActual) => ({
   ...(await importActual<typeof import('@/lib/crypto/encryption-key-lookup')>()),
   resolveEncryptionPublicKey: async () => state.current,
 }))
-vi.mock('@/lib/services/messaging-key-service', () => ({
-  MessagingAlreadySetUpError: class extends Error {},
-  MessagingSetupCancelledError: class extends Error {},
-  addMessagingKeyWithMasterKey: async (draft: { publicKey: Uint8Array }) => {
-    state.added.push(draft.publicKey)
-    state.afterAdd?.(draft.publicKey)
-  },
-  anchorKeyState: async (draft: { publicKey: Uint8Array }) => {
-    if (state.current === null) return 'none'
-    return bytesToHex(state.current) === bytesToHex(draft.publicKey) ? 'this-key' : 'other-key'
-  },
-}))
+vi.mock('@/lib/services/messaging-key-service', () => {
+  class MessagingSetupCancelledError extends Error {}
+  return {
+    MessagingAlreadySetUpError: class extends Error {},
+    MessagingSetupCancelledError,
+    addMessagingKeyWithMasterKey: async (draft: { publicKey: Uint8Array }, _masterWif: string, cancelled?: () => boolean) => {
+      state.waiting += 1
+      await state.lock
+      if (cancelled?.()) throw new MessagingSetupCancelledError()
+      state.added.push(draft.publicKey)
+      state.afterAdd?.(draft.publicKey)
+    },
+    anchorKeyState: async (draft: { publicKey: Uint8Array }) => {
+      if (state.current === null) return 'none'
+      return bytesToHex(state.current) === bytesToHex(draft.publicKey) ? 'this-key' : 'other-key'
+    },
+  }
+})
 
 import { preparePhraseSession } from './recovery-phrase-sign-in'
 
@@ -85,10 +98,14 @@ function messagingKeyOf(session: Awaited<ReturnType<typeof preparePhraseSession>
 const account = { identityIndex: 0, identityId: IDENTITY, username: null }
 
 beforeEach(() => {
+  vi.stubGlobal('navigator', { locks: {} })
   state.publicKeys = [authKey(0, SecurityLevel.MASTER), authKey(2, SecurityLevel.HIGH)]
   state.current = null
   state.added = []
   state.afterAdd = null
+  state.lock = null
+  state.waiting = 0
+  state.recorded = true
 })
 
 describe('preparePhraseSession messaging key', () => {
@@ -99,6 +116,41 @@ describe('preparePhraseSession messaging key', () => {
     expect(state.added.map(bytesToHex)).toEqual([bytesToHex(rotationKey(0).publicKey)])
     expect(bytesToHex(messagingKeyOf(session).publicKey)).toBe(bytesToHex(rotationKey(0).publicKey))
     expect(bytesToHex(messagingKeyOf(session).privateKey)).toBe(bytesToHex(rotationKey(0).privateKey))
+  })
+
+  it('is ready once a locked identity read records the added key the anchor read still lags on', async () => {
+    state.afterAdd = (publicKey) => { state.publicKeys = [...state.publicKeys, anchorKey(3, publicKey)] }
+    const session = await preparePhraseSession(wallet, account)
+    expect(session.messaging).toBe('ready')
+    expect(state.added).toHaveLength(1)
+  })
+
+  it('is not set up, adding nothing more, while no locked identity read has recorded the added key', async () => {
+    state.recorded = false
+    state.afterAdd = (publicKey) => { state.publicKeys = [...state.publicKeys, anchorKey(3, publicKey)] }
+    const session = await preparePhraseSession(wallet, account)
+    expect(session).toMatchObject({ messaging: 'not-set-up', messagingKey: null })
+    expect(state.added).toHaveLength(1)
+  })
+
+  it('signs in without messaging, adding nothing, where this browser has no Web Locks', async () => {
+    vi.stubGlobal('navigator', {})
+    const session = await preparePhraseSession(wallet, account)
+    expect(session).toMatchObject({ messaging: 'unsupported-browser', messagingKey: null })
+    expect(session.signInWif).toBeTruthy()
+    expect(state.added).toEqual([])
+  })
+
+  it('adds nothing when the login dialog closes while the add waits behind another update', async () => {
+    let release = () => {}
+    state.lock = new Promise((resolve) => { release = resolve })
+    const attempt = new AbortController()
+    const session = preparePhraseSession(wallet, account, () => attempt.signal.aborted)
+    await vi.waitFor(() => expect(state.waiting).toBe(1))
+    attempt.abort()
+    release()
+    await expect(session).rejects.toThrow()
+    expect(state.added).toEqual([])
   })
 
   it('uses rotation 0 when it is the current key', async () => {

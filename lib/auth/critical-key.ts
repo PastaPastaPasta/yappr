@@ -233,8 +233,13 @@ export function criticalKeySession(): number {
  */
 export function liveSessionCheck(identityId: string, session: number): () => void {
   return () => {
-    if (currentIdentityId() !== identityId || sessionEpoch() !== session) throw new CriticalKeyCancelledError()
+    if (!sessionIsLive(identityId, session)) throw new CriticalKeyCancelledError()
   }
+}
+
+/** Whether `session` (from {@link criticalKeySession}) is still on with `identityId` signed in. */
+export function sessionIsLive(identityId: string, session: number): boolean {
+  return currentIdentityId() === identityId && sessionEpoch() === session
 }
 
 /** Steps 1 and 2 of {@link criticalKeyFor}, without asking: the key that would sign now, or null. */
