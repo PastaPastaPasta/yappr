@@ -173,6 +173,10 @@ async function measuredCreate(key, docType, data, refusedOn) {
     throw new Error(`${key}: ${author.ownerId}'s contract nonce moved ${nonceBefore} → ${nonceAfter} around the write signed at ${outcome.nonce}; another writer used this author, so the fee can't be attributed`);
   }
   const after = await stableBalance(nonceHeight, before.credits);
+  const { nonce: nonceAtBalance } = await nextNonce(nonceBefore, after.height);
+  if (nonceAtBalance !== outcome.nonce) {
+    throw new Error(`${key}: ${author.ownerId}'s contract nonce moved to ${nonceAtBalance} by the post-write balance at height ${after.height}; another writer used this author, so the fee can't be attributed`);
+  }
   lastHeight = after.height;
   Object.assign(entry, {
     balanceBefore: String(before.credits), heightBefore: before.height,
