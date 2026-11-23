@@ -25,6 +25,7 @@
     "scripts/prove-v18-moderation.mjs",
     "scripts/prove-v20-references.mjs",
     "scripts/provision-test-identity.mjs",
+    "scripts/read-contract-indexes.mjs",
     "scripts/recover-deleted.mjs",
     "scripts/register-app-connect-contracts.mjs",
     "scripts/register-feature-contract.mjs",

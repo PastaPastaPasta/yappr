@@ -3,7 +3,7 @@
 **Status: preparation only. Nothing here has run on mainnet.** On
 2026-11-22 the mainnet path from a fresh maker through registration, charter
 seating and a root export ran on **testnet**, with the same scripts and
-switches; the per-index readback (step 5.6) was not covered ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22));
+switches ([section 12](#12-testnet-rehearsal-of-the-mainnet-path-2026-11-22)); the per-index readback (step 5.6) was added afterwards and read the same set (section 12, item 15);
 what still needs a person is [section 13](#13-what-still-needs-a-human). Mainnet
 registration, the root site and `master` are held for QuantumExplorer's
 go-ahead. This file lists what has to be true, run, configured and funded
@@ -140,9 +140,9 @@ changes consume identity nonces and move every planned id.
         pins evo-sdk **5.0.0-rc.4**, while npm `latest` has been 5.0.3 since
         2026-11-03. Reads from rc.4 work on mainnet (above, and the 2026-11-22
         snapshot attempt); no write from rc.4 to a 5.0.x Drive has run
-        anywhere. **[A] Before go:** move the SDK pin to 5.0.3 in its own PR,
-        then rerun section 12 on testnet with it. Until then this stays
-        **UNKNOWN for writes**.
+        anywhere. The pin moved to 5.0.3 in #978. **[A] Before go:** rerun
+        section 12 on testnet from it. Until then this stays **UNKNOWN for
+        writes**.
   - [ ] Maker nonce and balance as expected; none of the planned ids or the
         group exist yet (`--dry-run` proves this).
 
@@ -189,14 +189,26 @@ NETWORK=mainnet node scripts/register-app-connect-contracts.mjs --live --product
          --members <anchor>:1,<social>:1,<blocks>:1,<dmV5>:1,<blog>:1,<pollr>:1,<storefront>:1,<passkeyVault>:1
        ```
        Expect **32/0**.
-6. [ ] One proved read per index family. **Not yet done on a v20 set.** The
-       only full readback (95 indexes answered) was the ad hoc 2026-11-12 read
-       of the v19 testnet set. **No committed tool does this.** A
-       generic orderBy/count/ranked probe on the rehearsal set answered only
-       the indexes without a pinned prefix: `live`-keyed, typed-array and
-       derived-owner indexes need a `where` value per index. **[A]** Write the
-       per-index reader (or reuse the read halves of the `verify-*`
-       batteries) before go.
+6. [ ] One proved read per declared index, from the journal:
+       ```sh
+       NETWORK=mainnet node scripts/read-contract-indexes.mjs --journal <journal> --out <operator dir>/index-reads.json
+       ```
+       Expect **95/95 indexes answered** on the v20 set. Each index gets a
+       `documents.query` shaped to it (equality pins on every property
+       but the last, ordered by the last; Drive picks the index whose
+       properties match exactly, so a shorter index such as `vote.byPoll`
+       is read by itself, not by a longer sibling with the same prefix; a `timeRange` index is read over its
+       newest window), plus `count` on countable indexes and `ranked` on
+       ranked ones (oldest open window when windowed). Pins take a stored
+       document's values when the type has one, else typed placeholders, which
+       prove the node serves the index (empty), not that writes land in it; on
+       a fresh mainnet set every index answers empty. The six indexes of the
+       indexOnly `like` and `likeReply` types, and the count-only
+       (`summableOffCountIndex`) ones, are read by `count` (and `ranked`)
+       alone: there are no documents to query. Counts pin every
+       property (or a range on the last), so a longer sibling index can't answer;
+       averageable indexes are also ranked by average; a window read the node
+       can't prove fails the index. Rehearsal result: section 12, item 15.
 7. [ ] Journal backed up off the machine (0600 copy). **[O]** End the nonce freeze.
        Back up by copying once the run is done. The tool replaces the
        journal with `rename`, so a journal turned into a symlink mid-run
@@ -375,7 +387,7 @@ Updated 2026-11-22 after the testnet rehearsal (section 12).
     teams are still the safer choice against a rival opening a contest.
 13. Whether the charter filer's `--prepare` succeeds on mainnet: it works on
     testnet with #970; it remains the mainnet stop gate.
-14. A per-index proved reader for step 5.6 does not exist yet. **[A]**
+14. Step 5.6's per-index reader is `scripts/read-contract-indexes.mjs`; on mainnet it proves each index is served, and answers with rows only where documents exist.
 
 ## 12. Testnet rehearsal of the mainnet path (2026-11-22)
 
@@ -410,10 +422,10 @@ Differences from mainnet, all forced by the clock or the network:
 | 12. Release config | A `.env.mainnet`-shaped file built from the journal passed `loadReleaseEnv(…, 'mainnet')`: env validation only rejects ids known from other networks, so fresh testnet ids get through. Before #971 the mainnet build then exported without a snapshot; since #971 it requires `lib/contracts/bundled/mainnet.json` matching the pins (section 7). Only `contracts:snapshot` reads mainnet: `NETWORK=mainnet contracts:snapshot` refused: the eight ids are missing there, the three system contracts present. The same values as `.env.testnet` passed the testnet release config. |
 | 13. Root build | `contracts:snapshot --prune` (testnet, 13 contracts), then the root release build (`BASE_PATH` empty, `STORAGE_EPOCH=testnet-mainnet-rehearsal-1`). The static export served at `/` loaded the home page, the feed and Moderation teams with 0 console errors. It read the rehearsal set live: the election banner gave this set's own apply-from times. The `build:mainnet` export of the mainnet-shaped env also completed (49 files), before #971 made that impossible without a snapshot. |
 | 14. Maker top-up after registration | Asset lock +49.99e9 → 174.23e9; nonce still 8. |
+| 15. Per-index read (section 5, step 6) | `read-contract-indexes.mjs --journal <journal>` (SDK 5.0.0-rc.4, read 2026-11-22): **95/95 indexes answered** across the eight contracts (app 1, social 37, blocks 3, DM v5 4, blog 18, pollr 3, storefront 28, passkey vault 1), every read proved, with at least one real read per index (no document query on the six `like`/`likeReply` indexes, which are indexOnly; counts pin every property; the two storefront rating indexes also ranked by average). Pins came from stored documents for the four social types the v20 proofs wrote (followRequest, report, post, reply); six of their indexes answered with rows (`followRequest.pair`/`target`, `post.ownerAndTime`/`timeline`, `reply.ownerAndTime`, `report.byTarget`), the rest empty. No cold windows. |
 
 Gaps found and fixed: #970 (filer readback), #971 (mainnet build without a
-snapshot), #972 (asset lock network). Open: the SDK pin (section 4), the
-per-index reader (section 5, step 6).
+snapshot), #972 (asset lock network). The SDK pin moved to 5.0.3 in #978; open: the testnet rerun from it (section 4).
 
 ## 13. What still needs a human
 
