@@ -90,16 +90,45 @@ const ACTIVE_SIGN_IN = 'pending-request:active-sign-in'
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-/** Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. False if it could not be saved. */
-async function markActiveSignIn(slot: string, durable?: () => Promise<void>): Promise<boolean> {
-  const bytes = encoder.encode(slot)
+/** Mark writes run one at a time, so a start that puts back the mark it overtook never lands after a newer mark. */
+let marks: Promise<unknown> = Promise.resolve()
+
+/**
+ * Durable before the request reaches the wallet: a kill while the wallet answers resumes this request. False if it
+ * could not be saved, or if the start was overtaken while it was saved (`current`): the mark of the request opened
+ * before is then put back, so an overtaken start leaves no mark of its own.
+ */
+function markActiveSignIn(slot: string, current: () => boolean, durable?: () => Promise<void>): Promise<boolean> {
+  const run = marks.then(() => writeActiveSignIn(slot, current, durable))
+  marks = run.catch(() => undefined)
+  return run
+}
+
+async function writeActiveSignIn(slot: string, current: () => boolean, durable?: () => Promise<void>): Promise<boolean> {
+  if (!current()) return false
+  const store = appConnectSessions.keyStore()
+  const network = appConnectSessions.network()
+  let previous: Uint8Array | null = null
   try {
-    await appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, bytes)
-    await durable?.()
-    return true
-  } catch (error) {
-    logger.warn('App Connect: could not record the sign-in in progress:', error)
+    try {
+      previous = await store.loadSecret(network, ACTIVE_SIGN_IN, { strict: true })
+      await store.saveSecret(network, ACTIVE_SIGN_IN, encoder.encode(slot))
+      await durable?.()
+    } catch (error) {
+      logger.warn('App Connect: could not record the sign-in in progress:', error)
+      return false
+    }
+    if (current()) return true
+    try {
+      if (previous) await store.saveSecret(network, ACTIVE_SIGN_IN, previous)
+      else await store.deleteSecret(network, ACTIVE_SIGN_IN)
+      await durable?.()
+    } catch (error) {
+      logger.warn('App Connect: could not put back the sign-in in progress:', error)
+    }
     return false
+  } finally {
+    previous?.fill(0)
   }
 }
 
@@ -255,7 +284,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
         onError: (message, error) => logger.warn(message, error),
         // A signed-out request is marked opened last once it is chosen, before the wallet can see it; without the
         // mark a kill while the wallet answers could resume the other one, so none is handed out.
-        ...(input.renew ? {} : { beforeHandout: () => markActiveSignIn(slotOf(input) ?? 'login', options.durable) }),
+        ...(input.renew ? {} : { beforeHandout: (current) => markActiveSignIn(slotOf(input) ?? 'login', current, options.durable) }),
       })
       login = instance
       instance.subscribe((next) => publish(id, instance, next))

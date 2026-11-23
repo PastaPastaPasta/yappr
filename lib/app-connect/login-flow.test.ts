@@ -36,7 +36,7 @@ function harness(options: {
   network?: 'mainnet' | 'testnet' | 'devnet'
   carriers?: readonly ['dashpay' | 'dash-key', ...('dashpay' | 'dash-key')[]]
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
-  beforeHandout?: () => Promise<boolean>
+  beforeHandout?: (current: () => boolean) => Promise<boolean>
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
@@ -270,6 +270,35 @@ describe('AppConnectLogin', () => {
     const offline = harness({ protocolVersion: 13, beforeHandout: async () => { throw new Error('not asked') } })
     await offline.login.start()
     expect(last(offline)).toEqual({ phase: 'unavailable', reason: 'network-not-ready' })
+  })
+})
+
+describe('AppConnectLogin handout hook', () => {
+  it('tells a hook still running that a newer start overtook it, and the overtaken start hands nothing out', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const overtaken: boolean[] = []
+    let calls = 0
+    const h = harness({
+      beforeHandout: async (current) => {
+        calls += 1
+        if (calls > 1) return true
+        await gate
+        overtaken.push(!current())
+        return true
+      },
+    })
+    const first = h.login.start()
+    await h.flush()
+    expect(calls).toBe(1)
+    await h.login.start()
+    const waiting = h.states.filter((state) => state.phase === 'waiting').length
+    expect(waiting).toBe(1)
+    release()
+    await first
+    expect(overtaken).toEqual([true])
+    expect(h.states.filter((state) => state.phase === 'waiting').length).toBe(waiting)
+    expect(last(h)).toMatchObject({ phase: 'waiting' })
   })
 })
 

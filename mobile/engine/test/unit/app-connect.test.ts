@@ -849,6 +849,28 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
   })
 
+  it('puts the mark back when a start is overtaken while its mark is on its way to the host', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const plain = await engine.appConnectStart({ returnTo: RETURN_TO })
+    if (plain.phase !== 'waiting') throw new Error('not waiting')
+    expect(await activeMark()).toBe('login')
+    heldAcks = []
+    emitted = []
+    const reopening = engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    await until(() => heldAcks?.length, 'the mark on its way to the host')
+    vi.mocked(appConnectPlatformPort.chainStatus).mockRejectedValueOnce(new Error('offline'))
+    expect(await engine.appConnectStart({ returnTo: RETURN_TO })).toMatchObject({ phase: 'unavailable', reason: 'offline' })
+    releaseAcks()
+    await reopening
+    await settle()
+    expect(flows().some(flow => flow.phase === 'waiting')).toBe(false)
+    expect(await activeMark()).toBe('login')
+    const next = boot()
+    session = next
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: null })
+  })
+
   it('answers a launch whose pending sign-in read failed with an error, not an empty slot, and finds it on the next read', async () => {
     const engine = await signedOut()
     await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
