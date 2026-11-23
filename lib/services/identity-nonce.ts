@@ -91,7 +91,9 @@ export interface NonceReservation {
  * re-checks its mempool after every block and a valid transition executes in
  * the next one, so a minute is many blocks past the one it would have
  * executed in. A transition whose nonce is known (a create, a wallet request)
- * never expires: it stays pending until Platform shows that nonce consumed.
+ * never expires: it stays pending until Platform shows that nonce consumed. A
+ * chosen-nonce write gets this lifetime too, and once it runs out after the
+ * write was sent it stays dormant ({@link dormantWrites}).
  */
 const PENDING_LIFETIME_MS = 60 * 1000;
 
@@ -233,9 +235,10 @@ export function stillPending(current: bigint | undefined | null, reservation: No
  * Sent chosen-nonce transitions past their lifetime whose nonce Platform does
  * not show consumed. Their answer was lost and they may never have reached
  * Platform, so they no longer hold unrelated writes back; but they may still
- * execute, so a later write to the same target waits for them (it could
- * otherwise execute first), and so does a payment the SDK signs while one is
- * past the tip (the SDK could sign its nonce).
+ * execute. A later write to the same target takes the same nonce, so only one
+ * of the two can execute and the older can never land after the newer. A
+ * payment the SDK signs waits while one is past the tip (the SDK could sign
+ * its nonce).
  */
 function dormantWrites(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
   return (reservation?.pending ?? []).filter((p) => p.sent && p.nonce !== null && p.expiresAt !== null && p.expiresAt <= now &&
@@ -427,12 +430,15 @@ function renewPending(ownerId: string, contractId: string, entry: PendingTransit
  * ({@link dormantWrites}). Throws {@link NONCE_STORE_ERROR} when that can't be stored,
  * and the transition must then not be sent.
  */
-function markSent(ownerId: string, contractId: string, entry: PendingTransition): void {
+function markSent(ownerId: string, contractId: string, entry: PendingTransition, replaces?: PendingTransition): void {
   const reservation = loadReservation(ownerId, contractId);
   saveReservation(ownerId, contractId, {
     mark: max(reservation?.mark ?? BigInt(0), entry.nonce ?? BigInt(0)),
     floor: reservation?.floor ?? BigInt(0),
-    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, sent: true, expiresAt: Date.now() + PENDING_LIFETIME_MS }],
+    pending: [
+      ...(reservation?.pending ?? []).filter((p) => p.id !== entry.id && p.id !== replaces?.id),
+      { ...entry, sent: true, expiresAt: Date.now() + PENDING_LIFETIME_MS },
+    ],
   });
 }
 
@@ -522,8 +528,8 @@ function isVerdict(error: unknown): boolean {
  * ({@link PAYMENT_PENDING_ERROR}).
  * Unknown SDK nonces still hold writes back. While one is outstanding, a
  * chosen nonce never takes the last slot Drive accepts, which stays for creates.
- * A dormant chosen write ({@link dormantWrites}) holds back a later write with
- * its scope, and a payment while its nonce is past the tip.
+ * A later write with a dormant chosen write's scope ({@link dormantWrites})
+ * takes its nonce; a payment waits while one is past the tip.
  * It calls `sending` right before its broadcast, and must not send when that throws.
  *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
@@ -546,13 +552,14 @@ export async function withSdkSignedWrite<T>(
   const send = async () => {
     let polls = 0;
     // Without a chosen-nonce builder (a payment), it waits behind a wallet payment request too.
-    const { current, value } = await (writeWithNonce ? awaitNonce : awaitPaymentNonce)<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
+    const { current, value } = await (writeWithNonce ? awaitNonce : awaitPaymentNonce)<{ nonce: bigint | null; replaces?: PendingTransition }>(ownerId, contractId, (tip, reservation) => {
       const pending = stillPending(tip, reservation);
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
         (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
       const dormant = dormantWrites(tip, reservation);
-      if (scope !== undefined && dormant.some((entry) => entry.scope === scope)) return null;
+      const sameTarget = scope === undefined ? [] : dormant.filter((entry) => entry.scope === scope);
+      if (sameTarget.length > 0) return writeWithNonce && sameTarget.length === 1 ? { nonce: sameTarget[0].nonce, replaces: sameTarget[0] } : null;
       if (!writeWithNonce && dormant.some((entry) => entry.nonce !== null && entry.nonce > tipOf(tip))) return null;
       if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
         const nonce = allocateNonce(tip, reservation);
@@ -569,7 +576,8 @@ export async function withSdkSignedWrite<T>(
       const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
       const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
       try {
-        const result = await writeWithNonce(value.nonce, () => markSent(ownerId, contractId, entry));
+        // Taking a dormant write's nonce drops it once this one is sent: from then on only one of them can execute.
+        const result = await writeWithNonce(value.nonce, () => markSent(ownerId, contractId, entry, value.replaces));
         clearInterval(alive);
         renewPending(ownerId, contractId, entry);
         // An affected-state answer can be a snapshot rather than execution proof: released early only once a
@@ -584,7 +592,7 @@ export async function withSdkSignedWrite<T>(
           const reservation = loadReservation(ownerId, contractId);
           if (reservation) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
         } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
-        // It may still execute: later writes to the same target wait for it through its lifetime.
+        // It may still execute: later writes to the same target wait for it through its lifetime, then take its nonce.
         else renewPending(ownerId, contractId, entry);
         throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
       }
