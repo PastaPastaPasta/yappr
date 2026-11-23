@@ -46,6 +46,8 @@ const WALLET_SIGN_TIMEOUT_MS = 300000
 // transfer document is "ours" (created after the QR went up).
 const CLOCK_SKEW_MARGIN_MS = 60000
 
+const UNRESOLVED_TIP = "Your wallet request can no longer be used, and the tip hasn't shown up."
+
 type ModalState =
   | 'input'
   | 'confirming'
@@ -352,8 +354,21 @@ export function TipModal() {
     setState('success')
   }, [user, refreshBalance])
 
+  // A QR this session showed may have paid, and its outcome is not proved: nothing else is built or signed.
+  const showUnresolved = useCallback(() => {
+    walletSessionRef.current++
+    setWalletUri(null)
+    setWalletExpired(false)
+    setError(UNRESOLVED_TIP)
+    setState('unconfirmed')
+  }, [])
+
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
+    if (shownRequestRef.current) {
+      showUnresolved()
+      return
+    }
     setState('processing')
     setError(null)
     const result = await tipService.sendYappTipLocal(
@@ -397,29 +412,37 @@ export function TipModal() {
    * we sent it, and a floor would hide it.
    */
   const recheckTip = useCallback(async () => {
-    if (!user || !recipientInfo) return false
+    if (!user || !recipientInfo) return null
     const match = tipService.tipMatch(recipientInfo.id, yappAmountBig, tipTarget, noteMessage)
-    const result = await tipService.confirmYappTip(user.identityId, match)
-    if (result.success) {
-      finishYappTip()
-      return true
-    }
-    setError(result.error ?? null)
-    return false
-  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage, finishYappTip])
+    return tipService.confirmYappTip(user.identityId, match)
+  }, [user, recipientInfo, yappAmountBig, tipTarget, noteMessage])
 
   /**
    * Ask the chain first, act second. Both "check again" buttons go through
    * here, so neither the "couldn't confirm" screen nor the expired QR — which
    * the user could scan into a SECOND transfer — offers a fresh send before
    * the first one has been ruled out. `onStillMissing` runs only when no proof
-   * turned up.
+   * turned up, and neither runs once the modal session that asked has ended
+   * (closed, or the account switched).
    */
   const checkTipLanded = (onStillMissing: () => void) => {
+    const session = walletSessionRef.current
     setState('confirming-landed')
     recheckTip()
-      .then(landed => { if (!landed) onStillMissing() })
-      .catch(err => { logger.error('Tip re-check failed:', err); onStillMissing() })
+      .then(result => {
+        if (walletSessionRef.current !== session) return
+        if (result?.success) {
+          finishYappTip()
+          return
+        }
+        setError(result?.error ?? null)
+        onStillMissing()
+      })
+      .catch(err => {
+        if (walletSessionRef.current !== session) return
+        logger.error('Tip re-check failed:', err)
+        onStillMissing()
+      })
   }
 
   // Leave the dash-st: QR screen. Bumping the generation counter discards any
@@ -452,22 +475,23 @@ export function TipModal() {
     setWalletExpired(false)
     const key = JSON.stringify([recipientInfo.id, yappAmountBig.toString(), tipTarget ?? null, noteMessage ?? null])
     try {
-      // This session's QR, while it may still execute, is shown again for the same tip with its own match
-      // and holds any other back; it is kept until a new one replaces it or it is proved retired.
+      // This session's QR is shown again for the same tip with its own match while it may still execute,
+      // and holds any other back. Once it can't, it may still have paid, so nothing else is built.
       const shown = shownRequestRef.current?.ownerId === user.identityId ? shownRequestRef.current : null
       if (shown) {
         const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
         if (walletSessionRef.current !== session) return
-        if (live && shown.key !== key) {
+        if (!live) {
+          showUnresolved()
+          return
+        }
+        if (shown.key !== key) {
           exitWalletSign(PAYMENT_PENDING_ERROR)
           return
         }
-        if (live) {
-          walletMatchRef.current = shown.match
-          setWalletUri(shown.uri)
-          return
-        }
-        if (shownRequestRef.current === shown) shownRequestRef.current = null
+        walletMatchRef.current = shown.match
+        setWalletUri(shown.uri)
+        return
       }
       // Recipient, amount, post and message all have to agree before a row
       // counts as this tip, plus a time floor so an identical earlier tip to
@@ -533,6 +557,7 @@ export function TipModal() {
     }, 5000)
 
     return () => {
+      finished = true
       clearTimeout(budget)
       clearInterval(poll)
     }
@@ -1045,7 +1070,7 @@ export function TipModal() {
                         <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the tip land yet</p>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
                           If your wallet already broadcast it, your balance will update shortly. Otherwise check again
-                          for a fresh request.
+                          to show the request again.
                         </p>
                         <Button onClick={() => checkTipLanded(startWalletSign)} className="w-full">
                           Check again
@@ -1089,8 +1114,8 @@ export function TipModal() {
                       <p className="text-lg font-medium">Couldn&apos;t confirm your tip</p>
                       <p className="text-sm text-gray-600 dark:text-gray-400">{error}</p>
                       <p className="text-xs text-gray-500">
-                        Your wallet or this browser already broadcast {amountLabel}. Sending again would transfer it a
-                        second time, so check first.
+                        Your wallet or this browser may already have sent {amountLabel}. Sending again could transfer it
+                        a second time, so check first.
                       </p>
                     </div>
                     <div className="flex gap-3">

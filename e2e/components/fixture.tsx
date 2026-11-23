@@ -7,6 +7,7 @@ import { LiveThreadStatusFixture, ThreadStatusFixture } from './thread-status-fi
 import { BlogManagementFixture } from './blog-management-fixture'
 import { BlogEditorFixture } from './blog-editor-fixture'
 import { PasskeyEnrolFixture } from './passkey-enrol-fixture'
+import { PaymentModalFixture } from './payment-modal-fixture'
 
 declare global {
   interface Window {
@@ -20,8 +21,11 @@ const root = document.getElementById('root')
 if (!root) throw new Error('Component fixture root is missing')
 const fixture = new URLSearchParams(window.location.search).get('fixture')
 const threadState = fixture?.startsWith('thread-') ? fixture.slice('thread-'.length) : null
+const params = new URLSearchParams(window.location.search)
 createRoot(root).render(
-  fixture === 'passkey-enrol' ? (
+  fixture === 'buy-yapp' || fixture === 'tip' ? (
+    <PaymentModalFixture modal={fixture === 'tip' ? 'tip' : 'buy'} signing={params.get('signing') === 'local' ? 'local' : 'wallet'} />
+  ) : fixture === 'passkey-enrol' ? (
     <PasskeyEnrolFixture />
   ) : fixture === 'blog-management' ? (
     <BlogManagementFixture />

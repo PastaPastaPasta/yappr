@@ -1,4 +1,5 @@
 // Test-only boundaries: no identity lookup or state transition is real.
+import { useSyncExternalStore } from 'react'
 import { getEncryptionKey, getEncryptionKeyType } from '@/lib/secure-storage'
 import { scopedKey } from '@/lib/storage-scope'
 
@@ -54,8 +55,26 @@ export function snapshot() {
   }
 }
 
+// The payment-modal fixture switches accounts through this; every other fixture keeps the one user.
+let signedIn = user
+const authListeners = new Set<() => void>()
+const subscribeAuth = (listener: () => void) => {
+  authListeners.add(listener)
+  return () => { authListeners.delete(listener) }
+}
+const refreshBalance = async () => {}
+declare global {
+  interface Window {
+    switchAuthUser?: (identityId: string) => void
+  }
+}
+window.switchAuthUser = (identityId) => {
+  signedIn = { identityId }
+  authListeners.forEach((listener) => listener())
+}
+
 export function useAuth() {
-  return { user }
+  return { user: useSyncExternalStore(subscribeAuth, () => signedIn), refreshBalance }
 }
 
 // Stored per feed on chain; the settings card reads them off the feed, never constants.
@@ -73,7 +92,7 @@ export const privateFeedService = {
 }
 export const adoptUnfinishedMove = async () => 0
 export const usePrivateFeedMove = () => null
-export const identityService = { hasEncryptionKey: async () => true }
+export const identityService = { hasEncryptionKey: async () => true, getBalance: async () => ({ confirmed: 1_000_000_000_000 }) }
 export const validateEncryptionKey = async () => ({
   isValid: true,
   privateKey: Uint8Array.from({ length: 32 }, (_, index) => index === 31 ? 1 : 0),

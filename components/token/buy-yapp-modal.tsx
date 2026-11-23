@@ -59,6 +59,8 @@ const MODAL_TITLES: Record<ModalState, string> = {
 // the wallet (matches the key-registration flow's 5-minute window).
 const WALLET_SIGN_TIMEOUT_MS = 300000
 
+const UNRESOLVED_PURCHASE = "Your wallet request can no longer be used, and the purchase hasn't shown up in your balance."
+
 export function BuyYappModal() {
   const { isOpen, reason, signing, close } = useBuyYappModal()
   // Opened for a wallet-login user: skip local signing (their login key is
@@ -81,9 +83,9 @@ export function BuyYappModal() {
   // purchased amount.
   const [walletUri, setWalletUri] = useState<string | null>(null)
   const [walletExpired, setWalletExpired] = useState(false)
-  const walletBaselineRef = useRef<bigint | null>(null)
-  // The QR this modal session built, shown again by "Check again" while it may still execute.
-  const shownRequestRef = useRef<{ ownerId: string; key: string; uri: string; nonce: bigint; baseline: bigint } | null>(null)
+  // The QR this modal session built, shown again by "Check again" while it may still execute, with the
+  // balance its purchase is detected against (the lowest seen while it was up).
+  const shownRequestRef = useRef<{ ownerId: string; key: string; uri: string; nonce: bigint; amount: bigint; baseline: bigint } | null>(null)
 
   // An account switch ends the modal session: the QR and any wallet work in flight belong to the old identity.
   const sessionIdentity = user?.identityId
@@ -117,7 +119,6 @@ export function BuyYappModal() {
       setShowCosts(false)
       setWalletUri(null)
       setWalletExpired(false)
-      walletBaselineRef.current = null
       shownRequestRef.current = null
       walletSessionRef.current++
     }
@@ -163,8 +164,21 @@ export function BuyYappModal() {
     setState('success')
   }, [refreshBalance])
 
+  // A QR this session showed may have paid, and its outcome is not proved: nothing else is built or signed.
+  const showUnresolved = useCallback(() => {
+    walletSessionRef.current++
+    setWalletUri(null)
+    setWalletExpired(false)
+    setError(UNRESOLVED_PURCHASE)
+    setState('unconfirmed')
+  }, [])
+
   const handleBuy = async () => {
     if (!user || costCredits === null) return
+    if (shownRequestRef.current) {
+      showUnresolved()
+      return
+    }
     setState('processing')
     setError(null)
     // Cap the spend at the exact cost the user just confirmed. If the on-chain
@@ -214,28 +228,32 @@ export function BuyYappModal() {
     setWalletExpired(false)
     const key = `${amountBig}:${costCredits}`
     try {
-      // This session's QR, while it may still execute, is shown again for the same purchase with its own
-      // baseline and holds any other back; it is kept until a new one replaces it or it is proved retired.
+      // This session's QR is shown again for the same purchase while it may still execute, and holds any
+      // other back. Once it can't, it may still have paid: unless the balance shows it did, nothing else is built.
       const shown = shownRequestRef.current?.ownerId === user.identityId ? shownRequestRef.current : null
       if (shown) {
         const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
         if (walletSessionRef.current !== session) return
-        if (live && shown.key !== key) {
+        if (!live) {
+          const balance = await tokenService.getBalance(user.identityId)
+          if (walletSessionRef.current !== session) return
+          if (balance >= shown.baseline + shown.amount) {
+            setYappBalance(balance)
+            finishPurchase()
+          } else showUnresolved()
+          return
+        }
+        if (shown.key !== key) {
           exitWalletSign(PAYMENT_PENDING_ERROR)
           return
         }
-        if (live) {
-          walletBaselineRef.current = shown.baseline
-          setWalletUri(shown.uri)
-          return
-        }
-        if (shownRequestRef.current === shown) shownRequestRef.current = null
+        setWalletUri(shown.uri)
+        return
       }
       // Baseline balance fetched fresh so the success check ("balance grew by
       // the purchased amount") can't trip on a stale value from modal open.
       const baseline = await tokenService.getBalance(user.identityId)
       if (walletSessionRef.current !== session) return
-      walletBaselineRef.current = baseline
       const request = await buildUnsignedDirectPurchaseTransition(user.identityId, amountBig, costCredits)
       // Abandoned before its QR went up: no wallet has it, so free its nonce.
       if (walletSessionRef.current !== session) {
@@ -243,7 +261,7 @@ export function BuyYappModal() {
         return
       }
       const uri = buildYapprStateTransitionUri(request.bytes, getConfiguredNetwork())
-      shownRequestRef.current = { ownerId: user.identityId, key, uri, nonce: request.nonce, baseline }
+      shownRequestRef.current = { ownerId: user.identityId, key, uri, nonce: request.nonce, amount: amountBig, baseline }
       setWalletUri(uri)
     } catch (err) {
       if (walletSessionRef.current !== session) return
@@ -263,7 +281,8 @@ export function BuyYappModal() {
   // contract nonce, so it expires naturally if the user posts or likes in the
   // meantime.
   useEffect(() => {
-    if (state !== 'walletSign' || !walletUri || !user) return
+    const shown = shownRequestRef.current
+    if (state !== 'walletSign' || !walletUri || !user || !shown) return
     const identityId = user.identityId
 
     const budget = setTimeout(() => {
@@ -274,16 +293,15 @@ export function BuyYappModal() {
     let finished = false
     const poll = setInterval(() => {
       tokenService.getBalance(identityId).then(balance => {
-        const baseline = walletBaselineRef.current
-        if (finished || baseline === null) return
-        if (balance < baseline) {
+        if (finished) return
+        if (balance < shown.baseline) {
           // The user spent YAPP mid-flow (e.g. posted from another tab).
           // Re-baseline to the running minimum so the wallet's purchase still
           // registers as "+amount over the low-water mark" when it lands.
-          walletBaselineRef.current = balance
+          shown.baseline = balance
           return
         }
-        if (balance < baseline + amountBig) return
+        if (balance < shown.baseline + shown.amount) return
         finished = true
         setYappBalance(balance)
         finishPurchase()
@@ -293,10 +311,11 @@ export function BuyYappModal() {
     }, 5000)
 
     return () => {
+      finished = true
       clearTimeout(budget)
       clearInterval(poll)
     }
-  }, [state, walletUri, user, amountBig, finishPurchase])
+  }, [state, walletUri, user, finishPurchase])
 
   const handleClose = () => {
     if (state === 'processing') return
@@ -504,7 +523,7 @@ export function BuyYappModal() {
                           <div className="py-6 text-center space-y-4">
                             <p className="font-medium text-gray-900 dark:text-white">Haven&apos;t seen the purchase land yet</p>
                             <p className="text-sm text-gray-600 dark:text-gray-400">
-                              If your wallet already broadcast it, your balance will update shortly. Otherwise check again for a fresh request.
+                              If your wallet already broadcast it, your balance will update shortly. Otherwise check again to show the request again.
                             </p>
                             <Button
                               onClick={startWalletSign}
