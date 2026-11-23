@@ -18,7 +18,7 @@
  * is read. Schemas come from the chain, not the repo. Read-only; any network.
  * Exits 1 when any index read fails.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { connectSdk } from './sdk-env.mjs';
 import { describeErr } from './owner-keys.mjs';
@@ -182,8 +182,12 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
       };
     }));
   }
+  const rankedPrefix = prefix.filter(([field]) => field !== index.timeRange?.on);
+  const unread = (kind) => ({ ok: false, errors: [`declares a ${kind} ranking without its ${kind} property on this index; check it by hand`] });
+  if (index.rankedAverageable && !index.averageable) result.rankedAvg = unread('average');
+  if (index.rankedSummable && !index.summable) result.rankedSum = unread('sum');
   if (index.rankedAverageable && index.averageable) {
-    const where = prefix;
+    const where = rankedPrefix;
     result.rankedAvg = await firstAnswer([{
       label: `groupBy ${last}, avg(${index.averageable})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
       run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'avg', property: index.averageable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
@@ -191,9 +195,10 @@ async function readIndex(contractId, type, schema, index, sample, ownerId) {
   }
 
   if (index.rankedSummable && index.summable) {
+    const where = rankedPrefix;
     result.rankedSum = await firstAnswer([{
-      label: `groupBy ${last}, sum(${index.summable})${prefix.length ? `, ${prefix.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
-      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(prefix.length ? { where: prefix } : {}), ...window('oldest') })).entries.length,
+      label: `groupBy ${last}, sum(${index.summable})${where.length ? `, ${where.length} pins` : ''}${index.timeRange ? ', oldest window' : ''}`,
+      run: async () => (await sdk.documents.ranked({ ...base, groupBy: last, aggregate: { type: 'sum', property: index.summable }, direction: 'desc', limit: 3, ...(where.length ? { where } : {}), ...window('oldest') })).entries.length,
     }]);
   }
 
@@ -218,7 +223,7 @@ async function sampleDocument(contractId, type) {
 }
 
 const targets = contractSet();
-if (values.out) writeFileSync(values.out, '', { flag: 'wx', mode: 0o600 });
+if (values.out && existsSync(values.out)) throw new Error(`${values.out} already exists; pick another --out`);
 sdk = await connectSdk();
 await sdk.epoch.current();
 const report = { network: process.env.NETWORK, readAt: new Date().toISOString(), contracts: [] };
@@ -259,7 +264,7 @@ for (const { name, id } of targets) {
   }
 }
 Object.assign(report, { indexes, failed, missingContracts: missing, coldWindowIndexes: cold });
-if (values.out) writeFileSync(values.out, `${JSON.stringify(report, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2)}\n`, { flag: 'r+' });
+if (values.out) writeFileSync(values.out, `${JSON.stringify(report, (_, value) => (typeof value === 'bigint' ? value.toString() : value), 2)}\n`, { flag: 'wx', mode: 0o600 });
 console.log(`${indexes - failed}/${indexes} indexes answered${failed ? `, ${failed} FAILED` : ''}` +
   `${cold ? `; ${cold} hit an unproved window` : ''}${missing ? `; ${missing} contract(s) NOT FOUND` : ''}`);
 process.exitCode = failed || missing ? 1 : 0;
