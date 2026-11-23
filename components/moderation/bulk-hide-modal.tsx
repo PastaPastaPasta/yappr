@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBulkHideModal } from '@/hooks/use-bulk-hide-modal'
 import { useRecentModeration } from '@/hooks/use-recent-moderation'
 import { labelOptions, relativeTime, type LabelOption } from '@/lib/moderation-labels'
-import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, idsWithin, runBulk, type BulkItem, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary } from '@/lib/moderation-bulk'
+import { HIDE_FEE_CREDITS, UNHIDE_FEE_CREDITS, bulkCostLine, closedKeySheet, freshReads, idsWithin, readPredatesRun, runBulk, tabAfter, withRunChanges, type BulkItem, type BulkKind, type BulkMode, type BulkProgress, type BulkRange, type BulkSummary, type ReadAt, type RunChange } from '@/lib/moderation-bulk'
 import { bulkHideService } from '@/lib/services/bulk-hide-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { MOD_HIDDEN, moderationService, type ModerationReasonInput } from '@/lib/services/moderation-service'
@@ -22,7 +22,7 @@ const CHIP = 'px-3 py-1 rounded-full border text-xs font-medium transition-color
 
 type ListState =
   | { status: 'loading'; count: number }
-  | { status: 'ready'; items: BulkItem[]; truncated: boolean }
+  | { status: 'ready'; items: BulkItem[]; truncated: boolean; stale?: boolean }
   | { status: 'failed' }
 
 const RANGES: ReadonlyArray<{ range: BulkRange; text: string }> = [
@@ -35,6 +35,9 @@ const NO_COUNTS: Record<BulkMode, number | null> = { hide: null, unhide: null }
 
 /** How long after a run the lists are read again, so a node a block behind does not show what just changed. */
 const SETTLE_MS = 4000
+
+/** How many times in a row the lists are read again while a read still predates a run change. */
+const MAX_STALE_REREADS = 5
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
@@ -85,12 +88,34 @@ export function BulkHideModal() {
   const [authorName, setAuthorName] = useState<string | null>(null)
   const stopRef = useRef(false)
   const readRef = useRef(0)
+  /** What runs in this opening changed or found changed, listed where each now belongs over a read proved before it. */
+  const runChangesRef = useRef(new Map<string, RunChange>())
+  /** Reads both tabs again a little later while a read still predates a run change. */
+  const staleReadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const staleReadsRef = useRef(0)
+  /** The last list read that came back, and whether the other tab's count is still being read: a re-read waits for both. */
+  const settledReadRef = useRef(0)
+  const countingRef = useRef(false)
+  /** The next list read is an automatic re-read: the rows on screen stay until it lands, and stay if it fails. */
+  const backgroundReadRef = useRef(false)
+  /** Which opening, author and tab the rows on screen were read for ('' while none are): only those are kept through a re-read. */
+  const shownKeyRef = useRef('')
+  /** Drops the other tab's count read still out, so it cannot repaint a badge cleared since. */
+  const dropCountRef = useRef(() => {})
+  /** The newest block time a list read this opening was proved at: a run's by-ID reads are no older. */
+  const listedAtRef = useRef<Record<BulkKind, number>>({ post: -Infinity, reply: -Infinity })
   /** Moves on with every opening and closing: a run started under another ignores itself. */
   const openingRef = useRef(0)
   const authorId = target?.authorId ?? ''
 
   useEffect(() => {
     openingRef.current++
+    readRef.current++
+    backgroundReadRef.current = false
+    shownKeyRef.current = ''
+    dropCountRef.current()
+    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
+    staleReadTimerRef.current = null
     if (!isOpen || !target) return
     setRunning(false)
     setStopping(false)
@@ -102,6 +127,9 @@ export function BulkHideModal() {
     setProgress(null)
     setSummary(null)
     setCounts(NO_COUNTS)
+    runChangesRef.current = new Map()
+    staleReadsRef.current = 0
+    listedAtRef.current = { post: -Infinity, reply: -Infinity }
     setAuthorName(target.authorName ?? null)
     if (!target.authorName) {
       // Only for this opening: a lookup that answers after the dialog was opened for someone else is dropped.
@@ -112,23 +140,76 @@ export function BulkHideModal() {
     }
   }, [isOpen, target])
 
+  /** A read of either tab proved at `readAt` predates a run change: the chain will show more, so read both again (a few times at most per run). */
+  const scheduleStaleRead = useCallback((readAt: ReadAt) => {
+    if (staleReadTimerRef.current || !readPredatesRun(runChangesRef.current, readAt)) return
+    if (staleReadsRef.current >= MAX_STALE_REREADS) return
+    staleReadsRef.current++
+    const opening = openingRef.current
+    const reread = () => {
+      if (openingRef.current === opening && (settledReadRef.current !== readRef.current || countingRef.current)) {
+        staleReadTimerRef.current = setTimeout(reread, SETTLE_MS)
+        return
+      }
+      staleReadTimerRef.current = null
+      if (openingRef.current !== opening) return
+      backgroundReadRef.current = true
+      setReadEpoch((epoch) => epoch + 1)
+    }
+    staleReadTimerRef.current = setTimeout(reread, SETTLE_MS)
+  }, [])
+
+  useEffect(() => () => {
+    if (staleReadTimerRef.current) clearTimeout(staleReadTimerRef.current)
+    staleReadTimerRef.current = null
+  }, [isOpen])
+
+  /** Raises `kind`'s signing floor as soon as a listing page of it lands proved. */
+  const listedAt = useCallback((kind: BulkKind, at: number | undefined) => {
+    if (at !== undefined && Number.isFinite(at)) listedAtRef.current[kind] = Math.max(listedAtRef.current[kind], at)
+  }, [])
+
   /** Reads `which`'s lane afresh from the chain. A later read wins over an earlier one still out. */
   const load = useCallback((which: BulkMode) => {
     if (!authorId) return
     const read = ++readRef.current
-    setList({ status: 'loading', count: 0 })
-    bulkHideService.readAll(authorId, which, (count) => {
-      if (readRef.current === read) setList({ status: 'loading', count })
-    }).then(({ items, truncated }) => {
+    const key = `${openingRef.current}:${authorId}:${which}`
+    const background = backgroundReadRef.current && shownKeyRef.current === key
+    backgroundReadRef.current = false
+    if (!background) {
+      shownKeyRef.current = ''
+      setList({ status: 'loading', count: 0 })
+    }
+    bulkHideService.readAll(authorId, which, {
+      onProgress: (count) => {
+        if (readRef.current === read && !background) setList({ status: 'loading', count })
+      },
+      onProof: (kind, at) => {
+        if (readRef.current === read) listedAt(kind, at)
+      },
+    }).then(({ items: fresh, truncated, ats }) => {
       if (readRef.current !== read) return
+      settledReadRef.current = read
+      const items = withRunChanges(fresh, which, runChangesRef.current, ats)
+      scheduleStaleRead(ats)
+      shownKeyRef.current = key
       setList({ status: 'ready', items, truncated })
       setCounts((current) => ({ ...current, [which]: items.length }))
       // What is no longer listed (done, or changed by someone else) drops out of the selection.
       setSelected((current) => new Set(items.filter((item) => current.has(item.id)).map((item) => item.id)))
     }).catch(() => {
-      if (readRef.current === read) setList({ status: 'failed' })
+      if (readRef.current !== read) return
+      settledReadRef.current = read
+      if (!background) {
+        shownKeyRef.current = ''
+        setList({ status: 'failed' })
+        return
+      }
+      // The rows stay, marked as possibly out of date, and are read again within the same budget.
+      setList((current) => (current.status === 'ready' ? { ...current, stale: true } : current))
+      scheduleStaleRead(NaN)
     })
-  }, [authorId])
+  }, [authorId, scheduleStaleRead, listedAt])
 
   useEffect(() => {
     if (isOpen && authorId) load(mode)
@@ -139,13 +220,37 @@ export function BulkHideModal() {
     if (!isOpen || !authorId) return
     const other: BulkMode = mode === 'hide' ? 'unhide' : 'hide'
     let cancelled = false
-    bulkHideService.count(authorId, other).then((count) => {
+    dropCountRef.current = () => {
+      cancelled = true
+      countingRef.current = false
+    }
+    const changes = runChangesRef.current
+    // Once a run changed something the count comes from the list, with the
+    // changes its read predates; a list too long to read whole has no count.
+    countingRef.current = changes.size > 0
+    const counted: Promise<number | null> = changes.size === 0
+      ? bulkHideService.count(authorId, other)
+      : bulkHideService.readAll(authorId, other, {
+        onProof: (kind, at) => {
+          if (!cancelled) listedAt(kind, at)
+        },
+      }).then(({ items, truncated, ats }) => {
+        if (!cancelled) scheduleStaleRead(ats)
+        return truncated ? null : withRunChanges(items, other, changes, ats).length
+      })
+    counted.then((count) => {
       if (!cancelled) setCounts((current) => ({ ...current, [other]: count }))
-    }).catch(() => { /* the tab shows no count */ })
+    }).catch(() => {
+      // No count is better than one from before the run.
+      if (!cancelled) setCounts((current) => ({ ...current, [other]: null }))
+    }).finally(() => {
+      if (!cancelled) countingRef.current = false
+    })
     return () => {
       cancelled = true
+      countingRef.current = false
     }
-  }, [isOpen, authorId, mode, readEpoch])
+  }, [isOpen, authorId, mode, readEpoch, scheduleStaleRead, listedAt])
 
   const options: readonly LabelOption[] = useMemo(
     () => (seatedReasons.required ? labelOptions(seatedReasons.reasons) : labelOptions(null)),
@@ -167,6 +272,7 @@ export function BulkHideModal() {
 
   const switchMode = (next: BulkMode) => {
     if (running || next === mode) return
+    backgroundReadRef.current = false
     setMode(next)
     setSelected(new Set())
     setProgress(null)
@@ -226,19 +332,28 @@ export function BulkHideModal() {
       return
     }
     const { batch } = opened
+    const settles = freshReads(runChangesRef.current, (kind) => listedAtRef.current[kind])
     const hideLabel = chosen?.label ?? 0
     const result = await runBulk(batchItems, {
       apply: (item, guard) => mode === 'hide'
         ? batch.hide(item.kind, item.id, { label: hideLabel, reason: reasonFor(item) }, guard)
         : batch.unhide(item.kind, item.id, reasonFor(item), guard),
-      pending: (pendingItems) => bulkHideService.pending(pendingItems, mode),
-      recheck: (item) => bulkHideService.pending([item], mode).then((read) => (read.todo.has(item.id) ? 'todo' : read.changed.has(item.id) ? 'changed' : 'done')),
+      pending: (pendingItems) => bulkHideService.pending(pendingItems, mode).then(settles(pendingItems)),
+      recheck: (item) => bulkHideService.pending([item], mode).then(settles([item])),
       // The cards already on screen show each change as soon as it is confirmed:
       // this run's own as it asked, one settled by a read as the read holds it.
       onDone: (item, change) => {
+        if (sameOpening()) {
+          // Known as of its own block time, or the proved read that settled it.
+          runChangesRef.current.set(item.id, { item, tab: tabAfter(mode, change), at: change.marks === undefined ? change.at : change.seenAt })
+        }
         const at = change.at ?? Date.now()
         const asked = mode === 'hide' ? { mod: MOD_HIDDEN, modLabel: hideLabel, moderatedBy: moderatorId, moderatedAt: at } : null
-        recordMarks(item.id, change.marks === undefined ? asked : change.marks, { at: change.marks === undefined ? at : change.marks?.moderatedAt })
+        recordMarks(item.id, change.marks === undefined ? asked : change.marks, change.marks === undefined ? { at } : { at: change.marks?.moderatedAt ?? change.seenAt, observed: true })
+      },
+      // One that changed some other way (a tombstone, a legal hold) is not done, but is listed where the read found it.
+      onSeen: (item, seen) => {
+        if (sameOpening()) runChangesRef.current.set(item.id, { item, tab: seen.tab, at: seen.seenAt })
       },
       onProgress: (next) => {
         if (current()) setProgress(next)
@@ -255,8 +370,11 @@ export function BulkHideModal() {
     // read can reach a node a block behind, so give the network a moment
     // first; the list reads as loading meanwhile, so nothing stale is offered.
     setSelected(new Set(batchItems.map((item) => item.id)))
+    staleReadsRef.current = 0
     readRef.current++
     setList({ status: 'loading', count: 0 })
+    dropCountRef.current()
+    setCounts(NO_COUNTS)
     await new Promise((resolve) => setTimeout(resolve, SETTLE_MS))
     if (current()) setReadEpoch((epoch) => epoch + 1)
   }
@@ -279,7 +397,9 @@ export function BulkHideModal() {
   const listed = new Set(items.map((item) => item.id))
   // A failure that changed some other way (a legal hold) stays listed whatever the lists show; one to try again only while it is still listed to do.
   const failures = (summary?.failures ?? []).filter((failure) => !failure.retryable || (list.status === 'ready' && listed.has(failure.item.id)))
-  const retryable = failures.filter((failure) => failure.retryable).map((failure) => failure.item)
+  // Retried as the rows now listed, so a retry is checked against the same proof as the main button.
+  const retryIds = new Set(failures.filter((failure) => failure.retryable).map((failure) => failure.item.id))
+  const retryable = items.filter((item) => retryIds.has(item.id))
 
   return (
     <Modal open={isOpen} onOpenChange={(open) => !open && close()} className="w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto">
@@ -383,6 +503,12 @@ export function BulkHideModal() {
               </li>
             ))}
           </ul>
+        )}
+        {list.status === 'ready' && list.stale && (
+          <p className="p-3 text-xs text-gray-500">
+            Couldn&apos;t check this list again, so it may be out of date.{' '}
+            <button type="button" className="underline disabled:opacity-50" disabled={running} onClick={() => setReadEpoch((epoch) => epoch + 1)} data-testid="bulk-hide-reread">Check again</button>
+          </p>
         )}
         {list.status === 'ready' && list.truncated && (
           <p className="p-3 text-xs text-gray-500">Showing their newest {items.length.toLocaleString()}. Hide these, then open this again for the rest.</p>

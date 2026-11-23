@@ -15,13 +15,22 @@ import {
   newestFirst,
   readEveryPage,
   runBulk,
+  laneOf,
+  oldestBlockTime,
+  provedAt,
+  freshReads,
+  readPredatesRun,
+  tabAfter,
+  withRunChanges,
   type BulkApplyResult,
   type BulkChange,
   type BulkChainRead,
   type BulkChainState,
   type BulkItem,
+  type BulkMode,
   type BulkPage,
   type BulkProgress,
+  type BulkSeen,
 } from './moderation-bulk'
 
 const HOUR = 3_600_000
@@ -73,19 +82,36 @@ describe('paging', () => {
   const pages = (all: BulkItem[], size: number) => vi.fn(async (startAfter?: string): Promise<BulkPage> => {
     const from = startAfter ? all.findIndex((i) => i.id === startAfter) + 1 : 0
     const items = all.slice(from, from + size)
-    return { items, ...(items.length === size ? { next: items[items.length - 1].id } : {}) }
+    return { items, at: 1000 - from, ...(items.length === size ? { next: items[items.length - 1].id } : {}) }
   })
 
   it('reads every page until a short one', async () => {
     const all = Array.from({ length: 250 }, (_, n) => item(`i${n}`, n))
     const readPage = pages(all, 100)
     const seen: number[] = []
-    const result = await readEveryPage(readPage, { onPage: (items) => seen.push(items.length) })
+    const proofs: (number | undefined)[] = []
+    const result = await readEveryPage(readPage, { onPage: (items, at) => { seen.push(items.length); proofs.push(at) } })
+    // Each page's proof is handed on as it lands, before the listing completes.
+    expect(proofs).toEqual([1000, 900, 800])
     expect(result.items).toHaveLength(250)
     expect(result.truncated).toBe(false)
     expect(readPage).toHaveBeenCalledTimes(3)
     expect(readPage.mock.calls.map(([cursor]) => cursor)).toEqual([undefined, 'i99', 'i199'])
     expect(seen).toEqual([100, 200, 250])
+    // As fresh as its oldest page.
+    expect(result.at).toBe(800)
+  })
+
+  it('dates a read made of several answers by the oldest, and by none when one carries no block time', () => {
+    expect(oldestBlockTime([30, 10, 20])).toBe(10)
+    expect(oldestBlockTime([30, undefined])).toBeNaN()
+    expect(oldestBlockTime([30, NaN])).toBeNaN()
+  })
+
+  it("dates each document by the answer that covered it, else the read's oldest", () => {
+    const read = { todo: new Set<string>(), changed: new Set<string>(), at: 10, ats: new Map([['a', 30]]) }
+    expect(provedAt(read, 'a')).toBe(30)
+    expect(provedAt(read, 'b')).toBe(10)
   })
 
   it('reads one more page after a full last one, and stops at the cap', async () => {
@@ -118,6 +144,146 @@ describe('cost', () => {
     expect(bulkCostLine(0, 100_000_000)).toBe('About 100M credits (6¢) each.')
     expect(bulkCostLine(10, 100_000_000)).toBe('About 1B credits (60¢), 100M credits (6¢) each.')
     expect(bulkCostLine(1)).toContain(formatCredits(HIDE_FEE_CREDITS))
+    expect(bulkCostLine(1, 100_000_000)).toBe('About 100M credits (6¢).')
+  })
+})
+
+describe("a run's changes over a lagging read", () => {
+  const doc = (id: string, createdAt: number): BulkItem => ({ id, kind: 'post', createdAt, preview: id })
+  const NOW = 1_000_000
+  /** Run changes, each known as of a block time (default: just after the read at NOW). */
+  const changes = (...entries: [BulkItem, BulkMode | null, number?][]) => new Map(entries.map(([item, tab, at = NOW + 1]) => [item.id, { item, tab, at }] as const))
+
+  it('puts a document where the change leaves it: its own transition per the run, a read per its marks', () => {
+    expect(tabAfter('hide', {})).toBe('unhide')
+    expect(tabAfter('unhide', {})).toBe('hide')
+    expect(tabAfter('hide', { marks: null })).toBe('hide')
+    // What a chain read holds for a listed document: no mod, maybe who cleared it.
+    expect(tabAfter('unhide', { marks: {} })).toBe('hide')
+    expect(tabAfter('unhide', { marks: { moderatedBy: 'x', moderatedAt: 1 } as BulkChange['marks'] })).toBe('hide')
+    expect(tabAfter('unhide', { marks: { mod: 1 } as BulkChange['marks'] })).toBe('unhide')
+    expect(tabAfter('hide', { marks: { mod: 2 } as BulkChange['marks'] })).toBeNull()
+    // A read that says where it lists the document wins over its marks (a tombstone keeps its mod).
+    expect(tabAfter('unhide', { marks: { mod: 1 } as BulkChange['marks'], tab: null })).toBeNull()
+    expect(tabAfter('hide', { marks: null, tab: 'unhide' })).toBe('unhide')
+  })
+
+  it('lists a document a read found in neither tab (a legal hold, a tombstone) in neither, whatever a lagging read shows', () => {
+    const held = doc('h', 2)
+    const other = doc('o', 1)
+    const neither = changes([held, null])
+    expect(withRunChanges([held, other], 'hide', neither, NOW).map((item) => item.id)).toEqual(['o'])
+    expect(withRunChanges([held], 'unhide', neither, NOW)).toEqual([])
+  })
+
+  it('knows where a stored document is listed', () => {
+    expect(laneOf({ live: 1 })).toBe('hide')
+    expect(laneOf({ live: 1, mod: 1 })).toBe('unhide')
+    expect(laneOf({ live: 1, mod: 2 })).toBeNull()
+    expect(laneOf({ live: 0 })).toBeNull()
+  })
+
+  it('reads the lists again while a read was proved before a run change', () => {
+    expect(readPredatesRun(new Map(), NOW)).toBe(false)
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NOW)).toBe(false)
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW], [doc('b', 2), 'unhide', NOW + 20]), NOW)).toBe(true)
+    // A read of unknown age may predate any of them.
+    expect(readPredatesRun(changes([doc('a', 1), 'hide', NOW]), NaN)).toBe(true)
+  })
+
+  it("refuses a run's by-ID read older than the list it acts on, a run change, or a read it already accepted", () => {
+    const at = (time: number, ats: [string, number][] = []): BulkChainRead => ({ todo: new Set(), changed: new Set(), at: time, ats: new Map(ats) })
+    const a = doc('a', 1)
+    const b = doc('b', 2)
+    // The row came from a list proved at NOW: an older answer cannot settle it.
+    const listed = freshReads(new Map(), () => NOW)
+    expect(() => listed([a])(at(NOW - 20))).toThrow()
+    expect(listed([a])(at(NOW))).toEqual(at(NOW))
+    // ...nor one older than an answer this run already accepted for it.
+    expect(() => listed([a])(at(NOW + 10, [['a', NOW + 5]]))).not.toThrow()
+    expect(() => listed([a])(at(NOW + 1))).toThrow()
+    // A run change to b at NOW + 20 is a floor for b only; each is judged by its own answer.
+    const run = freshReads(changes([b, 'hide', NOW + 20]), () => -Infinity)
+    expect(() => run([a, b])(at(NOW, [['b', NOW + 20]]))).not.toThrow()
+    expect(() => run([b])(at(NOW + 19))).toThrow()
+    // Nothing known of a document: even an answer of unknown age is taken.
+    expect(() => freshReads(new Map(), () => -Infinity)([a])(at(NaN))).not.toThrow()
+    // A change or list of unknown proof time sets no floor; the list's still does.
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => -Infinity)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => NaN)([a])(at(NOW))).not.toThrow()
+    expect(() => freshReads(changes([a, 'hide', NaN]), () => NOW)([a])(at(NOW - 1))).toThrow()
+    // The floor is the newest list read as of each answer, not as of the run's start.
+    let newest = NOW
+    const live = freshReads(new Map(), () => newest)
+    expect(() => live([b])(at(NOW))).not.toThrow()
+    newest = NOW + 30
+    expect(() => live([a])(at(NOW + 10))).toThrow()
+  })
+
+  it("floors each listed row by its own page's proof, not the listing's oldest page", async () => {
+    const pages: Record<string, BulkPage> = { post: { items: [doc('p', 2)], at: NOW + 50 }, reply: { items: [], at: NOW } }
+    const posts = await readEveryPage(async () => pages.post)
+    const replies = await readEveryPage(async () => pages.reply)
+    const [row] = newestFirst(posts.items, replies.items)
+    expect(oldestBlockTime([posts.at, replies.at])).toBe(NOW)
+    expect(row.provedAt).toBe(NOW + 50)
+    const at = (time: number): BulkChainRead => ({ todo: new Set(), changed: new Set(), at: time })
+    const guard = freshReads(new Map(), () => oldestBlockTime([posts.at, replies.at]))
+    expect(() => guard([row])(at(NOW + 49))).toThrow()
+    expect(() => guard([row])(at(NOW + 50))).not.toThrow()
+  })
+
+  it('guards each type by its own newest listing, so an older reply listing cannot lower the floor for a post', () => {
+    const post = doc('p', 2)
+    const floors = { post: NOW + 1, reply: NOW - 1 }
+    const read = (time: number): BulkChainRead => ({ todo: new Set([post.id]), changed: new Set(), at: time })
+    const guard = freshReads(new Map(), (kind) => floors[kind])
+    expect(() => guard([post])(read(NOW))).toThrow()
+    expect(() => guard([post])(read(NOW + 1))).not.toThrow()
+  })
+
+  it('lets a read proved after the run show what changed since, however soon it came (an author\'s tombstone)', () => {
+    const hidden = doc('h', 2)
+    // This run hid h at NOW; its author deleted it a block later, and the Hidden read was proved after that.
+    expect(withRunChanges([], 'unhide', changes([hidden, 'unhide', NOW]), NOW + 1)).toEqual([])
+    // A node still a block behind the hide lists it as showing: the run's change wins there.
+    expect(withRunChanges([hidden], 'hide', changes([hidden, 'unhide', NOW]), NOW - 1)).toEqual([])
+  })
+
+  it('dates each type by its own listing, so an older reply page cannot bring back a post a fresher post page omits', () => {
+    const post = doc('p', 2)
+    const reply: BulkItem = { id: 'r', kind: 'reply', createdAt: 1, preview: 'r' }
+    // The run unhid p and r at NOW; p's author deleted it a block later, which the post listing (NOW + 1) shows.
+    const unhid = changes([post, 'hide', NOW], [reply, 'hide', NOW])
+    const ats = { post: NOW + 1, reply: NOW - 1 }
+    expect(withRunChanges([], 'hide', unhid, ats).map((item) => item.id)).toEqual(['r'])
+    expect(readPredatesRun(changes([post, 'hide', NOW]), ats)).toBe(false)
+    expect(readPredatesRun(unhid, ats)).toBe(true)
+  })
+
+  it('never ranks a change of unknown block time above a read, and ranks every known one above a read of unknown age', () => {
+    const x = doc('x', 1)
+    const unknown = new Map([[x.id, { item: x, tab: 'unhide' as const }]])
+    expect(withRunChanges([x], 'hide', unknown, NOW).map((item) => item.id)).toEqual(['x'])
+    expect(withRunChanges([x], 'hide', changes([x, 'unhide', NOW]), undefined)).toEqual([])
+  })
+
+  it('lists what the run unhid under Showing and not under Hidden, whatever the read reached', () => {
+    const a = doc('a', 3)
+    const b = doc('b', 2)
+    const c = doc('c', 1)
+    const unhid = changes([a, 'hide'], [b, 'hide'])
+    // One unhide landed a block after the other: this node shows only a, and still lists b as hidden.
+    expect(withRunChanges([a, c], 'hide', unhid, NOW).map((item) => item.id)).toEqual(['a', 'b', 'c'])
+    expect(withRunChanges([b], 'unhide', unhid, NOW)).toEqual([])
+  })
+
+  it('leaves a read alone when the run changed nothing in it, or when it was proved at or after its changes', () => {
+    const read = [doc('x', 2), doc('y', 1)]
+    expect(withRunChanges(read, 'unhide', new Map(), NOW)).toEqual(read)
+    expect(withRunChanges(read, 'unhide', changes([doc('z', 3), 'hide']), NOW)).toEqual(read)
+    // Another moderator unhid x after this run hid it: a read proved since wins.
+    expect(withRunChanges([doc('x', 2)], 'hide', changes([doc('x', 2), 'unhide', NOW]), NOW).map((item) => item.id)).toEqual(['x'])
   })
 })
 
@@ -144,8 +310,20 @@ describe('runBulk', () => {
         return { todo: still, changed: new Set(changed), marks: new Map(done.map((i) => [i.id, null])) }
       }),
       onDone: vi.fn<(item: BulkItem, change: BulkChange) => void>(),
+      onSeen: vi.fn<(item: BulkItem, seen: BulkSeen) => void>(),
       pause: vi.fn<(ms: number) => Promise<void>>(async () => {}),
-      ...(recheck ? { recheck: vi.fn(recheck) } : {}),
+      // The one-document read just before signing, found as `recheck` says (done: listed, no marks).
+      ...(recheck ? {
+        recheck: vi.fn(async (i: BulkItem): Promise<BulkChainRead> => {
+          const state = await recheck(i)
+          return {
+            todo: new Set(state === 'todo' ? [i.id] : []),
+            changed: new Set(state === 'changed' ? [i.id] : []),
+            marks: new Map(state === 'done' ? [[i.id, null]] : []),
+            lanes: new Map<string, BulkMode | null>(state === 'done' ? [[i.id, 'unhide']] : state === 'changed' ? [[i.id, null]] : []),
+          }
+        }),
+      } : {}),
       cancelled,
       onProgress,
     }
@@ -167,6 +345,28 @@ describe('runBulk', () => {
     expect(summary.done).toBe(3)
     // Every confirmed one reaches the cards on screen: a and b with what the read holds, c as this run asked.
     expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { marks: null }], ['b', { marks: null }], ['c', {}]])
+  })
+
+  it('settles, announces and sends nothing on a first read the guard refuses as older than the row', async () => {
+    const d = deps()
+    const guard = freshReads(new Map(), () => NOW)
+    const stale = d.pending
+    const pending = vi.fn(async (asked: readonly BulkItem[]) => guard(asked)({ ...(await stale(asked)), todo: new Set(), at: NOW - 1 }))
+    const summary = await runBulk(items, { ...d, pending })
+    expect(summary).toMatchObject({ done: 0, stopped: 'fatal' })
+    expect(d.apply).not.toHaveBeenCalled()
+    expect(d.onDone).not.toHaveBeenCalled()
+  })
+
+  it('places a proved write by the lane of the document it proved: an unhide over a fresh tombstone lists it in neither tab', async () => {
+    const results: Record<string, BulkApplyResult> = {
+      a: { success: true, moderatedAt: NOW, document: { live: 1 } },
+      b: { success: true, moderatedAt: NOW, document: { mod: 1 } },
+    }
+    const d = deps({ apply: async (i) => results[i.id] ?? ok })
+    await runBulk(items, d)
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', { at: NOW, tab: 'hide' }], ['b', { at: NOW, tab: null }], ['c', {}]])
+    expect(tabAfter('unhide', { at: NOW, tab: null })).toBeNull()
   })
 
   it('counts a document the read no longer finds, without announcing it', async () => {
@@ -194,8 +394,28 @@ describe('runBulk', () => {
     expect(d.apply.mock.calls.map(([i]) => i.id)).toEqual(['a'])
     expect(summary.done).toBe(2)
     expect(summary.failures.map((f) => f.item.id)).toEqual(['b'])
-    // c was done by someone else: counted, not announced.
-    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['a'])
+    // c was done by someone else: counted, and announced with what that read holds, where it lists it.
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['a', {}], ['c', { marks: null, tab: 'unhide' }]])
+    // b is not done, but the read found it in neither tab: that is said apart from the count.
+    expect(d.onSeen.mock.calls.map(([i, seen]) => [i.id, seen])).toEqual([['b', { tab: null }]])
+  })
+
+  it('says where the first read lists one that changed some other way, as of that read, without counting it', async () => {
+    const d = deps()
+    // The author deleted a hidden post before its unhide: it keeps its mod, but is listed nowhere.
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(['a']), marks: new Map(), lanes: new Map([['a', null]]), at: 5 }))
+    const summary = await runBulk([items[0]], d)
+    expect(summary.done).toBe(0)
+    expect(summary.failures).toMatchObject([{ item: { id: 'a' }, retryable: false }])
+    expect(d.onDone).not.toHaveBeenCalled()
+    expect(d.onSeen).toHaveBeenCalledWith(items[0], { tab: null, seenAt: 5 })
+  })
+
+  it('dates what a read settled by the block time it was proved at', async () => {
+    const d = deps()
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(), marks: new Map([['a', null]]), lanes: new Map([['a', 'hide']]), at: 7 }))
+    await runBulk([items[0]], d)
+    expect(d.onDone).toHaveBeenCalledWith(items[0], { marks: null, tab: 'hide', seenAt: 7 })
   })
 
   it('sends nothing for a document it cannot read again, and stops after three in a row', async () => {
@@ -205,6 +425,15 @@ describe('runBulk', () => {
     expect(d.apply).not.toHaveBeenCalled()
     expect(summary.failures).toHaveLength(SAME_REFUSAL_LIMIT)
     expect(summary.stopped).toBe('fatal')
+  })
+
+  it('announces a document the first read found under a legal hold with the tab that read lists it in: neither', async () => {
+    const d = deps()
+    const held = { mod: 2 } as NonNullable<BulkChange['marks']>
+    d.pending.mockImplementationOnce(async () => ({ todo: new Set(), changed: new Set(), marks: new Map([['a', held]]), lanes: new Map([['a', null]]) }))
+    await runBulk([items[0]], d)
+    expect(d.onDone.mock.calls[0][1]).toEqual({ marks: held, tab: null })
+    expect(tabAfter('hide', d.onDone.mock.calls[0][1])).toBeNull()
   })
 
   it('counts an unconfirmed change the chain shows landed, announcing what the read holds', async () => {
@@ -253,13 +482,24 @@ describe('runBulk', () => {
     expect(summary).toMatchObject({ done: 0, stopped: 'fatal', failures: [] })
   })
 
-  it('counts "already that way" as done', async () => {
-    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)) })
+  it('settles "already that way" by the proved read at the end, with what it holds', async () => {
+    const reads = [async (asked: readonly BulkItem[]) => new Set(asked.map((i) => i.id)), async () => new Set<string>()]
+    const d = deps({
+      apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)),
+      pending: (asked) => (reads.shift() ?? reads[0])(asked),
+    })
     const summary = await runBulk(items, d)
     expect(d.apply).toHaveBeenCalledTimes(3)
-    expect(summary.done).toBe(3)
-    // Already that way by no change of this run's: nothing is said of its marks or when.
-    expect(d.onDone.mock.calls.map(([i]) => i.id)).toEqual(['b', 'c'])
+    expect(summary).toMatchObject({ done: 3, failures: [] })
+    expect(d.pending.mock.calls.map(([asked]) => asked.map((i) => i.id))).toEqual([['a', 'b', 'c'], ['a']])
+    expect(d.onDone.mock.calls.map(([i, change]) => [i.id, change])).toEqual([['b', {}], ['c', {}], ['a', { marks: null }]])
+  })
+
+  it('does not count "already that way" when the read at the end still finds it to do', async () => {
+    const d = deps({ apply: vi.fn(async (i: BulkItem): Promise<BulkApplyResult> => (i.id === 'a' ? { success: false, errorCode: 'NOTHING_TO_CHANGE' } : ok)) })
+    const summary = await runBulk(items, d)
+    expect(summary.done).toBe(2)
+    expect(summary.failures.map((f) => [f.item.id, f.retryable])).toEqual([['a', true]])
   })
 
   it('reports progress, counting only confirmed changes', async () => {

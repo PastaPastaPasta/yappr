@@ -37,6 +37,12 @@ export function inLane(doc: Readonly<Record<string, unknown>>, mode: BulkMode): 
   return doc.live === 1 && mod === laneMod(mode)
 }
 
+/** The tab a stored document is listed in: Showing, Hidden, or neither (a legal hold, a tombstone, unlisted). */
+export function laneOf(doc: Readonly<Record<string, unknown>>): BulkMode | null {
+  if (inLane(doc, 'hide')) return 'hide'
+  return inLane(doc, 'unhide') ? 'unhide' : null
+}
+
 /** One of the account's documents, as the dialog lists it. */
 export interface BulkItem {
   id: string
@@ -44,6 +50,65 @@ export interface BulkItem {
   createdAt: number
   /** The first of its text, for the moderator to recognise it by. */
   preview: string
+  /** The block time the listing page it came from was proved at. */
+  provedAt?: number
+}
+
+/**
+ * A document a run changed or read, the tab it is listed in now (null:
+ * neither), and the chain's block time that state is known at: its own
+ * transition's, or the proved read's. Without one it never outranks a read.
+ */
+export interface RunChange {
+  item: BulkItem
+  tab: BulkMode | null
+  at?: number
+}
+
+/**
+ * The tab a run's change puts its document in: one settled by a chain read
+ * where the read lists it, this run's own transition per `mode`, else per the
+ * marks it holds. Null when it is in neither (a legal hold, or gone).
+ */
+export function tabAfter(mode: BulkMode, change: BulkChange): BulkMode | null {
+  if (change.tab !== undefined) return change.tab
+  if (change.marks === undefined) return mode === 'hide' ? 'unhide' : 'hide'
+  const mod = change.marks?.mod
+  if (mod === undefined) return 'hide'
+  return mod === laneMod('unhide') ? 'unhide' : null
+}
+
+/** When a read was proved: one block time for all of it, or one per type, as posts and replies are separate listings. */
+export type ReadAt = number | undefined | Readonly<Record<BulkKind, number>>
+
+/**
+ * The run changes a read proved at block time `readAt` (NaN or undefined:
+ * unknown) predates. Each came back proved, but the read can reach a node a
+ * block behind them; a read at or after one already shows it, and whatever
+ * changed since (an author's tombstone).
+ */
+function newerThan(changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): RunChange[] {
+  return [...changes.values()].filter((change) => {
+    if (change.at === undefined) return false
+    const at = typeof readAt === 'object' ? readAt[change.item.kind] : readAt
+    return at === undefined || !Number.isFinite(at) || change.at > at
+  })
+}
+
+/** `tab`'s list as a read proved it at block time `readAt`, with the run changes it predates where they now belong. */
+export function withRunChanges(items: readonly BulkItem[], tab: BulkMode, changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): BulkItem[] {
+  const recent = newerThan(changes, readAt)
+  if (recent.length === 0) return [...items]
+  const moved = new Map(recent.map((change) => [change.item.id, change]))
+  const kept = items.filter((item) => !moved.has(item.id) || moved.get(item.id)?.tab === tab)
+  const listed = new Set(kept.map((item) => item.id))
+  const added = recent.filter((change) => change.tab === tab && !listed.has(change.item.id)).map((change) => change.item)
+  return added.length === 0 ? kept : [...kept, ...added].sort((a, b) => b.createdAt - a.createdAt)
+}
+
+/** Whether a read proved at block time `readAt` predates a run change: the lists are read again a little later. */
+export function readPredatesRun(changes: ReadonlyMap<string, RunChange>, readAt: ReadAt): boolean {
+  return newerThan(changes, readAt).length > 0
 }
 
 /** How far back "select by time" reaches. */
@@ -70,10 +135,16 @@ export function newestFirst(posts: readonly BulkItem[], replies: readonly BulkIt
   return merged
 }
 
-/** One page of a listing: its items and the cursor for the next, absent on the last page. */
+/** One page of a listing: its items, the cursor for the next (absent on the last page), and the block time it was proved at. */
 export interface BulkPage {
   items: BulkItem[]
   next?: string
+  at?: number
+}
+
+/** The block time of a read made of several proved answers: the oldest of them (NaN when one carries none). */
+export function oldestBlockTime(times: readonly (number | undefined)[]): number {
+  return times.reduce<number>((oldest, time) => (time === undefined || !Number.isFinite(time) ? NaN : Math.min(oldest, time)), Infinity)
 }
 
 /** Most documents of one type the dialog reads for an account. */
@@ -82,30 +153,33 @@ export const MAX_ITEMS_PER_KIND = 5000
 /**
  * Every page of a listing, from the first, following `next` until a page has
  * none or `max` items are in. `onPage` sees the total so far after each page.
- * Returns the items and whether `max` cut the listing short.
+ * `onPage` also gets the page's block time as it lands. Returns the items,
+ * whether `max` cut the listing short, and the block time of its oldest page.
  */
 export async function readEveryPage(
   readPage: (startAfter?: string) => Promise<BulkPage>,
-  { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[]) => void } = {}
-): Promise<{ items: BulkItem[]; truncated: boolean }> {
+  { max = MAX_ITEMS_PER_KIND, onPage }: { max?: number; onPage?: (items: readonly BulkItem[], at: number | undefined) => void } = {}
+): Promise<{ items: BulkItem[]; truncated: boolean; at: number }> {
   const items: BulkItem[] = []
   const seen = new Set<string>()
+  const times: (number | undefined)[] = []
   let cursor: string | undefined
   let stalled = false
   do {
     const page = await readPage(cursor)
+    times.push(page.at)
     for (const item of page.items) {
       if (seen.has(item.id)) continue
       seen.add(item.id)
-      items.push(item)
+      items.push(page.at !== undefined && Number.isFinite(page.at) ? { ...item, provedAt: page.at } : item)
     }
-    onPage?.(items)
+    onPage?.(items, page.at)
     // A cursor that does not move would read the same page forever; the
     // listing may go on past it, so it is reported as incomplete.
     stalled = page.next !== undefined && page.next === cursor
     cursor = page.next && !stalled ? page.next : undefined
   } while (cursor && items.length < max)
-  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max }
+  return { items: items.slice(0, max), truncated: stalled || cursor !== undefined || items.length > max, at: oldestBlockTime(times) }
 }
 
 /**
@@ -150,6 +224,7 @@ export function bulkCostLine(count: number, perDocument = HIDE_FEE_CREDITS): str
   const total = count * perDocument
   const each = `${formatCredits(perDocument)} credits (${formatCents(creditsToCents(perDocument))}) each`
   if (count === 0) return `About ${each}.`
+  if (count === 1) return `About ${formatCredits(total)} credits (${formatCents(creditsToCents(total))}).`
   return `About ${formatCredits(total)} credits (${formatCents(creditsToCents(total))}), ${each}.`
 }
 
@@ -160,6 +235,8 @@ export interface BulkApplyResult {
   errorCode?: string
   /** The change's own block time, from the proved answer. */
   moderatedAt?: number
+  /** The changed document as the proved answer gave it. */
+  document?: Readonly<Record<string, unknown>>
 }
 
 /** One document that did not change, and why, in words. */
@@ -177,7 +254,17 @@ export interface BulkFailure {
  */
 export interface BulkChange {
   marks?: ModerationMarks | null
+  /** For one settled by a chain read or this run's proved write: the tab the proved document is listed in (null: neither). */
+  tab?: BulkMode | null
   at?: number
+  /** For one settled by a chain read: the block time the read was proved at. */
+  seenAt?: number
+}
+
+/** Where a chain read found a document that changed some other way: the tab it is listed in (null: neither), as of `seenAt`. */
+export interface BulkSeen {
+  tab: BulkMode | null
+  seenAt?: number
 }
 
 export interface BulkProgress {
@@ -214,6 +301,49 @@ export interface BulkChainRead {
   changed: Set<string>
   /** What each document read holds now (null: no marks), for the cards on screen. */
   marks?: Map<string, ModerationMarks | null>
+  /** The tab each document no longer to do is listed in now ({@link laneOf}; null: neither, or gone). */
+  lanes?: Map<string, BulkMode | null>
+  /** The block time the read was proved at (the oldest of its answers). */
+  at?: number
+  /** The block time of the answer that covered each document, where it differs from `at`. */
+  ats?: Map<string, number>
+}
+
+/** The block time the answer covering `id` in `read` was proved at. */
+export function provedAt(read: BulkChainRead, id: string): number | undefined {
+  return read.ats?.get(id) ?? read.at
+}
+
+/**
+ * A run's guard on its by-ID reads ({@link BulkRunDeps.pending}, `recheck`):
+ * a read answering an asked document from before `listedAt(kind)` (the newest
+ * list of its type the dialog showed, as of the read), the listing page it came from, what a run proved of it, or an earlier read this
+ * run accepted for it cannot settle it, and rejects, so nothing is counted,
+ * announced or sent on it.
+ */
+export function freshReads(changes: ReadonlyMap<string, RunChange>, listedAt: (kind: BulkKind) => number) {
+  const accepted = new Map<string, number>()
+  const known = (time: number | undefined) => (time !== undefined && Number.isFinite(time) ? time : -Infinity)
+  const floor = (item: BulkItem) => Math.max(known(listedAt(item.kind)), known(item.provedAt), known(changes.get(item.id)?.at), known(accepted.get(item.id)))
+  return (asked: readonly BulkItem[]) => (read: BulkChainRead): BulkChainRead => {
+    const behind = asked.some((item) => {
+      const min = floor(item)
+      const at = provedAt(read, item.id)
+      return min !== -Infinity && !(at !== undefined && at >= min)
+    })
+    if (behind) throw new Error('read behind what the dialog already showed')
+    for (const item of asked) {
+      const at = provedAt(read, item.id)
+      if (at !== undefined && Number.isFinite(at)) accepted.set(item.id, Math.max(at, accepted.get(item.id) ?? -Infinity))
+    }
+    return read
+  }
+}
+
+/** Where `item` stands in a chain read ({@link BulkRunDeps.pending}): an id in neither set is done. */
+export function stateIn(read: BulkChainRead, item: BulkItem): BulkChainState {
+  if (read.todo.has(item.id)) return 'todo'
+  return read.changed.has(item.id) ? 'changed' : 'done'
 }
 
 export interface BulkRunDeps {
@@ -228,15 +358,18 @@ export interface BulkRunDeps {
   /**
    * Reads one document again just before its transition is signed, so a
    * change since the first read (another moderator's legal hold, above all)
-   * is never overwritten. Rejects when the read fails.
+   * is never overwritten: the same read as `pending`, for that one. Rejects
+   * when the read fails.
    */
-  recheck?: (item: BulkItem) => Promise<BulkChainState>
+  recheck?: (item: BulkItem) => Promise<BulkChainRead>
   /**
    * Each document confirmed in the state asked for: by this run's own proved
    * transition (`change.marks` undefined, `at` its block time), or by a chain
    * read (`change.marks` what the read holds, which may be another moderator's).
    */
   onDone?: (item: BulkItem, change: BulkChange) => void
+  /** Each document a chain read found changed some other way, with where that read lists it: not done, but no longer where it was. */
+  onSeen?: (item: BulkItem, seen: BulkSeen) => void
   onProgress?: (progress: BulkProgress) => void
   /** Checked before each transition: true stops the run after the one under way. */
   cancelled?: () => boolean
@@ -349,13 +482,34 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const progress: BulkProgress = { total: items.length, done: 0, current: null, failures: [] }
   const report = () => deps.onProgress?.({ ...progress, failures: [...progress.failures] })
 
-  /** Counts `item` done; announces it only when this run's own transition did it. */
+  /** Counts `item` done, and announces it with what confirmed it. */
   const markDone = (item: BulkItem, change: BulkChange) => {
     progress.done++
     deps.onDone?.(item, change)
   }
   const fail = (item: BulkItem, error: string, retryable = true) => {
     progress.failures.push({ item, error, retryable })
+  }
+  const seenAt = (read: BulkChainRead, item: BulkItem) => {
+    const at = provedAt(read, item.id)
+    return at !== undefined ? { seenAt: at } : {}
+  }
+  /** What a read that found `item` done holds for it; null when it did not find it (gone). */
+  const readChange = (read: BulkChainRead, item: BulkItem): BulkChange | null => {
+    const marks = read.marks?.get(item.id)
+    if (marks === undefined) return null
+    const tab = read.lanes?.get(item.id)
+    return tab === undefined ? { marks, ...seenAt(read, item) } : { marks, tab, ...seenAt(read, item) }
+  }
+  /** Where a read that found `item` changed some other way lists it, if the read says. */
+  const readSeen = (read: BulkChainRead, item: BulkItem): BulkSeen | null => {
+    const tab = read.lanes?.get(item.id)
+    return tab === undefined ? null : { tab, ...seenAt(read, item) }
+  }
+  /** Fails `item` as changed some other way, and says where the read lists it now. */
+  const failChanged = (item: BulkItem, seen: BulkSeen | null) => {
+    fail(item, CHANGED_ERROR, false)
+    if (seen) deps.onSeen?.(item, seen)
   }
   /**
    * Counts what a chain read says is done or changed; returns what it says is
@@ -366,12 +520,12 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const settle = (read: BulkChainRead, asked: readonly BulkItem[], stillError: string | null): BulkItem[] => {
     const still: BulkItem[] = []
     for (const item of asked) {
-      if (read.changed.has(item.id)) fail(item, CHANGED_ERROR, false)
+      if (read.changed.has(item.id)) failChanged(item, readSeen(read, item))
       else if (!read.todo.has(item.id)) {
         // Announced with what the read holds; a document the read did not find (gone) is counted, not announced.
-        const marks = read.marks?.get(item.id)
-        if (marks === undefined) progress.done++
-        else markDone(item, { marks })
+        const change = readChange(read, item)
+        if (change) markDone(item, change)
+        else progress.done++
       }
       else if (stillError) fail(item, stillError)
       else still.push(item)
@@ -398,6 +552,9 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   let streakCount = 0
   let waitMs = 0
 
+  /** What the check just before a transition read for each one it found done already, or changed some other way. */
+  const foundDone = new Map<string, BulkChange | null>()
+  const foundChanged = new Map<string, BulkSeen | null>()
   /**
    * Whether `item` may still be sent: the run not stopped, and the chain read
    * just now still showing it to do. Its answer, when it says no, as the loop
@@ -406,16 +563,23 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
   const mayStillSend = async (item: BulkItem): Promise<BulkApplyResult | null> => {
     if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
     if (!deps.recheck) return null
-    let state: BulkChainState
+    let read: BulkChainRead
     try {
-      state = await deps.recheck(item)
+      read = await deps.recheck(item)
     } catch {
       return { success: false, error: RECHECK_ERROR, errorCode: RECHECK_FAILED }
     }
     // The read took a moment: a stop pressed meanwhile still stops before signing.
     if (cancelled()) return { success: false, errorCode: 'CANCELLED' }
-    if (state === 'done') return { success: false, errorCode: FOUND_DONE }
-    if (state === 'changed') return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+    const state = stateIn(read, item)
+    if (state === 'done') {
+      foundDone.set(item.id, readChange(read, item))
+      return { success: false, errorCode: FOUND_DONE }
+    }
+    if (state === 'changed') {
+      foundChanged.set(item.id, readSeen(read, item))
+      return { success: false, error: CHANGED_ERROR, errorCode: FOUND_CHANGED }
+    }
     return null
   }
 
@@ -452,23 +616,28 @@ export async function runBulk(items: readonly BulkItem[], deps: BulkRunDeps): Pr
     const result = await send(item)
     if (result.success) {
       // As this run asked; ordered by its own block time when the answer gave it.
-      markDone(item, result.moderatedAt !== undefined ? { at: result.moderatedAt } : {})
+      markDone(item, {
+        ...(result.moderatedAt !== undefined ? { at: result.moderatedAt } : {}),
+        ...(result.document ? { tab: laneOf(result.document) } : {}),
+      })
       streakCode = null
       continue
     }
     if (result.errorCode === ALREADY) {
-      // Already that way on chain, by no change of this run's: counted, nothing said of when.
-      progress.done++
+      // Already that way on chain, by no change of this run's: settled by the proved read at the end, like an unconfirmed one.
+      unconfirmed.push(item)
       streakCode = null
       continue
     }
     if (result.errorCode === FOUND_DONE) {
-      // Done before its turn, perhaps by another moderator and some other way: nothing is said of its marks.
-      progress.done++
+      // Done before its turn, perhaps by another moderator and some other way: announced with what that read holds.
+      const change = foundDone.get(item.id)
+      if (change) markDone(item, change)
+      else progress.done++
       continue
     }
     if (result.errorCode === FOUND_CHANGED) {
-      fail(item, CHANGED_ERROR, false)
+      failChanged(item, foundChanged.get(item.id) ?? null)
       continue
     }
     if (closedKeySheet(result.errorCode)) {
