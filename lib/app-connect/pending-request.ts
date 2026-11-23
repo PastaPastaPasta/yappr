@@ -35,34 +35,39 @@ function inOrder<T>(operation: () => Promise<T>): Promise<T> {
  * One slot per kind of request, so a sign-in and a renewal (which names its
  * identity) never overwrite each other's pending request.
  */
-export function requestRecordsFor(identityHint: string | undefined): RequestRecordStore {
+export function requestRecordsFor(identityHint: string | undefined): RequestRecordStore & {
+  /** As `load`, but a failed read or unwrap throws rather than reading as no request. */
+  loadStrict(): Promise<StoredAppConnectRequest | null>
+} {
   const secretName = `pending-request:${identityHint ?? 'login'}`
+  // Read and (for a stale request) delete under the same lock, so a
+  // request another tab saves meanwhile is never the one deleted.
+  const read = (strict: boolean) => inOrder(async () => {
+    const network = appConnectSessions.network()
+    const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName, { strict })
+    if (!bytes) return null
+    let record: StoredAppConnectRequest | null = null
+    try {
+      record = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
+    } catch {
+      // Unreadable: treated like a stale request below.
+    } finally {
+      bytes.fill(0)
+    }
+    // A stale or unreadable request is of no use to anyone: forget it.
+    if (!record) await appConnectSessions.keyStore().deleteSecret(network, secretName)
+    return record
+  })
   return {
     async load() {
-      const network = appConnectSessions.network()
       try {
-        // Read and (for a stale request) delete under the same lock, so a
-        // request another tab saves meanwhile is never the one deleted.
-        return await inOrder(async () => {
-          const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
-          if (!bytes) return null
-          let record: StoredAppConnectRequest | null = null
-          try {
-            record = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
-          } catch {
-            // Unreadable: treated like a stale request below.
-          } finally {
-            bytes.fill(0)
-          }
-          // A stale or unreadable request is of no use to anyone: forget it.
-          if (!record) await appConnectSessions.keyStore().deleteSecret(network, secretName)
-          return record
-        })
+        return await read(false)
       } catch (error) {
         logger.warn('App Connect: could not read the pending request:', error)
         return null
       }
     },
+    loadStrict: () => read(true),
     async save(record) {
       const bytes = encoder.encode(JSON.stringify(record))
       try {

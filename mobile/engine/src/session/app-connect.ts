@@ -6,7 +6,6 @@ import {
   AppConnectLogin,
   type AppConnectLoginState,
   type AppConnectUnavailableReason,
-  type RequestRecordStore,
   type StoredAppConnectRequest,
 } from '@/lib/app-connect/login-flow'
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
@@ -104,22 +103,28 @@ async function markActiveSignIn(slot: string, durable?: () => Promise<void>): Pr
   }
 }
 
+/** Throws when the mark cannot be read, so a launch never takes a failed read for no mark. */
 async function activeSignIn(): Promise<string | null> {
+  const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), ACTIVE_SIGN_IN, { strict: true })
+  if (!bytes) return null
   try {
-    const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), ACTIVE_SIGN_IN)
-    return bytes ? decoder.decode(bytes) : null
-  } catch {
-    return null
+    return decoder.decode(bytes)
+  } finally {
+    bytes.fill(0)
   }
 }
 
-function recordsFor(kind: AppConnectRequestKind): RequestRecordStore {
+function recordsFor(kind: AppConnectRequestKind): ReturnType<typeof requestRecordsFor> {
   return requestRecordsFor(slotOf(kind))
 }
 
-/** The stored request of this kind, if it is still answerable. A "Sign in again" slot holds one account's at a time. */
-async function loadRequest(kind: AppConnectRequestKind): Promise<StoredAppConnectRequest | null> {
-  const record = await recordsFor(kind).load()
+/**
+ * The stored request of this kind, if it is still answerable. A "Sign in again" slot holds one account's at a time.
+ * `strict`: a failed read throws rather than reading as no request.
+ */
+async function loadRequest(kind: AppConnectRequestKind, strict = false): Promise<StoredAppConnectRequest | null> {
+  const records = recordsFor(kind)
+  const record = await (strict ? records.loadStrict() : records.load())
   return record && record.identityHint === kind.identityHint ? record : null
 }
 
@@ -315,12 +320,13 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
     /**
      * The sign-in a signed-out launch should resume, if one is stored: a
      * plain one (`reauth: null`), or signing `reauth` in again. When both
-     * are, the one opened last (the newer one if that is unknown).
+     * are, the one opened last (the newer one if that is unknown). Throws
+     * when a slot or the mark cannot be read: that is no answer, not an empty slot.
      */
     async pendingSignIn(): Promise<{ reauth: string | null } | null> {
       if (!isAppConnectBuild() || !appConnectPins()) return null
-      const plain = await loadRequest({})
-      const again = await requestRecordsFor(REAUTH_SLOT).load()
+      const plain = await loadRequest({}, true)
+      const again = await requestRecordsFor(REAUTH_SLOT).loadStrict()
       const reauth = again?.identityHint
       if (!again || reauth === undefined) return plain ? { reauth: null } : null
       if (!plain) return { reauth }

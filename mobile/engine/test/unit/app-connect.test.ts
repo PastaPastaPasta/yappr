@@ -849,6 +849,28 @@ describe('App Connect requests across kills and engine restarts', () => {
     expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
   })
 
+  it('answers a launch whose pending sign-in read failed with an error, not an empty slot, and finds it on the next read', async () => {
+    const engine = await signedOut()
+    await engine.appConnectStart({ reauth: OWNER, returnTo: RETURN_TO })
+    const next = boot()
+    session = next
+    const store = appConnectSessions.keyStore()
+    const load = vi.spyOn(store, 'loadSecret').mockRejectedValueOnce(new Error('storage failed'))
+    try {
+      await expect(next.appConnectPendingSignIn()).rejects.toThrow('storage failed')
+    } finally {
+      load.mockRestore()
+    }
+    const decrypt = vi.spyOn(globalThis.crypto.subtle, 'decrypt').mockRejectedValueOnce(new Error('device key unavailable'))
+    try {
+      await expect(next.appConnectPendingSignIn()).rejects.toThrow('device key unavailable')
+    } finally {
+      decrypt.mockRestore()
+    }
+    expect(await next.appConnectPendingSignIn()).toEqual({ reauth: OWNER })
+    expect(stored()).toContain(REAUTH_SLOT)
+  })
+
   it('keeps the account signed in when its pending request cannot be deleted at sign-out', async () => {
     const engine = await walletSignIn(await signedOut(), [32, 33])
     const renewal = await engine.appConnectStart({ renew: true, returnTo: RETURN_TO })
