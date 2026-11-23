@@ -55,3 +55,12 @@ test('a draft the anchor shows but no identity read confirms yet is awaited, nev
   await page.evaluate(() => window.confirmMessagingKey?.())
   await expect.poll(() => setup(page), { timeout: 15_000 }).toEqual({ sent: 0, adopted: 1, ready: 1 })
 })
+
+test('a lagging read after the anchor showed the draft does not offer it again', async ({ page }) => {
+  await page.goto('/?fixture=set-up-messaging&lagging')
+  await expect.poll(() => page.evaluate(() => window.anchorChecks), { timeout: 15_000 }).toBeGreaterThanOrEqual(3)
+  await expect(page.getByText('Checking your account…')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Set up messaging' })).toHaveCount(0)
+  await page.evaluate(() => window.confirmMessagingKey?.())
+  await expect.poll(() => setup(page), { timeout: 15_000 }).toEqual({ sent: 0, adopted: 1, ready: 1 })
+})

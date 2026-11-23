@@ -167,7 +167,8 @@ export function SetUpMessaging({
       let state = await anchorKeyState(next)
       for (let check = 1; state === 'pending' && check < CONFIRM_ATTEMPTS && !cancelled; check++) {
         await sleep(CONFIRM_DELAY_MS)
-        state = await anchorKeyState(next)
+        const observed = await anchorKeyState(next)
+        if (observed !== 'none') state = observed
       }
       return state
     }

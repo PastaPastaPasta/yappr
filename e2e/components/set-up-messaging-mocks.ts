@@ -8,6 +8,8 @@ const setup = { sent: 0, adopted: 0 }
 const walletOnly = new URLSearchParams(location.search).has('wallet')
 /** `?pending`: the anchor already shows this draft, but no identity read confirms it until the test does. */
 const pendingAtLoad = new URLSearchParams(location.search).has('pending')
+/** `?lagging`: as `?pending`, but the second read comes from a node a block behind and shows no key. */
+const laggingAtLoad = new URLSearchParams(location.search).has('lagging')
 let handedOff = false
 let confirmed = false
 let confirm: () => void = () => undefined
@@ -38,7 +40,8 @@ export const loginKeyIsMaster = async () => !walletOnly
 /** No key until an update is sent or the wallet is asked; after that, this draft once the test confirms it. */
 export async function anchorKeyState(): Promise<AnchorKeyState> {
   window.anchorChecks = (window.anchorChecks ?? 0) + 1
-  if (pendingAtLoad) return confirmed ? 'this-key' : 'pending'
+  if (laggingAtLoad && window.anchorChecks === 2) return 'none'
+  if (pendingAtLoad || laggingAtLoad) return confirmed ? 'this-key' : 'pending'
   if (setup.sent === 0 && !handedOff) return 'none'
   if (handedOff) window.walletPolls = (window.walletPolls ?? 0) + 1
   await confirmation
