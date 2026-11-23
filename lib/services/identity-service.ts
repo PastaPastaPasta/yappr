@@ -5,11 +5,72 @@ import { signerService } from './signer-service';
 import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/wasm-sdk';
 import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config';
 import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup';
-import { keyNetwork } from '@/lib/constants'
+import { DEVNET_NAME, getConfiguredNetwork, keyNetwork } from '@/lib/constants'
 import { bytesEqual, requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
 import { extractErrorMessage, sentWriteOutcomeUnknown } from '@/lib/error-utils'
 import { getSecurityLevelName, KeyPurpose, KeyType, SecurityLevel, resolveKeyPurpose, resolveKeyType } from '@/lib/crypto/identity-keys'
+import { crossTabLocks, withIdentityUpdateLock } from '@/lib/identity-write-lock'
+import { sleep } from '@/lib/retry-utils'
+import { Identifier } from '@dashevo/wasm-sdk'
+
+/**
+ * Where the revision floor is kept: by chain and identity, never under a
+ * deployment's storage scope. The identity update lock is one per origin, so
+ * every build on it for one chain (root, /staging, /testing) must read the
+ * same floor.
+ */
+const chainName = () => (getConfiguredNetwork() === 'devnet' ? `devnet-${DEVNET_NAME}` : getConfiguredNetwork())
+const provedRevisionKey = (identityId: string) => `yappr:identity-revision:${chainName()}:${identityId}`
+const FRESH_READS = 5
+const FRESH_READ_PAUSE_MS = 1500
+export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached the network yet. Try again in a moment."
+
+/** The revision the last identity update this browser proved left the identity at, or null. */
+function provedIdentityRevision(identityId: string): number | null {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(provedRevisionKey(identityId))
+  } catch {
+    // Storage blocked: nothing was noted.
+  }
+  const revision = raw === null ? NaN : Number(raw)
+  return Number.isSafeInteger(revision) ? revision : null
+}
+
+/** Records a proved identity update, so the next one (any tab) waits for a read that has it. */
+export function noteProvedIdentityRevision(identityId: string, revision: unknown): void {
+  const value = Number(revision)
+  if (!Number.isSafeInteger(value) || value <= (provedIdentityRevision(identityId) ?? -1)) return
+  try {
+    localStorage.setItem(provedRevisionKey(identityId), String(value))
+  } catch {
+    // Storage blocked: the next update reads without a floor.
+  }
+}
+
+/**
+ * Under {@link withIdentityUpdateLock}: the identity to build an update on,
+ * read at least as fresh as the last update this browser proved and as
+ * `seenRevision`, a revision the caller already read (a node a block behind
+ * would hand back a key id and revision already taken), with the SDK's cached
+ * identity nonce refreshed (another tab may have used it). Null when there is
+ * no such identity; rejects with {@link STALE_IDENTITY_ERROR} when no read
+ * catches up.
+ */
+export async function identityForUpdate(identityId: string, seenRevision?: bigint | number) {
+  const sdk = await getEvoSdk()
+  try { await sdk.wasm.refreshIdentityNonce(new Identifier(identityId)) } catch { /* best effort */ }
+  const proved = provedIdentityRevision(identityId)
+  const seen = seenRevision !== undefined && Number.isSafeInteger(Number(seenRevision)) ? Number(seenRevision) : null
+  const floor = proved === null ? seen : seen === null ? proved : Math.max(proved, seen)
+  for (let attempt = 0; ; attempt++) {
+    const identity = await sdk.identities.fetch(identityId)
+    if (!identity || floor === null || Number(identity.revision ?? 0) >= floor) return identity
+    if (attempt + 1 >= FRESH_READS) throw new Error(STALE_IDENTITY_ERROR)
+    await sleep(FRESH_READ_PAUSE_MS)
+  }
+}
 
 export interface IdentityPublicKey {
   id: number;
@@ -270,17 +331,45 @@ class IdentityService {
     }
   }
 
-  /** Whether the identity (read fresh) has key `keyId` with exactly `data`; false when not, or the read fails. */
-  private async hasPublicKey(identityId: string, keyId: number, data: Uint8Array): Promise<boolean> {
-    try {
-      const sdk = await getEvoSdk();
-      const identity = await sdk.identities.fetch(identityId);
-      const key = identity?.publicKeys.find((candidate) => candidate.keyId === keyId);
-      return key ? bytesEqual(requireBytes(key.data, 'identity key data'), data) : false;
-    } catch (error) {
-      logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
-      return false;
+  /** The revision of one fresh read whose identity has a key with exactly `data` (and id `keyId` when given), or null. */
+  private async keyRevision(identityId: string, data: Uint8Array, keyId?: number): Promise<number | null> {
+    const sdk = await getEvoSdk();
+    const identity = await sdk.identities.fetch(identityId);
+    const key = identity?.publicKeys.find((candidate) =>
+      (keyId === undefined || candidate.keyId === keyId) && bytesEqual(requireBytes(candidate.data, 'identity key data'), data));
+    return identity && key ? Number(identity.revision ?? 0) : null;
+  }
+
+  /**
+   * The revision of the first fresh read (a few, paced) whose identity has key `keyId` with exactly `data`,
+   * or null when none does.
+   */
+  private async keyReadBackRevision(identityId: string, keyId: number, data: Uint8Array): Promise<number | null> {
+    for (let read = 0; read < FRESH_READS; read++) {
+      if (read > 0) await sleep(FRESH_READ_PAUSE_MS);
+      try {
+        const revision = await this.keyRevision(identityId, data, keyId);
+        if (revision !== null) return revision;
+      } catch (error) {
+        logger.warn(`Could not read back key ${keyId} of ${identityId}:`, extractErrorMessage(error));
+      }
     }
+    return null;
+  }
+
+  /**
+   * For a key confirmed outside the update lock: under the lock, one fresh identity read, and when it has
+   * the key, its revision is recorded so the next update (any tab) builds on it. Returns whether the read
+   * had the key. Where the lock is unavailable nothing is recorded: no update is signed here to read it.
+   */
+  async recordKeyRevision(identityId: string, data: Uint8Array): Promise<boolean> {
+    if (!crossTabLocks()) return await this.keyRevision(identityId, data) !== null;
+    return await withIdentityUpdateLock(identityId, async () => {
+      const revision = await this.keyRevision(identityId, data);
+      if (revision === null) return false;
+      noteProvedIdentityRevision(identityId, revision);
+      return true;
+    });
   }
 
   /**
@@ -359,8 +448,9 @@ class IdentityService {
    * @param encryptionPrivateKey - The private key bytes (32 bytes)
    * @param signingPrivateKeyWif - The MASTER level key for signing (in WIF format)
    * @param contractId - Optional contract ID to bind the key to
-   * @param options.cancelled - Asked right before the broadcast: when it answers true nothing is sent
-   *   and the result is `{ success: false, cancelled: true }`
+   * @param options.cancelled - Asked once the identity update lock is held (it may wait behind another
+   *   tab's update) and again right before the broadcast: when it answers true nothing is sent and the
+   *   result is `{ success: false, cancelled: true }`
    * @returns Result with success status and the new key ID
    */
   async addEncryptionKey(
@@ -370,11 +460,21 @@ class IdentityService {
     _contractId?: string, // Reserved for future use: contract-bound keys
     options: { cancelled?: () => boolean } = {}
   ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
+    return withIdentityUpdateLock(identityId, () => this.addEncryptionKeyLocked(identityId, encryptionPrivateKey, signingPrivateKeyWif, options))
+      .catch((error: unknown) => ({ success: false, error: extractErrorMessage(error) }));
+  }
+
+  private async addEncryptionKeyLocked(
+    identityId: string,
+    encryptionPrivateKey: Uint8Array,
+    signingPrivateKeyWif: string,
+    options: { cancelled?: () => boolean }
+  ): Promise<{ success: boolean; keyId?: number; error?: string; cancelled?: boolean }> {
+    if (options.cancelled?.()) return { success: false, cancelled: true };
     try {
       const sdk = await getEvoSdk();
 
-      // Fetch current identity
-      const identity = await sdk.identities.fetch(identityId);
+      const identity = await identityForUpdate(identityId);
       if (!identity) {
         return { success: false, error: 'Identity not found' };
       }
@@ -437,62 +537,63 @@ class IdentityService {
       const identityJson = identity.toJSON();
       logger.debug('Identity revision before update:', identityJson.revision);
 
-      // Create signer with the master key (for signing the update transition)
-      const signer = await signerService.createSigner(signingPrivateKeyWif);
+      if (options.cancelled?.()) return { success: false, cancelled: true };
 
-      // Also add the NEW encryption key's private key to the signer.
-      // Dash Platform requires a "key proof" signature from each new key being added,
-      // proving ownership of the private key. The SDK looks up the private key by
-      // Hash160(compressed_public_key) in the signer, so it must contain both:
-      // 1. The master key (to authorize the identity update)
-      // 2. The new key (to generate the key proof)
       if (encryptionPrivateKey.length !== 32) {
         return { success: false, error: `Invalid encryption private key: expected 32 bytes, got ${encryptionPrivateKey.length}` };
       }
-      const network = keyNetwork();
       const encryptionKeyHex = Array.from(encryptionPrivateKey).map(b => b.toString(16).padStart(2, '0')).join('');
-      const encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, network);
-      signer.addKey(encryptionPrivateKeyObj);
-      logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
 
-      // The last moment a caller can still back out: everything after this may be on chain.
-      if (options.cancelled?.()) return { success: false, cancelled: true };
-
-      // Update the identity using typed API
-      logger.debug('Calling sdk.identities.update...');
+      // Create signer with the master key (for signing the update transition)
+      const signer = await signerService.createSigner(signingPrivateKeyWif);
+      let unanswered: { error: unknown } | null = null;
+      let encryptionPrivateKeyObj: PrivateKey | undefined;
       try {
-        await sdk.identities.update({
-          identity,
-          addPublicKeys: [newKey],
-          signer
-        });
-        logger.debug('sdk.identities.update completed successfully');
-      } catch (updateError) {
-        // No verdict (a timeout, or a result proof that could not be checked
-        // during a quorum rotation): the key may be on the identity already.
-        if (sentWriteOutcomeUnknown(updateError) && await this.hasPublicKey(identityId, newKeyId, publicKeyBytes)) {
-          logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(updateError)}" but the identity has it`);
-          this.clearCache(identityId);
-          return { success: true, keyId: newKeyId };
+        // Also add the NEW encryption key's private key to the signer.
+        // Dash Platform requires a "key proof" signature from each new key being added,
+        // proving ownership of the private key. The SDK looks up the private key by
+        // Hash160(compressed_public_key) in the signer, so it must contain both:
+        // 1. The master key (to authorize the identity update)
+        // 2. The new key (to generate the key proof)
+        encryptionPrivateKeyObj = PrivateKey.fromHex(encryptionKeyHex, keyNetwork());
+        signer.addKey(encryptionPrivateKeyObj);
+        logger.debug(`Signer now has ${signer.keyCount} keys (master + new encryption key)`);
+
+        // The last moment a caller can still back out: everything after this may be on chain.
+        if (options.cancelled?.()) return { success: false, cancelled: true };
+
+        // Update the identity using typed API
+        logger.debug('Calling sdk.identities.update...');
+        try {
+          await sdk.identities.update({
+            identity,
+            addPublicKeys: [newKey],
+            signer
+          });
+          logger.debug('sdk.identities.update completed successfully');
+        } catch (updateError) {
+          // No verdict (a timeout, or a result proof that could not be checked
+          // during a quorum rotation): the key may be on the identity already.
+          if (!sentWriteOutcomeUnknown(updateError)) throw updateError;
+          unanswered = { error: updateError };
         }
-        logger.error('sdk.identities.update failed:', updateError);
-        if (updateError && typeof updateError === 'object') {
-          const wasmErr = updateError as Record<string, unknown>;
-          logger.error('WasmSdkError properties:');
-          try {
-            logger.error('  - kind:', wasmErr.kind);
-            logger.error('  - name:', wasmErr.name);
-            logger.error('  - message:', wasmErr.message);
-            logger.error('  - code:', wasmErr.code);
-            logger.error('  - retriable:', wasmErr.retriable);
-          } catch (e) {
-            logger.error('  - Could not read properties:', e);
-          }
-        }
-        throw updateError;
+      } finally {
+        encryptionPrivateKeyObj?.free();
+        signer.free();
+      }
+
+      if (unanswered) {
+        // Still under the lock: the next update must not read a revision before this key's.
+        const revision = await this.keyReadBackRevision(identityId, newKeyId, publicKeyBytes);
+        if (revision === null) throw unanswered.error;
+        logger.warn(`Adding key ${newKeyId} reported "${extractErrorMessage(unanswered.error)}" but the identity has it`);
+        noteProvedIdentityRevision(identityId, revision);
+        this.clearCache(identityId);
+        return { success: true, keyId: newKeyId };
       }
 
       logger.debug('Encryption key added successfully');
+      noteProvedIdentityRevision(identityId, Number(identity.revision ?? 0) + 1);
 
       // Clear cache to reflect the update
       this.clearCache(identityId);

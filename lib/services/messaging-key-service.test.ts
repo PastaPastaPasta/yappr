@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   addEncryptionKey: vi.fn(),
   validateKeySecurityLevel: vi.fn(),
   clearCache: vi.fn(),
+  recordKeyRevision: vi.fn<() => Promise<boolean>>(),
 }))
 
 vi.mock('@/lib/crypto/encryption-key-lookup', () => ({ resolveEncryptionPublicKey: () => mocks.currentKey() }))
@@ -19,6 +20,7 @@ vi.mock('./identity-service', () => ({
     addEncryptionKey: mocks.addEncryptionKey,
     validateKeySecurityLevel: mocks.validateKeySecurityLevel,
     clearCache: mocks.clearCache,
+    recordKeyRevision: mocks.recordKeyRevision,
   },
 }))
 
@@ -73,7 +75,12 @@ describe('messaging key setup', () => {
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(sha256(new TextEncoder().encode('a wallet-made key'))))
     await expect(s.anchorKeyState(draft)).resolves.toBe('other-key')
     mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
+    mocks.recordKeyRevision.mockResolvedValueOnce(true)
     await expect(s.anchorKeyState(draft)).resolves.toBe('this-key')
+    expect(mocks.recordKeyRevision).toHaveBeenCalledWith(IDENTITY, getPublicKey(EXPECTED))
+    mocks.currentKey.mockResolvedValueOnce(getPublicKey(EXPECTED))
+    mocks.recordKeyRevision.mockResolvedValueOnce(false)
+    await expect(s.anchorKeyState(draft)).resolves.toBe('pending')
     mocks.currentKey.mockRejectedValueOnce(new Error('DAPI down'))
     await expect(s.anchorKeyState(draft)).rejects.toThrow('DAPI down')
   })
@@ -108,6 +115,16 @@ describe('messaging key setup', () => {
     const cancelled = () => true
     mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, cancelled: true })
     await expect(s.addMessagingKeyWithMasterKey(draft, LOGIN_WIF, cancelled)).rejects.toBeInstanceOf(s.MessagingSetupCancelledError)
+    expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled })
+  })
+
+  it('passes the cancel check on from the login-key path', async () => {
+    const s = await load()
+    s.storePrivateKey(IDENTITY, LOGIN_WIF)
+    const draft = s.draftMessagingKey(IDENTITY)
+    const cancelled = () => true
+    mocks.addEncryptionKey.mockResolvedValueOnce({ success: false, cancelled: true })
+    await expect(s.addMessagingKeyWithLoginKey(draft, cancelled)).rejects.toBeInstanceOf(s.MessagingSetupCancelledError)
     expect(mocks.addEncryptionKey).toHaveBeenCalledWith(IDENTITY, EXPECTED, LOGIN_WIF, undefined, { cancelled })
   })
 

@@ -15,6 +15,8 @@ import { SetUpMessaging, type MessagingSetupContext } from './set-up-messaging'
 import { MessagingSignInPrompt } from './messaging-sign-in-prompt'
 import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { useLoginModal } from '@/hooks/use-login-modal'
+import { criticalKeySession, sessionIsLive } from '@/lib/auth/critical-key'
+import { crossTabLocks } from '@/lib/identity-write-lock'
 
 type EncryptionKeyContext = MessagingSetupContext
 
@@ -135,6 +137,20 @@ function KeyEntryAddEncryptionKeyModal({
   useEffect(() => {
     isOpenRef.current = isOpen
   }, [isOpen])
+
+  /**
+   * The key update in progress, taken when it is submitted: aborted by Close (at once, not after the exit
+   * animation), by a newer submission and on unmount, so an update still waiting for the identity update
+   * lock sends nothing.
+   */
+  const attemptRef = useRef<AbortController | null>(null)
+  const beginAttempt = useCallback(() => {
+    attemptRef.current?.abort()
+    const attempt = new AbortController()
+    attemptRef.current = attempt
+    return attempt.signal
+  }, [])
+  useEffect(() => () => attemptRef.current?.abort(), [])
 
   // App Connect setup finished: the key is the anchor's current one and stored for this session.
   const handleMessagingReady = useCallback((identityId: string) => {
@@ -291,7 +307,7 @@ function KeyEntryAddEncryptionKeyModal({
   }, [privateKeyWif])
 
   // Add the encryption key to identity
-  const addKeyToIdentity = useCallback(async () => {
+  const addKeyToIdentity = useCallback(async (cancelled: () => boolean) => {
     if (!user || !privateKeyWif || !privateKeyBytes || !criticalKeyWif.trim()) return
 
     setStep('adding')
@@ -306,8 +322,10 @@ function KeyEntryAddEncryptionKeyModal({
         user.identityId,
         privateKeyBytes,
         criticalKeyWif.trim(),
-        YAPPR_CONTRACT_ID // Contract-bound to Yappr
+        YAPPR_CONTRACT_ID, // Contract-bound to Yappr
+        { cancelled }
       )
+      if (result.cancelled || cancelled()) return
 
       if (result.success) {
         try {
@@ -345,6 +363,10 @@ function KeyEntryAddEncryptionKeyModal({
       return
     }
 
+    const signal = beginAttempt()
+    const session = criticalKeySession()
+    const identityId = user.identityId
+    const cancelled = () => signal.aborted || !sessionIsLive(identityId, session)
     setIsValidatingKey(true)
     setKeyValidationError(null)
 
@@ -361,15 +383,16 @@ function KeyEntryAddEncryptionKeyModal({
         return
       }
 
-      // Key is valid, proceed to add the encryption key
       setIsValidatingKey(false)
-      await addKeyToIdentity()
+      if (cancelled()) return
+      // Key is valid, proceed to add the encryption key
+      await addKeyToIdentity(cancelled)
     } catch (err) {
       logger.error('Error validating key:', err)
       setKeyValidationError(err instanceof Error ? err.message : 'Failed to validate key')
       setIsValidatingKey(false)
     }
-  }, [user, criticalKeyWif, addKeyToIdentity])
+  }, [user, criticalKeyWif, addKeyToIdentity, beginAttempt])
 
   // Handle close
   const handleClose = useCallback(() => {
@@ -389,6 +412,7 @@ function KeyEntryAddEncryptionKeyModal({
     setExistingKeyError(null)
     setIsValidatingExistingKey(false)
     setIsEnterExistingPath(false)
+    attemptRef.current?.abort()
     onClose()
   }, [onClose])
 
@@ -585,6 +609,7 @@ function KeyEntryAddEncryptionKeyModal({
             onDone={handleMessagingReady}
             onAlreadySetUp={() => setStep('existing-key')}
             onCancel={handleClose}
+            beginAttempt={beginAttempt}
           />
         ) : null
 
@@ -640,10 +665,16 @@ function KeyEntryAddEncryptionKeyModal({
             </div>
 
             <div className="flex flex-col gap-3">
-              <Button onClick={deriveKey} className="w-full">
-                <KeyIcon className="h-4 w-4 mr-2" />
-                Create Encryption Key
-              </Button>
+              {crossTabLocks() ? (
+                <Button onClick={deriveKey} className="w-full">
+                  <KeyIcon className="h-4 w-4 mr-2" />
+                  Create Encryption Key
+                </Button>
+              ) : (
+                <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+                  This browser can&apos;t add a messaging key safely. Update it, or use a different browser.
+                </p>
+              )}
               <Button onClick={handleClose} variant="outline" className="w-full">
                 Cancel
               </Button>
