@@ -207,17 +207,20 @@ describe('withSdkSignedWrite', () => {
     expect(await settle(write)).toEqual({ ok: false, error: unsent })
   })
 
-  it('leaves the last slot in the nonce window to creates through repeated definitive refusals', async () => {
-    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
-    sdk.identities.contractNonce.mockResolvedValue(n(100))
+  it.each([
+    ['at tip 100', n(100), 100, 124],
+    ['before the identity first wrote to the contract', undefined, 0, 23],
+  ])('leaves the last slot in the nonce window to creates through repeated definitive refusals %s', async (_label, current, tip, last) => {
+    reserveNonce(OWNER, CONTRACT, n(tip + 1), current, WALLET_TOKEN_SCOPE)
+    sdk.identities.contractNonce.mockResolvedValue(current)
     const refusal = new Error('state transition broadcast error: code=40101 DocumentNotFoundError')
     const refused = vi.fn<(nonce: bigint) => Promise<string>>(async () => { throw refusal })
     for (let attempt = 0; attempt < 30; attempt++) {
       await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, refused))
     }
-    expect(refused.mock.calls.map(([nonce]) => nonce)).toEqual(Array.from({ length: 22 }, (_, i) => n(102 + i)))
-    expect(loadReservation(OWNER, CONTRACT)?.mark).toBe(n(123))
-    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(124) })
+    expect(refused.mock.calls.map(([nonce]) => nonce)).toEqual(Array.from({ length: last - tip - 2 }, (_, i) => n(tip + 2 + i)))
+    expect(loadReservation(OWNER, CONTRACT)?.mark).toBe(n(last - 1))
+    expect(await nextCreateNonce()).toEqual({ ok: true, value: n(last) })
   })
 
   it('keeps a later write to the same target waiting on a chosen write that lost its answer through its lifetime, then lets it go', async () => {

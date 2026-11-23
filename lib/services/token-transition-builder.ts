@@ -13,6 +13,7 @@ import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
+import { lastAcceptedNonce } from '@/lib/nonce-rules.mjs';
 import { WALLET_TOKEN_SCOPE, allocateNonce, awaitPaymentNonce, releaseNonce, reserveNonce } from './identity-nonce';
 
 /**
@@ -55,9 +56,14 @@ export async function buildUnsignedTokenBatch(
   // nonce past every one this browser signed, and reserving it as pending
   // until Platform shows it consumed (the wallet may sign it long after the QR
   // is gone), keeps any later write from signing the same one (QA D-01). It is
-  // reserved only once the bytes exist, so a failed build holds nothing.
+  // reserved only once the bytes exist, so a failed build holds nothing. It
+  // never takes the last nonce Drive accepts: it stays pending for as long as
+  // a wallet may sign it, and that slot is the one left for creates.
   return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
-    const { current: rawNonce, value: nonce } = await awaitPaymentNonce(ownerId, YAPPR_CONTRACT_ID, allocateNonce);
+    const { current: rawNonce, value: nonce } = await awaitPaymentNonce(ownerId, YAPPR_CONTRACT_ID, (tip, reservation) => {
+      const allocated = allocateNonce(tip, reservation);
+      return allocated !== null && allocated < lastAcceptedNonce(tip) ? allocated : null;
+    });
     logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
 
     const base = new TokenBaseTransition({

@@ -38,7 +38,7 @@ import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
 import { NONCE_STORE_ERROR, PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
-import { MAX_NONCE_DISTANCE } from '@/lib/nonce-rules.mjs';
+import { lastAcceptedNonce } from '@/lib/nonce-rules.mjs';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
 import { getEvoSdk } from './evo-sdk-service';
@@ -518,7 +518,7 @@ export async function withSdkSignedWrite<T>(
         (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
       if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
         const nonce = allocateNonce(tip, reservation);
-        if (nonce === null || (pending.length > 0 && nonce - tipOf(tip) >= MAX_NONCE_DISTANCE)) return null;
+        if (nonce === null || (pending.length > 0 && nonce >= lastAcceptedNonce(tip))) return null;
         return { nonce };
       }
       return pending.length === 0 ? { nonce: null } : null;

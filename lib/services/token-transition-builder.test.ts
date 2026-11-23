@@ -29,9 +29,9 @@ vi.stubGlobal('localStorage', {
 
 import { TokenTransferTransition } from '@dashevo/wasm-sdk'
 import { YAPPR_CONTRACT_ID } from '../constants'
-import { PAYMENT_PENDING_ERROR } from '@/lib/error-utils'
+import { PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
-import { loadReservation, withSdkSignedWrite, stillPending } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, withSdkSignedWrite, stillPending } from './identity-nonce'
 import { buildUnsignedTokenBatch } from './token-transition-builder'
 
 const OWNER = 'owner'
@@ -135,6 +135,17 @@ describe('a second wallet payment QR (#929)', () => {
     sdk.identities.contractNonce.mockResolvedValue(BigInt(126))
     expect(await settle(build())).toMatchObject({ value: { bytes: new Uint8Array([7]) } })
     expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(127)])
+  })
+})
+
+describe('the last nonce Drive accepts', () => {
+  it('is never taken by a QR, which stays pending as long as a wallet may sign it, so a create can still use it', async () => {
+    vi.useFakeTimers()
+    // 23 requests cancelled before their QR went up left the mark at 123 with nothing pending.
+    releaseNonce(OWNER, YAPPR_CONTRACT_ID, reserveNonce(OWNER, YAPPR_CONTRACT_ID, BigInt(123), BigInt(100), WALLET_TOKEN_SCOPE))
+    expect(await settle(build())).toEqual({ error: new Error(PENDING_WRITE_ERROR) })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toEqual([])
+    expect(await settle(awaitNonce(OWNER, YAPPR_CONTRACT_ID, allocateNonce).then(({ value }) => value))).toEqual({ value: BigInt(124) })
   })
 })
 
