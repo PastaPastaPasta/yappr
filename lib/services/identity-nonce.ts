@@ -38,7 +38,7 @@ import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
 import { NONCE_STORE_ERROR, PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
-import { lastAcceptedNonce } from '@/lib/nonce-rules.mjs';
+import { MAX_NONCE_DISTANCE, lastAcceptedNonce } from '@/lib/nonce-rules.mjs';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
 import { getEvoSdk } from './evo-sdk-service';
@@ -285,10 +285,15 @@ export async function awaitPaymentNonce<T>(
   }
 }
 
-/** Whether the wallet request reserved at `nonce` may still execute, so its QR can be shown again. */
+/**
+ * Whether the wallet request reserved at `nonce` may still execute, so its QR
+ * can be shown again. Its reservation is kept at MAX_NONCE_DISTANCE behind the
+ * tip too, but Drive refuses a nonce that far back, so its QR is not shown.
+ */
 export async function walletRequestLive(ownerId: string, contractId: string, nonce: bigint): Promise<boolean> {
   const sdk = await getEvoSdk();
   const current = await sdk.identities.contractNonce(ownerId, contractId);
+  if (nonce + MAX_NONCE_DISTANCE <= tipOf(current)) return false;
   return stillPending(current, loadReservation(ownerId, contractId)).some((p) => p.scope === WALLET_TOKEN_SCOPE && p.nonce === nonce);
 }
 

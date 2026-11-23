@@ -727,6 +727,16 @@ describe('a transition whose nonce is known (a create, a wallet request)', () =>
     sdk.identities.contractNonce.mockResolvedValue(n(101))
     expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(false)
   })
+
+  it('is not shown again at the edge of the window, where Drive refuses it, though it stays reserved', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
+    const behind = (distance: number) => n(101 + distance) | (BigInt(1) << BigInt(40 + distance - 1))
+    sdk.identities.contractNonce.mockResolvedValue(behind(23))
+    expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(true)
+    sdk.identities.contractNonce.mockResolvedValue(behind(24))
+    expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(false)
+    expect(stillPending(behind(24), loadReservation(OWNER, CONTRACT)).map(p => p.nonce)).toEqual([n(101)])
+  })
 })
 
 describe('allocateNonce', () => {
