@@ -354,7 +354,7 @@ export function TipModal() {
     setState('success')
   }, [user, refreshBalance])
 
-  // A QR this session showed may have paid, and its outcome is not proved: nothing else is built or signed.
+  // A QR this session showed can no longer execute and may have paid: nothing else is built or signed.
   const showUnresolved = useCallback(() => {
     walletSessionRef.current++
     setWalletUri(null)
@@ -365,8 +365,9 @@ export function TipModal() {
 
   const handleSendYappTip = async () => {
     if (!user || !recipientInfo) return
+    // This session showed a QR: it is shown again while it can execute, or its tip is looked up.
     if (shownRequestRef.current) {
-      showUnresolved()
+      startWalletSign()
       return
     }
     setState('processing')
@@ -482,7 +483,7 @@ export function TipModal() {
         const live = await walletRequestLive(user.identityId, YAPPR_CONTRACT_ID, shown.nonce)
         if (walletSessionRef.current !== session) return
         if (!live) {
-          showUnresolved()
+          checkTipLanded(showUnresolved)
           return
         }
         if (shown.key !== key) {

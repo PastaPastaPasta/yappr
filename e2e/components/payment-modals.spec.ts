@@ -75,17 +75,32 @@ test.describe('buy YAPP with a wallet', () => {
     await expect(page.getByRole('button', { name: 'Approve in wallet' })).toBeVisible()
   })
 
-  test('signs nothing locally after showing a QR this session', async ({ page }) => {
-    await page.clock.install()
-    await page.goto('/?fixture=buy-yapp&signing=local')
-    await page.getByRole('button', { name: 'Continue' }).click()
-    await page.getByRole('button', { name: 'Confirm & Buy' }).click()
-    await page.getByRole('button', { name: 'Approve in wallet' }).click()
-    await expect(waitingForWallet(page)).toBeVisible()
+  for (const live of [true, false]) {
+    test(`signs nothing locally after showing a QR this session, ${live ? 'showing that QR again' : 'once it can no longer execute'}`, async ({ page }) => {
+      await page.clock.install()
+      await page.goto('/?fixture=buy-yapp&signing=local')
+      await page.getByRole('button', { name: 'Continue' }).click()
+      await page.getByRole('button', { name: 'Confirm & Buy' }).click()
+      await page.getByRole('button', { name: 'Approve in wallet' }).click()
+      await expect(waitingForWallet(page)).toBeVisible()
+      await page.getByRole('button', { name: 'Back' }).click()
+      await setTest(page, { live })
+      await page.getByRole('button', { name: 'Use your highest-security key instead' }).click()
+      await expect(live ? waitingForWallet(page) : page.getByText("Couldn't confirm your purchase")).toBeVisible()
+      expect(await paymentState(page)).toEqual({ builds: ['component-test-identity'], localPayments: 1 })
+    })
+  }
+
+  test('reports the purchase its QR made, not an amount entered since', async ({ page }) => {
+    await showPurchaseQr(page)
     await page.getByRole('button', { name: 'Back' }).click()
-    await page.getByRole('button', { name: 'Use your highest-security key instead' }).click()
-    await expect(page.getByText("Couldn't confirm your purchase")).toBeVisible()
-    expect(await paymentState(page)).toEqual({ builds: ['component-test-identity'], localPayments: 1 })
+    await page.getByRole('button', { name: 'Back' }).click()
+    await page.getByRole('button', { name: '500', exact: true }).click()
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await setTest(page, { live: false, balance: 1100 })
+    await page.getByRole('button', { name: 'Approve in wallet' }).click()
+    await expect(page.getByText('Purchased 100 YAPP')).toBeVisible()
+    expect((await paymentState(page)).builds).toHaveLength(1)
   })
 })
 
@@ -115,6 +130,22 @@ test.describe('tip YAPP with a wallet', () => {
     await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible()
     await expect(waitingForWallet(page)).toHaveCount(0)
     expect((await paymentState(page)).builds).toEqual(['component-test-identity'])
+  })
+
+  test('looks the tip up before saying it could not confirm it, when the wallet flow is started again after Back', async ({ page }) => {
+    await page.clock.install()
+    await page.goto('/?fixture=tip')
+    await page.getByRole('button', { name: 'Continue' }).click()
+    await page.getByRole('button', { name: 'Sign with wallet' }).click()
+    await expect(waitingForWallet(page)).toBeVisible()
+    await page.getByRole('button', { name: 'Back' }).click()
+    await setTest(page, { live: false })
+    await page.evaluate(() => window.paymentTest.holdNextTipCheck())
+    await page.getByRole('button', { name: 'Approve in wallet' }).click()
+    await expect(page.getByText('Checking whether your tip landed')).toBeVisible()
+    await page.evaluate(() => window.paymentTest.releaseTipCheck(false))
+    await expect(page.getByText("Couldn't confirm your tip")).toBeVisible()
+    expect((await paymentState(page)).builds).toHaveLength(1)
   })
 
   test('builds no second request once its QR can no longer execute and the tip has not shown up', async ({ page }) => {

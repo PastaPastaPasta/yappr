@@ -164,7 +164,7 @@ export function BuyYappModal() {
     setState('success')
   }, [refreshBalance])
 
-  // A QR this session showed may have paid, and its outcome is not proved: nothing else is built or signed.
+  // A QR this session showed can no longer execute and may have paid: nothing else is built or signed.
   const showUnresolved = useCallback(() => {
     walletSessionRef.current++
     setWalletUri(null)
@@ -175,8 +175,9 @@ export function BuyYappModal() {
 
   const handleBuy = async () => {
     if (!user || costCredits === null) return
+    // This session showed a QR: it is shown again while it can execute, or its purchase is looked up.
     if (shownRequestRef.current) {
-      showUnresolved()
+      startWalletSign()
       return
     }
     setState('processing')
@@ -238,6 +239,7 @@ export function BuyYappModal() {
           const balance = await tokenService.getBalance(user.identityId)
           if (walletSessionRef.current !== session) return
           if (balance >= shown.baseline + shown.amount) {
+            setAmount(shown.amount.toString())
             setYappBalance(balance)
             finishPurchase()
           } else showUnresolved()
