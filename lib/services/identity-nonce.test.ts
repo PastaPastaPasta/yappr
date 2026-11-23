@@ -223,7 +223,7 @@ describe('withSdkSignedWrite', () => {
     expect(await nextCreateNonce()).toEqual({ ok: true, value: n(last) })
   })
 
-  it('keeps a later write to the same target waiting on a chosen write that lost its answer through its lifetime, then lets it go', async () => {
+  it.each(['this tab', 'another tab'])('keeps a later write to the same target in %s waiting on a sent chosen write that lost its answer until its nonce is used, however long ago', async (context) => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
     sdk.identities.contractNonce.mockResolvedValue(n(100))
     const lost = new Error('transport error: grpc error: Failed to fetch')
@@ -234,9 +234,42 @@ describe('withSdkSignedWrite', () => {
     expect(warn).not.toHaveBeenCalled()
     expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:b', undefined, warn))).toEqual({ ok: true, value: 'warned' })
     expect(warn).toHaveBeenLastCalledWith(n(103), expect.any(Function))
-    await vi.advanceTimersByTimeAsync(2 * MINUTE)
-    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, warn))).toEqual({ ok: true, value: 'warned' })
+    await vi.advanceTimersByTimeAsync(10 * MINUTE)
+    let write = withSdkSignedWrite
+    if (context === 'another tab') {
+      vi.resetModules()
+      write = (await import('./identity-nonce')).withSdkSignedWrite
+    }
+    // The clear at 102 may still land after a newer warning; it no longer holds other targets back.
+    expect(await settle(write(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, warn))).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
+    expect(await settle(write(OWNER, CONTRACT, async () => 'sdk', 'target:c', undefined, warn))).toEqual({ ok: true, value: 'warned' })
     expect(warn).toHaveBeenLastCalledWith(n(104), expect.any(Function))
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).toContain(n(102))
+    // 102 is used: the same target goes ahead, signed by the SDK now that nothing this browser signed is ahead.
+    sdk.identities.contractNonce.mockResolvedValue(n(104))
+    expect(await settle(write(OWNER, CONTRACT, async () => 'sdk', 'target:a', undefined, warn))).toEqual({ ok: true, value: 'sdk' })
+    expect(loadReservation(OWNER, CONTRACT)?.pending.map(p => p.nonce)).not.toContain(n(102))
+  })
+
+  it('keeps a local payment off a sent chosen write\'s nonce once its lifetime ran out', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const lost = new Error('transport error: grpc error: Failed to fetch')
+    const edit = vi.fn<(nonce: bigint, sending: () => void) => Promise<string>>(async (_nonce, sending) => { sending(); throw lost })
+    expect(await settle(withSdkSignedWrite(OWNER, CONTRACT, async () => 'sdk', undefined, undefined, edit))).toEqual({ ok: false, error: lost })
+    expect(edit).toHaveBeenCalledWith(n(102), expect.any(Function))
+    // The wallet pays QR 101; the edit at 102 never shows up, and its lifetime runs out.
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    await vi.advanceTimersByTimeAsync(10 * MINUTE)
+    vi.resetModules()
+    const fresh = await import('./identity-nonce')
+    // The SDK signs one past the tip it reads: 102, which the edit may still take.
+    const payment = vi.fn(async () => 'paid')
+    expect(await settle(fresh.withSdkSignedWrite(OWNER, CONTRACT, payment))).toEqual({ ok: false, error: new Error(PENDING_WRITE_ERROR) })
+    expect(payment).not.toHaveBeenCalled()
+    // Once Platform is past 102 the SDK can no longer sign it, even while 102 may still fill its gap.
+    sdk.identities.contractNonce.mockResolvedValue(n(103) | (BigInt(1) << BigInt(40)))
+    expect(await settle(fresh.withSdkSignedWrite(OWNER, CONTRACT, payment))).toEqual({ ok: true, value: 'paid' })
   })
 
   it('keeps a sent chosen write pending while its page lives, and a wallet QR for as long as it could execute', async () => {

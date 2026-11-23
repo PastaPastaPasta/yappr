@@ -65,6 +65,12 @@ export interface PendingTransition {
    * Wallet requests use WALLET_TOKEN_SCOPE and impose no ordering constraint.
    */
   scope?: string;
+  /**
+   * A chosen-nonce transition marked as broadcast. Once its lifetime runs out
+   * it is dormant: it no longer holds most writes back, but it stays stored
+   * until Platform shows its nonce consumed (see {@link dormantWrites}).
+   */
+  sent?: true;
 }
 
 export interface NonceReservation {
@@ -157,7 +163,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     const parsed = JSON.parse(raw) as {
       mark: string;
       floor?: unknown;
-      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown }[];
+      pending: { id: string; nonce: string | null; signedAfter?: unknown; signedAtMost?: unknown; expiresAt: number | null; scope?: unknown; sent?: unknown }[];
     };
     return {
       mark: BigInt(parsed.mark),
@@ -174,6 +180,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
             // Both, or neither: one without its range only expires.
             ...(signedAfter !== undefined && signedAtMost !== undefined ? { signedAfter, signedAtMost } : {}),
             ...(typeof p.scope === 'string' ? { scope: p.scope } : {}),
+            ...(p.sent === true ? { sent: true as const } : {}),
           };
         }),
     };
@@ -194,6 +201,7 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
         ? { signedAfter: p.signedAfter.toString(), signedAtMost: p.signedAtMost.toString() }
         : {}),
       ...(p.scope !== undefined ? { scope: p.scope } : {}),
+      ...(p.sent ? { sent: true } : {}),
     }));
     localStorage.setItem(
       reservationKey(ownerId, contractId),
@@ -219,6 +227,25 @@ export function stillPending(current: bigint | undefined | null, reservation: No
     if (p.signedAfter === undefined || p.signedAtMost === undefined) return true;
     return !anyConsumed(current, p.signedAfter + BigInt(1), p.signedAtMost);
   });
+}
+
+/**
+ * Sent chosen-nonce transitions past their lifetime whose nonce Platform does
+ * not show consumed. Their answer was lost and they may never have reached
+ * Platform, so they no longer hold unrelated writes back; but they may still
+ * execute, so a later write to the same target waits for them (it could
+ * otherwise execute first), and so does a payment the SDK signs while one is
+ * past the tip (the SDK could sign its nonce).
+ */
+function dormantWrites(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
+  return (reservation?.pending ?? []).filter((p) => p.sent && p.nonce !== null && p.expiresAt !== null && p.expiresAt <= now &&
+    !identityContractNonceConsumed(current, p.nonce));
+}
+
+/** The entries a reservation keeps once `current` was read: those still pending and those dormant. */
+function retained(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
+  const kept = [...stillPending(current, reservation, now), ...dormantWrites(current, reservation, now)];
+  return (reservation?.pending ?? []).filter((p) => kept.includes(p));
 }
 
 /**
@@ -325,7 +352,7 @@ export function reserveNonce(
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
     floor,
-    pending: [...live, entry],
+    pending: [...retained(current, previous), entry],
   });
   return entry;
 }
@@ -392,11 +419,12 @@ function renewPending(ownerId: string, contractId: string, entry: PendingTransit
 }
 
 /**
- * Right before a chosen-nonce transition is broadcast: its entry and the mark
- * past its nonce are stored, with a fresh lifetime, so no later write signs
- * that nonce. Like an SDK-signed write's, the entry expires once this page
- * stops renewing it, so one that never reached Platform can't hold writes
- * back for good. Throws {@link NONCE_STORE_ERROR} when that can't be stored,
+ * Right before a chosen-nonce transition is broadcast: its entry, marked sent,
+ * and the mark past its nonce are stored, with a fresh lifetime, so no later
+ * write signs that nonce. Like an SDK-signed write's, the entry expires once
+ * this page stops renewing it, so one that never reached Platform can't hold
+ * writes back for good; it then stays dormant until its nonce is consumed
+ * ({@link dormantWrites}). Throws {@link NONCE_STORE_ERROR} when that can't be stored,
  * and the transition must then not be sent.
  */
 function markSent(ownerId: string, contractId: string, entry: PendingTransition): void {
@@ -404,7 +432,7 @@ function markSent(ownerId: string, contractId: string, entry: PendingTransition)
   saveReservation(ownerId, contractId, {
     mark: max(reservation?.mark ?? BigInt(0), entry.nonce ?? BigInt(0)),
     floor: reservation?.floor ?? BigInt(0),
-    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, expiresAt: Date.now() + PENDING_LIFETIME_MS }],
+    pending: [...(reservation?.pending ?? []).filter((p) => p.id !== entry.id), { ...entry, sent: true, expiresAt: Date.now() + PENDING_LIFETIME_MS }],
   });
 }
 
@@ -494,6 +522,8 @@ function isVerdict(error: unknown): boolean {
  * ({@link PAYMENT_PENDING_ERROR}).
  * Unknown SDK nonces still hold writes back. While one is outstanding, a
  * chosen nonce never takes the last slot Drive accepts, which stays for creates.
+ * A dormant chosen write ({@link dormantWrites}) holds back a later write with
+ * its scope, and a payment while its nonce is past the tip.
  * It calls `sending` right before its broadcast, and must not send when that throws.
  *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
@@ -521,6 +551,9 @@ export async function withSdkSignedWrite<T>(
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
         (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
+      const dormant = dormantWrites(tip, reservation);
+      if (scope !== undefined && dormant.some((entry) => entry.scope === scope)) return null;
+      if (!writeWithNonce && dormant.some((entry) => entry.nonce !== null && entry.nonce > tipOf(tip))) return null;
       if (writeWithNonce && reservation && (pending.length > 0 || reservation.mark > tipOf(tip))) {
         const nonce = allocateNonce(tip, reservation);
         if (nonce === null || (pending.length > 0 && nonce >= lastAcceptedNonce(tip))) return null;
@@ -613,9 +646,9 @@ export async function settlePendingWrites(ownerId: string, contractId: string): 
       logger.debug('Could not read the contract nonce to settle pending writes:', error);
       return 0;
     }
-    const pending = stillPending(current, reservation);
+    const pending = retained(current, reservation);
     const settled = reservation.pending.length - pending.length;
-    if (settled > 0) saveReservation(ownerId, contractId, { ...reservation, floor: floorAfterSettling(current, reservation, pending) ?? reservation.floor, pending });
+    if (settled > 0) saveReservation(ownerId, contractId, { ...reservation, floor: floorAfterSettling(current, reservation, stillPending(current, reservation)) ?? reservation.floor, pending });
     return settled;
   });
 }
