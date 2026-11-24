@@ -870,6 +870,14 @@ describe('a transition whose nonce is known (a create, a wallet request)', () =>
     expect(await walletRequestLive(OWNER, CONTRACT, n(101))).toBe(false)
   })
 
+  it('stays live through a read from a node behind the one it was issued against', async () => {
+    reserveNonce(OWNER, CONTRACT, n(123), n(100), WALLET_TOKEN_SCOPE)
+    for (const tip of [100, 98, 100]) {
+      sdk.identities.contractNonce.mockResolvedValue(n(tip))
+      expect(await walletRequestLive(OWNER, CONTRACT, n(123))).toBe(true)
+    }
+  })
+
   it('is not shown again at the edge of the window, where Drive refuses it, though it stays reserved', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
     const behind = (distance: number) => n(101 + distance) | (BigInt(1) << BigInt(40 + distance - 1))

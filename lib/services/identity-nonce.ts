@@ -298,12 +298,15 @@ export async function awaitPaymentNonce<T>(
  * Whether the wallet request reserved at `nonce` may still execute, so its QR
  * can be shown again: it is still reserved and Drive would still admit its
  * nonce ({@link nonceAdmissible}). A reservation alone is not enough: one
- * 24 behind the tip is kept, but Drive refuses it.
+ * 24 behind the tip is kept, but Drive refuses it. A read that puts it past
+ * the window ahead comes from a node behind the one it was issued against, so
+ * proves nothing.
  */
 export async function walletRequestLive(ownerId: string, contractId: string, nonce: bigint): Promise<boolean> {
   const sdk = await getEvoSdk();
   const current = await sdk.identities.contractNonce(ownerId, contractId);
-  if (!nonceAdmissible(current, nonce)) return false;
+  // Past the window ahead only on a lagging read: inconclusive, so it stays live while it is reserved.
+  if (nonce <= tipOf(current) && !nonceAdmissible(current, nonce)) return false;
   return stillPending(current, loadReservation(ownerId, contractId)).some((p) => p.scope === WALLET_TOKEN_SCOPE && p.nonce === nonce);
 }
 
