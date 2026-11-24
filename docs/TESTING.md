@@ -56,6 +56,12 @@ key on its registered identity before running write tests. Fund the identities'
 credits and YAPP balances separately from the contract maker. Never replace the
 testnet seed to repair devnet credentials.
 
+When the devnet's quorum service (`NEXT_PUBLIC_QUORUM_URL` in `.env.devnet`)
+does not answer, the job stops at "Warm the devnet quorum service" with one
+error and runs no devnet spec: the SDK cannot connect without it, so every spec
+would only time out. That error means the devnet was reset or retired, and the
+fix is the re-provisioning above, not a test change.
+
 Publish a new dedicated secret from its private file, without printing the seed:
 
 ```bash

@@ -362,17 +362,27 @@ jobs:
 
       # The devnet quorum service cold-starts (~10s) after idle and every SDK
       # connect fails until it is warm, so warm it before the run rather than
-      # burning a retry on it.
+      # burning a retry on it. Every SDK connect needs it, so when it stays
+      # unreachable (the devnet was reset or retired) no spec can pass: say so
+      # once and skip the specs instead of timing out each of them.
       - name: Warm the devnet quorum service
-        continue-on-error: true
         run: |
-          for path in quorums previous masternodes; do
-            curl -sS -o /dev/null --max-time 60 \
-              "https://quorums.sakura.networks.dash.org/$path" || true
+          set -a && . ./.env.devnet && set +a
+          for attempt in 1 2 3; do
+            if curl -sSf -o /dev/null --max-time 60 "$NEXT_PUBLIC_QUORUM_URL/quorums"; then
+              for path in previous masternodes; do
+                curl -sS -o /dev/null --max-time 60 "$NEXT_PUBLIC_QUORUM_URL/$path" || true
+              done
+              echo "DEVNET_UP=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 10
           done
+          echo "::error::The devnet quorum service $NEXT_PUBLIC_QUORUM_URL is unreachable, so the SDK cannot connect and every devnet spec would fail. The devnet in .env.devnet ($NEXT_PUBLIC_DEVNET_NAME) was probably reset or retired: point .env.devnet at a live devnet with the yappr contracts and bot pool registered there."
+          exit 1
 
       - name: Run the devnet topology and username entry specs
-        if: env.HAS_SEED == 'true'
+        if: ${{ !cancelled() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true' }}
         continue-on-error: true
         env:
           E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
@@ -389,6 +399,7 @@ jobs:
       # instead of passing on a retry. It writes its own report and results,
       # which later steps would otherwise overwrite before the upload.
       - name: Run the devnet SDK recovery specs
+        if: ${{ !cancelled() && env.DEVNET_UP == 'true' }}
         env:
           E2E_BASE_PATH: /devnet
           E2E_ENV_FILE: .env.devnet
@@ -402,8 +413,9 @@ jobs:
       # (about 15 min together); the history (120-message bulk write) and
       # lost-state recovery files are local-only, see docs/TESTING.md. The messaging
       # setup file runs only on an App Connect build and skips itself otherwise.
+      # !cancelled(): a red SDK recovery step must not hide the DM results.
       - name: Run the devnet DM v5 specs
-        if: env.HAS_SEED == 'true'
+        if: ${{ !cancelled() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true' }}
         continue-on-error: true
         env:
           E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
@@ -440,7 +452,7 @@ jobs:
       # instead of failing; what it left stays live until the same command is
       # run by hand without --since.
       - name: Tombstone the run's public posts and replies
-        if: always() && env.HAS_SEED == 'true'
+        if: always() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true'
         continue-on-error: true
         timeout-minutes: 15
         env:

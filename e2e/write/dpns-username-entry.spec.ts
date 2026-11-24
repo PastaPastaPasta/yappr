@@ -15,7 +15,7 @@ test.describe('DPNS registration entry', () => {
   for (const { name, labels } of duplicateGroups) {
     test(`marks every row for ${name} and recovers after editing or removal`, async ({ page }) => {
       await page.goto(appUrl('/settings/?section=account'))
-      await page.getByRole('button', { name: /^Register (More Usernames|Username)$/ }).click()
+      await page.getByRole('button', { name: /^Add (a|another) username$/ }).click()
 
       const inputs = page.getByPlaceholder('username', { exact: true })
       const add = page.getByRole('button', { name: 'Add Another Username', exact: true })
