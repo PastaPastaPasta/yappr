@@ -387,15 +387,16 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 /**
  * Start a write's lifetime over: the page is still waiting on the SDK, or has
  * just lost the answer, or is still preparing a chosen-nonce write. Never
- * gives a lifetime back to one that has none: a chosen-nonce write marked
- * sent. Best effort: when localStorage refuses, it expires a little sooner.
+ * gives a lifetime back to one that has none (a chosen-nonce write marked
+ * sent), nor to a prepared chosen-nonce write whose lifetime already ran out. Best effort: when localStorage refuses, it expires a little sooner.
  */
 function renewPending(ownerId: string, contractId: string, entry: PendingTransition): void {
   try {
     const reservation = loadReservation(ownerId, contractId);
     if (!reservation) return;
     const stored = reservation.pending.find((p) => p.id === entry.id);
-    if (typeof stored?.expiresAt !== 'number') return;
+    // A prepared chosen write whose lifetime ran out stays lapsed: another tab may have moved past it (see markSent).
+    if (typeof stored?.expiresAt !== 'number' || (stored.nonce !== null && stored.expiresAt <= Date.now())) return;
     const expiresAt = Date.now() + PENDING_LIFETIME_MS;
     saveReservation(ownerId, contractId, { ...reservation, pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt } : p)) });
   } catch {
@@ -550,7 +551,8 @@ export async function withSdkSignedWrite<T>(
       if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
         (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
       const nonce = allocateNonce(tip, reservation);
-      if (nonce === null || !nonceAdmissible(tip, nonce) || nonce >= lastAcceptedNonce(tip)) return null;
+      // Drive must admit it, and the last slot it accepts stays for creates.
+      if (nonce === null || !nonceAdmissible(tip, nonce) || nonce === lastAcceptedNonce(tip)) return null;
       return { nonce };
     });
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
