@@ -4,7 +4,7 @@
  * request abandoned before its QR went up can be discarded, under the write
  * lock like every other change to the shared reservation.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({ identities: { contractNonce: vi.fn() } }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -29,8 +29,9 @@ vi.stubGlobal('localStorage', {
 
 import { TokenTransferTransition } from '@dashevo/wasm-sdk'
 import { YAPPR_CONTRACT_ID } from '../constants'
+import { PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
 import { withIdentityWriteLock } from '@/lib/identity-write-lock'
-import { loadReservation } from './identity-nonce'
+import { WALLET_TOKEN_SCOPE, allocateNonce, awaitNonce, loadReservation, releaseNonce, reserveNonce, withSdkSignedWrite, stillPending } from './identity-nonce'
 import { buildUnsignedTokenBatch } from './token-transition-builder'
 
 const OWNER = 'owner'
@@ -38,6 +39,114 @@ const OWNER = 'owner'
 beforeEach(() => {
   storage.clear()
   sdk.identities.contractNonce.mockResolvedValue(BigInt(100))
+})
+
+afterEach(() => { vi.useRealTimers() })
+
+async function settle<T>(promise: Promise<T>) {
+  const outcome = promise.then(value => ({ value }), (error: unknown) => ({ error }))
+  await vi.runAllTimersAsync()
+  return outcome
+}
+
+const build = () => buildUnsignedTokenBatch('test', OWNER, base => new TokenTransferTransition({ base, recipientId: 'recipient', amount: BigInt(1) }))
+
+describe('displayed wallet QR reservations (#777)', () => {
+  it.each(['this tab', 'reload', 'second tab'])('allows another write with a separate nonce after abandonment in %s', async (context) => {
+    vi.useFakeTimers()
+    await build()
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000)
+    let write = withSdkSignedWrite
+    if (context !== 'this tab') {
+      vi.resetModules()
+      write = (await import('./identity-nonce')).withSdkSignedWrite
+    }
+    const sdkWrite = vi.fn(async () => 'sdk')
+    const chosen = vi.fn(async (nonce: bigint) => {
+      sdk.identities.contractNonce.mockResolvedValue(nonce | (BigInt(1) << (BigInt(40) + nonce - BigInt(102))))
+      return `sent ${nonce}`
+    })
+    const startedAt = Date.now()
+    expect(await settle(write(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))).toEqual({ value: 'sent 102' })
+    expect(Date.now()).toBe(startedAt)
+    expect(sdkWrite).not.toHaveBeenCalled()
+    expect(chosen).toHaveBeenCalledWith(BigInt(102), expect.any(Function))
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(101)])
+    if (context === 'second tab') {
+      expect(await settle(withSdkSignedWrite(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))).toEqual({ value: 'sent 103' })
+      expect(chosen.mock.calls.map(([nonce]) => nonce)).toEqual([BigInt(102), BigInt(103)])
+    }
+  })
+
+  it('keeps a scanned QR safe to sign later without reusing its nonce', async () => {
+    vi.useFakeTimers()
+    await build()
+    const chosen = vi.fn(async (nonce: bigint) => {
+      sdk.identities.contractNonce.mockResolvedValue(nonce | (BigInt(1) << (BigInt(40) + nonce - BigInt(102))))
+      return `sent ${nonce}`
+    })
+    const sdkWrite = vi.fn(async () => 'sdk')
+    await settle(withSdkSignedWrite(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))
+    // The app's 102 landed, but 101 is still a gap and the wallet can broadcast it.
+    const missing101 = BigInt(102) | (BigInt(1) << BigInt(40))
+    sdk.identities.contractNonce.mockResolvedValue(missing101)
+    expect(stillPending(missing101, loadReservation(OWNER, YAPPR_CONTRACT_ID))).toHaveLength(1)
+    await settle(withSdkSignedWrite(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))
+    expect(chosen.mock.calls.map(([nonce]) => nonce)).toEqual([BigInt(102), BigInt(103)])
+    // Now the wallet signs 101, and proof shows every nonce through 103 consumed.
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(103))
+    expect(stillPending(BigInt(103), loadReservation(OWNER, YAPPR_CONTRACT_ID))).toEqual([])
+    expect((await build()).bytes).toEqual(new Uint8Array([7]))
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(104)])
+  })
+
+  it('does not sign anything when the proof read fails', async () => {
+    vi.useFakeTimers()
+    await build()
+    sdk.identities.contractNonce.mockRejectedValue(new Error('proof unavailable'))
+    const chosen = vi.fn(async () => 'sent')
+    const sdkWrite = vi.fn(async () => 'sdk')
+    expect(await settle(withSdkSignedWrite(OWNER, YAPPR_CONTRACT_ID, sdkWrite, undefined, undefined, chosen))).toEqual({ error: new Error('proof unavailable') })
+    expect(chosen).not.toHaveBeenCalled()
+    expect(sdkWrite).not.toHaveBeenCalled()
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toHaveLength(1)
+  })
+})
+
+describe('a second wallet payment QR (#929)', () => {
+  it.each(['this tab', 'another tab'])('is not built in %s while the first may still execute', async tab => {
+    vi.useFakeTimers()
+    await build()
+    let buildAgain = build
+    if (tab === 'another tab') {
+      vi.resetModules()
+      const fresh = await import('./token-transition-builder')
+      buildAgain = () => fresh.buildUnsignedTokenBatch('test', OWNER, base => new TokenTransferTransition({ base, recipientId: 'recipient', amount: BigInt(1) }))
+    }
+    expect(await settle(buildAgain())).toEqual({ error: new Error(PAYMENT_PENDING_ERROR) })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(101)])
+  })
+
+  it('is built once the first falls out of the nonce window', async () => {
+    vi.useFakeTimers()
+    await build()
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(125) | (BigInt(1) << BigInt(40 + 23)))
+    expect(await settle(build())).toEqual({ error: new Error(PAYMENT_PENDING_ERROR) })
+    sdk.identities.contractNonce.mockResolvedValue(BigInt(126))
+    expect(await settle(build())).toMatchObject({ value: { bytes: new Uint8Array([7]) } })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending.map(p => p.nonce)).toEqual([BigInt(127)])
+  })
+})
+
+describe('the last nonce Drive accepts', () => {
+  it('is never taken by a QR, which stays pending as long as a wallet may sign it, so a create can still use it', async () => {
+    vi.useFakeTimers()
+    // 23 requests cancelled before their QR went up left the mark at 123 with nothing pending.
+    releaseNonce(OWNER, YAPPR_CONTRACT_ID, reserveNonce(OWNER, YAPPR_CONTRACT_ID, BigInt(123), BigInt(100), WALLET_TOKEN_SCOPE))
+    expect(await settle(build())).toEqual({ error: new Error(PENDING_WRITE_ERROR) })
+    expect(loadReservation(OWNER, YAPPR_CONTRACT_ID)?.pending).toEqual([])
+    expect(await settle(awaitNonce(OWNER, YAPPR_CONTRACT_ID, allocateNonce).then(({ value }) => value))).toEqual({ value: BigInt(124) })
+  })
 })
 
 describe('buildUnsignedTokenBatch', () => {

@@ -5,6 +5,7 @@ const fromHere = (relative: string) => fileURLToPath(new URL(relative, import.me
 const mocks = fromHere('./private-feed-mocks.ts')
 const blogEditorMocks = fromHere('./blog-editor-mocks.ts')
 const passkeyMocks = fromHere('./passkey-mocks.ts')
+const paymentMocks = fromHere('./payment-modal-mocks.ts')
 
 export default defineConfig({
   root: fromHere('./'),
@@ -27,6 +28,7 @@ export default defineConfig({
       { find: /^@\/components\/moderation\/barred-writer-notice$/, replacement: fromHere('./blog-management-mocks.tsx') },
       { find: /^@\/lib\/auth\/passkey-vault$/, replacement: passkeyMocks },
       { find: /^@\/lib\/services\/messaging-key-service$/, replacement: fromHere('./set-up-messaging-mocks.ts') },
+      { find: /^@\/lib\/services\/(token-service|token-purchase-builder|token-transfer-builder|tip-service|tip-history-service|identity-nonce|unified-profile-service)$/, replacement: paymentMocks },
       { find: '@', replacement: fromHere('../../') },
     ],
     dedupe: ['react', 'react-dom'],
