@@ -321,6 +321,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The SDK cannot connect without the devnet's quorum service: it loads
+      # /quorums and /previous before its first request. When either stays
+      # unreachable no spec can pass, so say so once, before setup and the build
+      # hold the shared slot, and skip the specs instead of timing out each one.
+      # An empty NEXT_PUBLIC_QUORUM_URL means the SDK's default for the devnet name.
+      - name: Check the devnet quorum service
+        run: |
+          set -a && . ./.env.devnet && set +a
+          url="${NEXT_PUBLIC_QUORUM_URL:-https://quorums.${NEXT_PUBLIC_DEVNET_NAME}.networks.dash.org}"
+          echo "DEVNET_QUORUM_URL=$url" >> "$GITHUB_ENV"
+          for attempt in 1 2 3; do
+            failed=""
+            for path in quorums previous; do
+              curl -sSf -o /dev/null --max-time 60 "$url/$path" || failed="$failed /$path"
+            done
+            if [ -z "$failed" ]; then
+              echo "DEVNET_UP=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            [ "$attempt" -lt 3 ] && sleep 10
+          done
+          echo "::error::The devnet quorum service $url did not answer$failed after 3 attempts, so the SDK cannot connect and no devnet spec ran. Check the URL in .env.devnet and the devnet's status first; if $NEXT_PUBLIC_DEVNET_NAME was reset or retired, re-provision it (docs/TESTING.md, Devnet CI credentials)."
+          exit 1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -360,19 +384,18 @@ jobs:
             echo "::notice::E2E_DEVNET_SEED_PHRASE unavailable (fork PR?) — skipping the devnet write specs"
           fi
 
-      # The devnet quorum service cold-starts (~10s) after idle and every SDK
-      # connect fails until it is warm, so warm it before the run rather than
-      # burning a retry on it.
+      # The quorum service cold-starts (~10s) after idle and every SDK connect
+      # fails until it is warm. The check above already woke it; touch it again
+      # after the build so it is still warm when the specs start.
       - name: Warm the devnet quorum service
         continue-on-error: true
         run: |
           for path in quorums previous masternodes; do
-            curl -sS -o /dev/null --max-time 60 \
-              "https://quorums.sakura.networks.dash.org/$path" || true
+            curl -sS -o /dev/null --max-time 60 "$DEVNET_QUORUM_URL/$path" || true
           done
 
       - name: Run the devnet topology and username entry specs
-        if: env.HAS_SEED == 'true'
+        if: ${{ !cancelled() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true' }}
         continue-on-error: true
         env:
           E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
@@ -389,6 +412,7 @@ jobs:
       # instead of passing on a retry. It writes its own report and results,
       # which later steps would otherwise overwrite before the upload.
       - name: Run the devnet SDK recovery specs
+        if: ${{ !cancelled() && env.DEVNET_UP == 'true' }}
         env:
           E2E_BASE_PATH: /devnet
           E2E_ENV_FILE: .env.devnet
@@ -402,8 +426,9 @@ jobs:
       # (about 15 min together); the history (120-message bulk write) and
       # lost-state recovery files are local-only, see docs/TESTING.md. The messaging
       # setup file runs only on an App Connect build and skips itself otherwise.
+      # !cancelled(): a red SDK recovery step must not hide the DM results.
       - name: Run the devnet DM v5 specs
-        if: env.HAS_SEED == 'true'
+        if: ${{ !cancelled() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true' }}
         continue-on-error: true
         env:
           E2E_SEED_PHRASE: ${{ secrets.E2E_DEVNET_SEED_PHRASE }}
@@ -440,7 +465,7 @@ jobs:
       # instead of failing; what it left stays live until the same command is
       # run by hand without --since.
       - name: Tombstone the run's public posts and replies
-        if: always() && env.HAS_SEED == 'true'
+        if: always() && env.HAS_SEED == 'true' && env.DEVNET_UP == 'true'
         continue-on-error: true
         timeout-minutes: 15
         env:
