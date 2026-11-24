@@ -155,6 +155,46 @@ describe('mainnet release', () => {
     expect(() => releaseConfig.assertSnapshotPins(snapshot, env)).toThrow('exact contract pins')
   })
 
+  it('next.config.js refuses a mainnet release build without a snapshot matching its pins', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yappr-mainnet-config-'))
+    try {
+      mkdirSync(join(dir, 'scripts'))
+      for (const file of ['release-config.cjs', 'app-connect-entries.cjs', 'sdk-wasm-asset.cjs']) {
+        copyFileSync(new URL(file, import.meta.url), join(dir, 'scripts', file))
+      }
+      copyFileSync(new URL('../next.config.js', import.meta.url), join(dir, 'next.config.js'))
+      mkdirSync(join(dir, 'lib/contracts/bundled'), { recursive: true })
+      copyFileSync(new URL('../lib/constants.ts', import.meta.url), join(dir, 'lib/constants.ts'))
+      for (const file of otherFiles) copyFileSync(new URL(`../${file}`, import.meta.url), join(dir, file))
+      mkdirSync(join(dir, 'node_modules/next'), { recursive: true })
+      symlinkSync(fileURLToPath(new URL('../node_modules/bs58', import.meta.url)), join(dir, 'node_modules/bs58'), 'dir')
+      writeFileSync(join(dir, 'node_modules/next/constants.js'), "exports.PHASE_PRODUCTION_BUILD = 'phase-production-build'")
+      mkdirSync(join(dir, 'node_modules/@dashevo/wasm-sdk/dist/raw'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk_bg.wasm'), 'wasm')
+      const env = completeMainnet()
+      const load = () => spawnSync(process.execPath, ['-e', "require('./next.config.js')('phase-production-build')"], {
+        cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH, ...env },
+      })
+      const snapshotFile = join(dir, 'lib/contracts/bundled/mainnet.json')
+      const ids = snapshotContractIds([env], '', env.NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID, ['v20'])
+      const snapshot = { network: 'mainnet', contracts: Object.fromEntries(ids.map(id => [id, { version: 1, bytes: 'fixture' }])) }
+
+      const missing = load()
+      expect(missing.status).not.toBe(0)
+      expect(missing.stderr).toContain('needs lib/contracts/bundled/mainnet.json')
+
+      writeFileSync(snapshotFile, JSON.stringify({ ...snapshot, contracts: { ...snapshot.contracts,
+        [env.NEXT_PUBLIC_YAPPR_CONTRACT_ID]: { version: 2, bytes: 'fixture' } } }))
+      const mismatched = load()
+      expect(mismatched.status).not.toBe(0)
+      expect(mismatched.stderr).toContain('exact contract pins')
+
+      writeFileSync(snapshotFile, JSON.stringify(snapshot))
+      const matching = load()
+      expect(matching.status, matching.stderr).toBe(0)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
   it('builds from an explicit mainnet env path, ignores ambient pins, and refuses bad input before Next', () => {
     const dir = mkdtempSync(join(tmpdir(), 'yappr-mainnet-cli-'))
     try {
