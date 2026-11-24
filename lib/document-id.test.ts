@@ -105,6 +105,11 @@ describe('allocateIdentityContractNonce', () => {
     expect(allocateIdentityContractNonce(BigInt(100), BigInt(123))).toBe(BigInt(124))
     expect(allocateIdentityContractNonce(BigInt(100), BigInt(124))).toBe(BigInt(101))
   })
+
+  it('stays below 24 on a first write to the contract, which Platform refuses at 24', () => {
+    expect(allocateIdentityContractNonce(undefined, BigInt(22))).toBe(BigInt(23))
+    expect(allocateIdentityContractNonce(undefined, BigInt(23))).toBe(BigInt(1))
+  })
 })
 
 describe('identityContractNonceConsumed', () => {

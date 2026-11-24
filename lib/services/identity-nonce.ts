@@ -36,8 +36,9 @@
  */
 import { Identifier } from '@dashevo/wasm-sdk';
 import { logger } from '@/lib/logger';
-import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
+import { NONCE_STORE_ERROR, PAYMENT_PENDING_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityNonceConflictError, isNonceSpentRefusal, sentWriteOutcomeUnknown } from '@/lib/error-utils';
 import { allocateIdentityContractNonce, identityContractNonceConsumed, nextIdentityContractNonce } from '@/lib/document-id';
+import { lastAcceptedNonce, nonceAdmissible } from '@/lib/nonce-rules.mjs';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { CriticalKeyCancelledError } from '@/lib/auth/critical-key';
 import { getEvoSdk } from './evo-sdk-service';
@@ -51,12 +52,21 @@ export interface PendingTransition {
   signedAfter?: bigint;
   /** With a null nonce: and no later than this one. */
   signedAtMost?: bigint;
-  /** With a null nonce: when it stops holding writes back unless settled first (see {@link PENDING_LIFETIME_MS}). */
+  /**
+   * When it stops holding writes back unless settled first (see
+   * {@link PENDING_LIFETIME_MS}). A known nonce has one only while its write
+   * is prepared and not yet sent; null once it may have gone out.
+   */
   expiresAt: number | null;
   /**
    * What the transition writes, as an opaque key its caller chose (a Pollr
    * ballot names its poll), so a caller can tell which pending transitions can
-   * touch what it is about to do. Absent means unknown: it may touch anything.
+   * touch what it is about to do. App writes may bypass each other only when
+   * both scopes are present and differ. Absent means unknown: it may touch
+   * anything. Moderation uses `moderation:<contract>:identity:<identity>` or
+   * `moderation:<contract>:document:<type>:<id>` across all actions on a target.
+   * Fee claims use `moderation:<contract>:pot:<pot>`.
+   * Wallet requests use WALLET_TOKEN_SCOPE and impose no ordering constraint.
    */
   scope?: string;
 }
@@ -79,7 +89,12 @@ export interface NonceReservation {
  * re-checks its mempool after every block and a valid transition executes in
  * the next one, so a minute is many blocks past the one it would have
  * executed in. A transition whose nonce is known (a create, a wallet request)
- * never expires: it stays pending until Platform shows that nonce consumed.
+ * never expires once it may have gone out: it stays pending until Platform
+ * shows that nonce consumed. A chosen-nonce write has this lifetime only while
+ * it is prepared, so a page that closes before sending holds nothing back for
+ * good; {@link markSent} clears it right before the broadcast. The evidence of
+ * a send is that null `expiresAt`, a field every deployment's serializer
+ * keeps, so a tab still running an older build cannot erase it.
  */
 const PENDING_LIFETIME_MS = 60 * 1000;
 
@@ -101,6 +116,8 @@ const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
  * contracts apart.
  */
 const RESERVATION_PREFIX = 'yappr:nonce-reservation:';
+
+export const WALLET_TOKEN_SCOPE = 'wallet-token';
 
 /**
  * Entries this tab released (each on a verdict) whose release localStorage may
@@ -200,14 +217,14 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
 /**
  * The pending transitions that may still execute, given the raw value
  * `identities.contractNonce` returned: not one whose nonce (or, SDK-signed,
- * any nonce it may carry) is consumed, and not an SDK-signed one past its
- * lifetime. Consumption is final, so a node that is behind only keeps one
+ * any nonce it may carry) is consumed, and not one past its lifetime (an
+ * SDK-signed one, or a chosen-nonce one that was never sent). Consumption is final, so a node that is behind only keeps one
  * pending longer.
  */
 export function stillPending(current: bigint | undefined | null, reservation: NonceReservation | null, now = Date.now()): PendingTransition[] {
   return (reservation?.pending ?? []).filter((p) => {
-    if (p.nonce !== null) return !identityContractNonceConsumed(current, p.nonce);
     if (p.expiresAt !== null && p.expiresAt <= now) return false;
+    if (p.nonce !== null) return !identityContractNonceConsumed(current, p.nonce);
     if (p.signedAfter === undefined || p.signedAtMost === undefined) return true;
     return !anyConsumed(current, p.signedAfter + BigInt(1), p.signedAtMost);
   });
@@ -256,6 +273,44 @@ export async function awaitNonce<T>(
 }
 
 /**
+ * {@link awaitNonce} for a payment: it also waits while a wallet payment
+ * request may still execute, since a second payment beside it could pay
+ * twice. Throws {@link PAYMENT_PENDING_ERROR} when one is still waiting.
+ */
+export async function awaitPaymentNonce<T>(
+  ownerId: string,
+  contractId: string,
+  ready: (current: bigint | undefined, reservation: NonceReservation | null) => T | null
+): Promise<{ current: bigint | undefined; value: T }> {
+  let held = false;
+  try {
+    return await awaitNonce(ownerId, contractId, (tip, reservation) => {
+      held = stillPending(tip, reservation).some((entry) => entry.scope === WALLET_TOKEN_SCOPE);
+      return held ? null : ready(tip, reservation);
+    });
+  } catch (error) {
+    if (held && error instanceof Error && error.message === PENDING_WRITE_ERROR) throw new Error(PAYMENT_PENDING_ERROR);
+    throw error;
+  }
+}
+
+/**
+ * Whether the wallet request reserved at `nonce` may still execute, so its QR
+ * can be shown again: it is still reserved and Drive would still admit its
+ * nonce ({@link nonceAdmissible}). A reservation alone is not enough: one
+ * 24 behind the tip is kept, but Drive refuses it. A read that puts it past
+ * the window ahead comes from a node behind the one it was issued against, so
+ * proves nothing.
+ */
+export async function walletRequestLive(ownerId: string, contractId: string, nonce: bigint): Promise<boolean> {
+  const sdk = await getEvoSdk();
+  const current = await sdk.identities.contractNonce(ownerId, contractId);
+  // Past the window ahead only on a lagging read: inconclusive, so it stays live while it is reserved.
+  if (nonce <= tipOf(current) && !nonceAdmissible(current, nonce)) return false;
+  return stillPending(current, loadReservation(ownerId, contractId)).some((p) => p.scope === WALLET_TOKEN_SCOPE && p.nonce === nonce);
+}
+
+/**
  * Record a signed transition as pending before its broadcast (one that errors
  * may still have gone out), dropping what `current` shows settled. `nonce` is
  * null for one the SDK signs. Neither the mark nor the floor ever goes down.
@@ -267,7 +322,8 @@ export function reserveNonce(
   contractId: string,
   nonce: bigint | null,
   current: bigint | undefined | null,
-  scope?: string
+  scope?: string,
+  lifetime = false
 ): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   const mark = previous?.mark ?? BigInt(0);
@@ -277,7 +333,7 @@ export function reserveNonce(
   const id = crypto.randomUUID();
   const entry: PendingTransition = nonce === null
     ? { id, nonce, signedAfter: floor, signedAtMost: max(floor, mark) + BigInt(1), expiresAt: Date.now() + PENDING_LIFETIME_MS }
-    : { id, nonce, expiresAt: null };
+    : { id, nonce, expiresAt: lifetime ? Date.now() + PENDING_LIFETIME_MS : null };
   if (scope !== undefined) entry.scope = scope;
   saveReservation(ownerId, contractId, {
     mark: max(mark, entry.nonce ?? entry.signedAtMost ?? BigInt(0)),
@@ -292,8 +348,9 @@ export function reserveNonce(
  * at least the tip, and at least the last nonce of an SDK-signed entry that
  * expired. That one never showed landing, but it was never refused either
  * (its page may have closed mid-write), so it may still take any nonce in its
- * range; nothing in that range may then settle a later write. Null without
- * a reservation.
+ * range; nothing in that range may then settle a later write. A known nonce
+ * that expired was never sent ({@link markSent}), so it spent nothing. Null
+ * without a reservation.
  */
 function floorAfterSettling(current: bigint | undefined | null, reservation: NonceReservation | null, live: PendingTransition[]): bigint | null {
   if (!reservation) return null;
@@ -316,7 +373,7 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
       const pending = reservation.pending.filter((p) => p.id !== entry.id);
       const floor = spentThrough === undefined ? reservation.floor : max(reservation.floor, spentThrough);
       if (pending.length !== reservation.pending.length || floor !== reservation.floor) {
-        saveReservation(ownerId, contractId, { mark: reservation.mark, floor, pending });
+        saveReservation(ownerId, contractId, { ...reservation, floor, pending });
       }
     }
   } catch {
@@ -331,19 +388,47 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
 }
 
 /**
- * Start an SDK-signed transition's lifetime over: the page is still waiting on
- * the SDK, or has just lost the answer. Best effort: when localStorage
- * refuses, it expires a little sooner.
+ * Start a write's lifetime over: the page is still waiting on the SDK, or has
+ * just lost the answer, or is still preparing a chosen-nonce write. Never
+ * gives a lifetime back to one that has none (a chosen-nonce write marked
+ * sent), nor to a prepared chosen-nonce write whose lifetime already ran out. Best effort: when localStorage refuses, it expires a little sooner.
  */
 function renewPending(ownerId: string, contractId: string, entry: PendingTransition): void {
   try {
     const reservation = loadReservation(ownerId, contractId);
-    if (!reservation?.pending.some((p) => p.id === entry.id)) return;
+    if (!reservation) return;
+    const stored = reservation.pending.find((p) => p.id === entry.id);
+    // A prepared chosen write whose lifetime ran out stays lapsed: another tab may have moved past it (see markSent).
+    if (typeof stored?.expiresAt !== 'number' || (stored.nonce !== null && stored.expiresAt <= Date.now())) return;
     const expiresAt = Date.now() + PENDING_LIFETIME_MS;
     saveReservation(ownerId, contractId, { ...reservation, pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt } : p)) });
   } catch {
     // Already logged.
   }
+}
+
+/** A chosen-nonce write's reservation ran out, or was dropped, before it could be sent. */
+const RESERVATION_LAPSED = 'The nonce reserved for this write lapsed before it was sent';
+
+/**
+ * Right before a chosen-nonce transition is broadcast: its entry loses its
+ * lifetime, so from then on it holds back every write it could clash with
+ * until Platform shows its nonce consumed, whatever happens to this page, and
+ * the mark goes past its nonce. A reservation is not permission to send: when
+ * the entry already expired or was dropped (this page stalled past its
+ * lifetime, and another tab may have moved on), it throws and nothing is sent.
+ * Throws {@link NONCE_STORE_ERROR} when that can't be stored, and the
+ * transition must then not be sent.
+ */
+function markSent(ownerId: string, contractId: string, entry: PendingTransition): void {
+  const reservation = loadReservation(ownerId, contractId);
+  const stored = reservation?.pending.find((p) => p.id === entry.id);
+  if (!reservation || !stored || (stored.expiresAt !== null && stored.expiresAt <= Date.now())) throw new Error(RESERVATION_LAPSED);
+  saveReservation(ownerId, contractId, {
+    ...reservation,
+    mark: max(reservation.mark, entry.nonce ?? BigInt(0)),
+    pending: reservation.pending.map((p) => (p.id === entry.id ? { ...p, expiresAt: null } : p)),
+  });
 }
 
 /** How often, and how far apart, Platform is read for the nonce an answered SDK-signed transition took. */
@@ -389,6 +474,14 @@ async function nonceTakenOnAnswer(
   return entry.signedAtMost;
 }
 
+/** Preparation failed before a chosen-nonce transition could be broadcast. */
+export class ChosenWriteNotSentError extends Error {
+  constructor(readonly reason: unknown) {
+    super('This change hasn’t been sent. Please try again.');
+    this.name = 'ChosenWriteNotSentError';
+  }
+}
+
 /** A write's precondition no longer held under the write lock: nothing was reserved or sent. */
 export const WRITE_PRECONDITION_FAILED = 'This was not sent: what it depended on changed.';
 
@@ -401,7 +494,8 @@ function isVerdict(error: unknown): boolean {
 /**
  * Run a write the SDK signs itself under the identity's write lock.
  *
- * The write starts only once nothing this browser signed may still execute
+ * Without a chosen-nonce builder, the write starts only once nothing this
+ * browser signed may still execute
  * (waiting a few seconds for that, then failing unsent with
  * {@link PENDING_WRITE_ERROR}). It is recorded as pending with no nonce and
  * the range of nonces it may carry (see the module comment): if its outcome
@@ -412,12 +506,33 @@ function isVerdict(error: unknown): boolean {
  * behind one that admitted the same transition. On an answer the floor goes
  * to the nonce it took, read back from Platform ({@link nonceTakenOnAnswer}).
  *
+ * `writeWithNonce`, when supplied, builds the same action with a chosen nonce
+ * past the mark if known-nonce transitions remain outstanding after the normal
+ * wait, but only when both app writes have scopes and those scopes differ.
+ * Same-scope writes, or app writes unscoped on either side, keep waiting and
+ * fail unsent with PENDING_WRITE_ERROR if they do not settle. Wallet requests
+ * impose no ordering on these writes. Their nonces stay reserved until
+ * consumed, including after a QR closes or a page reloads. Without
+ * `writeWithNonce` (a payment), a wallet request still holds the write back
+ * ({@link PAYMENT_PENDING_ERROR}).
+ * Unknown SDK nonces still hold writes back. A chosen nonce must be one Drive
+ * admits ({@link nonceAdmissible}) and never takes the last slot Drive
+ * accepts, which stays for creates. A chosen nonce is used only while
+ * something this browser signed is still pending; with nothing pending the
+ * SDK signs, as without a builder. It calls `sending` right before its
+ * broadcast, and must not send when that throws: from then on the write holds
+ * back same-target writes and payments until Platform shows its nonce
+ * consumed ({@link markSent}), even if its answer is lost. A chosen write that
+ * never reached Platform therefore holds them until its nonce leaves Drive's
+ * window, as a lost create does (#777).
+ *
  * `scope` is stored with its pending entry (see {@link PendingTransition.scope}).
  *
  * `precondition`, when given, is the last word on whether to send: it runs
- * under the lock, after every earlier transition has settled and before a
- * nonce is reserved, so nothing this browser signs can land between the check
- * and the write. When it resolves false the write fails with
+ * under the lock after waiting for earlier transitions and before a nonce is
+ * reserved. With a chosen-nonce builder an earlier unconfirmed transition may
+ * still execute later; the check cannot establish ordering against it. When it
+ * resolves false the write fails with
  * {@link WRITE_PRECONDITION_FAILED} and nothing is reserved or sent.
  */
 export async function withSdkSignedWrite<T>(
@@ -425,11 +540,51 @@ export async function withSdkSignedWrite<T>(
   contractId: string,
   write: () => Promise<T>,
   scope?: string,
-  precondition?: () => Promise<boolean>
+  precondition?: () => Promise<boolean>,
+  writeWithNonce?: (nonce: bigint, sending: () => void) => Promise<T>
 ): Promise<T> {
-  return withIdentityWriteLock(ownerId, contractId, async () => {
-    const { current } = await awaitNonce(ownerId, contractId, (tip, reservation) => (stillPending(tip, reservation).length === 0 ? true : null));
+  const send = async () => {
+    let polls = 0;
+    // Without a chosen-nonce builder (a payment), it waits behind a wallet payment request too.
+    const { current, value } = await (writeWithNonce ? awaitNonce : awaitPaymentNonce)<{ nonce: bigint | null }>(ownerId, contractId, (tip, reservation) => {
+      const pending = stillPending(tip, reservation);
+      if (pending.length === 0) return { nonce: null };
+      if (!writeWithNonce) return null;
+      if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE) && polls++ < PENDING_POLLS) return null;
+      if (pending.some((entry) => entry.scope !== WALLET_TOKEN_SCOPE &&
+        (scope === undefined || entry.scope === undefined || entry.scope === scope))) return null;
+      const nonce = allocateNonce(tip, reservation);
+      // Drive must admit it, and the last slot it accepts stays for creates.
+      if (nonce === null || !nonceAdmissible(tip, nonce) || nonce === lastAcceptedNonce(tip)) return null;
+      return { nonce };
+    });
     if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
+    if (value.nonce !== null && writeWithNonce) {
+      const previousMark = loadReservation(ownerId, contractId)?.mark ?? BigInt(0);
+      // Its lifetime keeps starting over while this page prepares it, so a page that dies before sending holds
+      // nothing back for good; markSent ends it right before the broadcast.
+      const entry = reserveNonce(ownerId, contractId, value.nonce, current, scope, true);
+      const alive = setInterval(() => renewPending(ownerId, contractId, entry), PENDING_LIFETIME_MS / 4);
+      try {
+        const result = await writeWithNonce(value.nonce, () => markSent(ownerId, contractId, entry));
+        clearInterval(alive);
+        // An affected-state answer can be a snapshot rather than execution proof: released early only once a
+        // nonce read proves it can no longer execute.
+        await settleChosenNonce(ownerId, contractId, entry);
+        return result;
+      } catch (error) {
+        clearInterval(alive);
+        if (error instanceof ChosenWriteNotSentError || error instanceof CriticalKeyCancelledError) {
+          releaseNonce(ownerId, contractId, entry);
+          // No bytes left this lock, so this allocation never became a signed nonce; unless something went past it since.
+          const reservation = loadReservation(ownerId, contractId);
+          if (reservation && reservation.mark === entry.nonce) saveReservation(ownerId, contractId, { ...reservation, mark: previousMark });
+        } else if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
+        // Otherwise it may still execute: marked sent, it stays pending until its nonce is consumed. One that failed
+        // before markSent was never sent, and its lifetime runs out.
+        throw error instanceof ChosenWriteNotSentError && error.reason instanceof CriticalKeyCancelledError ? error.reason : error;
+      }
+    }
     const sdk = await getEvoSdk();
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
     const entry = reserveNonce(ownerId, contractId, null, current, scope);
@@ -452,7 +607,18 @@ export async function withSdkSignedWrite<T>(
     clearInterval(alive);
     releaseNonce(ownerId, contractId, entry, await nonceTakenOnAnswer(ownerId, contractId, entry, true, tipOf(current)));
     return result;
-  });
+  };
+  return withIdentityWriteLock(ownerId, contractId, send);
+}
+
+async function settleChosenNonce(ownerId: string, contractId: string, entry: PendingTransition): Promise<void> {
+  try {
+    const sdk = await getEvoSdk();
+    const current = await sdk.identities.contractNonce(ownerId, contractId);
+    if (entry.nonce !== null && identityContractNonceConsumed(current, entry.nonce)) releaseNonce(ownerId, contractId, entry, entry.nonce);
+  } catch (error) {
+    logger.debug('Could not prove the chosen nonce consumed:', error);
+  }
 }
 
 /**

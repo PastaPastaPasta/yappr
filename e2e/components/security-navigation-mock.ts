@@ -8,3 +8,8 @@ const subscribe = (callback: () => void) => {
 export function usePathname() {
   return useSyncExternalStore(subscribe, () => window.location.pathname)
 }
+
+const router = { push: () => {}, replace: () => {}, back: () => {}, prefetch: () => {}, refresh: () => {} }
+export function useRouter() {
+  return router
+}

@@ -13,7 +13,8 @@ import { tokenService } from './token-service';
 import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION } from '../constants';
 import { TokenBaseTransition, TokenTransition, BatchedTransition, BatchTransition } from '@dashevo/wasm-sdk';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
-import { allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identity-nonce';
+import { lastAcceptedNonce, nonceAdmissible } from '@/lib/nonce-rules.mjs';
+import { WALLET_TOKEN_SCOPE, allocateNonce, awaitPaymentNonce, releaseNonce, reserveNonce } from './identity-nonce';
 
 /**
  * An unsigned transition for a wallet, and the way to take it back. The bytes
@@ -25,15 +26,18 @@ import { allocateNonce, awaitNonce, releaseNonce, reserveNonce } from './identit
  */
 export interface WalletTransitionRequest {
   bytes: Uint8Array;
+  nonce: bigint;
   discard: () => Promise<void>;
 }
 
 /**
  * Serialize an unsigned single-transition batch for `ownerId`.
  *
- * The transition carries the owner's next identity-contract nonce, so it is
- * only valid until their next write to the social contract (posting, liking, …)
- * consumes that nonce — build it right before showing the QR and rebuild on retry.
+ * The transition carries a reserved identity-contract nonce. Later app writes
+ * use different nonces: even after its QR closes, a scanned request may still
+ * execute until Platform proves that its nonce is consumed or outside the
+ * nonce window. Until then no other payment is built or sent, so one payment
+ * can never go out twice.
  *
  * @param label - Prefix for the debug lines, naming the calling flow
  * @param ownerId - Identity ID (Base58) the wallet signs for
@@ -52,9 +56,14 @@ export async function buildUnsignedTokenBatch(
   // nonce past every one this browser signed, and reserving it as pending
   // until Platform shows it consumed (the wallet may sign it long after the QR
   // is gone), keeps any later write from signing the same one (QA D-01). It is
-  // reserved only once the bytes exist, so a failed build holds nothing.
+  // reserved only once the bytes exist, so a failed build holds nothing. It
+  // never takes the last nonce Drive accepts: it stays pending for as long as
+  // a wallet may sign it, and that slot is the one left for creates.
   return withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => {
-    const { current: rawNonce, value: nonce } = await awaitNonce(ownerId, YAPPR_CONTRACT_ID, allocateNonce);
+    const { current: rawNonce, value: nonce } = await awaitPaymentNonce(ownerId, YAPPR_CONTRACT_ID, (tip, reservation) => {
+      const allocated = allocateNonce(tip, reservation);
+      return allocated !== null && nonceAdmissible(tip, allocated) && allocated !== lastAcceptedNonce(tip) ? allocated : null;
+    });
     logger.debug(`${label}: nonce raw=${rawNonce} using=${nonce}`);
 
     const base = new TokenBaseTransition({
@@ -69,9 +78,9 @@ export async function buildUnsignedTokenBatch(
     const bytes = stateTransition.toBytes();
     logger.debug(`${label}: unsigned transition bytes length: ${bytes.length}`);
 
-    const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce);
+    const entry = reserveNonce(ownerId, YAPPR_CONTRACT_ID, nonce, rawNonce, WALLET_TOKEN_SCOPE);
     // Never shown to a wallet, so never signed: its nonce was not taken.
     const discard = () => withIdentityWriteLock(ownerId, YAPPR_CONTRACT_ID, async () => releaseNonce(ownerId, YAPPR_CONTRACT_ID, entry));
-    return { bytes, discard };
+    return { bytes, nonce, discard };
   });
 }

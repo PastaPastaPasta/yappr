@@ -21,6 +21,7 @@ export const STALE_IDENTITY_ERROR = "Your account's latest change hasn't reached
 
 export const identityService = {
   hasEncryptionKey: async () => fixture !== 'encryption-key-modal',
+  getBalance: async () => ({ confirmed: 1_000_000_000_000 }),
   validateKeySecurityLevel: async () => ({ isValid: true, keyId: 0, securityLevel: 'MASTER' }),
   /** As the real one: waits for the identity update lock (another tab's update), asks the cancel check, sends, then waits for confirmation. */
   addEncryptionKey: async (_identityId: string, _key: Uint8Array, _master: string, _contractId?: string, options: { cancelled?: () => boolean } = {}) => {

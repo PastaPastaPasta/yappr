@@ -23,7 +23,7 @@
  */
 import bs58 from 'bs58'
 import { Document } from '@dashevo/wasm-sdk'
-import { MAX_NONCE_DISTANCE, NONCE_SEQUENCE_MASK, identityContractNonceConsumed } from './nonce-rules.mjs'
+import { NONCE_SEQUENCE_MASK, identityContractNonceConsumed, lastAcceptedNonce } from './nonce-rules.mjs'
 
 export { identityContractNonceConsumed }
 
@@ -47,8 +47,7 @@ export function nextIdentityContractNonce(current: bigint | undefined | null): b
 export function allocateIdentityContractNonce(current: bigint | undefined | null, reserved: bigint | null): bigint {
   const next = nextIdentityContractNonce(current)
   if (reserved === null || reserved < next) return next
-  const tip = next - BigInt(1)
-  return reserved + BigInt(1) - tip > MAX_NONCE_DISTANCE ? next : reserved + BigInt(1)
+  return reserved + BigInt(1) > lastAcceptedNonce(current) ? next : reserved + BigInt(1)
 }
 
 export interface DocumentIdInputs {

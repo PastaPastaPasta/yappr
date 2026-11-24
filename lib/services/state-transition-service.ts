@@ -1,3 +1,4 @@
+import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
@@ -20,6 +21,7 @@ import { documentIdForCreate, identityContractNonceConsumed } from '@/lib/docume
 import { buildSignedCreateTransition } from '@/lib/manual-batch';
 import { ensureRegisteredContract } from '@/lib/registered-contracts';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
+import { criticalKeySession, liveSessionCheck } from '@/lib/auth/critical-key';
 import { allocateNonce, awaitNonce, releaseNonce, reserveNonce, withSdkSignedWrite, type PendingTransition } from './identity-nonce';
 import {
   DocumentActionFeeAgreement,
@@ -994,6 +996,8 @@ class StateTransitionService {
     let sent = false;
     const newRevision = revision + 1;
     try {
+      // Taken before anything is awaited: a sign-out or account switch meanwhile stops a chosen-nonce write unsent.
+      const assertLive = liveSessionCheck(ownerId, criticalKeySession());
       this.assertUnpricedAction(contractId, documentType, 'replace');
       const sdk = await getEvoSdk();
 
@@ -1017,10 +1021,13 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => {
+      const wif = key.wif;
+      const write = (nonce?: bigint, sending?: () => void) => {
         sent = true;
-        return sdk.documents.replace({ document, identityKey: signingKey, signer });
-      }, reservationScope);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, assertLive, sending);
+        return writer.documents.replace({ document, identityKey: signingKey, signer });
+      };
+      await withSdkSignedWrite(ownerId, contractId, write, reservationScope, undefined, write);
       logger.debug('Document update submitted successfully');
       reportSigningSuccess(ownerId);
 
@@ -1063,6 +1070,8 @@ class StateTransitionService {
     // Set once the SDK is asked to sign and send: an error before that sent nothing.
     let sent = false;
     try {
+      // Taken before anything is awaited: a sign-out or account switch meanwhile stops a chosen-nonce write unsent.
+      const assertLive = liveSessionCheck(ownerId, criticalKeySession());
       this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
 
@@ -1084,10 +1093,13 @@ class StateTransitionService {
 
       const { signer, identityKey: signingKey } = await signerService.createSignerFromWasmKey(key.wif, key.identityKey);
 
-      await withSdkSignedWrite(ownerId, contractId, () => {
+      const wif = key.wif;
+      const write = (nonce?: bigint, sending?: () => void) => {
         sent = true;
-        return sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
-      }, undefined, precondition);
+        const writer = nonce === undefined ? sdk : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, assertLive, sending);
+        return writer.documents.delete({ document: documentForDelete, identityKey: signingKey, signer });
+      };
+      await withSdkSignedWrite(ownerId, contractId, write, undefined, precondition, write);
       logger.debug('Document deletion submitted successfully');
       reportSigningSuccess(ownerId);
 
@@ -1144,6 +1156,8 @@ class StateTransitionService {
     const { documentId, createdAtMs, data } = tuple;
     let key: SigningKey | null = null;
     try {
+      // Taken before anything is awaited: a sign-out or account switch meanwhile stops a chosen-nonce write unsent.
+      const assertLive = liveSessionCheck(ownerId, criticalKeySession());
       this.assertUnpricedAction(contractId, documentType, 'delete');
       const sdk = await getEvoSdk();
 
@@ -1171,10 +1185,14 @@ class StateTransitionService {
         // From evo-sdk 4.2.0-beta.7 (platform#5136) this resolves once the
         // proof shows the entry gone: an indexOnly delete waits for the
         // affected state instead of throwing the strict wait's snapshot error.
-        await withSdkSignedWrite(ownerId, contractId, () => {
+        const wif = key.wif;
+        const write = (nonce?: bigint, sending?: () => void) => {
           sent = true;
-          return sdk.documents.delete({ document, identityKey: signingKey, signer });
-        });
+          return nonce === undefined
+            ? sdk.documents.delete({ document, identityKey: signingKey, signer })
+            : chosenNonceWrites(sdk, ownerId, nonce, wif, signingKey, assertLive, sending).documents.deleteByValues(document);
+        };
+        await withSdkSignedWrite(ownerId, contractId, write, undefined, undefined, write);
         logger.debug(`indexOnly delete ${documentId} confirmed`);
         reportSigningSuccess(ownerId);
       } catch (waitErr) {
