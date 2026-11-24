@@ -371,11 +371,11 @@ describe('withSdkSignedWrite', () => {
   it('never lowers the mark below a nonce another tab took after this write\'s reservation lapsed', async () => {
     reserveNonce(OWNER, CONTRACT, n(101), n(100), WALLET_TOKEN_SCOPE)
     sdk.identities.contractNonce.mockResolvedValue(n(100))
+    vi.resetModules()
+    const other = await import('./identity-nonce')
     const lapsed = vi.fn<(nonce: bigint, sending: () => void) => Promise<string>>(async (_nonce, sending) => {
       vi.setSystemTime(Date.now() + 2 * MINUTE)
       // Another tab, past this one's lifetime, reserves a create at 103.
-      vi.resetModules()
-      const other = await import('./identity-nonce')
       other.reserveNonce(OWNER, CONTRACT, n(103), n(100))
       try { sending() } catch (error) { throw new ChosenWriteNotSentError(error) }
       return 'sent'
