@@ -43,6 +43,7 @@ import { isHiddenItem } from '@/lib/moderation-view';
 import { markQuoteHidden } from './post-moderation';
 import type { OwnQuote } from './quote-reposts';
 import type { ViewerMarks } from './viewer-marks';
+import { sessionGeneration } from '@/lib/auth/session-generation';
 
 /**
  * Batch a feed page, engagement counts, quoted posts, author profiles/names
@@ -97,6 +98,8 @@ export interface CompositeFeedPage {
 export async function loadCompositeFeedPage(
   options: CompositeFeedPageOptions
 ): Promise<CompositeFeedPage> {
+  // The viewer's marks belong to the session this read started in.
+  const session = sessionGeneration();
   const sdk = await getEvoSdk();
 
   const { query, slots } = buildFeedPageQuery(options);
@@ -107,7 +110,7 @@ export async function loadCompositeFeedPage(
     : null;
   const result = await sdk.documents.composite(query);
   validateCompositeResult(result, query);
-  return decodeFeedPage(result, slots, options, early);
+  return decodeFeedPage(result, slots, options, early, session);
 }
 
 /** Validate the response shape before decode can seed any derived caches. */
@@ -466,7 +469,8 @@ async function decodeFeedPage(
   result: CompositeDocumentsResult,
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions,
-  early: EarlyMarks | null
+  early: EarlyMarks | null,
+  session: number
 ): Promise<CompositeFeedPage> {
   let rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   if (options.documentIds) {
@@ -546,6 +550,7 @@ async function decodeFeedPage(
       const ownQuote = ownQuotes?.get(id);
       interactions.set(id, {
         viewerId,
+        session,
         liked: liked.has(id),
         reposted: ownQuote ? true : reposted.has(id),
         bookmarked: bookmarked.has(id),
@@ -615,6 +620,7 @@ async function decodeFeedPage(
       post.bookmarked = mine.bookmarked;
       post.ownQuote = mine.ownQuote;
       post.marksFor = mine.viewerId;
+      post.marksSession = mine.session;
     }
   }
 

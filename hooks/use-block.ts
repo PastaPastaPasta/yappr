@@ -234,7 +234,8 @@ export function useWithoutBlockedAuthors<T extends Post>(posts: T[] | null): T[]
   return useMemo(() => {
     if (!posts || !viewerId) return posts
     const read = blocked?.viewerId === viewerId ? blocked.ids : null
-    const isBlocked = (authorId: string) => read ? read.has(authorId) : blockStatusCache.get(viewerId, authorId) === true
+    // The hook's own read may predate rows appended since; the cache has theirs.
+    const isBlocked = (authorId: string) => read?.has(authorId) === true || blockStatusCache.get(viewerId, authorId) === true
     return posts.filter((post) => {
       const reposted = repostedAuthorIdOf(post)
       return !isBlocked(post.author.id) && !(reposted && isBlocked(reposted))

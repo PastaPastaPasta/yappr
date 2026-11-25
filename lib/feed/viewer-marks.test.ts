@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KindedTarget } from '@/lib/contract-topology'
+import { bumpSessionGeneration, sessionGeneration } from '@/lib/auth/session-generation'
 import { createMarksLoader, marksFor, postMarks, type Marks, type MarksReader } from './viewer-marks'
 
 const unmarked: Marks = { liked: false, reposted: false, bookmarked: false }
@@ -20,19 +21,29 @@ function harness(answer: (targets: readonly KindedTarget[], viewerId: string) =>
 describe('postMarks', () => {
   it('trusts a post\'s marks only when a read for a viewer set them', () => {
     expect(postMarks({ liked: true, reposted: false, bookmarked: false })).toBeUndefined()
-    expect(postMarks({ liked: true, marksFor: 'alice', ownQuote: { id: 'q', bare: true } }))
-      .toEqual({ viewerId: 'alice', liked: true, reposted: false, bookmarked: false, ownQuote: { id: 'q', bare: true } })
+    expect(postMarks({ liked: true, marksFor: 'alice' })).toBeUndefined()
+    expect(postMarks({ liked: true, marksFor: 'alice', marksSession: 3, ownQuote: { id: 'q', bare: true } }))
+      .toEqual({ viewerId: 'alice', session: 3, liked: true, reposted: false, bookmarked: false, ownQuote: { id: 'q', bare: true } })
   })
 })
 
 describe('marksFor', () => {
-  const alice = { viewerId: 'alice', ...unmarked, liked: true }
+  const aliceNow = () => ({ viewerId: 'alice', session: sessionGeneration(), ...unmarked, liked: true })
 
-  it('keeps marks read for this viewer', () => {
+  it('keeps marks read for this viewer in this session', () => {
+    const alice = aliceNow()
     expect(marksFor(alice, 'alice')).toBe(alice)
   })
 
+  it('drops marks read before the session changed, even for the same account', () => {
+    const alice = aliceNow()
+    bumpSessionGeneration()
+    bumpSessionGeneration()
+    expect(marksFor(alice, 'alice')).toBeUndefined()
+  })
+
   it('drops marks read for another viewer, or when signed out', () => {
+    const alice = aliceNow()
     expect(marksFor(alice, 'bob')).toBeUndefined()
     expect(marksFor(alice, undefined)).toBeUndefined()
     expect(marksFor(undefined, 'alice')).toBeUndefined()
@@ -52,8 +63,8 @@ describe('createMarksLoader', () => {
     expect(reader).toHaveBeenCalledTimes(2)
     expect(reader).toHaveBeenCalledWith([{ id: 'p1', kind: 'post' }, { id: 'r1', kind: 'reply' }], 'alice')
     expect(reader).toHaveBeenCalledWith([{ id: 'p1', kind: 'post' }], 'bob')
-    expect(p1).toEqual({ viewerId: 'alice', ...unmarked, liked: true })
-    expect(r1).toEqual({ viewerId: 'alice', ...unmarked })
+    expect(p1).toEqual({ viewerId: 'alice', session: sessionGeneration(), ...unmarked, liked: true })
+    expect(r1).toEqual({ viewerId: 'alice', session: sessionGeneration(), ...unmarked })
     expect(bobP1.viewerId).toBe('bob')
   })
 
@@ -63,6 +74,18 @@ describe('createMarksLoader', () => {
     expect(load('alice', { id: 'p1', kind: 'post' })).toBe(first)
     flush()
     await first
+    expect(reader).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not join a read started in an earlier session', async () => {
+    const { load, reader, flush } = harness((targets) => new Map(targets.map((t) => [t.id, unmarked])))
+    const first = load('alice', { id: 'p1', kind: 'post' })
+    bumpSessionGeneration()
+    const second = load('alice', { id: 'p1', kind: 'post' })
+    expect(second).not.toBe(first)
+    flush()
+    const [a, b] = await Promise.all([first, second])
+    expect(b.session).toBe(a.session + 1)
     expect(reader).toHaveBeenCalledTimes(1)
   })
 

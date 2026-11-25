@@ -63,7 +63,7 @@ async function createBareRepost(post: Post, viewerId: string): Promise<OwnQuote>
 
 /** The same viewer and target: a write's rollback never lands on another viewer's marks. */
 function sameMarks(a: KnownMarks | null, b: KnownMarks): a is KnownMarks {
-  return a !== null && a.viewerId === b.viewerId && a.targetId === b.targetId
+  return a !== null && a.viewerId === b.viewerId && a.session === b.session && a.targetId === b.targetId
 }
 
 /**
@@ -101,16 +101,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     setReposts(initial.reposts)
   }, [initial.likes, initial.reposts])
 
-  // The snapshot's marks count only when they were read for this viewer, and
-  // only when they arrived after the viewer last changed: marks on screen from
-  // before a sign-out may predate this account's last action, so signing back
-  // in reads them again unless a newer snapshot comes in.
-  const raw = initial.marks
-  const rawKey = raw ? `${raw.viewerId}|${raw.liked}|${raw.reposted}|${raw.bookmarked}|${raw.ownQuote?.id ?? ''}` : ''
-  const [session, setSession] = useState<{ viewerId: string | undefined; staleKey: string | null }>({ viewerId, staleKey: null })
-  if (session.viewerId !== viewerId) setSession({ viewerId, staleKey: rawKey })
-  const snapshot = session.viewerId === viewerId && rawKey !== session.staleKey ? marksFor(raw, viewerId) : undefined
+  // The snapshot's marks count only when they were read for this viewer in this session.
+  const snapshot = marksFor(initial.marks, viewerId)
   const snapshotViewer = snapshot?.viewerId
+  const snapshotSession = snapshot?.session ?? -1
   const snapshotLiked = snapshot?.liked === true
   const snapshotReposted = snapshot?.reposted === true
   const snapshotBookmarked = snapshot?.bookmarked === true
@@ -119,13 +113,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const snapshotMarks = useMemo<KnownMarks | null>(() => snapshotViewer
     ? {
         viewerId: snapshotViewer,
+        session: snapshotSession,
         targetId: postId,
         liked: snapshotLiked,
         reposted: snapshotReposted,
         bookmarked: snapshotBookmarked,
         ...(snapshotQuoteId ? { ownQuote: { id: snapshotQuoteId, bare: snapshotQuoteBare } } : {}),
       }
-    : null, [snapshotViewer, postId, snapshotLiked, snapshotReposted, snapshotBookmarked, snapshotQuoteId, snapshotQuoteBare])
+    : null, [snapshotViewer, snapshotSession, postId, snapshotLiked, snapshotReposted, snapshotBookmarked, snapshotQuoteId, snapshotQuoteBare])
 
   // Marks from this card's own read or writes; a newer snapshot replaces them,
   // unless a write is pending (the snapshot may predate it).

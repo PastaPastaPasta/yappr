@@ -4,11 +4,14 @@
  *
  * A page stays mounted when the viewer signs in, signs out or switches
  * account, so marks loaded for one viewer can still be on screen for the
- * next. Marks are trusted only when they name the current viewer and come
- * from a read that succeeded: a default, or a failed read, leaves them
- * unknown, and an unknown mark never decides what a toggle writes.
+ * next. Marks are trusted only when they name the current viewer, were read
+ * in the current session (a sign-out and back into the same account starts a
+ * new one: the account may have acted elsewhere meanwhile), and come from a
+ * read that succeeded: a default, or a failed read, leaves them unknown, and
+ * an unknown mark never decides what a toggle writes.
  */
 
+import { sessionGeneration } from '@/lib/auth/session-generation'
 import type { KindedTarget } from '@/lib/contract-topology'
 import type { Post } from '@/lib/types'
 import type { OwnQuote } from './quote-reposts'
@@ -25,16 +28,19 @@ export interface Marks {
 export interface ViewerMarks extends Marks {
   /** The viewer the read was for. */
   viewerId: string
+  /** The session generation (lib/auth/session-generation.ts) the read started in. */
+  session: number
 }
 
 /** Marks a read found, keyed by target id. A target missing from the map was not read. */
 export type MarksReader = (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, Marks>>
 
 /** The marks a post object carries, when a read for a viewer set them (`marksFor`). */
-export function postMarks(post: Pick<Post, 'marksFor' | 'liked' | 'reposted' | 'bookmarked' | 'ownQuote'>): ViewerMarks | undefined {
-  if (!post.marksFor) return undefined
+export function postMarks(post: Pick<Post, 'marksFor' | 'marksSession' | 'liked' | 'reposted' | 'bookmarked' | 'ownQuote'>): ViewerMarks | undefined {
+  if (!post.marksFor || post.marksSession === undefined) return undefined
   return {
     viewerId: post.marksFor,
+    session: post.marksSession,
     liked: post.liked === true,
     reposted: post.reposted === true,
     bookmarked: post.bookmarked === true,
@@ -42,9 +48,9 @@ export function postMarks(post: Pick<Post, 'marksFor' | 'liked' | 'reposted' | '
   }
 }
 
-/** `marks` when they were read for `viewerId`, else undefined. Signed out, nobody has marks to trust. */
+/** `marks` when they were read for `viewerId` in this session, else undefined. Signed out, nobody has marks to trust. */
 export function marksFor<T extends ViewerMarks>(marks: T | null | undefined, viewerId: string | undefined): T | undefined {
-  return viewerId && marks?.viewerId === viewerId ? marks : undefined
+  return viewerId && marks?.viewerId === viewerId && marks.session === sessionGeneration() ? marks : undefined
 }
 
 /**
@@ -54,19 +60,19 @@ export function marksFor<T extends ViewerMarks>(marks: T | null | undefined, vie
  * settles. A target the read did not answer rejects, so it stays unknown.
  */
 export function createMarksLoader(reader: MarksReader, schedule: (flush: () => void) => void = (flush) => setTimeout(flush, 0)) {
-  type Pending = { target: KindedTarget; resolve: (marks: ViewerMarks) => void; reject: (error: unknown) => void }
+  type Pending = { target: KindedTarget; session: number; resolve: (marks: ViewerMarks) => void; reject: (error: unknown) => void }
   const inFlight = new Map<string, Promise<ViewerMarks>>()
   let queued = new Map<string, Map<string, Pending>>()
   let scheduled = false
 
-  const keyOf = (viewerId: string, target: KindedTarget) => `${viewerId}|${target.kind}|${target.id}`
+  const keyOf = (viewerId: string, session: number, target: KindedTarget) => `${viewerId}|${session}|${target.kind}|${target.id}`
 
   const readBatch = async (viewerId: string, batch: Map<string, Pending>) => {
     try {
       const found = await reader(Array.from(batch.values(), (pending) => pending.target), viewerId)
-      batch.forEach(({ target, resolve, reject }) => {
+      batch.forEach(({ target, session, resolve, reject }) => {
         const marks = found.get(target.id)
-        if (marks) resolve({ ...marks, viewerId })
+        if (marks) resolve({ ...marks, viewerId, session })
         else reject(new Error(`No marks were read for ${target.kind} ${target.id}`))
       })
     } catch (error) {
@@ -86,12 +92,13 @@ export function createMarksLoader(reader: MarksReader, schedule: (flush: () => v
   }
 
   return function load(viewerId: string, target: KindedTarget): Promise<ViewerMarks> {
-    const key = keyOf(viewerId, target)
+    const session = sessionGeneration()
+    const key = keyOf(viewerId, session, target)
     const existing = inFlight.get(key)
     if (existing) return existing
     const read = new Promise<ViewerMarks>((resolve, reject) => {
       const batch = queued.get(viewerId) ?? new Map<string, Pending>()
-      batch.set(key, { target, resolve, reject })
+      batch.set(key, { target, session, resolve, reject })
       queued.set(viewerId, batch)
     })
     inFlight.set(key, read)

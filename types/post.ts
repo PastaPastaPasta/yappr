@@ -71,6 +71,8 @@ export interface Post {
    * viewer's marks (lib/feed/viewer-marks.ts).
    */
   marksFor?: string
+  /** The session generation the read behind `marksFor` started in. */
+  marksSession?: number
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)

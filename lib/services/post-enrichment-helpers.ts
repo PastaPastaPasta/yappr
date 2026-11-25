@@ -10,6 +10,7 @@ import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
 import type { ViewerMarks } from '../feed/viewer-marks';
+import { sessionGeneration } from '@/lib/auth/session-generation';
 
 /**
  * Owner-keyed profile data from a `getProfilesByIdentityIds` result, with the
@@ -35,6 +36,8 @@ export async function enrichPostsBatch(
   supplied?: PreloadedEnrichment
 ): Promise<Post[]> {
   if (posts.length === 0) return posts;
+  // The viewer's marks belong to the session this read started in.
+  const session = sessionGeneration();
 
   try {
     // Tagged with each post's kind so the batch queries hit the right doctypes
@@ -68,7 +71,7 @@ export async function enrichPostsBatch(
     preloaded.stats?.forEach((stats, postId) => statsMap.set(postId, { ...stats, postId }));
     // Each mark names the viewer it was read for: the batch read's is this one.
     const marksMap = new Map<string, ViewerMarks>();
-    if (currentUserId) interactionsMap.forEach((marks, postId) => marksMap.set(postId, { ...marks, viewerId: currentUserId }));
+    if (currentUserId) interactionsMap.forEach((marks, postId) => marksMap.set(postId, { ...marks, viewerId: currentUserId, session }));
     preloaded.interactions?.forEach((marks, postId) => marksMap.set(postId, marks));
 
     if (currentUserId) {
@@ -96,7 +99,7 @@ export async function enrichPostsBatch(
         quotes: stats?.quotes ?? post.quotes,
         views: stats?.views ?? post.views,
         ...(interactions
-          ? { liked: interactions.liked, reposted: interactions.reposted, bookmarked: interactions.bookmarked, ownQuote: interactions.ownQuote, marksFor: interactions.viewerId }
+          ? { liked: interactions.liked, reposted: interactions.reposted, bookmarked: interactions.bookmarked, ownQuote: interactions.ownQuote, marksFor: interactions.viewerId, marksSession: interactions.session }
           : {}),
         author: {
           ...post.author,

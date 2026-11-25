@@ -280,7 +280,7 @@ describe('composite feed page on v10', () => {
     expect(subs.filter((sub) => sub.documentType === 'post').map((sub) => sub.kind ?? 'documents')).toEqual(['counts', 'documents']);
     expect(subs.some((sub) => sub.documentType === 'repost')).toBe(false);
     expect(mocks.getOwnQuotes).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), 'post');
-    expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ viewerId: ownerIds[0], liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
+    expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ viewerId: ownerIds[0], session: 0, liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
     expect(page.preloaded.interactions?.get(docs[0].$id)?.reposted).toBe(false);
     // The posts carry the same marks, naming the viewer they were read for.
     const reposted = page.posts.find((post) => post.id === docs[2].$id);
