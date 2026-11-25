@@ -88,12 +88,15 @@ export function createSlotLock() {
  * post, standing in for a read that does not show them yet (indexing lag).
  * A card's own marks miss a write another card made, so every card showing
  * the post consults them before Quote. They only ever cover lag: a taken
- * slot stands in for a read that finds it free, for `lagMs` at most, and a
- * freed one for a read that still finds the same quote or repost.
+ * slot stands in, for `lagMs` at most, for a read that finds it free or
+ * still finds a quote or repost this tab removed, and a freed one for a read
+ * that still finds the one removed. Any other read wins: another tab or
+ * device wrote since.
  */
 export function createSlotWrites(session: () => number = sessionGeneration, now: () => number = Date.now, lagMs = 60_000) {
   type Write = { held: OwnQuote; at: number } | { freed: string }
   const written = new Map<string, Write>()
+  const removed = new Set<string>()
   const keyOf = (viewerId: string, postId: string) => `${session()}|${viewerId}|${postId}`
   return {
     /** The viewer now holds `quote` in the slot. */
@@ -102,6 +105,7 @@ export function createSlotWrites(session: () => number = sessionGeneration, now:
     },
     /** The viewer freed the slot by removing `quote`. */
     freed(viewerId: string, postId: string, quote: OwnQuote) {
+      removed.add(quote.id)
       written.set(keyOf(viewerId, postId), { freed: quote.id })
     },
     /** `read` of the slot, or this tab's write on it while the read has not caught up. */
@@ -110,8 +114,8 @@ export function createSlotWrites(session: () => number = sessionGeneration, now:
       const write = written.get(key)
       if (!write) return read
       if ('held' in write) {
-        // Within the lag window only a read of this very quote or repost has caught up.
-        if (read.ownQuote?.id !== write.held.id && now() - write.at < lagMs) return { reposted: true, ownQuote: write.held }
+        const lagging = !read.reposted || (read.ownQuote !== undefined && removed.has(read.ownQuote.id))
+        if (lagging && now() - write.at < lagMs) return { reposted: true, ownQuote: write.held }
       } else if (read.reposted && read.ownQuote?.id === write.freed) {
         return { reposted: false }
       }

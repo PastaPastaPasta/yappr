@@ -210,10 +210,19 @@ describe('createSlotWrites', () => {
     expect(writes.apply('alice', 'p1', free)).toBe(free)
   })
 
-  it('keeps a newer repost over a lagging read that still shows an earlier, removed one', () => {
+  it('keeps a newer repost over a lagging read that still shows one this tab removed', () => {
     const { writes } = setup()
+    writes.held('alice', 'p1', repost)
+    writes.freed('alice', 'p1', repost)
     writes.held('alice', 'p1', { id: 'r2', bare: true })
     expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: repost })).toEqual({ reposted: true, ownQuote: { id: 'r2', bare: true } })
+  })
+
+  it('trusts a read showing a repost another tab made, so Undo deletes the live one', () => {
+    const { writes } = setup()
+    writes.held('alice', 'p1', repost)
+    const otherTab = { reposted: true, ownQuote: { id: 'r3', bare: true } }
+    expect(writes.apply('alice', 'p1', otherTab)).toBe(otherTab)
   })
 
   it('frees the slot only while a read still shows the removed repost, never hiding a newer quote', () => {

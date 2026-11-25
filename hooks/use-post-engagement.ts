@@ -101,11 +101,13 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
 
-  // Follow the counts as the enrichment snapshot fills in.
+  // Follow the counts as the enrichment snapshot fills in, and drop a total read for another post.
+  const repostReadRef = useRef(0)
   useEffect(() => {
     setLikes(initial.likes)
+    repostReadRef.current += 1
     setReposts(initial.reposts)
-  }, [initial.likes, initial.reposts])
+  }, [initial.likes, initial.reposts, postId])
   // The snapshot's marks count only when they were read for this viewer in this session.
   const snapshot = marksFor(initial.marks, viewerId)
   const snapshotViewer = snapshot?.viewerId
@@ -208,7 +210,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [])
 
   /** After a repost write lands: the total from a fresh read, or (when that fails) the last confirmed one. */
-  const repostReadRef = useRef(0)
   const refreshReposts = useCallback(() => {
     // Only the latest read lands: an older one finishing last never replaces it.
     const read = ++repostReadRef.current
