@@ -144,10 +144,21 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   useEffect(() => {
     ownNowRef.current = ownNow
   }, [ownNow])
-  // A new count (or viewer) without the snapshot's marks is taken with the viewer's repost as the card knows it.
+  // A new count without the snapshot's marks is taken with the viewer's repost as the card knows it.
   useEffect(() => {
     setRepostBase({ count: initial.reposts, own: snapshotOwn ?? ownNowRef.current })
-  }, [initial.reposts, snapshotOwn, postId, viewerId])
+  }, [initial.reposts, snapshotOwn, postId])
+  // Another viewer, or none: the count as shown stands (a write the last one made included), with their repost unknown.
+  const shownRef = useRef(reposts)
+  const viewerRef = useRef(viewerId)
+  useEffect(() => {
+    if (viewerRef.current === viewerId) return
+    viewerRef.current = viewerId
+    setRepostBase({ count: shownRef.current })
+  }, [viewerId])
+  useEffect(() => {
+    shownRef.current = reposts
+  }, [reposts])
 
   const readMarks = useCallback(async (viewer: string): Promise<KnownMarks> => {
     const read = await loadViewerMarks(viewer, { id: postId, kind: targetKind })
