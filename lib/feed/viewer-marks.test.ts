@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KindedTarget } from '@/lib/contract-topology'
 import { bumpSessionGeneration, sessionGeneration } from '@/lib/auth/session-generation'
-import { createMarksLoader, marksFor, postMarks, type Marks, type MarksReader } from './viewer-marks'
+import { createMarksLoader, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
 
 const unmarked: Marks = { liked: false, reposted: false, bookmarked: false }
 
@@ -123,5 +123,23 @@ describe('createMarksLoader', () => {
     const retried = load('alice', { id: 'p1', kind: 'post' })
     flush()
     await expect(retried).resolves.toMatchObject({ viewerId: 'alice', liked: false })
+  })
+})
+
+describe('marks read one at a time', () => {
+  it('knows only the marks a read set, so an unread one never decides a write', () => {
+    const liked = withMark(noMarksRead('alice', 1), 'liked', { liked: true })
+    expect(liked).toEqual({ viewerId: 'alice', session: 1, liked: true, reposted: false, bookmarked: false, unread: ['reposted', 'bookmarked'] })
+    expect(knowsMark(liked, 'liked')).toBe(true)
+    expect(knowsMark(liked, 'bookmarked')).toBe(false)
+    expect(knowsMark(null, 'liked')).toBe(false)
+  })
+
+  it('becomes fully known once every mark is read, with the repost\'s quote', () => {
+    let marks = withMark(noMarksRead('alice', 1), 'liked', { liked: false })
+    marks = withMark(marks, 'reposted', { reposted: true, ownQuote: { id: 'q', bare: false } })
+    marks = withMark(marks, 'bookmarked', { bookmarked: true })
+    expect(marks).toEqual({ viewerId: 'alice', session: 1, liked: false, reposted: true, bookmarked: true, ownQuote: { id: 'q', bare: false } })
+    expect(withMark(marks, 'reposted', { reposted: false }).ownQuote).toBeUndefined()
   })
 })

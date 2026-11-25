@@ -11,7 +11,8 @@ import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
-import { loadViewerMarks, marksFor, type ViewerMarks } from '@/lib/feed/viewer-marks'
+import { sessionGeneration } from '@/lib/auth/session-generation'
+import { knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
   likes: number
@@ -22,8 +23,8 @@ export interface EngagementSnapshot {
   marksPending?: boolean
 }
 
-/** Marks known for one viewer and one target. */
-type KnownMarks = ViewerMarks & { targetId: string }
+/** Marks known for one viewer and one target (or some of them: see SomeMarks). */
+type KnownMarks = SomeMarks & { targetId: string }
 
 /** Frozen accounts and a paused token cannot spend at all, so say that instead of offering YAPP. */
 function reportSpendError(error: unknown, viewerId: string | undefined, buyReason: string, fallback: string) {
@@ -150,20 +151,37 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     }
   }, [needsRead, viewerId, readMarks])
 
-  /** The marks a write starts from: known ones, or a read made now. Null (with a toast) when they cannot be read. */
-  const resolveMarks = useCallback(async (): Promise<KnownMarks | null> => {
+  /**
+   * The marks a write of `need` starts from: known ones, or a read made now.
+   * When the full read fails, just `need` is read, so another mark's failed
+   * lookup never stops this write. Null (with a toast) when `need` cannot be read.
+   */
+  const resolveMarks = useCallback(async (need: MarkName): Promise<KnownMarks | null> => {
     if (!viewerId) return null
-    if (current) return current
+    if (current && knowsMark(current, need)) return current
     try {
       const read = await readMarks(viewerId)
       setOwnMarks(read)
       return read
     } catch (error) {
+      logger.warn('Engagement: the viewer\'s marks could not all be read; reading just the one this needs', error)
+    }
+    try {
+      const session = sessionGeneration()
+      const { fetchUserMark } = await import('@/lib/services/post-stats-helpers')
+      const read = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
+      const onto = (base: KnownMarks | null): KnownMarks =>
+        withMark(base && base.viewerId === viewerId && base.session === session && base.targetId === postId
+          ? base
+          : { ...noMarksRead(viewerId, session), targetId: postId }, need, read)
+      setOwnMarks(onto)
+      return onto(current)
+    } catch (error) {
       logger.error('Engagement: the viewer\'s marks could not be read:', error)
       toast.error('Could not check this post right now. Please try again.')
       return null
     }
-  }, [viewerId, current, readMarks])
+  }, [viewerId, current, readMarks, postId, targetKind])
 
   /** Applies `change` to the marks of `base`'s viewer and target, and to nothing else. */
   const patchMarks = useCallback((base: KnownMarks, change: Partial<ViewerMarks>) => {
@@ -182,9 +200,9 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     writesRef.current += 1
     try {
       const shown = current
-      const before = await resolveMarks()
+      const before = await resolveMarks('liked')
       // Unknown marks showed as unliked: a read finding a like just shows it.
-      if (!before || (!shown && before.liked)) return
+      if (!before || (!knowsMark(shown, 'liked') && before.liked)) return
       const wasLiked = before.liked
       patchMarks(before, { liked: !wasLiked })
       setLikes((count) => count + (wasLiked ? -1 : 1))
@@ -254,11 +272,11 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     const shown = current
     let before: KnownMarks | null
     try {
-      before = await resolveMarks()
+      before = await resolveMarks('reposted')
     } finally {
       setRepostLoading(false)
     }
-    if (!before || (!shown && before.reposted)) return null
+    if (!before || (!knowsMark(shown, 'reposted') && before.reposted)) return null
     if (repostsAreQuotes() && before.reposted) {
       let quote = before.ownQuote ?? null
       if (!quote) {
@@ -339,8 +357,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     writesRef.current += 1
     try {
       const shown = current
-      const before = await resolveMarks()
-      if (!before || (!shown && before.bookmarked)) return
+      const before = await resolveMarks('bookmarked')
+      if (!before || (!knowsMark(shown, 'bookmarked') && before.bookmarked)) return
       const wasBookmarked = before.bookmarked
       patchMarks(before, { bookmarked: !wasBookmarked })
       try {
@@ -363,8 +381,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   return {
     repostable,
     bookmarkable,
-    /** The viewer's marks when read for them; undefined while unknown (or signed out). */
-    marks: current ?? undefined,
+    /** The viewer's marks when all were read for them; undefined while any is unknown (or signed out). */
+    marks: current && !current.unread ? current : undefined,
     liked: current?.liked ?? false,
     likes,
     reposted: current?.reposted ?? false,
@@ -379,7 +397,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     toggleRepost,
     removeOwnQuote,
     toggleBookmark,
-    /** The viewer's marks, read now when unknown; null (after a toast) when they cannot be read. */
+    /** The marks for a write of one mark, read now when unknown; null (after a toast) when it cannot be read. */
     resolveMarks,
   }
 }

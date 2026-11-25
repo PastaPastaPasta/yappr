@@ -228,6 +228,26 @@ describe('block provenance', () => {
       .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
   })
 
+  it('does not cache "not blocked" when which lists the viewer follows could not be read', async () => {
+    let discoveryFails = true
+    query.mockImplementation(async q => {
+      if (q.documentTypeName === 'blockFollow') {
+        if (discoveryFails) throw new Error('StaleNode')
+        return [{ $id: identity(9), $ownerId: viewer, followedBlockers: [followed] }]
+      }
+      return q.documentTypeName === 'block' && q.where[0][2] === followed ? [block(authors[0], 0, followed)] : []
+    })
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
+    await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
+
+    discoveryFails = false
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
+  })
+
   it('labels a batch of targets by block source with one query per source', async () => {
     setBlockFollows(viewer, [followed])
     query.mockImplementation(async q => q.documentTypeName !== 'block' ? []

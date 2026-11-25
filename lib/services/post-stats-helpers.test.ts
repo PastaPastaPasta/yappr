@@ -45,3 +45,27 @@ describe('fetchBatchUserInteractions', () => {
     expect(marks.get('p1')).toEqual({ liked: true, reposted: false, bookmarked: false })
   })
 })
+
+describe('fetchUserMark', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    mocks.getUserLikedPostIds.mockReset().mockResolvedValue(new Set(['p1']))
+    mocks.getUserBookmarksForPosts.mockReset().mockRejectedValue(new Error('timeout'))
+    mocks.getOwnQuotes.mockReset().mockResolvedValue(new Map([['p1', { id: 'q', bare: true }]]))
+    mocks.getUserRepostedPostIds.mockReset().mockResolvedValue(new Set())
+  })
+
+  it('reads a like or repost even while the bookmark lookup fails', async () => {
+    const { fetchBatchUserInteractions, fetchUserMark } = await import('./post-stats-helpers')
+    const target = { id: 'p1', kind: 'post' as const }
+    expect((await fetchBatchUserInteractions([target], 'alice')).has('p1')).toBe(false)
+    expect(await fetchUserMark(target, 'alice', 'liked')).toEqual({ liked: true })
+    expect(await fetchUserMark(target, 'alice', 'reposted')).toEqual({ reposted: true, ownQuote: { id: 'q', bare: true } })
+    expect(mocks.getUserBookmarksForPosts).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects when the mark it was asked for cannot be read', async () => {
+    const { fetchUserMark } = await import('./post-stats-helpers')
+    await expect(fetchUserMark({ id: 'p1', kind: 'post' }, 'alice', 'bookmarked')).rejects.toThrow('timeout')
+  })
+})

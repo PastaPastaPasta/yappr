@@ -9,6 +9,7 @@ import {
   type TargetKind,
 } from '@/lib/contract-topology';
 import type { OwnQuote } from '@/lib/feed/quote-reposts';
+import type { MarkName } from '@/lib/feed/viewer-marks';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -28,11 +29,11 @@ export interface PostInteractionState {
 async function viewerReposts(currentUserId: string, ids: string[], kind: TargetKind): Promise<Map<string, OwnQuote | null>> {
   if (ownQuoteIndexFor(kind)) {
     const { postService } = await import('./post-service');
-    return postService.getOwnQuotes(currentUserId, ids, kind);
+    return noneIfTypeMissing(postService.getOwnQuotes(currentUserId, ids, kind), new Map<string, OwnQuote | null>());
   }
   if (!repostIndexFor(kind)) return new Map();
   const { repostService } = await import('./repost-service');
-  const reposted = await repostService.getUserRepostedPostIds(currentUserId, ids);
+  const reposted = await noneIfTypeMissing(repostService.getUserRepostedPostIds(currentUserId, ids), new Set<string>());
   return new Map(Array.from(reposted, (id) => [id, null]));
 }
 
@@ -49,6 +50,33 @@ function noneIfTypeMissing<T>(read: Promise<T>, none: T): Promise<T> {
   });
 }
 
+/** The viewer's likes among `ids`. */
+async function viewerLikes(currentUserId: string, ids: string[], kind: TargetKind): Promise<Set<string>> {
+  const { likeService } = await import('./like-service');
+  return noneIfTypeMissing(likeService.getUserLikedPostIds(currentUserId, ids, kind), new Set<string>());
+}
+
+/** The viewer's bookmarks among `ids`; none where the kind cannot be bookmarked. */
+async function viewerBookmarks(currentUserId: string, ids: string[], kind: TargetKind): Promise<Set<string>> {
+  if (!bookmarkIndexFor(kind)) return new Set();
+  const { bookmarkService } = await import('./bookmark-service');
+  const bookmarks = await noneIfTypeMissing(bookmarkService.getUserBookmarksForPosts(currentUserId, ids), []);
+  return new Set(bookmarks.map((bookmark) => bookmark.postId));
+}
+
+/**
+ * Just one of the viewer's marks on `target`, for an action whose full read
+ * failed on a mark it does not need. Rejects when that one read fails.
+ */
+export async function fetchUserMark(target: KindedTarget, currentUserId: string, mark: MarkName): Promise<Partial<PostInteractionState>> {
+  const [{ kind }] = groupByInteractionSurface([target]);
+  const ids = [target.id];
+  if (mark === 'liked') return { liked: (await viewerLikes(currentUserId, ids, kind)).has(target.id) };
+  if (mark === 'bookmarked') return { bookmarked: (await viewerBookmarks(currentUserId, ids, kind)).has(target.id) };
+  const ownQuote = (await viewerReposts(currentUserId, ids, kind)).get(target.id);
+  return { reposted: ownQuote !== undefined, ...(ownQuote ? { ownQuote } : {}) };
+}
+
 /**
  * The viewer's marks on each target. A target whose read failed is left out
  * rather than given defaults, so callers can tell "not marked" from "not read".
@@ -62,11 +90,6 @@ export async function fetchBatchUserInteractions(
     return result;
   }
 
-  const [{ likeService }, { bookmarkService }] = await Promise.all([
-    import('./like-service'),
-    import('./bookmark-service'),
-  ]);
-
   // One pass per distinct interaction surface. On v2 both kinds share one
   // surface, so this is a single pass over every id — the same three queries
   // the pre-topology code issued.
@@ -77,15 +100,11 @@ export async function fetchBatchUserInteractions(
         // via the composite indexes) instead of fetching all users' likes capped
         // at 100 and filtering client-side — which could miss the user's own on
         // busy pages.
-        const [likedPostIds, reposts, userBookmarks] = await Promise.all([
-          noneIfTypeMissing(likeService.getUserLikedPostIds(currentUserId, ids, kind), new Set<string>()),
-          noneIfTypeMissing(viewerReposts(currentUserId, ids, kind), new Map<string, OwnQuote | null>()),
-          bookmarkIndexFor(kind)
-            ? noneIfTypeMissing(bookmarkService.getUserBookmarksForPosts(currentUserId, ids), [])
-            : Promise.resolve([]),
+        const [likedPostIds, reposts, bookmarkedPostIds] = await Promise.all([
+          viewerLikes(currentUserId, ids, kind),
+          viewerReposts(currentUserId, ids, kind),
+          viewerBookmarks(currentUserId, ids, kind),
         ]);
-
-        const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
         ids.forEach((postId) => {
           const ownQuote = reposts.get(postId);

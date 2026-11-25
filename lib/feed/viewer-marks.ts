@@ -32,6 +32,36 @@ export interface ViewerMarks extends Marks {
   session: number
 }
 
+export type MarkName = 'liked' | 'reposted' | 'bookmarked'
+
+/** Marks where only some were read: `unread` names the rest, which show as unmarked and never decide a write. */
+export interface SomeMarks extends ViewerMarks {
+  unread?: readonly MarkName[]
+}
+
+/** Whether `marks` hold a read value for `name`. */
+export function knowsMark(marks: SomeMarks | null | undefined, name: MarkName): boolean {
+  return Boolean(marks && !marks.unread?.includes(name))
+}
+
+/** Marks for `viewerId` in `session` with none of them read yet. */
+export function noMarksRead(viewerId: string, session: number): SomeMarks {
+  return { viewerId, session, liked: false, reposted: false, bookmarked: false, unread: ['liked', 'reposted', 'bookmarked'] }
+}
+
+/** `base` with `name` set from a read of just that mark (on v10 `reposted` carries its `ownQuote`). */
+export function withMark<T extends SomeMarks>(base: T, name: MarkName, read: Partial<Marks>): T {
+  const next: T = { ...base, [name]: read[name] === true }
+  delete next.unread
+  const stillUnread = base.unread?.filter((other) => other !== name) ?? []
+  if (stillUnread.length > 0) next.unread = stillUnread
+  if (name === 'reposted') {
+    delete next.ownQuote
+    if (read.ownQuote) next.ownQuote = read.ownQuote
+  }
+  return next
+}
+
 /** Marks a read found, keyed by target id. A target missing from the map was not read. */
 export type MarksReader = (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, Marks>>
 

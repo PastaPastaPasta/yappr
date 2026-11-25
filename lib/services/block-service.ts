@@ -686,6 +686,14 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
+    return this.readBlockFollows(userId).catch((error: unknown) => {
+      logger.error('Error getting block follows:', error)
+      return []
+    })
+  }
+
+  /** As getBlockFollows(), but a failed read rejects: block decisions must not read it as no followed lists. */
+  private async readBlockFollows(userId: string): Promise<string[]> {
     if (!this.available) return []
     // Check cache first — null means "never cached", while an empty
     // array is a valid cached result (the common case) and must not
@@ -695,17 +703,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       return cached
     }
 
-    try {
-      const data = await this.getBlockFollow(userId)
-      const followedUserIds = data?.followedUserIds ?? []
-      // Cache the result even when empty — only a confirmed answer
-      // reaches here, since query failures throw
-      setBlockFollows(userId, followedUserIds)
-      return followedUserIds
-    } catch (error) {
-      logger.error('Error getting block follows:', error)
-      return []
-    }
+    const data = await this.getBlockFollow(userId)
+    const followedUserIds = data?.followedUserIds ?? []
+    // Cache the result even when empty — only a confirmed answer
+    // reaches here, since query failures throw
+    setBlockFollows(userId, followedUserIds)
+    return followedUserIds
   }
 
   // ============================================================
@@ -742,14 +745,20 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const cachedOwnBlock = cached?.isBlocked === true && cached.blockedBy === viewerId
     const [ownBlockedIds, followedBlockers] = await Promise.all([
       this.getOwnBlockedIds(viewerId),
-      this.getBlockFollows(viewerId),
+      // Unread followed lists leave an inherited block unknown, not absent.
+      this.readBlockFollows(viewerId).catch((error: unknown) => {
+        logger.error('Error getting block follows:', error)
+        return null
+      }),
     ])
     const isOwnBlock = cachedOwnBlock || ownBlockedIds.includes(targetUserId)
     // The merged filter covers followed lists too; a miss rules out an inherited block.
     const mergedFilter = getMergedBloomFilter(viewerId)
-    const { blocks, complete } = mergedFilter && !mergedFilter.mightContain(targetUserId)
+    const inheritedRead = mergedFilter && !mergedFilter.mightContain(targetUserId)
       ? { blocks: new Map<string, InheritedBlock>(), complete: true }
-      : await this.queryInheritedBlocksBatch([targetUserId], followedBlockers)
+      : await this.queryInheritedBlocksBatch([targetUserId], followedBlockers ?? [])
+    const { blocks } = inheritedRead
+    const complete = inheritedRead.complete && followedBlockers !== null
     const inherited = blocks.get(targetUserId)
     const isBlocked = isOwnBlock || inherited !== undefined
 
@@ -870,7 +879,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     // Phase 3: Verify possible positives
     try {
       const batchResults = new Map<string, { blockedBy: string; isBlocked: boolean; message?: string }>()
-      const followedBlockers = await this.getBlockFollows(viewerId)
+      // A failed read of which lists the viewer follows rejects: the possible positives stay unknown.
+      const followedBlockers = await this.readBlockFollows(viewerId)
       const { blocks: inheritedBlocks, complete } = await this.queryInheritedBlocksBatch(possiblePositives, followedBlockers)
       for (const targetId of possiblePositives) {
         const inherited = inheritedBlocks.get(targetId)

@@ -16,6 +16,8 @@ import { HiddenContentStub, ModerationLabel } from '@/components/moderation/mode
 import { archivalBuild, isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
+import { sessionGuard } from '@/lib/auth/session-generation'
+import { composeGuard } from '@/lib/compose/drafts'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
@@ -544,8 +546,11 @@ function PostCardView({
     // marks are read first, so the composer never opens on a held slot.
     let held = ownQuote
     if (repostsAreQuotePosts && !engagement.marks) {
-      const marks = await engagement.resolveMarks()
-      if (!marks) return
+      // A late answer is dropped when the session or the composer changed meanwhile.
+      const sameSession = sessionGuard()
+      const sameCompose = composeGuard(useAppStore.getState)
+      const marks = await engagement.resolveMarks('reposted')
+      if (!marks || !sameSession() || !sameCompose()) return
       if (marks.reposted && (!marks.ownQuote || marks.ownQuote.bare)) return
       held = marks.reposted ? marks.ownQuote ?? null : null
     }
