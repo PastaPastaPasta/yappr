@@ -837,17 +837,22 @@ class PostService extends BaseDocumentService<Post> {
    * `==` off the rangeCountable `quotesOfPost`/`quotesOfReply`). On v10 bare
    * reposts are quotes, so this is the repost count too.
    */
-  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
+  /** As countQuotes(), but a failed read throws instead of reading as 0. */
+  async readQuoteCount(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
     if (!quoteField) return 0;
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    return documentCount(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [[quoteField, '==', quotedPostId]],
+    });
+  }
+
+  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-      return await documentCount(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [[quoteField, '==', quotedPostId]],
-      });
+      return await this.readQuoteCount(quotedPostId, kind);
     } catch (error) {
       logger.error('Error counting quotes:', error);
       return 0;

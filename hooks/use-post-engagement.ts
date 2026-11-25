@@ -12,7 +12,6 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 import { sessionGeneration } from '@/lib/auth/session-generation'
-import { countWithOwn, type CountBase } from '@/lib/feed/repost-count'
 import { createSlotLock, createSlotWrites, fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
@@ -96,6 +95,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const bookmarkable = canBookmark(targetKind)
   const postId = post.id
   const [likes, setLikes] = useState(initial.likes)
+  // The last confirmed repost total: the snapshot's, or a fresh read after this card's repost write.
+  const [reposts, setReposts] = useState(initial.reposts)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
@@ -103,7 +104,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   // Follow the counts as the enrichment snapshot fills in.
   useEffect(() => {
     setLikes(initial.likes)
-  }, [initial.likes])
+    setReposts(initial.reposts)
+  }, [initial.likes, initial.reposts])
   // The snapshot's marks count only when they were read for this viewer in this session.
   const snapshot = marksFor(initial.marks, viewerId)
   const snapshotViewer = snapshot?.viewerId
@@ -112,10 +114,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const snapshotReposted = snapshot?.reposted === true
   const snapshotBookmarked = snapshot?.bookmarked === true
   const snapshotQuoteId = snapshot?.ownQuote?.id
-
-  // The repost count as read, with the viewer's repost as read with it (lib/feed/repost-count.ts).
-  const snapshotOwn = snapshotViewer ? snapshotReposted : undefined
-  const [repostBase, setRepostBase] = useState<CountBase>({ count: initial.reposts, own: snapshotOwn })
   const snapshotQuoteBare = snapshot?.ownQuote?.bare === true
   const snapshotMarks = useMemo<KnownMarks | null>(() => snapshotViewer
     ? {
@@ -138,27 +136,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [snapshotMarks])
   const ownKnown = ownMarks && ownMarks.targetId === postId ? marksFor(ownMarks, viewerId) ?? null : null
   const current = ownKnown ?? snapshotMarks
-  const ownNow = knowsMark(current, 'reposted') ? current?.reposted === true : undefined
-  const reposts = countWithOwn(repostBase, ownNow)
-  const ownNowRef = useRef(ownNow)
-  useEffect(() => {
-    ownNowRef.current = ownNow
-  }, [ownNow])
-  // A new count without the snapshot's marks is taken with the viewer's repost as the card knows it.
-  useEffect(() => {
-    setRepostBase({ count: initial.reposts, own: snapshotOwn ?? ownNowRef.current })
-  }, [initial.reposts, snapshotOwn, postId])
-  // Another viewer, or none: the count as shown stands (a write the last one made included), with their repost unknown.
-  const shownRef = useRef(reposts)
-  const viewerRef = useRef(viewerId)
-  useEffect(() => {
-    if (viewerRef.current === viewerId) return
-    viewerRef.current = viewerId
-    setRepostBase({ count: shownRef.current })
-  }, [viewerId])
-  useEffect(() => {
-    shownRef.current = reposts
-  }, [reposts])
 
   const readMarks = useCallback(async (viewer: string): Promise<KnownMarks> => {
     const read = await loadViewerMarks(viewer, { id: postId, kind: targetKind })
@@ -167,7 +144,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
 
   /** Stores a full read, keeping marks another tap read or wrote meanwhile: it only fills those still unread. */
   const storeRead = useCallback((read: KnownMarks) => {
-    setRepostBase((base) => base.own === undefined ? { ...base, own: read.reposted } : base)
     setOwnMarks((held) => sameMarks(held, read)
       ? (held.unread ?? []).reduce((marks, name) => withMark(marks, name, read), held)
       : read)
@@ -211,7 +187,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const { fetchUserMark } = await import('@/lib/services/post-stats-helpers')
       const fetched = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
       const read = need === 'reposted' ? slotWrites.apply(viewerId, postId, fetched) : fetched
-      if (need === 'reposted') setRepostBase((base) => base.own === undefined ? { ...base, own: read.reposted === true } : base)
       const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
       const fits = (marks: KnownMarks | null): marks is KnownMarks =>
         marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
@@ -231,6 +206,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const patchMarks = useCallback((base: KnownMarks, change: Partial<ViewerMarks>) => {
     setOwnMarks((marks) => ({ ...(sameMarks(marks, base) ? marks : base), ...change }))
   }, [])
+
+  /** After a repost write lands: the total from a fresh read, or (when that fails) the last confirmed one. */
+  const refreshReposts = useCallback(() => {
+    import('@/lib/services/post-stats-helpers')
+      .then(({ fetchRepostTotal }) => fetchRepostTotal({ id: postId, kind: targetKind }))
+      .then(setReposts)
+      .catch((error: unknown) => logger.warn('Engagement: the repost total could not be read; keeping the last one', error))
+  }, [postId, targetKind])
 
   const settle = useCallback(async () => {
     if (isUnconfirmed(postId) && !(await settleUnconfirmed(postId))) {
@@ -288,6 +271,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (!(await postService.deleteOwnPost(quote.id, viewerId))) throw new Error('Repost operation failed')
       patchMarks(base, { reposted: false, ownQuote: undefined })
       slotWrites.freed(viewerId, postId, quote)
+      refreshReposts()
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
       patchMarks(base, { reposted: true, ownQuote: quote })
@@ -299,7 +283,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       writesRef.current -= 1
       setRepostLoading(false)
     }
-  }, [viewerId, current, patchMarks, postId])
+  }, [viewerId, current, patchMarks, postId, refreshReposts])
 
   /**
    * v10 Quote: the marks that say whether the quote slot is free, read afresh
@@ -374,6 +358,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
         // (Undo returned above: here the viewer is reposting.)
         const repost = await createBareRepost(post, viewerId)
         slotWrites.held(viewerId, postId, repost)
+        refreshReposts()
         patchMarks(before, { reposted: true, ownQuote: repost })
         toast.success('Reposted')
         return null
@@ -381,6 +366,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const { repostService } = await import('@/lib/services/repost-service')
       const ok = wasReposted ? await repostService.removeRepost(postId, viewerId) : await repostService.repostPost(postId, viewerId, post.author.id)
       if (!ok) throw new Error('Repost operation failed')
+      refreshReposts()
       toast.success(wasReposted ? 'Removed repost' : 'Reposted')
     } catch (error) {
       patchMarks(before, { reposted: wasReposted })
@@ -397,6 +383,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           // Their own earlier repost landed (a double click, or a lost ack):
           // that is the repost they asked for.
           patchMarks(before, { reposted: true, ownQuote: existing })
+          refreshReposts()
           toast.success('Reposted')
           return null
         }
@@ -411,7 +398,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       setRepostLoading(false)
     }
     return null
-  }, [viewerId, repostable, repostLoading, current, resolveMarks, patchMarks, settle, post, postId, targetKind, removeOwnQuote])
+  }, [viewerId, repostable, repostLoading, current, resolveMarks, patchMarks, settle, post, postId, targetKind, removeOwnQuote, refreshReposts])
   const toggleRepost = useCallback(async (): Promise<OwnQuote | null> =>
     viewerId ? quoteSlots.hold(`${viewerId}|${postId}`, runToggleRepost) : null, [viewerId, postId, runToggleRepost])
 

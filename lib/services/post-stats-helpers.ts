@@ -5,6 +5,7 @@ import {
   groupByInteractionSurface,
   ownQuoteIndexFor,
   repostIndexFor,
+  repostsAreQuotes,
   type KindedTarget,
   type TargetKind,
 } from '@/lib/contract-topology';
@@ -122,6 +123,22 @@ export async function fetchBatchUserInteractions(
   );
 
   return result;
+}
+
+/**
+ * The repost total a card shows for `target`, read now: on v10 its quotes
+ * (bare reposts included), otherwise its repost documents. A failed read
+ * throws, so the card keeps its last confirmed total.
+ */
+export async function fetchRepostTotal(target: KindedTarget): Promise<number> {
+  const [{ kind }] = groupByInteractionSurface([target]);
+  if (repostsAreQuotes()) {
+    const { postService } = await import('./post-service');
+    return postService.readQuoteCount(target.id, kind);
+  }
+  if (!repostIndexFor(kind)) return 0;
+  const { repostService } = await import('./repost-service');
+  return repostService.readRepostCount(target.id);
 }
 
 export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Promise<Map<string, PostStats>> {

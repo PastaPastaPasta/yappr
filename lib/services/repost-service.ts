@@ -207,14 +207,19 @@ class RepostService {
   }
 
   /** Count reposts of a post — O(1) `byPost` count tree. */
+  /** As countReposts(), but a failed read throws instead of reading as 0. */
+  async readRepostCount(postId: string): Promise<number> {
+    const sdk = await this.sdk();
+    return documentCount(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [['postId', '==', postId]],
+    });
+  }
+
   async countReposts(postId: string): Promise<number> {
     try {
-      const sdk = await this.sdk();
-      return await documentCount(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [['postId', '==', postId]],
-      });
+      return await this.readRepostCount(postId);
     } catch (error) {
       logger.error('Error counting reposts:', error);
       return 0;

@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({
   getUserBookmarksForPosts: vi.fn(),
   getOwnQuotes: vi.fn(),
   getUserRepostedPostIds: vi.fn(),
+  readQuoteCount: vi.fn(),
+  readRepostCount: vi.fn(),
 }))
 
 vi.mock('./like-service', () => ({ likeService: { getUserLikedPostIds: mocks.getUserLikedPostIds } }))
 vi.mock('./bookmark-service', () => ({ bookmarkService: { getUserBookmarksForPosts: mocks.getUserBookmarksForPosts } }))
-vi.mock('./post-service', () => ({ postService: { getOwnQuotes: mocks.getOwnQuotes } }))
-vi.mock('./repost-service', () => ({ repostService: { getUserRepostedPostIds: mocks.getUserRepostedPostIds } }))
+vi.mock('./post-service', () => ({ postService: { getOwnQuotes: mocks.getOwnQuotes, readQuoteCount: mocks.readQuoteCount } }))
+vi.mock('./repost-service', () => ({ repostService: { getUserRepostedPostIds: mocks.getUserRepostedPostIds, readRepostCount: mocks.readRepostCount } }))
 
 describe('fetchBatchUserInteractions', () => {
   beforeEach(() => {
@@ -67,5 +69,26 @@ describe('fetchUserMark', () => {
   it('rejects when the mark it was asked for cannot be read', async () => {
     const { fetchUserMark } = await import('./post-stats-helpers')
     await expect(fetchUserMark({ id: 'p1', kind: 'post' }, 'alice', 'bookmarked')).rejects.toThrow('timeout')
+  })
+})
+
+describe('fetchRepostTotal', () => {
+  beforeEach(() => {
+    mocks.readQuoteCount.mockReset().mockResolvedValue(4)
+    mocks.readRepostCount.mockReset().mockResolvedValue(2)
+  })
+
+  it('reads quotes on v10, where a repost is a quote', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    const { fetchRepostTotal } = await import('./post-stats-helpers')
+    expect(await fetchRepostTotal({ id: 'p1', kind: 'post' })).toBe(4)
+    expect(mocks.readRepostCount).not.toHaveBeenCalled()
+  })
+
+  it('rejects a failed read, so the card keeps its last confirmed total', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
+    mocks.readQuoteCount.mockRejectedValue(new Error('timeout'))
+    const { fetchRepostTotal } = await import('./post-stats-helpers')
+    await expect(fetchRepostTotal({ id: 'p1', kind: 'post' })).rejects.toThrow('timeout')
   })
 })
