@@ -302,11 +302,13 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     const shown = current
     let before: KnownMarks | null
     try {
-      before = await resolveMarks('reposted')
+      // v10: the slot is read afresh, since another card may have taken or freed it.
+      before = await resolveMarks('reposted', repostsAreQuotes())
     } finally {
       setRepostLoading(false)
     }
-    if (!before || (!knowsMark(shown, 'reposted') && before.reposted)) return null
+    // A read that differs from what the card showed (unknown showed as not reposted) just shows it.
+    if (!before || before.reposted !== (knowsMark(shown, 'reposted') && shown?.reposted === true)) return null
     if (repostsAreQuotes() && before.reposted) {
       let quote = before.ownQuote ?? null
       if (!quote) {
