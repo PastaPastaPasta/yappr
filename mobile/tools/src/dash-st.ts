@@ -16,9 +16,10 @@ const IDENTITY_UPDATE = 'IdentityUpdate'
 
 /**
  * Decodes the transition carried by a `dash-st:` URI. The web
- * (`lib/services/identity-update-builder.ts`) sends
- * `IdentityUpdateTransition.toBytes()`, which lacks the StateTransition enum
- * tag that `StateTransition.toBytes()` writes, so both encodings are accepted.
+ * (`lib/services/identity-update-builder.ts`) sends a tagged
+ * `StateTransition`; links built before #612 carry the bare
+ * `IdentityUpdateTransition.toBytes()`, without the enum tag, so both
+ * encodings are accepted.
  * The wasm decoders ignore trailing bytes, so a decoding only counts when it
  * re-encodes to exactly the input.
  */

@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 import { ensureInitialized } from '@dashevo/evo-sdk'
-import { IdentityUpdateTransition } from '@dashevo/wasm-sdk'
+import { IdentityUpdateTransition, StateTransition } from '@dashevo/wasm-sdk'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { hash160 } from '@/lib/crypto/hash'
 
@@ -55,7 +55,7 @@ describe('buildUnsignedKeyRegistrationTransition', () => {
     const { transitionBytes } = await buildUnsignedKeyRegistrationTransition({
       identityId: IDENTITY, authPrivateKey, authPublicKey, encryptionPrivateKey, encryptionPublicKey,
     })
-    const update = IdentityUpdateTransition.fromBytes(transitionBytes)
+    const update = IdentityUpdateTransition.fromStateTransition(StateTransition.fromBytes(transitionBytes))
     const keys = update.publicKeyIdsToAdd
     try {
       expect(keys).toHaveLength(2)

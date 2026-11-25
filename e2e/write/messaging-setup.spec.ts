@@ -103,9 +103,9 @@ test.describe('Messaging setup (App Connect)', () => {
     expect(parsed, 'a dash-st: link').not.toBeNull()
     expect(parsed!.network).toBe('devnet')
 
-    const { ensureInitialized, IdentityUpdateTransition } = await import('@dashevo/evo-sdk')
+    const { ensureInitialized, IdentityUpdateTransition, StateTransition } = await import('@dashevo/evo-sdk')
     await ensureInitialized()
-    const update = IdentityUpdateTransition.fromBytes(parsed!.transitionBytes)
+    const update = IdentityUpdateTransition.fromStateTransition(StateTransition.fromBytes(parsed!.transitionBytes))
     try {
       expect(update.identityIdentifier.toBase58()).toBe(unreachable.identityId)
       expect(Array.from(update.publicKeyIdsToDisable)).toEqual([])

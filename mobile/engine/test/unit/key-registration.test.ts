@@ -67,10 +67,10 @@ function signInKeys(identityId: string, loginKey: Uint8Array) {
 function addedKeys(uri: string) {
   const parsed = auth.parseYapprStateTransitionUri(uri)
   if (!parsed) throw new Error('unparseable dash-st: URI')
-  const update = wasm.IdentityUpdateTransition.fromBytes(parsed.transitionBytes)
+  const stateTransition = wasm.StateTransition.fromBytes(parsed.transitionBytes)
+  const update = wasm.IdentityUpdateTransition.fromStateTransition(stateTransition)
   try {
     expect(update.publicKeyIdsToDisable).toHaveLength(0)
-    const stateTransition = update.toStateTransition()
     const digest = sha256(sha256(stateTransition.getSignableBytes()))
     stateTransition.free()
     return update.publicKeyIdsToAdd.map(key => ({

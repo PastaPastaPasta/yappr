@@ -10,6 +10,7 @@
  */
 
 import type { YapprRegisteredKey } from 'platform-auth'
+import type { StateTransition } from '@dashevo/wasm-sdk'
 import { logger } from '@/lib/logger'
 import { getEvoSdk } from './evo-sdk-service'
 import * as secp256k1 from '@noble/secp256k1'
@@ -42,7 +43,7 @@ export interface KeyRegistrationRequest {
  * Result of building an unsigned identity update transition
  */
 export interface UnsignedTransitionResult {
-  /** Serialized transition bytes (for dash-st: URI) */
+  /** Serialized StateTransition bytes, tagged (for dash-st: URI) */
   transitionBytes: Uint8Array
   /** The keys it adds, in key id order */
   keys: YapprRegisteredKey[]
@@ -223,7 +224,7 @@ async function buildUnsignedAddKeysTransition(
   logger.debug('IdentityUpdateBuilder: revision', newRevision, 'nonce', nextNonce, 'key ids', keyIds)
 
   // Each pass builds (and frees) its own wasm objects.
-  const buildTransitionBytes = (signatures: Uint8Array[], read: (transition: InstanceType<typeof wasm.IdentityUpdateTransition>) => Uint8Array): Uint8Array => {
+  const buildTransitionBytes = (signatures: Uint8Array[], read: (stateTransition: StateTransition) => Uint8Array): Uint8Array => {
     const created = keys.map((key, index) => new wasm.IdentityPublicKeyInCreation({
       keyId: keyIds[index],
       purpose: key.purpose,
@@ -242,9 +243,11 @@ async function buildUnsignedAddKeysTransition(
         addPublicKeys: created,
         disablePublicKeys: [],
       })
+      const stateTransition = transition.toStateTransition()
       try {
-        return read(transition)
+        return read(stateTransition)
       } finally {
+        stateTransition.free()
         transition.free()
       }
     } finally {
@@ -253,17 +256,10 @@ async function buildUnsignedAddKeysTransition(
   }
 
   // Pass 1: the signable bytes (which exclude every signature), for the ownership proofs.
-  const signableBytes = buildTransitionBytes(keys.map(() => new Uint8Array(0)), (transition) => {
-    const stateTransition = transition.toStateTransition()
-    try {
-      return stateTransition.getSignableBytes()
-    } finally {
-      stateTransition.free()
-    }
-  })
+  const signableBytes = buildTransitionBytes(keys.map(() => new Uint8Array(0)), (stateTransition) => stateTransition.getSignableBytes())
   const signatures = await Promise.all(keys.map((key) => key.proofPrivateKey ? signWithKey(key.proofPrivateKey, signableBytes) : Promise.resolve(new Uint8Array(0))))
-  // Pass 2: the same transition carrying the proofs.
-  const transitionBytes = buildTransitionBytes(signatures, (transition) => transition.toBytes())
+  // Pass 2: the same transition carrying the proofs, tagged as a StateTransition like every other `dash-st:` payload (#612).
+  const transitionBytes = buildTransitionBytes(signatures, (stateTransition) => stateTransition.toBytes())
   logger.debug('IdentityUpdateBuilder: Final transition bytes length:', transitionBytes.length)
   const added = keys.map((key, index): YapprRegisteredKey => ({ keyId: keyIds[index], purpose: key.purpose, securityLevel: key.securityLevel }))
   return { transitionBytes, keys: added, identityRevision: newRevision }

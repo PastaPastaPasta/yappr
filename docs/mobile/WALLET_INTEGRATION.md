@@ -188,9 +188,19 @@ keys are stored under that identity's ID.
 | --- | --- | --- | --- |
 | Tip a profile in DASH | `dash:<address>?amount=<x>&label=Tip%20for%20@bob` (from `yapprProfile.paymentUris`) | Yes, both wallets, mainnet | No callback. Yappr shows "Tip sent?" and checks the address via Insight, as the checkout does (`lib/services/insight-api-service.ts`). |
 | Pay with txid callback (Android) | `dashwallet://?pay=<addr>&amount=<x>&sender=yappr` | Android returns the txid; iOS turns it into a `dash:` payment with no callback | Use it where supported |
-| Sign a MASTER, CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` today; `dashpay://sign` planned ([profile](../APP_CONNECT_PROFILE.md#dashpaysign)) | DashConnect (testnet) | Yappr polls for the expected state change. On App Connect builds mobile uses `dash-st:` only for a missing encryption key in a raw-key session (D38), a MASTER-signed `IdentityUpdate`. Legacy builds also use it for first-login key registration. |
+| Sign a MASTER, CRITICAL or TRANSFER transition | `dash-st:<base58 transition>?n=…&v=1` today; `dashpay://sign` planned ([profile](../APP_CONNECT_PROFILE.md#dashpaysign)) | DashConnect (testnet): DashPay iOS and Android approve only a single token direct purchase; they refuse an `IdentityUpdate` | Yappr polls for the expected state change. On App Connect builds mobile uses `dash-st:` only for a missing encryption key in a raw-key session (D38), a MASTER-signed `IdentityUpdate`. Legacy builds also use it for first-login key registration. |
 | Add as DashPay contact | `dashpay://user?id=<identity>&username=<name>` | iOS parses it (`DashPayUserLink.swift`); Android unverified (W6) | None needed |
 | Top up credits | None today | — | W5; fallback: "Open DashPay" plus instructions |
+
+The **`dash-st:` payload** is a tagged state transition
+(`StateTransition.toBytes()`, the standard DPP framing) for every kind, so a
+wallet decodes it with `StateTransition.fromBytes`. Links built before #612
+carried a key registration as a bare `IdentityUpdateTransition`; platform-wallet's
+decoder and Yappr's test-wallet responder still accept that form. Decoding is
+not approval: platform-wallet decodes an `IdentityUpdate`, but DashPay iOS and
+Android refuse every `dash-st:` except a token direct purchase, so the
+messaging-key and legacy key-registration hand-offs complete today only with a
+wallet that approves identity updates (the test-wallet responder).
 
 The **`dash-st:` nonce trap:** an unsigned transition embeds a nonce, and
 anything else that uses the same nonce in the meantime makes it stale. The
