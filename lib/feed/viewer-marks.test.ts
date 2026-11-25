@@ -210,6 +210,12 @@ describe('createSlotWrites', () => {
     expect(writes.apply('alice', 'p1', free)).toBe(free)
   })
 
+  it('keeps a newer repost over a lagging read that still shows an earlier, removed one', () => {
+    const { writes } = setup()
+    writes.held('alice', 'p1', { id: 'r2', bare: true })
+    expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: repost })).toEqual({ reposted: true, ownQuote: { id: 'r2', bare: true } })
+  })
+
   it('frees the slot only while a read still shows the removed repost, never hiding a newer quote', () => {
     const { writes } = setup()
     writes.freed('alice', 'p1', repost)

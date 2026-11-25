@@ -835,9 +835,8 @@ class PostService extends BaseDocumentService<Post> {
    * Count quotes of a post or reply — O(1) count tree on the quote field for
    * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9; v10 serves
    * `==` off the rangeCountable `quotesOfPost`/`quotesOfReply`). On v10 bare
-   * reposts are quotes, so this is the repost count too.
+   * reposts are quotes, so this is the repost count too. A failed read throws.
    */
-  /** As countQuotes(), but a failed read throws instead of reading as 0. */
   async readQuoteCount(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
     if (!quoteField) return 0;
@@ -850,6 +849,7 @@ class PostService extends BaseDocumentService<Post> {
     });
   }
 
+  /** As readQuoteCount(), reading a failure as 0. */
   async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     try {
       return await this.readQuoteCount(quotedPostId, kind);
@@ -878,8 +878,7 @@ class PostService extends BaseDocumentService<Post> {
    * unique `ownerAndQuotedPost`/`ownerAndQuotedReply [$ownerId, field]` index
    * (`$ownerId == author && field in [...]`, one query per 100 targets). A
    * target has at most one. Empty where the topology has no such index; a
-   * failed read throws, so an unread
-   * repost never reads as "not reposted".
+   * failed read throws, so an unread repost never reads as "not reposted".
    */
   async getOwnQuotes(ownerId: string, targetIds: string[], kind: TargetKind = 'post'): Promise<Map<string, OwnQuote>> {
     const index = ownQuoteIndexFor(kind);

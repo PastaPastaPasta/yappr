@@ -110,7 +110,8 @@ export function createSlotWrites(session: () => number = sessionGeneration, now:
       const write = written.get(key)
       if (!write) return read
       if ('held' in write) {
-        if (!read.reposted && now() - write.at < lagMs) return { reposted: true, ownQuote: write.held }
+        // Within the lag window only a read of this very quote or repost has caught up.
+        if (read.ownQuote?.id !== write.held.id && now() - write.at < lagMs) return { reposted: true, ownQuote: write.held }
       } else if (read.reposted && read.ownQuote?.id === write.freed) {
         return { reposted: false }
       }

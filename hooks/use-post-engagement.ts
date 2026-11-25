@@ -42,7 +42,7 @@ function addedToBookmarksMessage(): string {
   return 'Added to bookmarks. Anyone can see your bookmarks.'
 }
 
-/** v10: the viewer's quote or repost of `postId` as the chain has it (null when none, or unreadable). */
+/** v10: the viewer's quote or repost of `postId` as the chain has it (null when none; a failed read rejects). */
 async function lookupOwnQuote(postId: string, viewerId: string, targetKind: TargetKind): Promise<OwnQuote | null> {
   const { postService } = await import('@/lib/services/post-service')
   return (await postService.getOwnQuotes(viewerId, [postId], targetKind)).get(postId) ?? null
@@ -208,10 +208,13 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [])
 
   /** After a repost write lands: the total from a fresh read, or (when that fails) the last confirmed one. */
+  const repostReadRef = useRef(0)
   const refreshReposts = useCallback(() => {
+    // Only the latest read lands: an older one finishing last never replaces it.
+    const read = ++repostReadRef.current
     import('@/lib/services/post-stats-helpers')
       .then(({ fetchRepostTotal }) => fetchRepostTotal({ id: postId, kind: targetKind }))
-      .then(setReposts)
+      .then((total) => { if (read === repostReadRef.current) setReposts(total) })
       .catch((error: unknown) => logger.warn('Engagement: the repost total could not be read; keeping the last one', error))
   }, [postId, targetKind])
 
