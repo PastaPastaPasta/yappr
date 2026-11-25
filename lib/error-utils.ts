@@ -150,6 +150,15 @@ export function isNotFoundAnswer(error: unknown): boolean {
 }
 
 /**
+ * The SDK refused a query because the contract has no such document type (a
+ * deployment registered before that type existed). It is a definite answer:
+ * nobody can hold a document of a type the contract lacks.
+ */
+export function isMissingDocumentTypeError(error: unknown): boolean {
+  return extractErrorMessage(error).toLowerCase().includes('document type not found')
+}
+
+/**
  * What a write whose outcome is unknown tells the user: it may have gone
  * through, so they check before sending it again.
  */

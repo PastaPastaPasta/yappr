@@ -36,4 +36,12 @@ describe('fetchBatchUserInteractions', () => {
     const marks = await fetchBatchUserInteractions([{ id: 'p1', kind: 'post' }, { id: 'p2', kind: 'post' }], 'alice')
     expect(marks.size).toBe(0)
   })
+
+  it('reads a document type the contract lacks as held by nobody', async () => {
+    mocks.getOwnQuotes.mockRejectedValue(new Error('[WASM] document type not found: can not get document type from contract'))
+    mocks.getUserLikedPostIds.mockResolvedValue(new Set(['p1']))
+    const { fetchBatchUserInteractions } = await import('./post-stats-helpers')
+    const marks = await fetchBatchUserInteractions([{ id: 'p1', kind: 'post' }], 'alice')
+    expect(marks.get('p1')).toEqual({ liked: true, reposted: false, bookmarked: false })
+  })
 })

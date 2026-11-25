@@ -148,7 +148,9 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const { quotedPost, loading, unavailable, hidden: quoteHidden } = useQuotedPost(post)
   const [enriched, setEnriched] = useState<Post | null>(null)
-  const [enriching, setEnriching] = useState(false)
+  // The target and viewer the last enrichment settled for; until it does, its
+  // read brings the viewer's marks, so the target card does not read them too.
+  const [enrichedFor, setEnrichedFor] = useState<string | null>(null)
   const [removed, setRemoved] = useState(false)
   const [removing, setRemoving] = useState(false)
 
@@ -165,7 +167,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
     // A v11 tombstone renders as a stub (or not at all): no counts to read.
     if (!quotedId || !target || isHiddenTombstone(target)) return
     let current = true
-    setEnriching(true)
+    const key = `${quotedId}|${viewerId ?? ''}`
     import('@/lib/services/post-service')
       .then(({ postService }) => postService.enrichPostsBatch([target]))
       .then(([result]) => {
@@ -173,7 +175,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
       })
       .catch((error) => logger.warn('Reposted post enrichment failed; showing it without counts', error))
       .finally(() => {
-        if (current) setEnriching(false)
+        if (current) setEnrichedFor(key)
       })
     return () => {
       current = false
@@ -231,7 +233,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
         // Deleting the target drops the repost that showed it.
         onDelete={onDelete ? () => onDelete(post.id) : undefined}
         keepIfUnreadable={keepIfUnreadable}
-        marksPending={enriching}
+        marksPending={Boolean(viewerId) && enrichedFor !== `${quotedId}|${viewerId}`}
       />
     )
   }

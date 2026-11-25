@@ -118,6 +118,8 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         knownForRef.current = key
       } catch (error) {
         logger.error(`${label}: status check failed:`, error)
+        // Unknown: show the neutral state rather than another viewer's; a toggle checks again.
+        if (isCurrent()) setIsOn(false)
       } finally {
         if (isCurrent()) setIsLoading(false)
       }
@@ -139,7 +141,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         openLoginPrompt()
         return
       }
-      if (!subjectId || isLoading) return
+      if (!subjectId || isLoading || toggleInFlightRef.current) return
       if (isSelf && selfError) {
         toast.error(selfError)
         return

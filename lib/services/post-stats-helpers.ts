@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { isMissingDocumentTypeError } from '@/lib/error-utils';
 import {
   bookmarkIndexFor,
   groupByInteractionSurface,
@@ -40,6 +41,14 @@ function rootsOf(targets: readonly KindedTarget[]): Map<string, string> {
   return new Map(targets.flatMap((target) => (target.rootPostId ? [[target.id, target.rootPostId] as const] : [])));
 }
 
+/** A contract without the document type holds none of it; any other failure stays a failure. */
+function noneIfTypeMissing<T>(read: Promise<T>, none: T): Promise<T> {
+  return read.catch((error: unknown) => {
+    if (isMissingDocumentTypeError(error)) return none;
+    throw error;
+  });
+}
+
 /**
  * The viewer's marks on each target. A target whose read failed is left out
  * rather than given defaults, so callers can tell "not marked" from "not read".
@@ -69,10 +78,10 @@ export async function fetchBatchUserInteractions(
         // at 100 and filtering client-side — which could miss the user's own on
         // busy pages.
         const [likedPostIds, reposts, userBookmarks] = await Promise.all([
-          likeService.getUserLikedPostIds(currentUserId, ids, kind),
-          viewerReposts(currentUserId, ids, kind),
+          noneIfTypeMissing(likeService.getUserLikedPostIds(currentUserId, ids, kind), new Set<string>()),
+          noneIfTypeMissing(viewerReposts(currentUserId, ids, kind), new Map<string, OwnQuote | null>()),
           bookmarkIndexFor(kind)
-            ? bookmarkService.getUserBookmarksForPosts(currentUserId, ids)
+            ? noneIfTypeMissing(bookmarkService.getUserBookmarksForPosts(currentUserId, ids), [])
             : Promise.resolve([]),
         ]);
 
