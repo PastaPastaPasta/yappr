@@ -1,6 +1,6 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
-import { Post, User } from '../types';
+import { Post } from '../types';
 import { loadIdentityBatch } from './identity-batch';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
@@ -9,6 +9,7 @@ import { blockStatusCache, followStatusCache } from '../caches/user-status-cache
 import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
+import type { ViewerMarks } from '../feed/viewer-marks';
 
 /**
  * Owner-keyed profile data from a `getProfilesByIdentityIds` result, with the
@@ -24,44 +25,6 @@ export function profileDataByOwnerId(profiles: readonly unknown[]): Map<string, 
     }
   }
   return map;
-}
-
-export async function enrichPostFull(
-  post: Post,
-  getPostStats: (target: KindedTarget) => Promise<PostStats>,
-  getUserInteractions: (target: KindedTarget) => Promise<PostInteractionState>
-): Promise<Post> {
-  try {
-    const target = targetOf(post);
-    const [stats, interactions, author] = await Promise.all([
-      getPostStats(target),
-      getUserInteractions(target),
-      unifiedProfileService.getProfileWithUsername(post.author.id),
-    ]);
-
-    const authorToUse = author || post.author;
-    const hasDpns = Boolean(authorToUse.username && !authorToUse.username.includes('...'));
-
-    return {
-      ...post,
-      likes: stats.likes,
-      reposts: stats.reposts,
-      replies: stats.replies,
-      quotes: stats.quotes,
-      views: stats.views,
-      liked: interactions.liked,
-      reposted: interactions.reposted,
-      bookmarked: interactions.bookmarked,
-      ownQuote: interactions.ownQuote,
-      author: {
-        ...authorToUse,
-        hasDpns,
-      } as User & { hasDpns: boolean },
-    };
-  } catch (error) {
-    logger.error('Error enriching post:', error);
-    return post;
-  }
 }
 
 export async function enrichPostsBatch(
@@ -101,7 +64,10 @@ export async function enrichPostsBatch(
     ]);
 
     preloaded.stats?.forEach((stats, postId) => statsMap.set(postId, { ...stats, postId }));
-    preloaded.interactions?.forEach((marks, postId) => interactionsMap.set(postId, marks));
+    // Each mark names the viewer it was read for: the batch read's is this one.
+    const marksMap = new Map<string, ViewerMarks>();
+    if (currentUserId) interactionsMap.forEach((marks, postId) => marksMap.set(postId, { ...marks, viewerId: currentUserId }));
+    preloaded.interactions?.forEach((marks, postId) => marksMap.set(postId, marks));
 
     if (currentUserId) {
       blockStatusCache.seed(currentUserId, blockStatusMap);
@@ -112,7 +78,7 @@ export async function enrichPostsBatch(
 
     return posts.map((post) => {
       const stats = statsMap.get(post.id);
-      const interactions = interactionsMap.get(post.id);
+      const interactions = marksMap.get(post.id);
       const username = usernameMap.get(post.author.id);
       const profileData = profileMap.get(post.author.id);
 
@@ -127,10 +93,9 @@ export async function enrichPostsBatch(
         replies: stats?.replies ?? post.replies,
         quotes: stats?.quotes ?? post.quotes,
         views: stats?.views ?? post.views,
-        liked: interactions?.liked ?? post.liked,
-        reposted: interactions?.reposted ?? post.reposted,
-        bookmarked: interactions?.bookmarked ?? post.bookmarked,
-        ownQuote: interactions ? interactions.ownQuote : post.ownQuote,
+        ...(interactions
+          ? { liked: interactions.liked, reposted: interactions.reposted, bookmarked: interactions.bookmarked, ownQuote: interactions.ownQuote, marksFor: interactions.viewerId }
+          : {}),
         author: {
           ...post.author,
           username: username || post.author.username,
@@ -142,6 +107,7 @@ export async function enrichPostsBatch(
           authorIsBlocked,
           authorIsFollowing,
           authorAvatarUrl,
+          viewerId: currentUserId ?? undefined,
         },
       };
     });

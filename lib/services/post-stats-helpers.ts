@@ -100,63 +100,30 @@ export async function fetchPostStats(
   }
 }
 
-export async function fetchUserInteractions(
-  target: KindedTarget,
-  currentUserId: string | null
-): Promise<PostInteractionState> {
-  if (!currentUserId) {
-    return { liked: false, reposted: false, bookmarked: false };
-  }
-
-  const { id: postId, kind } = target;
-
-  try {
-    const [{ likeService }, { bookmarkService }] = await Promise.all([
-      import('./like-service'),
-      import('./bookmark-service'),
-    ]);
-
-    // Kinds the topology forbids reposting/bookmarking have no document to look
-    // for, so those queries are skipped rather than pointed at the wrong doctype.
-    const [liked, reposts, bookmarked] = await Promise.all([
-      likeService.isLiked(postId, currentUserId, kind),
-      viewerReposts(currentUserId, [postId], kind),
-      bookmarkIndexFor(kind) ? bookmarkService.isBookmarked(postId, currentUserId) : Promise.resolve(false),
-    ]);
-
-    const ownQuote = reposts.get(postId);
-    return { liked, reposted: reposts.has(postId), bookmarked, ...(ownQuote ? { ownQuote } : {}) };
-  } catch (error) {
-    logger.error('Error getting user interactions:', error);
-    return { liked: false, reposted: false, bookmarked: false };
-  }
-}
-
+/**
+ * The viewer's marks on each target. A target whose read failed is left out
+ * rather than given defaults, so callers can tell "not marked" from "not read".
+ */
 export async function fetchBatchUserInteractions(
   targets: readonly KindedTarget[],
   currentUserId: string
 ): Promise<Map<string, PostInteractionState>> {
   const result = new Map<string, PostInteractionState>();
-
-  targets.forEach(({ id }) => {
-    result.set(id, { liked: false, reposted: false, bookmarked: false });
-  });
-
   if (targets.length === 0) {
     return result;
   }
 
-  try {
-    const [{ likeService }, { bookmarkService }] = await Promise.all([
-      import('./like-service'),
-      import('./bookmark-service'),
-    ]);
+  const [{ likeService }, { bookmarkService }] = await Promise.all([
+    import('./like-service'),
+    import('./bookmark-service'),
+  ]);
 
-    // One pass per distinct interaction surface. On v2 both kinds share one
-    // surface, so this is a single pass over every id — the same three queries
-    // the pre-topology code issued.
-    await Promise.all(
-      groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+  // One pass per distinct interaction surface. On v2 both kinds share one
+  // surface, so this is a single pass over every id — the same three queries
+  // the pre-topology code issued.
+  await Promise.all(
+    groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+      try {
         // Query only the CURRENT user's own likes/reposts (bounded by page size
         // via the composite indexes) instead of fetching all users' likes capped
         // at 100 and filtering client-side — which could miss the user's own on
@@ -180,11 +147,11 @@ export async function fetchBatchUserInteractions(
             ...(ownQuote ? { ownQuote } : {}),
           });
         });
-      })
-    );
-  } catch (error) {
-    logger.error('Error getting batch user interactions:', error);
-  }
+      } catch (error) {
+        logger.error('Error getting batch user interactions:', error);
+      }
+    })
+  );
 
   return result;
 }

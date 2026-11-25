@@ -8,7 +8,8 @@ import { blockService } from '@/lib/services/block-service'
 import { followService } from '@/lib/services/follow-service'
 import { blockStatusCache, followStatusCache } from '@/lib/caches/user-status-cache'
 import { targetOf, type KindedTarget } from '@/lib/contract-topology'
-import { repostedAuthorIdOf, type OwnQuote } from '@/lib/feed/quote-reposts'
+import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
+import { marksFor, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface PostStats {
   likes: number
@@ -16,15 +17,6 @@ export interface PostStats {
   replies: number
   quotes: number
   views: number
-}
-
-export interface UserInteractions {
-  liked: boolean
-  /** v10: true when the viewer has quoted or reposted it (one slot per target). */
-  reposted: boolean
-  bookmarked: boolean
-  /** v10: the viewer's quote or bare repost of it, when `reposted`. */
-  ownQuote?: OwnQuote
 }
 
 export interface ProfileData {
@@ -50,7 +42,8 @@ export interface PreloadedEnrichment {
   profiles?: Map<string, ProfileData>
   avatars?: Map<string, string>
   stats?: Map<string, PostStats>
-  interactions?: Map<string, UserInteractions>
+  /** The viewer's marks, each naming the viewer it was read for. */
+  interactions?: Map<string, ViewerMarks>
 }
 
 export interface EnrichmentState {
@@ -58,21 +51,24 @@ export interface EnrichmentState {
   usernames: Map<string, string | null>     // authorId → DPNS username (null = no DPNS)
   profiles: Map<string, ProfileData>        // authorId → profile data
   avatars: Map<string, string>              // authorId → avatar URL
+  // The viewer `blockStatus` and `followStatus` were read for (unset: nobody, signed out)
+  relationsFor: string | undefined
   blockStatus: Map<string, boolean>         // authorId → isBlocked
   followStatus: Map<string, boolean>        // authorId → isFollowing
   // Post data keyed by postId
   stats: Map<string, PostStats>             // postId → stats
-  interactions: Map<string, UserInteractions> // postId → user interactions
+  interactions: Map<string, ViewerMarks>    // postId → the viewer's marks, with that viewer
   replyTo: Map<string, ReplyToData>         // postId → parent post data (for replies)
   // Loading phase
   phase: 'idle' | 'loading' | 'complete'
 }
 
-function createEmptyEnrichmentState(): EnrichmentState {
+function createEmptyEnrichmentState(relationsFor?: string): EnrichmentState {
   return {
     usernames: new Map(),
     profiles: new Map(),
     avatars: new Map(),
+    relationsFor,
     blockStatus: new Map(),
     followStatus: new Map(),
     stats: new Map(),
@@ -92,15 +88,17 @@ interface UseProgressiveEnrichmentResult {
   enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void
   enrichmentState: EnrichmentState
   reset: () => void
+  isAuthorBlocked: (authorId: string) => boolean
   getPostEnrichment: (post: Post) => {
     username: string | null | undefined  // undefined = loading, null = no DPNS, string = username
     displayName: string | undefined
     profileLoaded: boolean  // true once the profile query resolved, even for authors with no profile
     avatarUrl: string | undefined
     stats: PostStats | undefined
-    interactions: UserInteractions | undefined
+    interactions: ViewerMarks | undefined
     isBlocked: boolean | undefined
     isFollowing: boolean | undefined
+    relationsFor: string | undefined
     replyTo: ReplyToData | undefined
   }
 }
@@ -116,23 +114,90 @@ interface UseProgressiveEnrichmentResult {
  * 1. DPNS usernames + Profiles (author identity)
  * 2. Avatars (visual)
  * 3. Stats (engagement counts)
- * 4. Interactions (user's like/repost state)
+ * 4. The viewer's marks, when they came with the posts (a card reads its own otherwise)
  * 5. Block/Follow status (action states)
+ *
+ * Block and follow status belong to the viewer they were read for. When the
+ * viewer changes with the list still on screen (a sign-in from the sheet), they
+ * are dropped and read again for every author this hook has seen, so the list
+ * itself, its counts and its names stay as they are.
  */
 export function useProgressiveEnrichment(
   options: UseProgressiveEnrichmentOptions = {}
 ): UseProgressiveEnrichmentResult {
   const { currentUserId, skipFollowStatus = false } = options
 
-  const [enrichmentState, setEnrichmentState] = useState<EnrichmentState>(createEmptyEnrichmentState)
+  const [enrichmentState, setEnrichmentState] = useState<EnrichmentState>(() => createEmptyEnrichmentState(currentUserId))
 
   // Track the current enrichment request to handle cancellation on tab switch
   const enrichmentIdRef = useRef(0)
+  // Every author enriched since the last reset, so a new viewer's relations can be read for them.
+  const seenRef = useRef({ authorIds: new Set<string>(), blockIds: new Set<string>(), followIds: new Set<string>() })
+  // The viewer now, for results that arrive after it changed.
+  const viewerRef = useRef(currentUserId)
+  viewerRef.current = currentUserId
 
   const reset = useCallback(() => {
     enrichmentIdRef.current++
-    setEnrichmentState(createEmptyEnrichmentState())
+    seenRef.current = { authorIds: new Set(), blockIds: new Set(), followIds: new Set() }
+    setEnrichmentState(createEmptyEnrichmentState(viewerRef.current))
   }, [])
+
+  /** Merges relations read for `viewer`, unless the viewer has changed since. */
+  const mergeRelations = useCallback((viewer: string, slice: 'blockStatus' | 'followStatus', values: Map<string, boolean>) => {
+    setEnrichmentState(prev => {
+      if (prev.relationsFor !== viewer || viewerRef.current !== viewer) return prev
+      const merged = new Map(prev[slice])
+      values.forEach((value, key) => merged.set(key, value))
+      return { ...prev, [slice]: merged }
+    })
+  }, [])
+
+  /** Reads `viewer`'s block and follow status for the given authors. Resolves once both settle. */
+  const loadRelations = useCallback((viewer: string, ids: { authorIds: string[]; blockIds: string[]; followIds: string[] }, isValid: () => boolean): Promise<unknown> => {
+    // Priority 5: Block status (always query for filtering).
+    const blockPromise = ids.blockIds.length > 0
+      ? blockService.checkBlockedBatch(viewer, ids.blockIds).then(blockStatus => {
+        blockStatusCache.seed(viewer, blockStatus)
+        if (isValid()) mergeRelations(viewer, 'blockStatus', blockStatus)
+      })
+      : Promise.resolve()
+    blockPromise.catch(err => logger.error('Progressive enrichment: block status failed', err))
+
+    // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
+    let followPromise: Promise<unknown> = Promise.resolve()
+    if (!skipFollowStatus) {
+      followPromise = ids.followIds.length > 0
+        ? followService.getFollowStatusBatch(ids.followIds, viewer).then(followStatus => {
+          followStatusCache.seed(viewer, followStatus)
+          if (isValid()) mergeRelations(viewer, 'followStatus', followStatus)
+        })
+        : Promise.resolve()
+      followPromise.catch(err => logger.error('Progressive enrichment: follow status failed', err))
+    } else {
+      // On Following tab, mark all authors as followed
+      const followStatus = new Map<string, boolean>()
+      ids.authorIds.forEach(id => followStatus.set(id, true))
+      followStatusCache.seed(viewer, followStatus)
+      mergeRelations(viewer, 'followStatus', followStatus)
+    }
+    return Promise.allSettled([blockPromise, followPromise])
+  }, [mergeRelations, skipFollowStatus])
+
+  // A new viewer with the list still on screen: the old one's relations go, and the new one's are read.
+  const relationsViewerRef = useRef(currentUserId)
+  useEffect(() => {
+    if (relationsViewerRef.current === currentUserId) return
+    relationsViewerRef.current = currentUserId
+    setEnrichmentState(prev => ({ ...prev, relationsFor: currentUserId, blockStatus: new Map(), followStatus: new Map() }))
+    const seen = seenRef.current
+    if (!currentUserId || seen.authorIds.size === 0) return
+    loadRelations(currentUserId, {
+      authorIds: Array.from(seen.authorIds),
+      blockIds: Array.from(seen.blockIds),
+      followIds: Array.from(seen.followIds),
+    }, () => true).catch(err => logger.error('Progressive enrichment: relations for the new viewer failed', err))
+  }, [currentUserId, loadRelations])
 
   /**
    * Start progressive enrichment for the given posts.
@@ -143,6 +208,8 @@ export function useProgressiveEnrichment(
 
     // Increment request ID to invalidate any in-flight requests
     const requestId = ++enrichmentIdRef.current
+    // Read here, not from the render: the callback stays the same across a viewer change, so the list using it isn't reloaded.
+    const viewerId = viewerRef.current
 
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
@@ -150,7 +217,7 @@ export function useProgressiveEnrichment(
     const run = async () => {
       if (!preloaded) {
         const { loadPostEnrichment } = await import('@/lib/feed/load-post-enrichment')
-        preloaded = await loadPostEnrichment(posts, currentUserId)
+        preloaded = await loadPostEnrichment(posts, viewerId)
         if (!isValid()) return
       }
       // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
@@ -199,7 +266,6 @@ export function useProgressiveEnrichment(
       const profileAuthorIds = authorIds.filter(notIn(preloaded?.profiles))
       const avatarAuthorIds = authorIds.filter(notIn(preloaded?.avatars))
       const statsTargets = targets.filter(target => notIn(preloaded?.stats)(target.id))
-      const interactionTargets = targets.filter(target => notIn(preloaded?.interactions)(target.id))
 
       // Store promises so we can reuse them for completion tracking
       // This prevents duplicate queries that were happening before
@@ -283,58 +349,19 @@ export function useProgressiveEnrichment(
         }))
       }).catch(err => logger.error('Progressive enrichment: stats failed', err))
 
-      // Priority 4: User interactions (only if logged in)
-      const interactionsPromise = currentUserId && interactionTargets.length > 0
-        ? postService.getBatchUserInteractions(interactionTargets)
-        : Promise.resolve(new Map<string, UserInteractions>())
-
-      if (currentUserId) {
-        interactionsPromise.then(interactions => {
-          if (!isValid()) return
-          setEnrichmentState(prev => ({
-            ...prev,
-            interactions: mergeMaps(prev.interactions, interactions)
-          }))
-        }).catch(err => logger.error('Progressive enrichment: interactions failed', err))
-
-        // Priority 5: Block status (always query for filtering). A v10 bare
-        // repost is shown as its target's author's post, so that author is
-        // checked too (none on v2/v9).
-        const blockIds = Array.from(new Set([
-          ...authorIds,
-          ...posts.map(repostedAuthorIdOf).filter((id): id is string => id !== null),
-        ]))
-        const blockPromise = blockService.checkBlockedBatch(currentUserId, blockIds)
-        blockPromise.then(blockStatus => {
-          if (!isValid()) return
-          blockStatusCache.seed(currentUserId, blockStatus)
-          setEnrichmentState(prev => ({
-            ...prev,
-            blockStatus: mergeMaps(prev.blockStatus, blockStatus)
-          }))
-        }).catch(err => logger.error('Progressive enrichment: block status failed', err))
-
-        // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
-        if (!skipFollowStatus) {
-          const followPromise = followService.getFollowStatusBatch(followLookupIds, currentUserId)
-          followPromise.then(followStatus => {
-            if (!isValid()) return
-            followStatusCache.seed(currentUserId, followStatus)
-            setEnrichmentState(prev => ({
-              ...prev,
-              followStatus: mergeMaps(prev.followStatus, followStatus)
-            }))
-          }).catch(err => logger.error('Progressive enrichment: follow status failed', err))
-        } else {
-          // On Following tab, mark all authors as followed
-          const followStatus = new Map<string, boolean>()
-          authorIds.forEach(id => followStatus.set(id, true))
-          followStatusCache.seed(currentUserId, followStatus)
-          setEnrichmentState(prev => ({
-            ...prev,
-            followStatus: mergeMaps(prev.followStatus, followStatus)
-          }))
-        }
+      // A v10 bare repost is shown as its target's author's post, so that
+      // author's block status is read too (none on v2/v9).
+      const blockIds = Array.from(new Set([
+        ...authorIds,
+        ...posts.map(repostedAuthorIdOf).filter((id): id is string => id !== null),
+      ]))
+      const seen = seenRef.current
+      authorIds.forEach(id => seen.authorIds.add(id))
+      blockIds.forEach(id => seen.blockIds.add(id))
+      followLookupIds.forEach(id => seen.followIds.add(id))
+      if (viewerId) {
+        loadRelations(viewerId, { authorIds, blockIds, followIds: followLookupIds }, isValid)
+          .catch(err => logger.error('Progressive enrichment: relations failed', err))
       }
 
       // Track completion using the SAME promises (no duplicate queries!). Each
@@ -344,7 +371,6 @@ export function useProgressiveEnrichment(
         profilePromise,
         avatarPromise,
         statsPromise,
-        interactionsPromise
       ]).then(() => {
         if (!isValid()) return
         setEnrichmentState(prev => ({ ...prev, phase: 'complete' }))
@@ -352,7 +378,7 @@ export function useProgressiveEnrichment(
     }
     run().catch(error => logger.error('Progressive enrichment failed', error))
 
-  }, [currentUserId, skipFollowStatus])
+  }, [loadRelations])
 
   /**
    * Helper to get enrichment data for a specific post.
@@ -368,18 +394,26 @@ export function useProgressiveEnrichment(
       ? enrichmentState.usernames.get(authorId)
       : undefined
 
+    // Relations read for another viewer (or before a sign-in) are not this viewer's.
+    const relationsKnown = enrichmentState.relationsFor === currentUserId
     return {
       username,
       displayName: enrichmentState.profiles.get(authorId)?.displayName,
       profileLoaded: enrichmentState.profiles.has(authorId),
       avatarUrl: enrichmentState.avatars.get(authorId),
       stats: enrichmentState.stats.get(postId),
-      interactions: enrichmentState.interactions.get(postId),
-      isBlocked: enrichmentState.blockStatus.get(authorId),
-      isFollowing: enrichmentState.followStatus.get(authorId),
+      interactions: marksFor(enrichmentState.interactions.get(postId), currentUserId),
+      isBlocked: relationsKnown ? enrichmentState.blockStatus.get(authorId) : undefined,
+      isFollowing: relationsKnown ? enrichmentState.followStatus.get(authorId) : undefined,
+      relationsFor: relationsKnown ? currentUserId : undefined,
       replyTo: enrichmentState.replyTo.get(postId)
     }
-  }, [enrichmentState])
+  }, [enrichmentState, currentUserId])
+
+  /** True when the current viewer blocks `authorId`, as far as has been read for them. */
+  const isAuthorBlocked = useCallback((authorId: string) =>
+    enrichmentState.relationsFor === currentUserId && enrichmentState.blockStatus.get(authorId) === true,
+  [enrichmentState, currentUserId])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -393,6 +427,7 @@ export function useProgressiveEnrichment(
     enrichProgressively,
     enrichmentState,
     reset,
+    isAuthorBlocked,
     getPostEnrichment
   }
 }

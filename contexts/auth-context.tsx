@@ -161,10 +161,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       deferredRevoke.current = { identityId, epoch: controller.sessionEpoch() }
       return
     }
+    // The page stays, as it does for a sign-out in another tab: a page that needs
+    // an account goes on to /login?next=<it> (withAuth), so signing back in returns there.
     revokeLogout.current = controller.logout()
-      .then(() => router.push('/'))
+      .then(() => undefined)
       .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
-  }, [controller, router])
+  }, [controller])
 
   useEffect(() => {
     appConnectSessions.onSignedOut(signOutRevoked)
@@ -195,20 +197,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [controller])
 
+  // Signed out in another tab: this tab's page stays too (see signOutRevoked).
   useEffect(() => observeSignOut(() => {
     controller.logoutLocally().then((signedOut) => {
       if (!signedOut || controller.getState().user) return
       useUsernameModal.getState().close()
       usePasskeyPrompts.getState().reset()
-      router.push('/')
     })
       .catch((error: unknown) => logger.error('Auth: cross-tab sign-out failed:', error))
-  }), [controller, router])
+  }), [controller])
 
   const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
     const next = signInDestination(intent)
     // Signed out: to sign in again, carrying this page (replaced, so Back doesn't land on a page that needs the account).
-    if (next.kind === 'route' && next.href === '/login') {
+    if (next.kind === 'signed-out') {
       router.replace(loginRoute(signInReturnRoute() ?? ''))
       return
     }
@@ -224,8 +226,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       usernamePromptClosed().then(leave, (error: unknown) => logger.error('Auth: leaving the sign-in page failed:', error))
       return
     }
+    // Signed in from the sign-in sheet over any other page: the page stays mounted,
+    // and what it shows for the viewer (marks, blocks, private posts) is read for the new one.
     if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
-    else router.push(next.href)
   }, [controller, router])
 
   /**

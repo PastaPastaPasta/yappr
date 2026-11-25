@@ -165,8 +165,9 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
 
       return batches.flatMap((result) => result.documents);
     } catch (error) {
+      // Thrown, not empty: an unread bookmark must not read as "not bookmarked".
       logger.error('Error getting user bookmarks for posts:', error);
-      return [];
+      throw error;
     }
   }
 }

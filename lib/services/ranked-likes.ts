@@ -568,6 +568,7 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: stri
         authorIsBlocked: false,
         authorIsFollowing: false,
         authorAvatarUrl: avatar,
+        viewerId: undefined,
       },
     }];
   }).slice(0, limit);
@@ -592,6 +593,7 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: stri
       ...post._enrichment,
       authorIsBlocked: blocked.get(post.author.id) ?? false,
       authorIsFollowing: following.get(post.author.id) ?? false,
+      viewerId: currentUserId,
     },
   }));
 }

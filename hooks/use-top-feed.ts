@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/logger';
 import { useAuth } from '@/contexts/auth-context';
-import { filterBlockedAuthors } from '@/hooks/use-block';
+import { filterBlockedAuthors, useWithoutBlockedAuthors } from '@/hooks/use-block';
 import { followService } from '@/lib/services';
 import type { Post } from '@/lib/types';
 import type { RankingWindow } from '@/lib/services/ranked-likes';
@@ -71,14 +71,21 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   // The first page last loaded for each ranking (tab, window, viewer), so going
   // back to one (or back to Top from Latest) shows it at once while it reloads.
   const firstPagesRef = useRef(new Map<string, Post[]>());
-  const viewKey = `${activeTab}:${window}:${userId ?? ''}`;
+  // The global ranking is the same for every viewer, so a sign-in keeps it on
+  // screen (re-filtered for the new viewer's blocks); Following's is the viewer's own.
+  const followingViewer = activeTab === 'following' ? userId : undefined;
+  const viewKey = `${activeTab}:${window}:${followingViewer ?? ''}`;
+  const viewerRef = useRef(userId);
+  viewerRef.current = userId;
 
   const load = useCallback(
     async ({ force = false, append = false }: LoadOptions = {}) => {
       const requestId = ++requestIdRef.current;
       const isCurrent = () => requestIdRef.current === requestId;
+      const viewerId = viewerRef.current;
+      const pageKey = `${viewKey}:${viewerId ?? ''}`;
 
-      if (!likesAreIndexOnly() || (activeTab === 'following' && !userId)) {
+      if (!likesAreIndexOnly() || (activeTab === 'following' && !followingViewer)) {
         setPosts([]);
         setHasMore(false);
         setIsLoading(false);
@@ -96,8 +103,8 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
       try {
         const { topLikedPostsHydrated, topLikedPostsByAuthorsHydrated } = await import('@/lib/services/ranked-likes');
         let ranked: Post[];
-        if (activeTab === 'following' && userId) {
-          const authorIds = await followService.getFollowingIds(userId);
+        if (activeTab === 'following' && followingViewer) {
+          const authorIds = await followService.getFollowingIds(followingViewer);
           ranked = await topLikedPostsByAuthorsHydrated({ authorIds, limit, window, force: bypassCache, throwOnError: true });
         } else {
           ranked = await topLikedPostsHydrated({ limit, window, force: bypassCache, throwOnError: true });
@@ -105,10 +112,10 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         // `throwOnError` makes a failed ranking or hydration reject rather than
         // degrade to an empty page, so an empty result here is genuinely the
         // end of the ranking and never a swallowed error.
-        const visible = await filterBlockedAuthors(userId, ranked);
+        const visible = await filterBlockedAuthors(viewerId, ranked);
         if (!isCurrent()) return;
         rankedCountRef.current = ranked.length;
-        if (!append) firstPagesRef.current.set(viewKey, visible);
+        if (!append) firstPagesRef.current.set(pageKey, visible);
         setPosts((current) => {
           if (!append || !current) return visible;
           const known = new Set(current.map((post) => post.id));
@@ -126,7 +133,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         if (append) throw error;
         setPosts((current) => current ?? []);
         // A kept page on screen keeps its paging; only an empty first load ends it.
-        if (!firstPagesRef.current.has(viewKey)) setHasMore(false);
+        if (!firstPagesRef.current.has(pageKey)) setHasMore(false);
       } finally {
         if (isCurrent()) {
           setIsLoading(false);
@@ -134,13 +141,13 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         }
       }
     },
-    [activeTab, userId, window, viewKey]
+    [activeTab, followingViewer, window, viewKey]
   );
 
-  // A different ranking (tab, window, or viewer) starts from the first page.
+  // A different ranking (tab, window, or Following's viewer) starts from the first page.
   useEffect(() => {
     if (!enabled) return;
-    setPosts(firstPagesRef.current.get(viewKey) ?? null);
+    setPosts(firstPagesRef.current.get(`${viewKey}:${viewerRef.current ?? ''}`) ?? null);
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
   }, [enabled, load, viewKey]);
 
@@ -155,5 +162,6 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
     setPosts((current) => (current ? current.filter((post) => post.id !== postId) : current));
   }, []);
 
-  return { posts, isLoading, refresh, handlePostDelete, hasMore, isLoadingMore, loadMore };
+  const visiblePosts = useWithoutBlockedAuthors(posts);
+  return { posts: visiblePosts, isLoading, refresh, handlePostDelete, hasMore, isLoadingMore, loadMore };
 }

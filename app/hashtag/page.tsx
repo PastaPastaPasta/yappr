@@ -16,7 +16,7 @@ import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
-import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { checkBlockedForAuthors, useWithoutBlockedAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
@@ -32,10 +32,15 @@ function HashtagPageContent() {
   const searchParams = useSearchParams()
   const tag = searchParams.get('tag') || ''
   const { user } = useAuth()
+  // Read by the loads, which don't re-run for a new viewer: a sign-in keeps the
+  // loaded pages, and the render filters them for the new viewer's blocks.
+  const viewerRef = useRef(user?.identityId)
+  viewerRef.current = user?.identityId
   const postingClosed = usePostingClosed()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
-  const [posts, setPosts] = useState<Post[]>([])
+  const [loadedPosts, setPosts] = useState<Post[]>([])
+  const posts = useWithoutBlockedAuthors(loadedPosts) ?? []
   const [isLoading, setIsLoading] = useState(true)
   const [hasMore, setHasMore] = useState(false)
   const [lastPostId, setLastPostId] = useState<string | undefined>()
@@ -51,7 +56,7 @@ function HashtagPageContent() {
   /** Top can show the tag's recent window (v9 today, v10 the rolling 24h) or all-time. */
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
   const [topByWindow, setTopByWindow] = useState<Partial<Record<RankingWindow, Post[]>>>({})
-  const topPosts = topByWindow[rankingWindow]
+  const topPosts = useWithoutBlockedAuthors(topByWindow[rankingWindow] ?? null) ?? undefined
 
   // Determine if this is a cashtag and get display values
   const isCashtag = isCashtagStorage(tag)
@@ -125,9 +130,10 @@ function HashtagPageContent() {
         let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts.filter(post => !post.deleted), preloaded)
 
         // Filter out posts from blocked users
-        if (user?.identityId && enrichedPosts.length > 0) {
+        const viewerId = viewerRef.current
+        if (viewerId && enrichedPosts.length > 0) {
           const authorIds = Array.from(new Set(enrichedPosts.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
+          const blockedMap = await checkBlockedForAuthors(viewerId, authorIds)
           enrichedPosts = enrichedPosts.filter(post => !blockedMap.get(post.author.id))
         }
 
@@ -150,10 +156,10 @@ function HashtagPageContent() {
     loadHashtagPosts().catch(err => logger.error('Failed to load hashtag posts:', err))
     return () => {
       cancelled = true
-      // An old next-page request must not update a different tag or viewer.
+      // An old next-page request must not update a different tag.
       loadGeneration.current = generation + 1
     }
-  }, [tag, user?.identityId])
+  }, [tag])
 
   const loadMorePosts = useCallback(async () => {
     const generation = loadGeneration.current
@@ -168,9 +174,10 @@ function HashtagPageContent() {
       })
       const page = result.documents
       let enriched = await postService.enrichPostsBatch(page.filter(post => !post.deleted), result.preloaded)
-      if (user?.identityId && enriched.length > 0) {
+      const viewerId = viewerRef.current
+      if (viewerId && enriched.length > 0) {
         const authors = Array.from(new Set(enriched.map(post => post.author.id)))
-        const blocked = await checkBlockedForAuthors(user.identityId, authors)
+        const blocked = await checkBlockedForAuthors(viewerId, authors)
         enriched = enriched.filter(post => !blocked.get(post.author.id))
       }
       if (loadGeneration.current !== generation) return
@@ -189,14 +196,14 @@ function HashtagPageContent() {
         setIsLoadingMore(false)
       }
     }
-  }, [tag, hasMore, lastPostId, isLoading, user?.identityId])
+  }, [tag, hasMore, lastPostId, isLoading])
 
   const { sentinelRef, isSuspended, loadMore } = useInfiniteScroll({
     hasMore,
     isLoading: isLoading || isLoadingMore,
     onLoadMore: loadMorePosts,
     disabled: sortMode !== 'latest' || !hashtagsAreInline(),
-    resetKey: `${tag}:${user?.identityId ?? ''}`,
+    resetKey: tag,
   })
 
   // Reset the sort state when the tag changes.
@@ -204,12 +211,6 @@ function HashtagPageContent() {
     setSortMode('latest')
     setTopByWindow({})
   }, [tag])
-
-  // The block filter depends on the viewer, so a Top list loaded under one
-  // identity is stale after login/logout — drop it and refetch.
-  useEffect(() => {
-    setTopByWindow({})
-  }, [user?.identityId])
 
   // Load the tag's top-liked posts while Top is selected. Each window's list is
   // kept, so switching back shows it at once while it refreshes quietly.
@@ -226,9 +227,10 @@ function HashtagPageContent() {
         let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: win })
 
         // Filter out posts from blocked users, matching the Latest path.
-        if (user?.identityId && fetched.length > 0) {
+        const viewerId = viewerRef.current
+        if (viewerId && fetched.length > 0) {
           const authorIds = Array.from(new Set(fetched.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
+          const blockedMap = await checkBlockedForAuthors(viewerId, authorIds)
           fetched = fetched.filter(post => !blockedMap.get(post.author.id))
         }
 
@@ -243,7 +245,7 @@ function HashtagPageContent() {
     return () => {
       cancelled = true
     }
-  }, [sortMode, tag, user?.identityId, rankingWindow])
+  }, [sortMode, tag, rankingWindow])
 
   if (!tag) {
     return (

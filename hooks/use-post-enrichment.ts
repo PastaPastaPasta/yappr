@@ -2,6 +2,7 @@ import { logger } from '@/lib/logger';
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
+import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 
 interface UsePostEnrichmentOptions {
   /** Callback when enrichment completes with enriched posts */
@@ -60,8 +61,9 @@ export function usePostEnrichment(
       return posts
     }
 
-    // Generate batch ID from sorted post IDs
-    const batchId = posts.map(p => p.id).sort().join(',')
+    // Generate batch ID from the viewer and sorted post IDs: an enrichment
+    // carries the viewer's marks and block status, so it is never shared across viewers
+    const batchId = `${getCurrentUserId() ?? ''}|${posts.map(p => p.id).sort().join(',')}`
 
     // If there's already a pending enrichment for this batch, wait for it
     // This handles React Strict Mode double-renders and concurrent calls

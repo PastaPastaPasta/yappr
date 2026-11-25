@@ -115,10 +115,23 @@ export function signInReturnRoute(): string | null {
   return sanitizeReturnTo(currentPagePath()) ?? sanitizeReturnTo(currentReturnToParam())
 }
 
+function onRoute(route: string): boolean {
+  const path = window.location.pathname.replace(/\/+$/, '')
+  return path === route || path.endsWith(route)
+}
+
 /** True on the sign-in page, which picks where a sign-in made on it goes next. Client-only. */
 export function onLoginPage(): boolean {
-  const path = window.location.pathname.replace(/\/+$/, '')
-  return path === LOGIN_ROUTE || path.endsWith(LOGIN_ROUTE)
+  return onRoute(LOGIN_ROUTE)
+}
+
+/**
+ * True on the username detour page, whose Skip and Continue go back to the
+ * `next` it carries. Over any other page the username prompt just closes.
+ * Client-only.
+ */
+export function onUsernameDetour(): boolean {
+  return onRoute(DPNS_REGISTER_ROUTE)
 }
 
 /** The raw `next` parameter of the current page. Client-only; `null` during prerender. */

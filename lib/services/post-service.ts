@@ -7,7 +7,7 @@ import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
-import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
+import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, type PostInteractionState } from './post-stats-helpers';
 import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
@@ -16,7 +16,7 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
 import { nextReadVersion, withoutHiddenItems } from '@/lib/moderation-view';
-import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
+import { enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
@@ -246,7 +246,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Transform document to Post type.
    * Returns a Post with default placeholder values - callers should use
-   * enrichPostFull() or enrichPostsBatch() to populate stats and author data.
+   * enrichPostsBatch() to populate stats and author data.
    */
   protected transformDocument(doc: Record<string, unknown>): Post {
     // SDK may nest document fields under 'data' property
@@ -335,17 +335,6 @@ class PostService extends BaseDocumentService<Post> {
     return post;
   }
 
-  /**
-   * Enrich a single post with all data (stats, interactions, author).
-   * Returns a new Post object with enriched data.
-   */
-  async enrichPostFull(post: Post): Promise<Post> {
-    return enrichPostFullHelper(
-      post,
-      (target) => this.getPostStats(target),
-      (target) => this.getUserInteractions(target)
-    );
-  }
 
   /**
    * Batch enrich multiple posts efficiently.
@@ -777,12 +766,6 @@ class PostService extends BaseDocumentService<Post> {
     return fetchPostStats(target, this.statsCache);
   }
 
-  /**
-   * Get user interactions with a post or reply
-   */
-  private async getUserInteractions(target: KindedTarget): Promise<PostInteractionState> {
-    return fetchUserInteractions(target, this.getCurrentUserId());
-  }
 
   /**
    * Get current user ID from localStorage session
@@ -797,11 +780,8 @@ class PostService extends BaseDocumentService<Post> {
    */
   async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, PostInteractionState>> {
     const currentUserId = this.getCurrentUserId();
-    if (!currentUserId || targets.length === 0) {
-      const result = new Map<string, PostInteractionState>();
-      targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
-      return result;
-    }
+    // Signed out, there are no marks to read.
+    if (!currentUserId || targets.length === 0) return new Map<string, PostInteractionState>();
 
     // Include userId in the key since interactions are user-specific, and the
     // doctype set because the same id list answers differently per surface.
@@ -905,8 +885,9 @@ class PostService extends BaseDocumentService<Post> {
    * v10: the author's own quote or bare repost of each target, through the
    * unique `ownerAndQuotedPost`/`ownerAndQuotedReply [$ownerId, field]` index
    * (`$ownerId == author && field in [...]`, one query per 100 targets). A
-   * target has at most one. Empty where the topology has no such index, and
-   * on error (fails closed: nothing reads as reposted).
+   * target has at most one. Empty where the topology has no such index; a
+   * failed read throws, so an unread
+   * repost never reads as "not reposted".
    */
   async getOwnQuotes(ownerId: string, targetIds: string[], kind: TargetKind = 'post'): Promise<Map<string, OwnQuote>> {
     const index = ownQuoteIndexFor(kind);
@@ -931,7 +912,7 @@ class PostService extends BaseDocumentService<Post> {
       return result;
     } catch (error) {
       logger.error('Error fetching own quotes:', error);
-      return new Map();
+      throw error;
     }
   }
 

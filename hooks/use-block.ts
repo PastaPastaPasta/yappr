@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { logger } from '@/lib/logger'
 import { useAuth } from '@/contexts/auth-context'
 import { blockStatusCache } from '@/lib/caches/user-status-cache'
 import { useNotificationStore } from '@/lib/stores/notification-store'
 import type { BlockProvenance } from '@/lib/services/block-service'
+import type { Post } from '@/lib/types'
+import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
 import { useToggleRelation } from './use-toggle-relation'
 
 export interface UseBlockResult {
@@ -186,4 +188,51 @@ export async function filterBlockedAuthors<T extends { author: { id: string } }>
   const authorIds = Array.from(new Set(posts.map((post) => post.author.id)))
   const blocked = await checkBlockedForAuthors(viewerId, authorIds)
   return posts.filter((post) => !blocked.get(post.author.id))
+}
+
+/**
+ * `posts` without those whose author, or whose reposted author (a v10 bare
+ * repost shows its target's author's post), the current viewer blocks.
+ * Re-read whenever the viewer changes, so a list kept on screen through a
+ * sign-in is filtered for the new viewer without being reloaded. A list
+ * filtered when it loaded stays filtered meanwhile; one loaded for another
+ * viewer shows in full until the new viewer's blocks are read.
+ */
+export function useWithoutBlockedAuthors<T extends Post>(posts: T[] | null): T[] | null {
+  const { user } = useAuth()
+  const viewerId = user?.identityId
+  const authorKey = useMemo(() => {
+    const ids = new Set<string>()
+    for (const post of posts ?? []) {
+      ids.add(post.author.id)
+      const reposted = repostedAuthorIdOf(post)
+      if (reposted) ids.add(reposted)
+    }
+    return Array.from(ids).sort().join(',')
+  }, [posts])
+  const [blocked, setBlocked] = useState<{ viewerId: string; ids: Set<string> } | null>(null)
+
+  useEffect(() => {
+    if (!viewerId || !authorKey) return
+    let current = true
+    checkBlockedForAuthors(viewerId, authorKey.split(','))
+      .then((statuses) => {
+        if (!current) return
+        const ids = new Set<string>()
+        statuses.forEach((isBlocked, authorId) => { if (isBlocked) ids.add(authorId) })
+        setBlocked({ viewerId, ids })
+      })
+      .catch((error) => logger.error('useWithoutBlockedAuthors: block check failed:', error))
+    return () => {
+      current = false
+    }
+  }, [viewerId, authorKey])
+
+  return useMemo(() => {
+    if (!posts || !viewerId || blocked?.viewerId !== viewerId || blocked.ids.size === 0) return posts
+    return posts.filter((post) => {
+      const reposted = repostedAuthorIdOf(post)
+      return !blocked.ids.has(post.author.id) && !(reposted && blocked.ids.has(reposted))
+    })
+  }, [posts, viewerId, blocked])
 }
