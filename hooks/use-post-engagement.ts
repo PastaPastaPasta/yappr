@@ -154,28 +154,31 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   /**
    * The marks a write of `need` starts from: known ones, or a read made now.
    * When the full read fails, just `need` is read, so another mark's failed
-   * lookup never stops this write. Null (with a toast) when `need` cannot be read.
+   * lookup never stops this write; from then on only the marks still unread
+   * are read, so a later read never overwrites a write in flight.
+   * Null (with a toast) when `need` cannot be read.
    */
   const resolveMarks = useCallback(async (need: MarkName): Promise<KnownMarks | null> => {
     if (!viewerId) return null
     if (current && knowsMark(current, need)) return current
-    try {
-      const read = await readMarks(viewerId)
-      setOwnMarks(read)
-      return read
-    } catch (error) {
-      logger.warn('Engagement: the viewer\'s marks could not all be read; reading just the one this needs', error)
+    if (!current) {
+      try {
+        const read = await readMarks(viewerId)
+        setOwnMarks(read)
+        return read
+      } catch (error) {
+        logger.warn('Engagement: the viewer\'s marks could not all be read; reading just the one this needs', error)
+      }
     }
     try {
       const session = sessionGeneration()
       const { fetchUserMark } = await import('@/lib/services/post-stats-helpers')
       const read = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
-      const onto = (base: KnownMarks | null): KnownMarks =>
-        withMark(base && base.viewerId === viewerId && base.session === session && base.targetId === postId
-          ? base
-          : { ...noMarksRead(viewerId, session), targetId: postId }, need, read)
-      setOwnMarks(onto)
-      return onto(current)
+      const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
+      const fits = (marks: KnownMarks | null): marks is KnownMarks =>
+        marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
+      setOwnMarks((held) => fits(held) ? withMark(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
+      return withMark(fits(current) ? current : fresh, need, read)
     } catch (error) {
       logger.error('Engagement: the viewer\'s marks could not be read:', error)
       toast.error('Could not check this post right now. Please try again.')

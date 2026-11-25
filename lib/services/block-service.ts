@@ -731,7 +731,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Why the viewer sees `targetUserId` as blocked: their own block document,
    * a followed block list, or both. Unlike isBlocked(), this always checks
    * both sources, so callers can offer the right remedy (delete the own block
-   * vs. manage followed block lists). A failed own-list read rejects.
+   * vs. manage followed block lists). A failed own-list read rejects, and so
+   * does "not blocked" when a followed list could not be read: that is unknown.
    */
   async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
     // No blocks contract (v13 without one): nobody is blocked, whatever a cache recorded.
@@ -762,15 +763,14 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const inherited = blocks.get(targetUserId)
     const isBlocked = isOwnBlock || inherited !== undefined
 
+    if (!isBlocked && !complete) throw new Error('Block status could not be read')
+
     // Own block takes precedence in the cache, matching checkBlockedBatch().
-    // A negative is only cached when every followed list was actually read.
-    if (isBlocked || complete) {
-      addConfirmedBlocksBatch(viewerId, new Map([[targetUserId, {
-        isBlocked,
-        blockedBy: isOwnBlock ? viewerId : inherited?.blockedBy ?? '',
-        message: isOwnBlock ? cached?.message : inherited?.message,
-      }]]))
-    }
+    addConfirmedBlocksBatch(viewerId, new Map([[targetUserId, {
+      isBlocked,
+      blockedBy: isOwnBlock ? viewerId : inherited?.blockedBy ?? '',
+      message: isOwnBlock ? cached?.message : inherited?.message,
+    }]]))
 
     return {
       isBlocked,

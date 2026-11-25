@@ -215,9 +215,8 @@ describe('block provenance', () => {
       if (followedReadFails) throw new Error('StaleNode')
       return [block(authors[0], 0, followed)]
     })
-    expect(await blockService.getBlockProvenance(authors[0], viewer))
-      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
-    // Unknown, not "not blocked": left out of the batch, and a single check rejects.
+    // Unknown, not "not blocked": provenance and a single check reject, and the batch leaves it out.
+    await expect(blockService.getBlockProvenance(authors[0], viewer)).rejects.toThrow('Block status could not be read')
     expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
     await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
 
@@ -237,10 +236,13 @@ describe('block provenance', () => {
       }
       return q.documentTypeName === 'block' && q.where[0][2] === followed ? [block(authors[0], 0, followed)] : []
     })
-    expect(await blockService.getBlockProvenance(authors[0], viewer))
-      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    await expect(blockService.getBlockProvenance(authors[0], viewer)).rejects.toThrow('Block status could not be read')
     expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
     await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
+    // The viewer's own block still shows, so it can be lifted.
+    addOwnBlock(viewer, authors[1])
+    expect(await blockService.getBlockProvenance(authors[1], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: true, inheritedFrom: null })
 
     discoveryFails = false
     expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
