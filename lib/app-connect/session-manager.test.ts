@@ -385,6 +385,17 @@ describe('AppConnectSessionManager across tabs', () => {
     expect(useAppConnectStatus.getState().signedOutByWallet).toBe(false)
   })
 
+  it('a restore begun before a raw-key sign-in activates nothing, even when its read starts after it', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    const began = appConnectSessions.lifecycleMark()
+    await appConnectSessions.yieldToRawKey('alice')
+
+    expect(await appConnectSessions.restore('alice', began)).toBe(false)
+    expect(appConnectSessions.current()).toBeNull()
+    expect(storedGrantedAt()).toBe(1)
+    expect(await appConnectSessions.restore('alice')).toBe(true)
+  })
+
   it('a raw-key sign-in replaces this tab’s wallet grant but keeps a newer one another tab stored', async () => {
     await storeFromAnotherTab(grant('alice', 1))
     await appConnectSessions.restore('alice')

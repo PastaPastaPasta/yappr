@@ -16,6 +16,7 @@ const sessions = vi.hoisted(() => ({
   restore: vi.fn(async (identityId: string) => identityId === 'alice'),
   yieldToRawKey: vi.fn(async () => undefined),
   hasStoredGrant: vi.fn(async (identityId: string) => identityId === 'alice'),
+  lifecycleMark: vi.fn(() => 0),
   current: vi.fn(() => null),
 }))
 vi.mock('@/lib/app-connect/session-manager', () => ({ appConnectSessions: sessions }))
@@ -90,7 +91,7 @@ describe('restoring a session by how it signed in (#732)', () => {
     await tab().loginWithKeyRing('alice')
 
     expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
-    expect(sessions.restore).toHaveBeenCalledWith('alice')
+    expect(sessions.restore).toHaveBeenCalledWith('alice', 0)
   })
 
   it('restores a session saved before the mode was recorded on the grant first, as before', async () => {
@@ -101,7 +102,7 @@ describe('restoring a session by how it signed in (#732)', () => {
     data.set(SESSION_STORAGE_KEY, JSON.stringify(stored))
 
     expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
-    expect(sessions.restore).toHaveBeenCalledWith('alice')
+    expect(sessions.restore).toHaveBeenCalledWith('alice', 0)
   })
 
   it('lets a tab without the raw key restore on the wallet grant', async () => {
@@ -109,7 +110,7 @@ describe('restoring a session by how it signed in (#732)', () => {
     for (const key of [...data.keys()]) if (key.includes('yappr_secure_')) data.delete(key)
 
     expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
-    expect(sessions.restore).toHaveBeenCalledWith('alice')
+    expect(sessions.restore).toHaveBeenCalledWith('alice', 0)
   })
 
   it('gives way to the wallet grant when Platform no longer takes the raw key', async () => {
@@ -119,7 +120,7 @@ describe('restoring a session by how it signed in (#732)', () => {
 
     expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
     expect(chain.getIdentity).toHaveBeenCalledWith('alice', { fresh: true })
-    expect(sessions.restore).toHaveBeenCalledWith('alice')
+    expect(sessions.restore).toHaveBeenCalledWith('alice', 0)
   })
 
   it('keeps the raw key when the identity cannot be read', async () => {
@@ -154,5 +155,26 @@ describe('restoring a session by how it signed in (#732)', () => {
     data.set(SESSION_STORAGE_KEY, JSON.stringify({ ...stored, user: { ...stored.user, identityId: 'bob' } }))
     await walletTab.refreshBalance()
     expect(JSON.parse(data.get(SESSION_STORAGE_KEY) ?? '{}').user.identityId).toBe('bob')
+  })
+
+  it('refreshes never touch the sign-in record, and a reload still sees their balance', async () => {
+    const walletTab = tab()
+    await walletTab.loginWithKeyRing('alice')
+    await tab().loginWithAuthKey('alice', WIF)
+    const signInRecord = data.get(SESSION_STORAGE_KEY)
+    await walletTab.refreshBalance()
+    await walletTab.setUsername('alice.dash')
+
+    expect(data.get(SESSION_STORAGE_KEY)).toBe(signInRecord)
+    expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice', balance: 2, username: 'alice.dash' })
+  })
+
+  it('pins the grant restore to the moment the reload began', async () => {
+    await tab().loginWithAuthKey('alice', WIF)
+    chain.getIdentity.mockImplementation(async () => ({ ...identity, publicKeys: [{ ...identity.publicKeys[0], disabledAt: 1 }] }))
+    sessions.lifecycleMark.mockReturnValueOnce(41)
+
+    await tab().restoreSession()
+    expect(sessions.restore).toHaveBeenCalledWith('alice', 41)
   })
 })

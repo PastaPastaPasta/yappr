@@ -74,6 +74,32 @@ function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {
   }
 }
 
+/**
+ * The session's balance and username as later refreshes saw them. Only a
+ * sign-in writes the session record (with its sign-in mode) and only a
+ * sign-out removes it; a refresh, which another tab may run at any moment,
+ * writes this record instead, so it can never replace or bring back a
+ * sign-in (#732). It counts only for the same identity, saved after the sign-in.
+ */
+const SESSION_PROFILE_KEY = scopedKey('yappr_session_profile')
+
+interface StoredProfile {
+  identityId: string
+  balance?: number
+  /** null: the identity has no username (any saved with the sign-in is stale). */
+  dpnsUsername: string | null
+  timestamp: number
+}
+
+function readStoredProfile(identityId: string, since: number): StoredProfile | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SESSION_PROFILE_KEY) ?? 'null') as StoredProfile | null
+    return parsed?.identityId === identityId && typeof parsed.timestamp === 'number' && parsed.timestamp >= since ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 function readStoredSession(): AuthSessionSnapshot | null {
   if (typeof window === 'undefined') return null
   const savedSession = localStorage.getItem(SESSION_STORAGE_KEY)
@@ -82,9 +108,10 @@ function readStoredSession(): AuthSessionSnapshot | null {
   try {
     const parsed = JSON.parse(savedSession) as { user?: Record<string, unknown>; timestamp?: number; signIn?: unknown }
     if (!parsed.user) return null
-    const user = fromSessionUser(parsed.user)
+    const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now()
+    const user = fromSessionUser({ ...parsed.user, ...readStoredProfile(String(parsed.user.identityId), timestamp) })
     if (!user) return null
-    const snapshot = toSessionSnapshot(user, typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now())
+    const snapshot = toSessionSnapshot(user, timestamp)
     return parsed.signIn === 'wallet' || parsed.signIn === 'key' ? { ...snapshot, signIn: parsed.signIn } : snapshot
   } catch (error) {
     logger.error('Failed to parse session:', error)
@@ -107,11 +134,13 @@ function readStoredSession(): AuthSessionSnapshot | null {
  * usable key the grant may still restore it.
  */
 async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
+  // A sign-in or sign-out once this restore has begun cancels its grant activation, however late it comes.
+  const began = appConnectSessions.lifecycleMark()
   const session = readStoredSession()
   const wif = getPrivateKey(identityId)
   const keySignIn = wif !== null && session?.user.identityId === identityId && session.signIn === 'key'
   // An App Connect key ring restores from IndexedDB alone, without the network.
-  const restoreRing = async () => isAppConnectBuild() && await appConnectSessions.restore(identityId)
+  const restoreRing = async () => isAppConnectBuild() && await appConnectSessions.restore(identityId, began)
   if (!keySignIn && await restoreRing()) return true
   if (!wif) return false
   const fetchKeys = async () => {
@@ -265,17 +294,19 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
         if (typeof window === 'undefined') return
         // Every login commits here (post-login work is skipped behind the username prompt): lift a sign-out's key fence.
         privateFeedKeyStore.signIn(snapshot.user.identityId)
+        localStorage.removeItem(SESSION_PROFILE_KEY)
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession(snapshot)))
       },
       clearSession() {
         if (typeof window === 'undefined') return
         localStorage.removeItem(SESSION_STORAGE_KEY)
+        localStorage.removeItem(SESSION_PROFILE_KEY)
       },
       updateUser(user, timestamp) {
         if (typeof window === 'undefined') return false
-        const stored = readStoredSession()
-        if (stored?.user.identityId !== user.identityId) return false
-        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession({ ...stored, user, timestamp })))
+        if (readStoredSession()?.user.identityId !== user.identityId) return false
+        const profile: StoredProfile = { identityId: user.identityId, balance: user.balance, dpnsUsername: user.username ?? null, timestamp }
+        localStorage.setItem(SESSION_PROFILE_KEY, JSON.stringify(profile))
         return true
       },
     },

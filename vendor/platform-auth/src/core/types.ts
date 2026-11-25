@@ -42,11 +42,12 @@ export interface SessionStore {
   setSession(snapshot: AuthSessionSnapshot): MaybePromise<void>
   clearSession(): MaybePromise<void>
   /**
-   * Replaces the stored session's user and timestamp, keeping its sign-in
-   * mode, only while the stored session is `user`'s identity; false when it
-   * is not (another tab ended it or signed another identity in). Reads and
-   * writes in one step, so no sign-in or clear can land between them.
-   * Without it, an update rewrites the whole session.
+   * Records a refreshed `user` (balance, username) for the stored session
+   * while it is `user`'s identity; false when it is not (another tab ended it
+   * or signed another identity in). It must never write the sign-in record
+   * itself, so a refresh racing another tab's sign-in or sign-out can neither
+   * replace nor bring that record back. Without it, an update rewrites the
+   * whole session.
    */
   updateUser?(user: AuthUser, timestamp: number): MaybePromise<boolean>
 }
