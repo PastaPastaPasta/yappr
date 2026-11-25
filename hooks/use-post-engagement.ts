@@ -256,7 +256,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       // v11: a tombstone that clears the quote, freeing the slot for a redo.
       if (!(await postService.deleteOwnPost(quote.id, viewerId))) throw new Error('Repost operation failed')
       patchMarks(base, { reposted: false, ownQuote: undefined })
-      slotWrites.record(viewerId, postId, null)
+      slotWrites.freed(viewerId, postId, quote)
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
       patchMarks(base, { reposted: true, ownQuote: quote })
@@ -342,7 +342,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (repostsAreQuotes()) {
         // (Undo returned above: here the viewer is reposting.)
         const repost = await createBareRepost(post, viewerId)
-        slotWrites.record(viewerId, postId, repost)
+        slotWrites.held(viewerId, postId, repost)
         patchMarks(before, { reposted: true, ownQuote: repost })
         toast.success('Reposted')
         return null
@@ -362,7 +362,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           logger.error('Repost: the viewer\'s quote or repost could not be read:', lookupError)
           return null
         })
-        if (existing) slotWrites.record(viewerId, postId, existing)
+        if (existing) slotWrites.held(viewerId, postId, existing)
         if (existing?.bare) {
           // Their own earlier repost landed (a double click, or a lost ack):
           // that is the repost they asked for.

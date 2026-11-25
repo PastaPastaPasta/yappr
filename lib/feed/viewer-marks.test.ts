@@ -174,26 +174,49 @@ describe('createSlotLock', () => {
 })
 
 describe('createSlotWrites', () => {
-  it('shows a repost made on one card to another card whose marks still say the slot is free', () => {
-    let session = 1
-    const writes = createSlotWrites(() => session)
-    const latestStaleRead = { reposted: false }
-    expect(writes.apply('alice', 'p1', latestStaleRead)).toBe(latestStaleRead)
+  const repost = { id: 'r', bare: true }
+  const free = { reposted: false }
+  const setup = () => {
+    const clock = { session: 1, now: 0 }
+    return { clock, writes: createSlotWrites(() => clock.session, () => clock.now, 60_000) }
+  }
 
+  it('shows a repost made on one card to another card whose read does not show it yet', () => {
+    const { writes } = setup()
+    expect(writes.apply('alice', 'p1', free)).toBe(free)
     // Top reposts and its write finishes before Latest's Quote is tapped.
-    writes.record('alice', 'p1', { id: 'r', bare: true })
-    const latest = withMark(withMark(noMarksRead('alice', 1), 'reposted', latestStaleRead), 'reposted', writes.apply('alice', 'p1', latestStaleRead))
+    writes.held('alice', 'p1', repost)
+    const latest = withMark(noMarksRead('alice', 1), 'reposted', writes.apply('alice', 'p1', free))
     expect(latest.reposted).toBe(true)
-    expect(latest.ownQuote).toEqual({ id: 'r', bare: true })
-    // Other posts and viewers are untouched; undoing frees the slot again.
-    expect(writes.apply('alice', 'p2', latestStaleRead)).toBe(latestStaleRead)
-    expect(writes.apply('bob', 'p1', latestStaleRead)).toBe(latestStaleRead)
-    writes.record('alice', 'p1', null)
-    expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: { id: 'r', bare: true } })).toEqual({ reposted: false })
+    expect(latest.ownQuote).toEqual(repost)
+    expect(writes.apply('alice', 'p2', free)).toBe(free)
+    expect(writes.apply('bob', 'p1', free)).toBe(free)
+  })
 
-    // A new session (sign-out and back in) reads the chain again.
-    writes.record('alice', 'p1', { id: 'r2', bare: true })
-    session = 2
-    expect(writes.apply('alice', 'p1', latestStaleRead)).toBe(latestStaleRead)
+  it('gives way to the chain once a read catches up, the lag window passes, or the session changes', () => {
+    const { clock, writes } = setup()
+    writes.held('alice', 'p1', repost)
+    const caughtUp = { reposted: true, ownQuote: repost }
+    expect(writes.apply('alice', 'p1', caughtUp)).toBe(caughtUp)
+    // Caught up once: a later free read (undone on another device) is trusted.
+    expect(writes.apply('alice', 'p1', free)).toBe(free)
+
+    writes.held('alice', 'p1', repost)
+    clock.now = 60_000
+    expect(writes.apply('alice', 'p1', free)).toBe(free)
+
+    writes.held('alice', 'p1', repost)
+    clock.session = 2
+    expect(writes.apply('alice', 'p1', free)).toBe(free)
+  })
+
+  it('frees the slot only while a read still shows the removed repost, never hiding a newer quote', () => {
+    const { writes } = setup()
+    writes.freed('alice', 'p1', repost)
+    expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: repost })).toEqual({ reposted: false })
+    // A quote written in the composer afterwards holds the slot: the read wins.
+    const quoted = { reposted: true, ownQuote: { id: 'q', bare: false } }
+    expect(writes.apply('alice', 'p1', quoted)).toBe(quoted)
+    expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: repost })).toEqual({ reposted: true, ownQuote: repost })
   })
 })

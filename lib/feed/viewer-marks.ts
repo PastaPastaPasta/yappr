@@ -85,23 +85,37 @@ export function createSlotLock() {
 
 /**
  * The quote or repost slot writes this tab made, per session, viewer and
- * post. Every card showing the post consults them before Quote: a card's own
- * marks miss a write another card made, and a read right after a write may
- * not show it yet.
+ * post, standing in for a read that does not show them yet (indexing lag).
+ * A card's own marks miss a write another card made, so every card showing
+ * the post consults them before Quote. They only ever cover lag: a taken
+ * slot stands in for a read that finds it free, for `lagMs` at most, and a
+ * freed one for a read that still finds the same quote or repost.
  */
-export function createSlotWrites(session: () => number = sessionGeneration) {
-  const written = new Map<string, OwnQuote | null>()
+export function createSlotWrites(session: () => number = sessionGeneration, now: () => number = Date.now, lagMs = 60_000) {
+  type Write = { held: OwnQuote; at: number } | { freed: string }
+  const written = new Map<string, Write>()
   const keyOf = (viewerId: string, postId: string) => `${session()}|${viewerId}|${postId}`
   return {
-    /** The viewer now holds `quote` in the slot, or (null) freed it. */
-    record(viewerId: string, postId: string, quote: OwnQuote | null) {
-      written.set(keyOf(viewerId, postId), quote)
+    /** The viewer now holds `quote` in the slot. */
+    held(viewerId: string, postId: string, quote: OwnQuote) {
+      written.set(keyOf(viewerId, postId), { held: quote, at: now() })
     },
-    /** `read` of the slot, with this tab's last write on it in its place. */
+    /** The viewer freed the slot by removing `quote`. */
+    freed(viewerId: string, postId: string, quote: OwnQuote) {
+      written.set(keyOf(viewerId, postId), { freed: quote.id })
+    },
+    /** `read` of the slot, or this tab's write on it while the read has not caught up. */
     apply(viewerId: string, postId: string, read: Partial<Marks>): Partial<Marks> {
-      const quote = written.get(keyOf(viewerId, postId))
-      if (quote === undefined) return read
-      return quote ? { reposted: true, ownQuote: quote } : { reposted: false }
+      const key = keyOf(viewerId, postId)
+      const write = written.get(key)
+      if (!write) return read
+      if ('held' in write) {
+        if (!read.reposted && now() - write.at < lagMs) return { reposted: true, ownQuote: write.held }
+      } else if (read.reposted && read.ownQuote?.id === write.freed) {
+        return { reposted: false }
+      }
+      written.delete(key)
+      return read
     },
   }
 }
