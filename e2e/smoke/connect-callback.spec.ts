@@ -18,9 +18,20 @@ test('a declined sign-in says so', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'Back to Yappr' })).toBeVisible()
 })
 
-test('a return link with no tab waiting continues to sign-in', async ({ page }) => {
+test('a return link with no tab waiting continues to sign-in, naming its request', async ({ page }) => {
   await page.goto(appUrl(`/connect/?r=${REQUEST_HASH}&ac=ok`))
   await expect(page).toHaveURL(appUrlPattern('/login'))
+  expect(new URL(page.url()).searchParams.get('request')).toBe(REQUEST_HASH)
+})
+
+test('a failed sign-in retries with its request, an expired one without', async ({ page }) => {
+  await page.goto(appUrl(`/connect/?r=${REQUEST_HASH}&ac=declined`))
+  const retry = page.getByRole('link', { name: 'Back to Yappr' })
+  await expect(retry).toHaveAttribute('href', new RegExp(`/login/\\?request=${REQUEST_HASH}$`))
+
+  await page.goto(appUrl(`/connect/?r=${REQUEST_HASH}&ac=stale`))
+  await expect(page.getByText('That code expired')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Back to Yappr' })).toHaveAttribute('href', /\/login\/$/)
 })
 
 test('the tab showing the code is told when the wallet returns', async ({ page, context }) => {

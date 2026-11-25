@@ -7,7 +7,7 @@ import { clearRestrictionsOnIdentityChange } from '@/lib/auth/restriction-standi
 import { bindCriticalKeySession, forgetCriticalKeysOnIdentityChange, holdCriticalKey } from '@/lib/auth/critical-key'
 import { signInDestination } from '@/lib/auth/intent-destination'
 import { bumpSessionGeneration } from '@/lib/auth/session-generation'
-import { currentPagePath, currentReturnToParam, loginRoute, onLoginPage, returnToOrDefault, signInReturnRoute } from '@/lib/auth/return-to'
+import { currentPagePath, currentReturnToParam, loginPageDestination, loginRoute, onLoginPage, signInReturnRoute } from '@/lib/auth/return-to'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -58,8 +58,11 @@ interface AuthContextType {
   error: string | null
   /** Signs in with a typed-in key; refuses one that is not an enabled CRITICAL or HIGH authentication key of the identity. */
   login: (identityId: string, privateKey: string, options?: { skipUsernameCheck?: boolean }) => Promise<void>
-  /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
-  loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
+  /**
+   * Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys.
+   * `returnTo`: the page the grant's request carried to the wallet's callback tab, applied by this sign-in alone.
+   */
+  loginWithAppConnect: (grant: AppConnectGrant, returnTo?: string) => Promise<PlatformAuthIntent>
   /**
    * Signs in with a passkey: the browser's picker, then the session the passkey
    * holds (docs/PASSKEY_VAULT.md). Resolves null once signed in, or with the
@@ -205,7 +208,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch((error: unknown) => logger.error('Auth: cross-tab sign-out failed:', error))
   }), [controller, router])
 
-  const applyIntent = useCallback(async (intent: PlatformAuthIntent): Promise<void> => {
+  /** `carried`: the page a committing wallet sign-in's request carried to its callback tab; /login's own `next` wins. */
+  const applyIntent = useCallback(async (intent: PlatformAuthIntent, carried?: string): Promise<void> => {
     const next = signInDestination(intent)
     // Signed out: to sign in again, carrying this page (replaced, so Back doesn't land on a page that needs the account).
     if (next.kind === 'route' && next.href === '/login') {
@@ -215,11 +219,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Signed in on /login: on to the page that sent the visitor there, replacing /login, once
     // any username prompt is closed. The prompt itself doesn't navigate on /login.
     if (onLoginPage()) {
-      const destination = returnToOrDefault(currentReturnToParam())
+      const destination = loginPageDestination(currentReturnToParam(), carried)
       const identityId = controller.getState().user?.identityId
+      const epoch = controller.sessionEpoch()
       if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+      // Only while this sign-in's session stands: a later sign-in (even as the same account) leaves on its own terms.
       const leave = () => {
-        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId) router.replace(destination)
+        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId && controller.sessionEpoch() === epoch) router.replace(destination)
       }
       usernamePromptClosed().then(leave, (error: unknown) => logger.error('Auth: leaving the sign-in page failed:', error))
       return
@@ -252,16 +258,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     noteSignIn(intent, 'key', controller.sessionEpoch())
   }, [controller, signInWithKey])
 
-  const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number): Promise<PlatformAuthIntent> => {
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant, since?: number, returnTo?: string): Promise<PlatformAuthIntent> => {
     const result = await walletSignIn.signIn(grant, since)
     // Signed in again with the wallet: a "your wallet signed you out" notice from before it is out of date.
     useAppConnectStatus.getState().dismissSignedOut()
-    await applyIntent(result.intent)
+    await applyIntent(result.intent, returnTo)
     return result.intent
   }, [applyIntent, walletSignIn])
 
-  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
-    const intent = await signInWithGrant(grant)
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant, returnTo?: string) => {
+    const intent = await signInWithGrant(grant, undefined, returnTo)
     noteSignIn(intent, 'wallet', controller.sessionEpoch())
     return intent
   }, [controller, signInWithGrant])

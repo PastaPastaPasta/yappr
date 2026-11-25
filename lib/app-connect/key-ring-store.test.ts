@@ -122,6 +122,30 @@ describe('AppConnectKeyRingStore', () => {
     expect(await store.loadSecret('devnet', 'request')).toBeNull()
   })
 
+  it('deletes a secret only when the predicate holds and the copy read is still the stored one', async () => {
+    const backend = memoryBackend()
+    const store = new AppConnectKeyRingStore(backend)
+    const encode = (text: string) => new TextEncoder().encode(text)
+    expect(await store.deleteSecretIf('devnet', 'request', () => true)).toBe(false)
+
+    await store.saveSecret('devnet', 'request', encode('old'))
+    expect(await store.deleteSecretIf('devnet', 'request', () => false)).toBe(false)
+    expect(await store.loadSecret('devnet', 'request')).toEqual(encode('old'))
+
+    // Another tab stores a newer request between the read and the delete.
+    const deleteIf = backend.deleteIf
+    backend.deleteIf = async (key, predicate) => {
+      await store.saveSecret('devnet', 'request', encode('new'))
+      return deleteIf.call(backend, key, predicate)
+    }
+    expect(await store.deleteSecretIf('devnet', 'request', (plain) => new TextDecoder().decode(plain) === 'old')).toBe(false)
+    expect(await store.loadSecret('devnet', 'request')).toEqual(encode('new'))
+    backend.deleteIf = deleteIf
+
+    expect(await store.deleteSecretIf('devnet', 'request', () => true)).toBe(true)
+    expect(await store.loadSecret('devnet', 'request')).toBeNull()
+  })
+
   it('throws on a strict secret read that fails, and reads a secret the device key does not open as absent', async () => {
     const backend = memoryBackend()
     const store = new AppConnectKeyRingStore(backend)

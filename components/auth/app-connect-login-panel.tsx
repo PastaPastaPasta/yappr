@@ -14,8 +14,11 @@ import { KeyExchangeQR } from './key-exchange-qr'
 import { IdentityConfirmCard } from './identity-confirm-card'
 
 interface AppConnectLoginPanelProps {
-  /** Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee. */
-  onGrant: (grant: AppConnectGrant) => Promise<unknown>
+  /**
+   * Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee.
+   * `returnTo`: the page the request carried to the wallet's callback tab, for this sign-in only.
+   */
+  onGrant: (grant: AppConnectGrant, returnTo?: string) => Promise<unknown>
   /** Called once signed in and the panel is done. */
   onComplete: () => void
   /** Renewal: only this identity may answer, and it is accepted without asking. */
@@ -74,25 +77,28 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   }, [])
 
   const accept = useCallback((identityId: string) => {
-    const grant = login?.accept(identityId)
-    if (!grant) return
-    setSigning('running')
-    setSignInError(null)
-    onGrant(grant)
-      .then(() => {
-        if (!mounted.current) return
-        setSigning('done')
-        setTimeout(() => {
-          if (mounted.current) onComplete()
-        }, 900)
+    login?.acceptCarrying(identityId)
+      .then((accepted) => {
+        if (!accepted) return
+        setSigning('running')
+        setSignInError(null)
+        onGrant(accepted.grant, accepted.returnTo)
+          .then(() => {
+            if (!mounted.current) return
+            setSigning('done')
+            setTimeout(() => {
+              if (mounted.current) onComplete()
+            }, 900)
+          })
+          .catch((error: unknown) => {
+            logger.error('App Connect sign-in failed:', error)
+            if (!mounted.current) return
+            setSigning('idle')
+            setSignInError('We couldn\'t finish signing you in. Try again with a new code.')
+            login.start({ identityHint, fresh: true }).catch((restartError: unknown) => logger.error('App Connect: restart failed', restartError))
+          })
       })
-      .catch((error: unknown) => {
-        logger.error('App Connect sign-in failed:', error)
-        if (!mounted.current) return
-        setSigning('idle')
-        setSignInError('We couldn\'t finish signing you in. Try again with a new code.')
-        login?.start({ identityHint, fresh: true }).catch((restartError: unknown) => logger.error('App Connect: restart failed', restartError))
-      })
+      .catch((error: unknown) => logger.error('App Connect: accepting the answer failed', error))
   }, [identityHint, login, onComplete, onGrant])
 
   const notMe = useCallback(() => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { appConnectRequestHash, parseAppConnectUri } from 'platform-auth'
 import type { AppConnectCandidate, AppConnectGrant, AppConnectVerification, VerifyAppConnectCandidateInput } from 'platform-auth'
 import { bytesToHex } from '@/lib/bytes'
-import { AppConnectLogin, parseStoredRequest, type AppConnectLoginState, type StoredAppConnectRequest } from './login-flow'
+import { AppConnectLogin, parseStoredRequest, type AppConnectAcceptance, type AppConnectLoginState, type StoredAppConnectRequest } from './login-flow'
 import type { AppConnectPlatformPort } from './platform-port'
 
 const id = (n: number) => bs58.encode(new Uint8Array(32).fill(n))
@@ -37,10 +37,17 @@ function harness(options: {
   carriers?: readonly ['dashpay' | 'dash-key', ...('dashpay' | 'dash-key')[]]
   verify?: (input: VerifyAppConnectCandidateInput) => AppConnectVerification
   beforeHandout?: (current: () => boolean) => Promise<boolean>
+  /** Shared with another harness: one browser's pending-request slot, seen from two tabs. */
+  records?: { value: StoredAppConnectRequest | null }
+  returnTo?: string
+  callbackRequestHash?: string
+  onCarry?: (requestHashHex: string) => void
+  /** Runs before the stored request is taken. */
+  beforeTake?: () => Promise<void>
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
-  const records = { value: null as StoredAppConnectRequest | null }
+  const records = options.records ?? { value: null as StoredAppConnectRequest | null }
   const verified: string[] = []
   const port = {
     chainStatus: async () => ({ protocolVersion: options.protocolVersion ?? 14, blockTimeMs: clock.now }),
@@ -59,10 +66,19 @@ function harness(options: {
       load: async () => records.value,
       save: async (r) => { records.value = r },
       clear: async (record) => { if (records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey) records.value = null },
+      take: async (record) => {
+        await options.beforeTake?.()
+        const ours = records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey
+        if (ours) records.value = null
+        return ours
+      },
     },
     origin: 'https://yap.pr',
     basePath: '/devnet',
     ...(options.beforeHandout ? { beforeHandout: options.beforeHandout } : {}),
+    returnTo: options.returnTo,
+    callbackRequestHash: options.callbackRequestHash,
+    onCarry: options.onCarry,
     now: () => clock.now,
     // Each sleep advances the clock instead of waiting.
     sleep: async (ms) => {
@@ -457,6 +473,201 @@ describe('AppConnectLogin and other tabs', () => {
   })
 })
 
+describe('AppConnectLogin return page', () => {
+  /** The tab a sign-in starts on: its request, stored with `returnTo`. */
+  async function origin(returnTo?: string) {
+    const h = harness({ returnTo })
+    await h.login.start()
+    return { records: h.records, hash: h.login.requestHashHex() ?? '', h }
+  }
+
+  /** The wallet's callback tab: resumes the shared slot, naming the request the wallet returned for. */
+  async function callbackTab(records: Harness['records'], callbackRequestHash: string, returnTo?: string) {
+    const h = harness({ records, callbackRequestHash, returnTo })
+    await h.login.start()
+    return h
+  }
+
+  /** Signed in with the grant, and no page. */
+  function expectNoPage(accepted: AppConnectAcceptance | null) {
+    expect(accepted?.grant.identityId).toBe(ALICE)
+    expect(accepted).not.toHaveProperty('returnTo')
+  }
+
+  async function confirm(h: Harness) {
+    h.setCandidates([candidate(ALICE)])
+    h.login.pollNow()
+    await h.flush()
+    expect(last(h)).toMatchObject({ phase: 'confirm' })
+  }
+
+  it('stores the sanitized page with a new request, and refuses an unsafe one', async () => {
+    expect((await origin('/post?id=1#reply')).records.value?.returnTo).toBe('/post?id=1#reply')
+    expect((await origin('//evil.example')).records.value).not.toHaveProperty('returnTo')
+    expect((await origin()).records.value).not.toHaveProperty('returnTo')
+  })
+
+  it('a tab resuming the request reads its page and never sets it', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash, '/settings')
+    expect(tab.login.requestHashHex()).toBe(hash)
+    expect(records.value?.returnTo).toBe('/messages')
+  })
+
+  it('the callback tab signs in to the page of the request the wallet returned for', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash)
+    await confirm(tab)
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ grant: { identityId: ALICE }, returnTo: '/messages' })
+  })
+
+  it('applies no page in the tab that started the request, or in a tab the wallet did not return to', async () => {
+    const { records, h } = await origin('/messages')
+    await confirm(h)
+    expectNoPage(await h.login.acceptCarrying(ALICE))
+
+    const again = await origin('/messages')
+    const other = harness({ records: again.records })
+    await other.login.start()
+    expect(other.login.requestHashHex()).toBe(again.hash)
+    await confirm(other)
+    expectNoPage(await other.login.acceptCarrying(ALICE))
+    expect(records.value).toBeNull()
+  })
+
+  it('never pairs the callback with a different request resumed from the shared slot', async () => {
+    const first = await origin('/messages')
+    // The starting tab replaced its request; the wallet returns for the old one.
+    const second = await origin('/settings')
+    const tab = await callbackTab(second.records, first.hash)
+    expect(tab.login.requestHashHex()).toBe(second.hash)
+    await confirm(tab)
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('an expired request carries nothing: the callback tab starts a request of its own, with no page', async () => {
+    const { records, hash, h } = await origin('/messages')
+    h.clock.now += 10 * 60_000
+    records.value = parseStoredRequest(records.value, h.clock.now)
+    const tab = await callbackTab(records, hash)
+    expect(tab.login.requestHashHex()).not.toBe(hash)
+    expect(records.value).not.toHaveProperty('returnTo')
+    await confirm(tab)
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('a confirmation left open until the request runs out signs in without the page', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash)
+    await confirm(tab)
+    tab.clock.now = T0 + 10 * 60_000
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('signs in without the page once another tab cleared or replaced the stored request', async () => {
+    const cleared = await origin('/messages')
+    const tab = await callbackTab(cleared.records, cleared.hash)
+    await confirm(tab)
+    cleared.records.value = null
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+
+    const replaced = await origin('/messages')
+    const other = await callbackTab(replaced.records, replaced.hash)
+    await confirm(other)
+    const newer = (await origin('/settings')).records.value
+    replaced.records.value = newer
+    expectNoPage(await other.login.acceptCarrying(ALICE))
+    expect(replaced.records.value).toBe(newer)
+  })
+
+  it('takes the stored request with the page, so of two callback tabs only one carries it', async () => {
+    const { records, hash } = await origin('/messages')
+    const a = await callbackTab(records, hash)
+    const b = await callbackTab(records, hash)
+    await confirm(a)
+    await confirm(b)
+    const results = await Promise.all([a.login.acceptCarrying(ALICE), b.login.acceptCarrying(ALICE)])
+    expect(results.map((result) => result?.grant.identityId)).toEqual([ALICE, ALICE])
+    expect(results.filter((result) => result?.returnTo === '/messages')).toHaveLength(1)
+  })
+
+  it('accepts nothing once "That\'s not me" restarts the flow while the request is being taken', async () => {
+    const { records, hash } = await origin('/messages')
+    let release = () => {}
+    const taking = new Promise<void>((resolve) => { release = resolve })
+    const tab = harness({ records, callbackRequestHash: hash, beforeTake: () => taking })
+    await tab.login.start()
+    await confirm(tab)
+    const accepting = tab.login.acceptCarrying(ALICE)
+    tab.setCandidates([])
+    const restarting = tab.login.reject()
+    release()
+    expect(await accepting).toBeNull()
+    await restarting
+    expect(last(tab)).toMatchObject({ phase: 'waiting' })
+    expect(tab.login.requestHashHex()).not.toBe(hash)
+  })
+
+  it('replacements keep exactly the replaced request\'s page, and the callback tab still applies it', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash, '/elsewhere')
+
+    await confirm(tab)
+    await tab.login.reject()
+    expect(tab.login.requestHashHex()).not.toBe(hash)
+    expect(records.value?.returnTo).toBe('/messages')
+
+    tab.clock.now += 10 * 60_000
+    await tab.login.checkAgain()
+    expect(records.value?.returnTo).toBe('/messages')
+
+    await tab.login.start({ fresh: true })
+    expect(records.value?.returnTo).toBe('/messages')
+
+    // "Try again": a plain start resumes this tab's own replacement and keeps carrying it.
+    await tab.login.start()
+    await confirm(tab)
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
+  })
+
+  it('names its own replacement, so a remount or reload of the callback tab keeps carrying it', async () => {
+    const { records, hash } = await origin('/messages')
+    const named: string[] = []
+    const tab = harness({ records, callbackRequestHash: hash, onCarry: (h) => named.push(h) })
+    await tab.login.start()
+    expect(named).toEqual([])
+    await tab.login.start({ fresh: true })
+    const replacement = tab.login.requestHashHex() ?? ''
+    expect(named).toEqual([replacement])
+    tab.login.dispose()
+
+    const remounted = await callbackTab(records, named[named.length - 1])
+    expect(remounted.login.requestHashHex()).toBe(replacement)
+    await confirm(remounted)
+    expect(await remounted.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
+  })
+
+  it('a replacement of a request with no page carries none, whatever page the tab is on', async () => {
+    const { records, hash } = await origin()
+    const tab = await callbackTab(records, hash, '/elsewhere')
+    await tab.login.start({ fresh: true })
+    expect(records.value).not.toHaveProperty('returnTo')
+    await confirm(tab)
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('stops carrying once a retry resumes another tab\'s newer request', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash)
+    const newer = await origin('/settings')
+    records.value = newer.records.value
+    await tab.login.start()
+    expect(tab.login.requestHashHex()).toBe(newer.hash)
+    await confirm(tab)
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+})
+
 describe('parseStoredRequest', () => {
   const record = { ephemeralPrivateKey: '11'.repeat(32), createdAt: T0, connectionId: 'ab'.repeat(16) }
 
@@ -466,5 +677,12 @@ describe('parseStoredRequest', () => {
     expect(parseStoredRequest({ ...record, ephemeralPrivateKey: 'zz' }, T0)).toBeNull()
     expect(parseStoredRequest({ ...record, connectionId: 5 }, T0)).toBeNull()
     expect(parseStoredRequest(null, T0)).toBeNull()
+  })
+
+  it('keeps a safe return page and drops an unsafe one, keeping the request', () => {
+    expect(parseStoredRequest({ ...record, returnTo: '/messages?tab=1' }, T0)).toEqual({ ...record, returnTo: '/messages?tab=1' })
+    for (const returnTo of ['//evil.example', 'https://evil.example', '/login', 5]) {
+      expect(parseStoredRequest({ ...record, returnTo }, T0)).toEqual(record)
+    }
   })
 })

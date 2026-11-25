@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_RETURN_TO,
   afterRegistrationRoute,
+  loginPageDestination,
   loginRoute,
   onLoginPage,
   returnToOrDefault,
@@ -89,6 +90,18 @@ describe('returnToOrDefault', () => {
 
   it('returns a safe value as is', () => {
     expect(returnToOrDefault('/messages/?conversation=x', '')).toBe('/messages/?conversation=x')
+  })
+})
+
+describe('loginPageDestination', () => {
+  it("prefers the page's own next, then the page a wallet sign-in carried, then the feed", () => {
+    expect(loginPageDestination('/settings/', '/messages/')).toBe('/settings/')
+    expect(loginPageDestination(null, '/messages/')).toBe('/messages/')
+    expect(loginPageDestination('//evil.example', '/messages/')).toBe('/messages/')
+    expect(loginPageDestination(null, '//evil.example')).toBe('/feed')
+    expect(loginPageDestination(null, '/login/')).toBe('/feed')
+    expect(loginPageDestination(null, '/connect/?r=ab&ac=declined')).toBe('/feed')
+    expect(loginPageDestination(null)).toBe('/feed')
   })
 })
 

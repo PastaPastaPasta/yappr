@@ -898,10 +898,12 @@ describe('App Connect requests across kills and engine restarts', () => {
     const renewal = await engine.appConnectStart({ renew: true, returnTo: RETURN_TO })
     if (renewal.phase !== 'waiting') throw new Error('not waiting')
     const deletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecret').mockRejectedValue(new Error('storage failed'))
+    const conditionalDeletes = vi.spyOn(appConnectSessions.keyStore(), 'deleteSecretIf').mockRejectedValue(new Error('storage failed'))
     try {
       await expect(engine.signOut()).rejects.toThrow('storage failed')
     } finally {
       deletes.mockRestore()
+      conditionalDeletes.mockRestore()
     }
     expect(await engine.current()).toMatchObject({ identityId: OWNER })
     expect(stored()).toContain(RENEWAL_SLOT)

@@ -11,6 +11,7 @@ import { isPendingRenewal } from '@/lib/app-connect/pending-request'
 import {
   APP_CONNECT_CHANNEL,
   appReturnLink,
+  callbackLoginRoute,
   isConnectCallbackAck,
   parseConnectCallback,
   type ConnectCallbackMessage,
@@ -30,7 +31,8 @@ const STATUS_COPY: Record<string, { title: string; description: string }> = {
 type View =
   | { kind: 'waiting' }
   | { kind: 'other-tab' }
-  | { kind: 'status'; title: string; description: string }
+  /** `retry`: sign-in again, tied to the request when it may still be live. */
+  | { kind: 'status'; title: string; description: string; retry: string }
   /** The request came from the Yappr app: hand the user back to it. */
   | { kind: 'app'; link: string }
 
@@ -62,10 +64,10 @@ export default function ConnectPage() {
           useRenewModal.getState().open()
           router.replace('/feed/')
         } else {
-          router.replace('/login/')
+          router.replace(callbackLoginRoute(requestHash))
         }
       })
-      .catch(() => router.replace('/login/'))
+      .catch(() => router.replace(callbackLoginRoute(requestHash)))
   }, [continueHere, isAuthRestoring, router, user?.identityId])
 
   useEffect(() => {
@@ -83,7 +85,8 @@ export default function ConnectPage() {
     }
     const failure = callback.status && callback.status !== 'ok' ? STATUS_COPY[callback.status] : undefined
     if (failure) {
-      setView({ kind: 'status', ...failure })
+      // An expired request is gone, and its page with it.
+      setView({ kind: 'status', ...failure, retry: callbackLoginRoute(callback.status === 'stale' ? null : callback.requestHash) })
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
@@ -138,7 +141,7 @@ export default function ConnectPage() {
             <p className="font-medium text-gray-900 dark:text-white">{view.title}</p>
             <p className="text-sm text-gray-600 dark:text-gray-400">{view.description}</p>
             <Button asChild>
-              <Link href="/login/">Back to Yappr</Link>
+              <Link href={view.retry}>Back to Yappr</Link>
             </Button>
           </>
         )}
