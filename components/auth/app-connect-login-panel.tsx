@@ -77,25 +77,28 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   }, [])
 
   const accept = useCallback((identityId: string) => {
-    const accepted = login?.accept(identityId)
-    if (!accepted) return
-    setSigning('running')
-    setSignInError(null)
-    onGrant(accepted.grant, accepted.returnTo)
-      .then(() => {
-        if (!mounted.current) return
-        setSigning('done')
-        setTimeout(() => {
-          if (mounted.current) onComplete()
-        }, 900)
+    login?.acceptCarrying(identityId)
+      .then((accepted) => {
+        if (!accepted) return
+        setSigning('running')
+        setSignInError(null)
+        onGrant(accepted.grant, accepted.returnTo)
+          .then(() => {
+            if (!mounted.current) return
+            setSigning('done')
+            setTimeout(() => {
+              if (mounted.current) onComplete()
+            }, 900)
+          })
+          .catch((error: unknown) => {
+            logger.error('App Connect sign-in failed:', error)
+            if (!mounted.current) return
+            setSigning('idle')
+            setSignInError('We couldn\'t finish signing you in. Try again with a new code.')
+            login.start({ identityHint, fresh: true }).catch((restartError: unknown) => logger.error('App Connect: restart failed', restartError))
+          })
       })
-      .catch((error: unknown) => {
-        logger.error('App Connect sign-in failed:', error)
-        if (!mounted.current) return
-        setSigning('idle')
-        setSignInError('We couldn\'t finish signing you in. Try again with a new code.')
-        login?.start({ identityHint, fresh: true }).catch((restartError: unknown) => logger.error('App Connect: restart failed', restartError))
-      })
+      .catch((error: unknown) => logger.error('App Connect: accepting the answer failed', error))
   }, [identityHint, login, onComplete, onGrant])
 
   const notMe = useCallback(() => {

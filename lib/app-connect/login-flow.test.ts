@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { appConnectRequestHash, parseAppConnectUri } from 'platform-auth'
 import type { AppConnectCandidate, AppConnectGrant, AppConnectVerification, VerifyAppConnectCandidateInput } from 'platform-auth'
 import { bytesToHex } from '@/lib/bytes'
-import { AppConnectLogin, parseStoredRequest, type AppConnectLoginState, type StoredAppConnectRequest } from './login-flow'
+import { AppConnectLogin, parseStoredRequest, type AppConnectAcceptance, type AppConnectLoginState, type StoredAppConnectRequest } from './login-flow'
 import type { AppConnectPlatformPort } from './platform-port'
 
 const id = (n: number) => bs58.encode(new Uint8Array(32).fill(n))
@@ -64,6 +64,11 @@ function harness(options: {
       load: async () => records.value,
       save: async (r) => { records.value = r },
       clear: async (record) => { if (records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey) records.value = null },
+      take: async (record) => {
+        const ours = records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey
+        if (ours) records.value = null
+        return ours
+      },
     },
     origin: 'https://yap.pr',
     basePath: '/devnet',
@@ -161,7 +166,7 @@ describe('AppConnectLogin', () => {
     const candidates = (state as { candidates: { identityId: string; grant: AppConnectGrant }[] }).candidates
     expect(candidates.map((c) => c.identityId)).toEqual([ALICE, BOB])
 
-    const chosen = h.login.accept(BOB)?.grant
+    const chosen = h.login.accept(BOB)
     expect(chosen?.identityId).toBe(BOB)
     expect(chosen?.authKeys[0].privateKey.every((b) => b === 9)).toBe(true)
     expect(candidates[0].grant.authKeys[0].privateKey.every((b) => b === 0)).toBe(true)
@@ -480,6 +485,12 @@ describe('AppConnectLogin return page', () => {
     return h
   }
 
+  /** Signed in with the grant, and no page. */
+  function expectNoPage(accepted: AppConnectAcceptance | null) {
+    expect(accepted?.grant.identityId).toBe(ALICE)
+    expect(accepted).not.toHaveProperty('returnTo')
+  }
+
   async function confirm(h: Harness) {
     h.setCandidates([candidate(ALICE)])
     h.login.pollNow()
@@ -504,20 +515,20 @@ describe('AppConnectLogin return page', () => {
     const { records, hash } = await origin('/messages')
     const tab = await callbackTab(records, hash)
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).toMatchObject({ grant: { identityId: ALICE }, returnTo: '/messages' })
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ grant: { identityId: ALICE }, returnTo: '/messages' })
   })
 
   it('applies no page in the tab that started the request, or in a tab the wallet did not return to', async () => {
     const { records, h } = await origin('/messages')
     await confirm(h)
-    expect(h.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await h.login.acceptCarrying(ALICE))
 
     const again = await origin('/messages')
     const other = harness({ records: again.records })
     await other.login.start()
     expect(other.login.requestHashHex()).toBe(again.hash)
     await confirm(other)
-    expect(other.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await other.login.acceptCarrying(ALICE))
     expect(records.value).toBeNull()
   })
 
@@ -528,7 +539,7 @@ describe('AppConnectLogin return page', () => {
     const tab = await callbackTab(second.records, first.hash)
     expect(tab.login.requestHashHex()).toBe(second.hash)
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
   })
 
   it('an expired request carries nothing: the callback tab starts a request of its own, with no page', async () => {
@@ -539,7 +550,39 @@ describe('AppConnectLogin return page', () => {
     expect(tab.login.requestHashHex()).not.toBe(hash)
     expect(records.value).not.toHaveProperty('returnTo')
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('a confirmation left open until the request runs out signs in without the page', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash)
+    await confirm(tab)
+    tab.clock.now = T0 + 10 * 60_000
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+  })
+
+  it('signs in without the page once another tab cleared or replaced the stored request', async () => {
+    const cleared = await origin('/messages')
+    const tab = await callbackTab(cleared.records, cleared.hash)
+    await confirm(tab)
+    cleared.records.value = null
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
+
+    const replaced = await origin('/messages')
+    const other = await callbackTab(replaced.records, replaced.hash)
+    await confirm(other)
+    const newer = (await origin('/settings')).records.value
+    replaced.records.value = newer
+    expectNoPage(await other.login.acceptCarrying(ALICE))
+    expect(replaced.records.value).toBe(newer)
+  })
+
+  it('takes the stored request with the page, so no other tab can carry it again', async () => {
+    const { records, hash } = await origin('/messages')
+    const tab = await callbackTab(records, hash)
+    await confirm(tab)
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
+    expect(records.value).toBeNull()
   })
 
   it('replacements keep exactly the replaced request\'s page, and the callback tab still applies it', async () => {
@@ -561,7 +604,7 @@ describe('AppConnectLogin return page', () => {
     // "Try again": a plain start resumes this tab's own replacement and keeps carrying it.
     await tab.login.start()
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).toMatchObject({ returnTo: '/messages' })
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
   })
 
   it('names its own replacement, so a remount or reload of the callback tab keeps carrying it', async () => {
@@ -578,7 +621,7 @@ describe('AppConnectLogin return page', () => {
     const remounted = await callbackTab(records, named[named.length - 1])
     expect(remounted.login.requestHashHex()).toBe(replacement)
     await confirm(remounted)
-    expect(remounted.login.accept(ALICE)).toMatchObject({ returnTo: '/messages' })
+    expect(await remounted.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
   })
 
   it('a replacement of a request with no page carries none, whatever page the tab is on', async () => {
@@ -587,7 +630,7 @@ describe('AppConnectLogin return page', () => {
     await tab.login.start({ fresh: true })
     expect(records.value).not.toHaveProperty('returnTo')
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
   })
 
   it('stops carrying once a retry resumes another tab\'s newer request', async () => {
@@ -598,7 +641,7 @@ describe('AppConnectLogin return page', () => {
     await tab.login.start()
     expect(tab.login.requestHashHex()).toBe(newer.hash)
     await confirm(tab)
-    expect(tab.login.accept(ALICE)).not.toHaveProperty('returnTo')
+    expectNoPage(await tab.login.acceptCarrying(ALICE))
   })
 })
 

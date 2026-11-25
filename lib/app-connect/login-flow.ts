@@ -85,6 +85,8 @@ export interface RequestRecordStore {
   save(record: StoredAppConnectRequest): Promise<void>
   /** Forgets the stored request, but only if it is still `record` (another tab may have replaced it). */
   clear(record: StoredAppConnectRequest): Promise<void>
+  /** As `clear`, in one step with the check: true when the stored request was still `record` and live. */
+  take(record: StoredAppConnectRequest): Promise<boolean>
 }
 
 export interface AppConnectLoginDeps {
@@ -358,17 +360,34 @@ export class AppConnectLogin {
   }
 
   /**
-   * The user picked `identityId`: hands back its grant, with the request's
-   * page when this tab carries it, and forgets the request and every other
-   * candidate. The caller signs in with the grant (which wipes its keys).
+   * The user picked `identityId`: hands back its grant and forgets the
+   * request and every other candidate. The caller signs in with the grant
+   * (which wipes its keys).
    */
-  accept(identityId: string): AppConnectAcceptance | null {
+  accept(identityId: string): AppConnectGrant | null {
     const chosen = this.verified.find((candidate) => candidate.identityId === identityId) ?? null
-    const returnTo = this.carriedHash !== null ? this.active?.record.returnTo : undefined
     this.verified = this.verified.filter((candidate) => candidate !== chosen)
     this.finish()
-    if (!chosen) return null
-    return { grant: chosen.grant, ...(returnTo ? { returnTo } : {}) }
+    return chosen?.grant ?? null
+  }
+
+  /**
+   * As `accept`, with the request's page when this tab carries it and the
+   * stored request is still this live one, which this takes. A grant verified
+   * before its request ran out or was replaced still signs in, without the page.
+   */
+  async acceptCarrying(identityId: string): Promise<AppConnectAcceptance | null> {
+    const active = this.active
+    if (!active || !this.verified.some((candidate) => candidate.identityId === identityId)) return null
+    const page = this.carriedHash !== null ? active.record.returnTo : undefined
+    const live = page !== undefined
+      && this.now() - active.record.createdAt < APP_CONNECT_MAX_REQUEST_AGE_MS
+      && await this.deps.records.take(active.record).catch(() => false)
+    // A restart or finish while checking: the answer it held is gone.
+    if (this.active !== active) return null
+    const grant = this.accept(identityId)
+    if (!grant) return null
+    return { grant, ...(live ? { returnTo: page } : {}) }
   }
 
   /** "That's not me": drop everything, including the request someone else answered, and show a new code. */

@@ -99,6 +99,25 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
         }
       })
     },
+    take(record) {
+      return inOrder(async () => {
+        const network = appConnectSessions.network()
+        const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
+        if (!bytes) return false
+        let stored: StoredAppConnectRequest | null = null
+        try {
+          stored = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
+        } catch {
+          // Unreadable: not this request.
+        } finally {
+          bytes.fill(0)
+        }
+        const ours = stored?.ephemeralPrivateKey === record.ephemeralPrivateKey
+        // Ours, or stale or unreadable: either way of no use to anyone now.
+        if (ours || !stored) await appConnectSessions.keyStore().deleteSecret(network, secretName)
+        return ours
+      })
+    },
   }
 }
 
