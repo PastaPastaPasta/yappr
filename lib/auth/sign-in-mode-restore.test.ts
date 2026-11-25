@@ -15,11 +15,14 @@ import { createYapprPlatformAuthDependencies } from './platform-auth-adapters'
 const sessions = vi.hoisted(() => ({
   restore: vi.fn(async (identityId: string) => identityId === 'alice'),
   yieldToRawKey: vi.fn(async () => undefined),
+  hasStoredGrant: vi.fn(async (identityId: string) => identityId === 'alice'),
   current: vi.fn(() => null),
 }))
 vi.mock('@/lib/app-connect/session-manager', () => ({ appConnectSessions: sessions }))
 vi.mock('@/lib/services/evo-sdk-service', () => ({ evoSdkService: { initialize: async () => undefined } }))
-vi.mock('@/lib/services/identity-service', () => ({ identityService: { getIdentity: async () => null } }))
+/** The identity's keys as Platform has them now; the session saved its own copy at sign-in. */
+const chain = vi.hoisted(() => ({ getIdentity: vi.fn() }))
+vi.mock('@/lib/services/identity-service', () => ({ identityService: chain }))
 vi.mock('@/lib/app-connect/config', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/app-connect/config')>(),
   isAppConnectBuild: () => true,
@@ -50,6 +53,9 @@ afterAll(() => vi.unstubAllGlobals())
 beforeEach(() => {
   data.clear()
   sessions.restore.mockClear()
+  sessions.hasStoredGrant.mockClear()
+  chain.getIdentity.mockReset()
+  chain.getIdentity.mockImplementation(async () => identity)
 })
 
 /** One tab: the app's adapters, with the identity read stubbed and the background work off. */
@@ -106,12 +112,47 @@ describe('restoring a session by how it signed in (#732)', () => {
     expect(sessions.restore).toHaveBeenCalledWith('alice')
   })
 
-  it('falls back to the wallet grant when the raw key no longer signs for the identity', async () => {
+  it('gives way to the wallet grant when Platform no longer takes the raw key', async () => {
     await tab().loginWithAuthKey('alice', WIF)
-    const stored = JSON.parse(data.get(SESSION_STORAGE_KEY) ?? '{}')
-    stored.user.publicKeys = [{ ...identity.publicKeys[0], data: bytesToBase64(getPublicKey(Uint8Array.from({ length: 32 }, (_, i) => 99 - i))) }]
-    data.set(SESSION_STORAGE_KEY, JSON.stringify(stored))
+    // Disabled on the identity; the session's copy of the keys still has it.
+    chain.getIdentity.mockImplementation(async () => ({ ...identity, publicKeys: [{ ...identity.publicKeys[0], disabledAt: 1 }] }))
+
     expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
+    expect(chain.getIdentity).toHaveBeenCalledWith('alice', { fresh: true })
     expect(sessions.restore).toHaveBeenCalledWith('alice')
+  })
+
+  it('keeps the raw key when the identity cannot be read', async () => {
+    await tab().loginWithAuthKey('alice', WIF)
+    chain.getIdentity.mockRejectedValue(new Error('offline'))
+
+    expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
+    expect(sessions.restore).not.toHaveBeenCalled()
+  })
+
+  it('reads nothing from the network for a raw-key session without a stored grant', async () => {
+    await tab().loginWithAuthKey('alice', WIF)
+    chain.getIdentity.mockClear()
+    sessions.hasStoredGrant.mockResolvedValueOnce(false)
+
+    expect(await tab().restoreSession()).toMatchObject({ identityId: 'alice' })
+    expect(chain.getIdentity).not.toHaveBeenCalled()
+    expect(sessions.restore).not.toHaveBeenCalled()
+  })
+
+  it('never writes back a session another tab ended or replaced', async () => {
+    const walletTab = tab()
+    await walletTab.loginWithKeyRing('alice')
+    // Another tab signs out.
+    data.delete(SESSION_STORAGE_KEY)
+    await walletTab.refreshBalance()
+    expect(data.get(SESSION_STORAGE_KEY)).toBeUndefined()
+
+    await walletTab.loginWithKeyRing('alice')
+    // Another tab signs bob in.
+    const stored = JSON.parse(data.get(SESSION_STORAGE_KEY) ?? '{}')
+    data.set(SESSION_STORAGE_KEY, JSON.stringify({ ...stored, user: { ...stored.user, identityId: 'bob' } }))
+    await walletTab.refreshBalance()
+    expect(JSON.parse(data.get(SESSION_STORAGE_KEY) ?? '{}').user.identityId).toBe('bob')
   })
 })

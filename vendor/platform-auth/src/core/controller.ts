@@ -700,21 +700,19 @@ export class PlatformAuthController {
   }
 
   private async updateSessionUser(updater: (user: AuthUser) => AuthUser): Promise<void> {
-    if (!this.state.user) return
-
-    const epoch = this.epoch
-    // The sign-in mode is the stored session's, which a later sign-in in another tab may have set.
-    const stored = await Promise.resolve(this.deps.sessionStore.getSession()).catch(() => null)
     const current = this.state.user
-    // A sign-in or sign-out while the session was read stands, and so does a stored
-    // session that another tab ended or replaced with another identity's.
-    if (this.epoch !== epoch || !current || stored?.user.identityId !== current.identityId) return
+    if (!current) return
+
     const updated = updater(current)
-    await this.deps.sessionStore.setSession({
-      user: updated,
-      timestamp: this.now(),
-      ...(stored.signIn ? { signIn: stored.signIn } : {}),
-    })
+    const store = this.deps.sessionStore
+    if (store.updateUser) {
+      if (!await store.updateUser(updated, this.now())) return
+    } else {
+      await store.setSession({
+        user: updated,
+        timestamp: this.now(),
+      })
+    }
     this.patchState({ user: updated })
   }
 

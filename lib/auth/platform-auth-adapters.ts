@@ -101,8 +101,10 @@ function readStoredSession(): AuthSessionSnapshot | null {
  * The browser's latest sign-in sets the shared session's mode. A raw-key
  * session restores on the raw key this tab can read (localStorage, or this
  * tab's sessionStorage for a CRITICAL key) before any wallet grant another
- * tab has stored for the identity since (#732). Without a usable key the
- * grant may still restore it.
+ * tab has stored for the identity since (#732). With a grant stored, the key
+ * is checked against the identity as it is now: a key Platform no longer
+ * takes gives way to the grant, and a failed read keeps the key. Without a
+ * usable key the grant may still restore it.
  */
 async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
   const session = readStoredSession()
@@ -112,16 +114,17 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
   const restoreRing = async () => isAppConnectBuild() && await appConnectSessions.restore(identityId)
   if (!keySignIn && await restoreRing()) return true
   if (!wif) return false
+  const fetchKeys = async () => {
+    await ensureSdk()
+    return (await identityService.getIdentity(identityId, { fresh: true }))?.publicKeys ?? null
+  }
+  const grantStored = keySignIn && isAppConnectBuild() && await appConnectSessions.hasStoredGrant(identityId)
   // `data` is optional on the session shape and required by the matcher.
-  const sessionKeys = session?.user.identityId === identityId
+  const sessionKeys = session?.user.identityId === identityId && !grantStored
     ? session.user.publicKeys.map((key) => ({ ...key, data: key.data }))
     : []
-  const belongs = await storedKeyBelongsToIdentity(wif, sessionKeys, async () => {
-    await ensureSdk()
-    return (await identityService.getIdentity(identityId))?.publicKeys ?? null
-  }, keyNetwork())
-  if (belongs) return true
-  if (keySignIn && await restoreRing()) return true
+  if (await storedKeyBelongsToIdentity(wif, sessionKeys, fetchKeys, keyNetwork())) return true
+  if (grantStored && await restoreRing()) return true
   logger.warn(`Session restore: the stored key does not belong to ${identityId}; leaving this tab signed out`)
   return false
 }
@@ -267,6 +270,13 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       clearSession() {
         if (typeof window === 'undefined') return
         localStorage.removeItem(SESSION_STORAGE_KEY)
+      },
+      updateUser(user, timestamp) {
+        if (typeof window === 'undefined') return false
+        const stored = readStoredSession()
+        if (stored?.user.identityId !== user.identityId) return false
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(toStoredSession({ ...stored, user, timestamp })))
+        return true
       },
     },
     secretStore: {

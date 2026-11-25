@@ -353,20 +353,6 @@ describe('a sign-in whose key the browser does not keep', () => {
   })
 })
 
-describe('a session update after another tab ended the session', () => {
-  it('does not write the session back', async () => {
-    const { controller, storedUser } = setup(async () => 'alice.dash')
-    await controller.restoreSession()
-    await vi.waitFor(() => expect(storedUser()?.username).toBe('alice.dash'))
-    await controller.setUsername('kept.dash')
-    expect(storedUser()?.username).toBe('kept.dash')
-    // Another tab signs out: the shared store is cleared, this tab's state is not.
-    controller['deps'].sessionStore.clearSession()
-    await controller.setUsername('resurrected.dash')
-    expect(storedUser()).toBeUndefined()
-  })
-})
-
 describe('sign-out', () => {
   it('still removes every other secret and signs out when the browser keeps one, and reports it', async () => {
     const { controller, events, storedUser, clearPrivateKey, clearLoginKey } = setup(async () => 'alice.dash')

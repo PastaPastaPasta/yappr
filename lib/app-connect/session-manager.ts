@@ -224,6 +224,16 @@ class AppConnectSessionManager {
     return session
   }
 
+  /** Whether the browser stores a grant for `identityId`, without making it this tab's. */
+  async hasStoredGrant(identityId: string): Promise<boolean> {
+    try {
+      return (await this.keyStore().load(this.network()))?.identityId === identityId
+    } catch (error) {
+      logger.warn('App Connect: could not read the key ring:', error)
+      return false
+    }
+  }
+
   /** Loads the stored session for `identityId` without touching the network. */
   async restore(identityId: string): Promise<boolean> {
     if (this.active?.identityId === identityId) return true
