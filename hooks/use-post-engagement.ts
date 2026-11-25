@@ -186,7 +186,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
       const fits = (marks: KnownMarks | null): marks is KnownMarks =>
         marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
-      setOwnMarks((held) => fits(held) ? (reread ? withMark : fillMark)(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
+      // Built on the marks shown (a snapshot's too), so the others stay as they were.
+      setOwnMarks((held) => fits(held) ? (reread ? withMark : fillMark)(held, need, read)
+        : fits(current) ? withMark(current, need, read)
+        : sessionGeneration() === session ? withMark(fresh, need, read) : held)
       return withMark(fits(current) ? current : fresh, need, read)
     } catch (error) {
       logger.error('Engagement: the viewer\'s marks could not be read:', error)
