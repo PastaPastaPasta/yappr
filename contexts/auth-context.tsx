@@ -221,9 +221,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (onLoginPage()) {
       const destination = loginPageDestination(currentReturnToParam(), carried)
       const identityId = controller.getState().user?.identityId
+      const epoch = controller.sessionEpoch()
       if (next.kind === 'username-prompt') useUsernameModal.getState().open(next.identityId)
+      // Only while this sign-in's session stands: a later sign-in (even as the same account) leaves on its own terms.
       const leave = () => {
-        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId) router.replace(destination)
+        if (onLoginPage() && identityId && controller.getState().user?.identityId === identityId && controller.sessionEpoch() === epoch) router.replace(destination)
       }
       usernamePromptClosed().then(leave, (error: unknown) => logger.error('Auth: leaving the sign-in page failed:', error))
       return

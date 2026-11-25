@@ -93,7 +93,7 @@ var ac=p.get('ac');
 location.replace(app+'://connect?r='+r+(ac&&/^[a-z]{1,16}$/.test(ac)?'&ac='+ac:''));
 }catch(e){}})();`
 
-const CALLBACK_REQUEST_PARAM = 'request'
+export const CALLBACK_REQUEST_PARAM = 'request'
 
 /**
  * Sign-in in the wallet's callback tab, naming the request the wallet

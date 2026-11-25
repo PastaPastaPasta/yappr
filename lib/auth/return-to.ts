@@ -15,9 +15,10 @@ export const DEFAULT_RETURN_TO = '/feed'
 
 const DPNS_REGISTER_ROUTE = '/dpns/register'
 const LOGIN_ROUTE = '/login'
+const CONNECT_ROUTE = '/connect'
 
-/** The detour itself and the login page: returning to them would loop or strand the user. */
-const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, LOGIN_ROUTE]
+/** The detour itself, the login page and the wallet's return page: returning to them would loop or strand the user. */
+const NEVER_RETURN_TO = [DPNS_REGISTER_ROUTE, LOGIN_ROUTE, CONNECT_ROUTE]
 
 const MAX_RETURN_TO_LENGTH = 2048
 // Any whitespace or control character. The URL parser silently drops tabs and

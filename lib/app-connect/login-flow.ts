@@ -114,6 +114,12 @@ export interface AppConnectLoginDeps {
    * this tab made to replace it, and of no other.
    */
   callbackRequestHash?: string
+  /**
+   * A request this tab carries the page of became active: the callback tab
+   * names it in place of the one the callback named, so a remount or reload
+   * keeps carrying it.
+   */
+  onCarry?: (requestHashHex: string) => void
   /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
   callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
@@ -323,6 +329,7 @@ export class AppConnectLogin {
       ? hashHex === this.deps.callbackRequestHash || hashHex === this.carriedHash
       : this.carriedHash !== null
     this.carriedHash = carried ? hashHex : null
+    if (carried && hashHex !== this.deps.callbackRequestHash) this.deps.onCarry?.(hashHex)
     this.lineage = { returnTo: record.returnTo }
     this.progress = new Map()
     this.discardVerified()

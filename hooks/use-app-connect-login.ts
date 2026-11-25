@@ -7,8 +7,16 @@ import { AppConnectLogin, type AppConnectLoginState } from '@/lib/app-connect/lo
 import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
-import { APP_CONNECT_CHANNEL, callbackRequestHash, isConnectCallbackMessage } from '@/lib/app-connect/callback-channel'
+import { APP_CONNECT_CHANNEL, CALLBACK_REQUEST_PARAM, callbackRequestHash, isConnectCallbackMessage } from '@/lib/app-connect/callback-channel'
 import { onLoginPage, signInReturnRoute } from '@/lib/auth/return-to'
+
+/** The callback tab's sign-in now names `requestHash`, a replacement it made, so a reload keeps its page. */
+function nameCallbackRequest(requestHash: string): void {
+  if (!onLoginPage()) return
+  const url = new URL(window.location.href)
+  url.searchParams.set(CALLBACK_REQUEST_PARAM, requestHash)
+  window.history.replaceState(window.history.state, '', url)
+}
 
 function createLogin(identityHint: string | undefined): AppConnectLogin | null {
   const pins = appConnectPins()
@@ -24,6 +32,7 @@ function createLogin(identityHint: string | undefined): AppConnectLogin | null {
     // A sign-in request carries the page it started on, for the wallet's callback tab.
     returnTo: identityHint ? undefined : signInReturnRoute() ?? undefined,
     callbackRequestHash: onLoginPage() ? callbackRequestHash(window.location.search) : undefined,
+    onCarry: nameCallbackRequest,
     origin: window.location.origin,
     basePath: process.env.NEXT_PUBLIC_BASE_PATH || '',
     onError: (message, error) => logger.warn(message, error),

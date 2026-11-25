@@ -100,6 +100,7 @@ describe('loginPageDestination', () => {
     expect(loginPageDestination('//evil.example', '/messages/')).toBe('/messages/')
     expect(loginPageDestination(null, '//evil.example')).toBe('/feed')
     expect(loginPageDestination(null, '/login/')).toBe('/feed')
+    expect(loginPageDestination(null, '/connect/?r=ab&ac=declined')).toBe('/feed')
     expect(loginPageDestination(null)).toBe('/feed')
   })
 })

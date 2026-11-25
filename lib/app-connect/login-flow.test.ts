@@ -41,6 +41,7 @@ function harness(options: {
   records?: { value: StoredAppConnectRequest | null }
   returnTo?: string
   callbackRequestHash?: string
+  onCarry?: (requestHashHex: string) => void
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
@@ -69,6 +70,7 @@ function harness(options: {
     ...(options.beforeHandout ? { beforeHandout: options.beforeHandout } : {}),
     returnTo: options.returnTo,
     callbackRequestHash: options.callbackRequestHash,
+    onCarry: options.onCarry,
     now: () => clock.now,
     // Each sleep advances the clock instead of waiting.
     sleep: async (ms) => {
@@ -560,6 +562,23 @@ describe('AppConnectLogin return page', () => {
     await tab.login.start()
     await confirm(tab)
     expect(tab.login.accept(ALICE)).toMatchObject({ returnTo: '/messages' })
+  })
+
+  it('names its own replacement, so a remount or reload of the callback tab keeps carrying it', async () => {
+    const { records, hash } = await origin('/messages')
+    const named: string[] = []
+    const tab = harness({ records, callbackRequestHash: hash, onCarry: (h) => named.push(h) })
+    await tab.login.start()
+    expect(named).toEqual([])
+    await tab.login.start({ fresh: true })
+    const replacement = tab.login.requestHashHex() ?? ''
+    expect(named).toEqual([replacement])
+    tab.login.dispose()
+
+    const remounted = await callbackTab(records, named[named.length - 1])
+    expect(remounted.login.requestHashHex()).toBe(replacement)
+    await confirm(remounted)
+    expect(remounted.login.accept(ALICE)).toMatchObject({ returnTo: '/messages' })
   })
 
   it('a replacement of a request with no page carries none, whatever page the tab is on', async () => {
