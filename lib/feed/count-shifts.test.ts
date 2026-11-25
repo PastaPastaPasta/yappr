@@ -1,37 +1,66 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCountShifts, shiftedCount } from './count-shifts'
+import { createCountShifts, shiftedCount, type CountBase } from './count-shifts'
 
 describe('count shifts', () => {
+  const shown = (shifts: ReturnType<typeof createCountShifts>, base: CountBase) =>
+    shiftedCount(base, shifts.confirmed('p1'), shifts.pending('p1'))
+  const baseOf = (shifts: ReturnType<typeof createCountShifts>, count: number): CountBase => ({ count, shift: shifts.confirmed('p1') })
+
   it('shows a repost made on one card to another, and its undo there leaves the true total', () => {
     const shifts = createCountShifts()
-    // Latest and Top both read three reposts.
-    const latest = { count: 3, shift: shifts.get('p1') }
-    const top = { count: 3, shift: shifts.get('p1') }
-    shifts.shift('p1', 1) // Repost from Top.
-    expect(shiftedCount(top, shifts.get('p1'))).toBe(4)
-    expect(shiftedCount(latest, shifts.get('p1'))).toBe(4)
-    shifts.shift('p1', -1) // Undo it from Latest.
-    expect(shiftedCount(latest, shifts.get('p1'))).toBe(3)
-    expect(shiftedCount(top, shifts.get('p1'))).toBe(3)
+    const latest = baseOf(shifts, 3)
+    const top = baseOf(shifts, 3)
+    shifts.start('p1', 1).keep() // Repost from Top.
+    expect(shown(shifts, top)).toBe(4)
+    expect(shown(shifts, latest)).toBe(4)
+    shifts.start('p1', -1).keep() // Undo it from Latest.
+    expect(shown(shifts, latest)).toBe(3)
+    expect(shown(shifts, top)).toBe(3)
+  })
+
+  it('keeps a card mounted mid-write right when the write is refused, or lands', () => {
+    const shifts = createCountShifts()
+    const latest = baseOf(shifts, 3)
+    const refused = shifts.start('p1', 1)
+    // Top mounts during the write with a snapshot read before it.
+    const top = baseOf(shifts, 3)
+    expect(shown(shifts, latest)).toBe(4)
+    expect(shown(shifts, top)).toBe(4)
+    refused.drop()
+    expect(shown(shifts, latest)).toBe(3)
+    expect(shown(shifts, top)).toBe(3)
+
+    const landed = shifts.start('p1', 1)
+    const later = baseOf(shifts, 3)
+    landed.keep()
+    expect(shown(shifts, later)).toBe(4)
+    expect(shown(shifts, latest)).toBe(4)
+  })
+
+  it('settles a change once, whichever comes first', () => {
+    const shifts = createCountShifts()
+    const change = shifts.start('p1', 1)
+    change.keep()
+    change.drop()
+    expect([shifts.confirmed('p1'), shifts.pending('p1')]).toEqual([1, 0])
   })
 
   it('does not count a write twice once a newer snapshot includes it', () => {
     const shifts = createCountShifts()
-    shifts.shift('p1', 1)
-    const reloaded = { count: 4, shift: shifts.get('p1') }
-    expect(shiftedCount(reloaded, shifts.get('p1'))).toBe(4)
-    expect(shiftedCount({ count: 0, shift: 1 }, 0)).toBe(0)
+    shifts.apply('p1', 1)
+    expect(shown(shifts, baseOf(shifts, 4))).toBe(4)
+    expect(shiftedCount({ count: 0, shift: 1 }, 0, 0)).toBe(0)
   })
 
   it('tells subscribers, and keeps posts apart', () => {
     const shifts = createCountShifts()
     const listener = vi.fn()
     const stop = shifts.subscribe(listener)
-    shifts.shift('p1', 1)
+    shifts.apply('p1', 1)
     expect(listener).toHaveBeenCalledTimes(1)
-    expect(shifts.get('p2')).toBe(0)
+    expect(shifts.confirmed('p2')).toBe(0)
     stop()
-    shifts.shift('p1', 1)
+    shifts.apply('p1', 1)
     expect(listener).toHaveBeenCalledTimes(1)
   })
 })

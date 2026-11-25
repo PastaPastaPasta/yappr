@@ -99,9 +99,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const postId = post.id
   const [likes, setLikes] = useState(initial.likes)
   // The snapshot's repost count plus this tab's repost writes since it, on any card.
-  const [repostBase, setRepostBase] = useState<CountBase>(() => ({ count: initial.reposts, shift: repostShifts.get(postId) }))
-  const repostShift = useSyncExternalStore(repostShifts.subscribe, () => repostShifts.get(postId), () => 0)
-  const reposts = shiftedCount(repostBase, repostShift)
+  const [repostBase, setRepostBase] = useState<CountBase>(() => ({ count: initial.reposts, shift: repostShifts.confirmed(postId) }))
+  const repostsConfirmed = useSyncExternalStore(repostShifts.subscribe, () => repostShifts.confirmed(postId), () => 0)
+  const repostsPending = useSyncExternalStore(repostShifts.subscribe, () => repostShifts.pending(postId), () => 0)
+  const reposts = shiftedCount(repostBase, repostsConfirmed, repostsPending)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
@@ -111,7 +112,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     setLikes(initial.likes)
   }, [initial.likes])
   useEffect(() => {
-    setRepostBase({ count: initial.reposts, shift: repostShifts.get(postId) })
+    setRepostBase({ count: initial.reposts, shift: repostShifts.confirmed(postId) })
   }, [initial.reposts, postId])
 
   // The snapshot's marks count only when they were read for this viewer in this session.
@@ -263,7 +264,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     // Offered only once the viewer's repost was read; nothing to undo against otherwise.
     if (!viewerId || !base) return
     patchMarks(base, { reposted: false })
-    repostShifts.shift(postId, -1)
+    const undo = repostShifts.start(postId, -1)
     setRepostLoading(true)
     writesRef.current += 1
     try {
@@ -271,11 +272,12 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       // v11: a tombstone that clears the quote, freeing the slot for a redo.
       if (!(await postService.deleteOwnPost(quote.id, viewerId))) throw new Error('Repost operation failed')
       patchMarks(base, { reposted: false, ownQuote: undefined })
+      undo.keep()
       slotWrites.freed(viewerId, postId, quote)
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
       patchMarks(base, { reposted: true, ownQuote: quote })
-      repostShifts.shift(postId, 1)
+      undo.drop()
       logger.error('Repost error:', error)
       // Undo is a tombstone (a replace), refused to a banned or suspended
       // author on v11; v12 accepts it (retractedWhen).
@@ -350,7 +352,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     }
     const wasReposted = before.reposted
     patchMarks(before, { reposted: !wasReposted })
-    repostShifts.shift(postId, wasReposted ? -1 : 1)
+    const change = repostShifts.start(postId, wasReposted ? -1 : 1)
     setRepostLoading(true)
     writesRef.current += 1
     try {
@@ -359,6 +361,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (repostsAreQuotes()) {
         // (Undo returned above: here the viewer is reposting.)
         const repost = await createBareRepost(post, viewerId)
+        change.keep()
         slotWrites.held(viewerId, postId, repost)
         patchMarks(before, { reposted: true, ownQuote: repost })
         toast.success('Reposted')
@@ -367,10 +370,11 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const { repostService } = await import('@/lib/services/repost-service')
       const ok = wasReposted ? await repostService.removeRepost(postId, viewerId) : await repostService.repostPost(postId, viewerId, post.author.id)
       if (!ok) throw new Error('Repost operation failed')
+      change.keep()
       toast.success(wasReposted ? 'Removed repost' : 'Reposted')
     } catch (error) {
       patchMarks(before, { reposted: wasReposted })
-      repostShifts.shift(postId, wasReposted ? 1 : -1)
+      change.drop()
       logger.error('Repost error:', error)
       if (repostsAreQuotes() && !wasReposted && isDuplicateUniqueIndexError(error)) {
         // The viewer already holds this target's one quote/repost slot (marks
@@ -384,7 +388,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           // Their own earlier repost landed (a double click, or a lost ack):
           // that is the repost they asked for.
           patchMarks(before, { reposted: true, ownQuote: existing })
-          repostShifts.shift(postId, 1)
+          repostShifts.apply(postId, 1)
           toast.success('Reposted')
           return null
         }
