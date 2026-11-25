@@ -17,6 +17,7 @@ import {
   type YapprKeyExchangeNetworkName,
 } from 'platform-auth'
 import { bytesToHex, hexToBytes } from '@/lib/bytes'
+import { sanitizeReturnTo } from '@/lib/auth/return-to'
 import type { AppConnectCarrierUris, AppConnectCarriers } from './carrier'
 import { APP_CONNECT_MIN_PROTOCOL_VERSION, appConnectCarriers, type AppConnectPins } from './config'
 import type { AppConnectTrust } from './group-trust'
@@ -58,6 +59,18 @@ export interface StoredAppConnectRequest {
   createdAt: number
   connectionId: string
   identityHint?: string
+  /**
+   * The page the sign-in started on (sanitized, without the base path), for the
+   * wallet's callback tab to return to. Written once, with the new request; a
+   * tab that resumes the request only reads it.
+   */
+  returnTo?: string
+}
+
+/** A confirmed answer, and the page its sign-in returns to when this tab carries one. */
+export interface AppConnectAcceptance {
+  grant: AppConnectGrant
+  returnTo?: string
 }
 
 /**
@@ -90,6 +103,17 @@ export interface AppConnectLoginDeps {
    * With several, each is the same request in another URI form.
    */
   carriers?: AppConnectCarriers
+  /**
+   * The page a new request carries, unless it replaces one of this tab's
+   * requests: a replacement keeps exactly the replaced request's page, none included.
+   */
+  returnTo?: string
+  /**
+   * The request the wallet's callback named, when this tab came from /connect:
+   * a sign-in applies the page of that request, resumed here, or of a request
+   * this tab made to replace it, and of no other.
+   */
+  callbackRequestHash?: string
   /** Overrides the return link built from `origin` and `basePath` (the mobile app returns through its own). */
   callbackUrl?: (requestHashHex: string) => string | undefined
   now?: () => number
@@ -111,13 +135,14 @@ const MAX_VERIFY_ATTEMPTS = 3
 export function parseStoredRequest(raw: unknown, now: number): StoredAppConnectRequest | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  const { ephemeralPrivateKey, createdAt, connectionId, identityHint } = record
+  const { ephemeralPrivateKey, createdAt, connectionId, identityHint, returnTo } = record
   if (typeof ephemeralPrivateKey !== 'string' || !/^[0-9a-f]{64}$/.test(ephemeralPrivateKey)) return null
   if (typeof connectionId !== 'string' || !/^[0-9a-f]{32}$/.test(connectionId)) return null
   if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt)) return null
   if (now - createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS || createdAt - now > 60_000) return null
   if (identityHint !== undefined && typeof identityHint !== 'string') return null
-  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}) }
+  const page = typeof returnTo === 'string' ? sanitizeReturnTo(returnTo, '') : null
+  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}), ...(page ? { returnTo: page } : {}) }
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -157,6 +182,10 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
+  /** The page of the request this tab activated last, which a replacement keeps (none included); null before the first. */
+  private lineage: { returnTo?: string } | null = null
+  /** The active request's hash while a sign-in from it applies its page (see `callbackRequestHash`). */
+  private carriedHash: string | null = null
   private readonly now: () => number
   private readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>
   private readonly verify: (input: VerifyAppConnectCandidateInput) => Promise<AppConnectVerification>
@@ -214,10 +243,11 @@ export class AppConnectLogin {
     }
 
     let record: StoredAppConnectRequest | null
+    let resumable: StoredAppConnectRequest | null = null
     try {
       const stored = options.fresh ? null : await this.deps.records.load()
       if (!current()) return
-      const resumable = stored && stored.identityHint === options.identityHint ? stored : null
+      resumable = stored && stored.identityHint === options.identityHint ? stored : null
       record = resumable ?? await this.newRecord(options.identityHint, current)
       if (record && current() && this.deps.beforeHandout && !(await this.deps.beforeHandout(current))) {
         if (!current()) return
@@ -232,7 +262,7 @@ export class AppConnectLogin {
       return
     }
     if (!record || !current()) return
-    this.activate(record)
+    this.activate(record, record === resumable)
     this.poll()
   }
 
@@ -244,11 +274,13 @@ export class AppConnectLogin {
    */
   private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
+    const returnTo = sanitizeReturnTo(this.lineage ? this.lineage.returnTo : this.deps.returnTo, '')
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
       connectionId: await this.deps.connectionId(),
       ...(identityHint ? { identityHint } : {}),
+      ...(returnTo ? { returnTo } : {}),
     }
     clearSensitiveBytes(privateKey)
     if (!current()) return null
@@ -262,7 +294,7 @@ export class AppConnectLogin {
     return record
   }
 
-  private activate(record: StoredAppConnectRequest): void {
+  private activate(record: StoredAppConnectRequest, resumed: boolean): void {
     // A new request replaces the old one: its ephemeral key is no longer needed.
     if (this.active) clearSensitiveBytes(this.active.privateKey)
     const privateKey = hexToBytes(record.ephemeralPrivateKey)
@@ -284,6 +316,14 @@ export class AppConnectLogin {
     }))
     const uris: AppConnectCarrierUris = [first, ...rest]
     this.active = { record, privateKey, request, hash, uri: first.uri, uris }
+    // A resumed request carries its page only if it is the one the callback named or one
+    // this tab carried already; a new one only if the request it replaces did.
+    const hashHex = bytesToHex(hash)
+    const carried = resumed
+      ? hashHex === this.deps.callbackRequestHash || hashHex === this.carriedHash
+      : this.carriedHash !== null
+    this.carriedHash = carried ? hashHex : null
+    this.lineage = { returnTo: record.returnTo }
     this.progress = new Map()
     this.discardVerified()
     this.set({ phase: 'waiting', uri: first.uri, uris })
@@ -311,15 +351,17 @@ export class AppConnectLogin {
   }
 
   /**
-   * The user picked `identityId`: hands back its grant and forgets the
-   * request and every other candidate. The caller signs in with the grant
-   * (which wipes its keys).
+   * The user picked `identityId`: hands back its grant, with the request's
+   * page when this tab carries it, and forgets the request and every other
+   * candidate. The caller signs in with the grant (which wipes its keys).
    */
-  accept(identityId: string): AppConnectGrant | null {
+  accept(identityId: string): AppConnectAcceptance | null {
     const chosen = this.verified.find((candidate) => candidate.identityId === identityId) ?? null
+    const returnTo = this.carriedHash !== null ? this.active?.record.returnTo : undefined
     this.verified = this.verified.filter((candidate) => candidate !== chosen)
     this.finish()
-    return chosen?.grant ?? null
+    if (!chosen) return null
+    return { grant: chosen.grant, ...(returnTo ? { returnTo } : {}) }
   }
 
   /** "That's not me": drop everything, including the request someone else answered, and show a new code. */

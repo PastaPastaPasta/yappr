@@ -188,8 +188,8 @@ export function LoginModal() {
     }
   }, [close, pathname, router])
 
-  const signInWithGrant = useCallback(async (grant: AppConnectGrant) => {
-    await loginWithAppConnect(grant)
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant, returnTo?: string) => {
+    await loginWithAppConnect(grant, returnTo)
   }, [loginWithAppConnect])
 
   const walletOptions = (

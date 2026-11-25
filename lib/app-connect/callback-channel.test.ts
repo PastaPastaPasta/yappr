@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { APP_RETURN_SCRIPT, appReturnLink, isConnectCallbackAck, isConnectCallbackMessage, parseConnectCallback } from './callback-channel'
+import { APP_RETURN_SCRIPT, appReturnLink, callbackLoginRoute, callbackRequestHash, isConnectCallbackAck, isConnectCallbackMessage, parseConnectCallback } from './callback-channel'
 
 const HASH = 'ab'.repeat(20)
 
@@ -69,5 +69,17 @@ describe('APP_RETURN_SCRIPT', () => {
     for (const search of [`?r=${HASH}&ac=ok`, `?r=${HASH}&app=javascript`, `?r=${HASH}&app=yappr-devx`, '?r=abc&app=yappr-dev', '']) {
       expect(run(search)).toBeNull()
     }
+  })
+})
+
+describe('callbackLoginRoute', () => {
+  it('names the request the wallet returned for, and nothing for an expired or odd one', () => {
+    expect(callbackLoginRoute(HASH)).toBe(`/login/?request=${HASH}`)
+    expect(callbackRequestHash(callbackLoginRoute(HASH).slice('/login/'.length))).toBe(HASH)
+    expect(callbackLoginRoute(null)).toBe('/login/')
+    expect(callbackLoginRoute('abc')).toBe('/login/')
+    expect(callbackRequestHash('?request=abc')).toBeUndefined()
+    expect(callbackRequestHash(`?request=${HASH.toUpperCase()}`)).toBeUndefined()
+    expect(callbackRequestHash('')).toBeUndefined()
   })
 })

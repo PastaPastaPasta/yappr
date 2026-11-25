@@ -92,3 +92,20 @@ var r=(p.get('r')||'').toLowerCase();if(!/^[0-9a-f]{40}$/.test(r))return;
 var ac=p.get('ac');
 location.replace(app+'://connect?r='+r+(ac&&/^[a-z]{1,16}$/.test(ac)?'&ac='+ac:''));
 }catch(e){}})();`
+
+const CALLBACK_REQUEST_PARAM = 'request'
+
+/**
+ * Sign-in in the wallet's callback tab, naming the request the wallet
+ * returned for: only that request, resumed there, brings back the page the
+ * sign-in started on. Without a hash (an expired request), plain sign-in.
+ */
+export function callbackLoginRoute(requestHash: string | null): string {
+  return requestHash && REQUEST_HASH.test(requestHash) ? `/login/?${CALLBACK_REQUEST_PARAM}=${requestHash}` : '/login/'
+}
+
+/** The request hash {@link callbackLoginRoute} put in `search`, or undefined. */
+export function callbackRequestHash(search: string): string | undefined {
+  const hash = new URLSearchParams(search).get(CALLBACK_REQUEST_PARAM)
+  return hash && REQUEST_HASH.test(hash) ? hash : undefined
+}

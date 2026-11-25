@@ -85,6 +85,14 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
 }
 
 /**
+ * Where a sign-in made on /login goes: the page's own `next`, else the page
+ * the committing wallet sign-in's request carried to its callback tab, else /feed.
+ */
+export function loginPageDestination(next: string | null | undefined, carried?: string): string {
+  return sanitizeReturnTo(next) ?? sanitizeReturnTo(carried, '') ?? DEFAULT_RETURN_TO
+}
+
+/**
  * Where the DPNS wizard's Continue goes: back to `next` only when the user now
  * has a username. After a failed registration they go to /feed instead.
  */

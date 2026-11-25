@@ -14,8 +14,11 @@ import { KeyExchangeQR } from './key-exchange-qr'
 import { IdentityConfirmCard } from './identity-confirm-card'
 
 interface AppConnectLoginPanelProps {
-  /** Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee. */
-  onGrant: (grant: AppConnectGrant) => Promise<unknown>
+  /**
+   * Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee.
+   * `returnTo`: the page the request carried to the wallet's callback tab, for this sign-in only.
+   */
+  onGrant: (grant: AppConnectGrant, returnTo?: string) => Promise<unknown>
   /** Called once signed in and the panel is done. */
   onComplete: () => void
   /** Renewal: only this identity may answer, and it is accepted without asking. */
@@ -74,11 +77,11 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
   }, [])
 
   const accept = useCallback((identityId: string) => {
-    const grant = login?.accept(identityId)
-    if (!grant) return
+    const accepted = login?.accept(identityId)
+    if (!accepted) return
     setSigning('running')
     setSignInError(null)
-    onGrant(grant)
+    onGrant(accepted.grant, accepted.returnTo)
       .then(() => {
         if (!mounted.current) return
         setSigning('done')
