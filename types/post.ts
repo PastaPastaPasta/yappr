@@ -32,8 +32,10 @@ export interface Media {
 
 /** Pre-fetched enrichment data to avoid N+1 queries in feed */
 export interface PostEnrichment {
-  authorIsBlocked: boolean
-  authorIsFollowing: boolean
+  /** Unset when not read (or the read failed). */
+  authorIsBlocked?: boolean
+  /** Unset when not read (or the read failed). */
+  authorIsFollowing?: boolean
   authorAvatarUrl: string
   /** The viewer `authorIsBlocked` and `authorIsFollowing` were read for; unset when they are defaults. */
   viewerId?: string

@@ -101,8 +101,15 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     setReposts(initial.reposts)
   }, [initial.likes, initial.reposts])
 
-  // The snapshot's marks count only when they were read for this viewer.
-  const snapshot = marksFor(initial.marks, viewerId)
+  // The snapshot's marks count only when they were read for this viewer, and
+  // only when they arrived after the viewer last changed: marks on screen from
+  // before a sign-out may predate this account's last action, so signing back
+  // in reads them again unless a newer snapshot comes in.
+  const raw = initial.marks
+  const rawKey = raw ? `${raw.viewerId}|${raw.liked}|${raw.reposted}|${raw.bookmarked}|${raw.ownQuote?.id ?? ''}` : ''
+  const [session, setSession] = useState<{ viewerId: string | undefined; staleKey: string | null }>({ viewerId, staleKey: null })
+  if (session.viewerId !== viewerId) setSession({ viewerId, staleKey: rawKey })
+  const snapshot = session.viewerId === viewerId && rawKey !== session.staleKey ? marksFor(raw, viewerId) : undefined
   const snapshotViewer = snapshot?.viewerId
   const snapshotLiked = snapshot?.liked === true
   const snapshotReposted = snapshot?.reposted === true
@@ -377,5 +384,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     toggleRepost,
     removeOwnQuote,
     toggleBookmark,
+    /** The viewer's marks, read now when unknown; null (after a toast) when they cannot be read. */
+    resolveMarks,
   }
 }

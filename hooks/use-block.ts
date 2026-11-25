@@ -169,47 +169,50 @@ export async function checkBlockedForAuthors(
 
   try {
     const { blockService } = await import('@/lib/services/block-service')
-    return await blockService.checkBlockedBatch(userId, authorIds)
+    const statuses = await blockService.checkBlockedBatch(userId, authorIds)
+    blockStatusCache.seed(userId, statuses)
+    return statuses
   } catch (error) {
     logger.error('checkBlockedForAuthors: Error:', error)
     return new Map()
   }
 }
 
+/** The authors a list shows: each post's, and a v10 bare repost's target author. */
+function shownAuthorIds(posts: readonly Post[]): string[] {
+  const ids = new Set<string>()
+  for (const post of posts) {
+    ids.add(post.author.id)
+    const reposted = repostedAuthorIdOf(post)
+    if (reposted) ids.add(reposted)
+  }
+  return Array.from(ids)
+}
+
 /**
- * Drop posts whose author the viewer has blocked. A no-op for logged-out
- * viewers and empty lists; block lookups fail soft to "not blocked".
+ * Reads the viewer's block status of the authors `posts` shows, into the
+ * shared cache, so a list stored in full renders filtered from its first frame
+ * (`useWithoutBlockedAuthors`). Lists keep blocked authors' rows rather than
+ * dropping them, so another viewer (a sign-in or sign-out with the list open)
+ * sees what is theirs to see.
  */
-export async function filterBlockedAuthors<T extends { author: { id: string } }>(
-  viewerId: string | undefined,
-  posts: T[]
-): Promise<T[]> {
-  if (!viewerId || posts.length === 0) return posts
-  const authorIds = Array.from(new Set(posts.map((post) => post.author.id)))
-  const blocked = await checkBlockedForAuthors(viewerId, authorIds)
-  return posts.filter((post) => !blocked.get(post.author.id))
+export async function preloadBlockStatus(viewerId: string | undefined, posts: readonly Post[]): Promise<void> {
+  if (!viewerId || posts.length === 0) return
+  await checkBlockedForAuthors(viewerId, shownAuthorIds(posts))
 }
 
 /**
  * `posts` without those whose author, or whose reposted author (a v10 bare
  * repost shows its target's author's post), the current viewer blocks.
  * Re-read whenever the viewer changes, so a list kept on screen through a
- * sign-in is filtered for the new viewer without being reloaded. A list
- * filtered when it loaded stays filtered meanwhile; one loaded for another
- * viewer shows in full until the new viewer's blocks are read.
+ * sign-in is filtered for the new viewer without being reloaded. Until that
+ * read lands, statuses already cached for the viewer (`preloadBlockStatus`)
+ * filter it.
  */
 export function useWithoutBlockedAuthors<T extends Post>(posts: T[] | null): T[] | null {
   const { user } = useAuth()
   const viewerId = user?.identityId
-  const authorKey = useMemo(() => {
-    const ids = new Set<string>()
-    for (const post of posts ?? []) {
-      ids.add(post.author.id)
-      const reposted = repostedAuthorIdOf(post)
-      if (reposted) ids.add(reposted)
-    }
-    return Array.from(ids).sort().join(',')
-  }, [posts])
+  const authorKey = useMemo(() => shownAuthorIds(posts ?? []).sort().join(','), [posts])
   const [blocked, setBlocked] = useState<{ viewerId: string; ids: Set<string> } | null>(null)
 
   useEffect(() => {
@@ -229,10 +232,12 @@ export function useWithoutBlockedAuthors<T extends Post>(posts: T[] | null): T[]
   }, [viewerId, authorKey])
 
   return useMemo(() => {
-    if (!posts || !viewerId || blocked?.viewerId !== viewerId || blocked.ids.size === 0) return posts
+    if (!posts || !viewerId) return posts
+    const read = blocked?.viewerId === viewerId ? blocked.ids : null
+    const isBlocked = (authorId: string) => read ? read.has(authorId) : blockStatusCache.get(viewerId, authorId) === true
     return posts.filter((post) => {
       const reposted = repostedAuthorIdOf(post)
-      return !blocked.ids.has(post.author.id) && !(reposted && blocked.ids.has(reposted))
+      return !isBlocked(post.author.id) && !(reposted && isBlocked(reposted))
     })
   }, [posts, viewerId, blocked])
 }

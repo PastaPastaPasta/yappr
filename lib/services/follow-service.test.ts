@@ -105,3 +105,15 @@ describe('the cached following ids of the new-posts check', () => {
     expect(await followService.getFollowingIdsCached(viewer)).toEqual(['311111111', TARGET])
   })
 })
+
+describe('follow status read failures', () => {
+  it('isFollowing rejects instead of answering "not following"', async () => {
+    query.mockRejectedValueOnce(new Error('offline'))
+    await expect(followService.isFollowing('222222222', '111111111')).rejects.toThrow('offline')
+  })
+
+  it('getFollowStatusBatch leaves every target unknown', async () => {
+    query.mockRejectedValueOnce(new Error('offline'))
+    expect((await followService.getFollowStatusBatch(['222222222'], '111111111')).size).toBe(0)
+  })
+})

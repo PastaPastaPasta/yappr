@@ -84,8 +84,8 @@ export async function enrichPostsBatch(
       const username = usernameMap.get(post.author.id);
       const profileData = profileMap.get(post.author.id);
 
-      const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
-      const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
+      const authorIsBlocked = blockStatusMap.get(post.author.id);
+      const authorIsFollowing = followStatusMap.get(post.author.id);
       const authorAvatarUrl = avatarUrlMap.get(post.author.id) ?? '';
 
       return {

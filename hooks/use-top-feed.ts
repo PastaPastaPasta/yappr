@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/logger';
 import { useAuth } from '@/contexts/auth-context';
-import { filterBlockedAuthors, useWithoutBlockedAuthors } from '@/hooks/use-block';
+import { preloadBlockStatus, useWithoutBlockedAuthors } from '@/hooks/use-block';
 import { followService } from '@/lib/services';
 import type { Post } from '@/lib/types';
 import type { RankingWindow } from '@/lib/services/ranked-likes';
@@ -68,7 +68,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   // derived from it rather than accumulated, so two overlapping load-more
   // calls cannot skip a page.
   const rankedCountRef = useRef(0);
-  // The first page last loaded for each ranking (tab, window, viewer), so going
+  // The first page last loaded for each ranking (tab, window, Following's viewer), so going
   // back to one (or back to Top from Latest) shows it at once while it reloads.
   const firstPagesRef = useRef(new Map<string, Post[]>());
   // The global ranking is the same for every viewer, so a sign-in keeps it on
@@ -83,7 +83,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
       const requestId = ++requestIdRef.current;
       const isCurrent = () => requestIdRef.current === requestId;
       const viewerId = viewerRef.current;
-      const pageKey = `${viewKey}:${viewerId ?? ''}`;
+      const pageKey = viewKey;
 
       if (!likesAreIndexOnly() || (activeTab === 'following' && !followingViewer)) {
         setPosts([]);
@@ -112,14 +112,15 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
         // `throwOnError` makes a failed ranking or hydration reject rather than
         // degrade to an empty page, so an empty result here is genuinely the
         // end of the ranking and never a swallowed error.
-        const visible = await filterBlockedAuthors(viewerId, ranked);
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerId, ranked);
         if (!isCurrent()) return;
         rankedCountRef.current = ranked.length;
-        if (!append) firstPagesRef.current.set(pageKey, visible);
+        if (!append) firstPagesRef.current.set(pageKey, ranked);
         setPosts((current) => {
-          if (!append || !current) return visible;
+          if (!append || !current) return ranked;
           const known = new Set(current.map((post) => post.id));
-          return [...current, ...visible.filter((post) => !known.has(post.id))];
+          return [...current, ...ranked.filter((post) => !known.has(post.id))];
         });
         // Judged on the ranked page, not the block-filtered one, so a filtered
         // author never makes a full page look like the end of the ranking.
@@ -147,7 +148,7 @@ export function useTopFeed({ activeTab, window, enabled }: UseTopFeedOptions): U
   // A different ranking (tab, window, or Following's viewer) starts from the first page.
   useEffect(() => {
     if (!enabled) return;
-    setPosts(firstPagesRef.current.get(`${viewKey}:${viewerRef.current ?? ''}`) ?? null);
+    setPosts(firstPagesRef.current.get(viewKey) ?? null);
     load().catch((error) => logger.error('Feed: top posts load failed:', error));
   }, [enabled, load, viewKey]);
 

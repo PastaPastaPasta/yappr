@@ -185,7 +185,14 @@ export function PrivatePostContent({
   // under a public root the replier. Settled by the reader, which reads the root.
   const [encryptionSourceOwnerId, setEncryptionSourceOwnerId] = useState(post.rootOwnerId ?? rootPostOwnerId ?? post.author.id)
   const { user } = useAuth()
-  const [state, setState] = useState<DecryptionState>({ status: 'idle' })
+  // The state belongs to the post and viewer it was reached for: anything else
+  // (the viewer just signed out or switched) reads as idle from the first render.
+  const scope = `${post.id}|${user?.identityId ?? ''}`
+  const scopeRef = useRef(scope)
+  scopeRef.current = scope
+  const [scoped, setScoped] = useState<{ scope: string; state: DecryptionState }>({ scope, state: { status: 'idle' } })
+  const state: DecryptionState = scoped.scope === scope ? scoped.state : { status: 'idle' }
+  const setState = useCallback((next: DecryptionState) => setScoped({ scope: scopeRef.current, state: next }), [])
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const openLoginPrompt = useLoginModal((s) => s.open)
 
@@ -233,8 +240,9 @@ export function PrivatePostContent({
   const attemptRef = useRef(0)
   const attemptDecryption = useCallback(async () => {
     const attempt = ++attemptRef.current
+    const attemptScope = scopeRef.current
     const settle = (next: DecryptionState) => {
-      if (attempt === attemptRef.current) setState(next)
+      if (attempt === attemptRef.current) setScoped({ scope: attemptScope, state: next })
     }
     if (!privateContentOf(post)) {
       settle({ status: 'error', message: 'Invalid private post data' })
@@ -311,14 +319,14 @@ export function PrivatePostContent({
   // "Recover": enter the encryption key, then read again with it.
   const handleRecoverAccess = useCallback(() => {
     openEncryptionKeyModal('recover_follower_keys', () => setState({ status: 'idle' }))
-  }, [openEncryptionKeyModal])
+  }, [openEncryptionKeyModal, setState])
 
   // Reset state when post or user changes to avoid stale decryption data
   useEffect(() => {
     attemptRef.current++
     setState({ status: 'idle' })
     setEncryptionSourceOwnerId(post.rootOwnerId ?? rootPostOwnerId ?? post.author.id)
-  }, [post.id, user?.identityId, post.rootOwnerId, rootPostOwnerId, post.author.id])
+  }, [post.id, user?.identityId, post.rootOwnerId, rootPostOwnerId, post.author.id, setState])
 
   // Attempt decryption on mount
   useEffect(() => {
@@ -329,14 +337,7 @@ export function PrivatePostContent({
 
   const readability = readabilityOf(state, isOwner)
   const viewerId = user?.identityId
-  // On a viewer change this runs before the reset above lands, with the previous
-  // viewer's state: skip that run so it is not saved as the new viewer's.
-  const readabilityViewerRef = useRef(viewerId)
   useEffect(() => {
-    if (readabilityViewerRef.current !== viewerId) {
-      readabilityViewerRef.current = viewerId
-      return
-    }
     if (readability === 'pending') return
     lastReadability.set(readabilityKey(post.id, viewerId), readability)
     onReadabilityChange?.(readability)
@@ -348,12 +349,12 @@ export function PrivatePostContent({
   useEffect(() => {
     if (!awaitingKeys) return
     return privateFeedKeyStore.subscribe(() => setState({ status: 'idle' }))
-  }, [awaitingKeys])
+  }, [awaitingKeys, setState])
 
   // Handle retry for decryption failures (Test 5.7)
   const handleRetry = useCallback(() => {
     setState({ status: 'idle' })
-  }, [])
+  }, [setState])
 
   // Loading: the same row the locked state settles into, which is what most
   // viewers get, so the card does not jump when the answer arrives.

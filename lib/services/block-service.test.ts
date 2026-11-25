@@ -217,7 +217,9 @@ describe('block provenance', () => {
     })
     expect(await blockService.getBlockProvenance(authors[0], viewer))
       .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
-    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(false)
+    // Unknown, not "not blocked": left out of the batch, and a single check rejects.
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
+    await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
 
     // Once the followed list reads again, the block shows up instead of a cached miss.
     followedReadFails = false

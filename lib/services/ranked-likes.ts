@@ -565,8 +565,6 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: stri
       },
       _enrichment: {
         ...post._enrichment,
-        authorIsBlocked: false,
-        authorIsFollowing: false,
         authorAvatarUrl: avatar,
         viewerId: undefined,
       },
@@ -591,8 +589,8 @@ async function hydrateRankedPosts(ranked: RankedLikedPost[], currentUserId: stri
     ...post,
     _enrichment: {
       ...post._enrichment,
-      authorIsBlocked: blocked.get(post.author.id) ?? false,
-      authorIsFollowing: following.get(post.author.id) ?? false,
+      authorIsBlocked: blocked.get(post.author.id),
+      authorIsFollowing: following.get(post.author.id),
       viewerId: currentUserId,
     },
   }));

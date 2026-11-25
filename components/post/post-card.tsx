@@ -536,13 +536,21 @@ function PostCardView({
     if (!requireAuth()) return
     return engagement.toggleBookmark()
   }
-  const handleQuote = () => {
+  const handleQuote = async () => {
     if (isTombstoned || !requireAuth()) return
     // v10 allows one quote or repost per author and target; a second would be
     // refused (40105), so the viewer is taken to their quote (a bare repost
-    // hides this item: it is undone from the Repost item instead).
-    if (ownQuote) {
-      router.push(`/post?id=${ownQuote.id}`)
+    // hides this item: it is undone from the Repost item instead). Unknown
+    // marks are read first, so the composer never opens on a held slot.
+    let held = ownQuote
+    if (repostsAreQuotePosts && !engagement.marks) {
+      const marks = await engagement.resolveMarks()
+      if (!marks) return
+      if (marks.reposted && (!marks.ownQuote || marks.ownQuote.bare)) return
+      held = marks.reposted ? marks.ownQuote ?? null : null
+    }
+    if (held) {
+      router.push(`/post?id=${held.id}`)
       return
     }
     openCompose({ quotingPost: enrichedPost })
@@ -955,7 +963,9 @@ function PostCardView({
             }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, allowed: hideAvatar || !(isOwnPost && selfLikesAreRefused(targetKind)), onClick: handleLike }}
             bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
-            onQuote={handleQuote}
+            onQuote={() => {
+              handleQuote().catch((error: unknown) => logger.error('Quote failed:', error))
+            }}
             // v10's one slot: a bare repost is undone from the Repost item (no
             // Quote, which would be refused); a quote with text is visited.
             quoteLabel={ownQuote ? (ownQuote.bare ? null : 'View your quote') : undefined}

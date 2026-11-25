@@ -15,7 +15,7 @@ import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
-import { checkBlockedForAuthors, useWithoutBlockedAuthors } from '@/hooks/use-block'
+import { preloadBlockStatus, useWithoutBlockedAuthors } from '@/hooks/use-block'
 import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
@@ -108,15 +108,9 @@ export default function ExplorePage() {
     const loadTopPosts = async () => {
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let posts = await topLikedPostsHydrated({ limit: 20, window: win })
-
-        // Filter out posts from blocked users, same as the search results above.
-        const viewerId = viewerRef.current
-        if (viewerId && posts.length > 0) {
-          const authorIds = Array.from(new Set(posts.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(viewerId, authorIds)
-          posts = posts.filter(post => !blockedMap.get(post.author.id))
-        }
+        const posts = await topLikedPostsHydrated({ limit: 20, window: win })
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerRef.current, posts)
 
         setTopByWindow((prev) => ({ ...prev, [win]: posts }))
       } catch (error) {
@@ -217,25 +211,18 @@ export default function ExplorePage() {
         const { postService } = await import('@/lib/services/post-service')
         const { documents: recentPosts } = await postService.getTimeline({ limit: 100 })
 
-        const authorIds = Array.from(new Set(recentPosts.map(p => p.author.id).filter(Boolean)))
-        const viewerId = viewerRef.current
-        const blockedMap = viewerId
-          ? await checkBlockedForAuthors(viewerId, authorIds)
-          : new Map<string, boolean>()
-
         const needle = searchQuery.toLowerCase()
         const filtered = recentPosts
-          .filter(post =>
-            !post.deleted &&
-            post.content.toLowerCase().includes(needle) &&
-            !blockedMap.get(post.author.id)
-          )
+          .filter(post => !post.deleted && post.content.toLowerCase().includes(needle))
           .map(post => ({
             ...post,
             author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
           }))
 
-        setSearchResults(await postService.enrichPostsBatch(filtered))
+        const results = await postService.enrichPostsBatch(filtered)
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerRef.current, results)
+        setSearchResults(results)
 
         // Search blog posts — reuse cached blog data from mount when available
         const { blogPostService } = await import('@/lib/services')

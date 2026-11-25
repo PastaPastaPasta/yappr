@@ -190,8 +190,8 @@ export function usePrivateFeedRequest({
         return
       }
 
-      // Auto-follow the owner if not already following (per plan)
-      const isFollowing = await followService.isFollowing(ownerId, currentUserId)
+      // Auto-follow the owner if not already following (per plan); an unreadable status tries the follow.
+      const isFollowing = await followService.isFollowing(ownerId, currentUserId).catch(() => false)
       if (!isFollowing) {
         // Continue anyway - the request might still work. followUser throws for
         // a refersTo rejection so the follow UI can toast it; here the auto-follow
@@ -263,8 +263,8 @@ export function usePrivateFeedRequest({
       // Derive public key from stored private key
       const encryptionPublicKey = getPublicKey(privateKeyBytes)
 
-      // Auto-follow the owner if not already following
-      const isFollowing = await followService.isFollowing(ownerId, currentUserId)
+      // Auto-follow the owner if not already following; an unreadable status tries the follow.
+      const isFollowing = await followService.isFollowing(ownerId, currentUserId).catch(() => false)
       if (!isFollowing) {
         await autoFollow(ownerId, currentUserId)
       }

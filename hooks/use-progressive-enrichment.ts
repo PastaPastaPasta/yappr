@@ -214,6 +214,30 @@ export function useProgressiveEnrichment(
     // Check if this request is still valid
     const isValid = () => enrichmentIdRef.current === requestId
 
+    // Registered before any await: a viewer change while this batch is still
+    // loading re-reads relations for every author seen, these included.
+    const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
+    // Quoted authors are gated for media just like top-level ones, but they are
+    // NOT enriched as authors (no username/profile/avatar/block lookups) and
+    // must never be seeded as followed on the Following tab — following the
+    // quoter says nothing about who they quoted. Their follow status rides
+    // along on the real batch query only, which seeds the shared cache that
+    // useMediaGate reads, so an embedded card of someone you follow renders its
+    // media instead of a placeholder.
+    const followLookupIds = Array.from(
+      new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
+    )
+    // A v10 bare repost is shown as its target's author's post, so that
+    // author's block status is read too (none on v2/v9).
+    const blockIds = Array.from(new Set([
+      ...authorIds,
+      ...posts.map(repostedAuthorIdOf).filter((id): id is string => id !== null),
+    ]))
+    const seen = seenRef.current
+    authorIds.forEach(id => seen.authorIds.add(id))
+    blockIds.forEach(id => seen.blockIds.add(id))
+    followLookupIds.forEach(id => seen.followIds.add(id))
+
     const run = async () => {
       if (!preloaded) {
         // The composite read carries the viewer's marks: cards wait for it rather than reading their own.
@@ -242,17 +266,6 @@ export function useProgressiveEnrichment(
         seenPostIds.add(post.id)
         targets.push(targetOf(post))
       }
-      const authorIds = Array.from(new Set(posts.map(p => p.author.id).filter(Boolean)))
-      // Quoted authors are gated for media just like top-level ones, but they are
-      // NOT enriched as authors (no username/profile/avatar/block lookups) and
-      // must never be seeded as followed on the Following tab — following the
-      // quoter says nothing about who they quoted. Their follow status rides
-      // along on the real batch query only, which seeds the shared cache that
-      // useMediaGate reads, so an embedded card of someone you follow renders its
-      // media instead of a placeholder.
-      const followLookupIds = Array.from(
-        new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
-      )
 
       // Set loading phase, merging whatever arrived with the posts
       setEnrichmentState(prev => ({
@@ -354,17 +367,9 @@ export function useProgressiveEnrichment(
         }))
       }).catch(err => logger.error('Progressive enrichment: stats failed', err))
 
-      // A v10 bare repost is shown as its target's author's post, so that
-      // author's block status is read too (none on v2/v9).
-      const blockIds = Array.from(new Set([
-        ...authorIds,
-        ...posts.map(repostedAuthorIdOf).filter((id): id is string => id !== null),
-      ]))
-      const seen = seenRef.current
-      authorIds.forEach(id => seen.authorIds.add(id))
-      blockIds.forEach(id => seen.blockIds.add(id))
-      followLookupIds.forEach(id => seen.followIds.add(id))
-      if (viewerId) {
+      // Read for the viewer now; if it changed while this batch loaded, the
+      // viewer-change effect already read these authors for it.
+      if (viewerId && viewerRef.current === viewerId) {
         loadRelations(viewerId, { authorIds, blockIds, followIds: followLookupIds }, isValid)
       }
 

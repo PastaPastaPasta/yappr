@@ -718,8 +718,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async isBlocked(targetUserId: string, viewerId: string): Promise<boolean> {
     if (!viewerId || !targetUserId) return false
 
-    const blocked = await this.checkBlockedBatch(viewerId, [targetUserId])
-    return blocked.get(targetUserId) ?? false
+    const blocked = (await this.checkBlockedBatch(viewerId, [targetUserId])).get(targetUserId)
+    // Left out of the batch: a followed list could not be read.
+    if (blocked === undefined) throw new Error('Block status could not be read')
+    return blocked
   }
 
   /**
@@ -872,9 +874,9 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       const { blocks: inheritedBlocks, complete } = await this.queryInheritedBlocksBatch(possiblePositives, followedBlockers)
       for (const targetId of possiblePositives) {
         const inherited = inheritedBlocks.get(targetId)
-        result.set(targetId, Boolean(inherited))
-        // A failed blocker query must not be cached as "not blocked".
+        // A failed blocker query leaves the target unknown, neither reported nor cached as "not blocked".
         if (!inherited && !complete) continue
+        result.set(targetId, Boolean(inherited))
         batchResults.set(targetId, {
           blockedBy: inherited?.blockedBy ?? '',
           isBlocked: Boolean(inherited),
@@ -884,13 +886,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       addConfirmedBlocksBatch(viewerId, batchResults)
     } catch (error) {
+      // The possible positives stay unknown (left out).
       logger.error('Error in batch block check:', error)
-      // On error, assume not blocked for unchecked
-      for (const targetId of possiblePositives) {
-        if (!result.has(targetId)) {
-          result.set(targetId, false)
-        }
-      }
     }
 
     return result

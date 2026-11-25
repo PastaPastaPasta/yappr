@@ -130,14 +130,19 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Check if user A follows user B.
-   * Uses getFollowingIds() which deduplicates in-flight requests,
-   * so multiple calls share 1 network request.
+   * Check if user A follows user B. Rejects when the read fails, so a failure
+   * is never taken for "not following". Concurrent calls share one read.
    */
   async isFollowing(targetUserId: string, followerUserId: string): Promise<boolean> {
     if (!followerUserId || !targetUserId) return false;
-    const followingIds = await this.getFollowingIds(followerUserId);
+    const followingIds = await this.readFollowingIds(followerUserId);
     return followingIds.includes(targetUserId);
+  }
+
+  /** Whom a user follows, rejecting on a failed read; concurrent calls share one read. */
+  private readFollowingIds(userId: string): Promise<string[]> {
+    return this.followingDeduplicator.dedupe(`strict:${userId}`, async () =>
+      (await this.getFollowing(userId, { throwOnError: true })).map(f => f.followingId));
   }
 
   /**
@@ -285,15 +290,10 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   /**
    * Batch check if the current user follows any of the target users.
    * Efficient: reuses getFollowingIds (1 query, deduplicated) then does Set intersection.
-   * @returns Map of targetUserId -> isFollowing
+   * @returns Map of targetUserId -> isFollowing; empty when the read failed (unknown, not "not following")
    */
   async getFollowStatusBatch(targetUserIds: string[], followerId: string): Promise<Map<string, boolean>> {
     const result = new Map<string, boolean>();
-
-    // Initialize all as not following
-    for (const id of targetUserIds) {
-      result.set(id, false);
-    }
 
     if (!followerId || targetUserIds.length === 0) {
       return result;
@@ -301,7 +301,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
     try {
       // Get all users this user follows (1 query, deduplicated)
-      const followingIds = await this.getFollowingIds(followerId);
+      const followingIds = await this.readFollowingIds(followerId);
       const followingSet = new Set(followingIds);
 
       // Check each target against the following set

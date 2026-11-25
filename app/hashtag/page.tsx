@@ -16,7 +16,7 @@ import { Post } from '@/lib/types'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
-import { checkBlockedForAuthors, useWithoutBlockedAuthors } from '@/hooks/use-block'
+import { preloadBlockStatus, useWithoutBlockedAuthors } from '@/hooks/use-block'
 import { isCashtagStorage, cashtagStorageToDisplay } from '@/lib/post-helpers'
 import { hashtagsAreInline, likesAreIndexOnly } from '@/lib/contract-topology'
 import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
@@ -127,15 +127,9 @@ function HashtagPageContent() {
         }
 
         // Enrich posts with author data (DPNS names, displayNames, stats)
-        let enrichedPosts = await postService.enrichPostsBatch(fetchedPosts.filter(post => !post.deleted), preloaded)
-
-        // Filter out posts from blocked users
-        const viewerId = viewerRef.current
-        if (viewerId && enrichedPosts.length > 0) {
-          const authorIds = Array.from(new Set(enrichedPosts.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(viewerId, authorIds)
-          enrichedPosts = enrichedPosts.filter(post => !blockedMap.get(post.author.id))
-        }
+        const enrichedPosts = await postService.enrichPostsBatch(fetchedPosts.filter(post => !post.deleted), preloaded)
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerRef.current, enrichedPosts)
 
         if (cancelled) return
         loadedGeneration.current = generation
@@ -173,13 +167,8 @@ function HashtagPageContent() {
         limit: PAGE_SIZE, startAfter: lastPostId,
       })
       const page = result.documents
-      let enriched = await postService.enrichPostsBatch(page.filter(post => !post.deleted), result.preloaded)
-      const viewerId = viewerRef.current
-      if (viewerId && enriched.length > 0) {
-        const authors = Array.from(new Set(enriched.map(post => post.author.id)))
-        const blocked = await checkBlockedForAuthors(viewerId, authors)
-        enriched = enriched.filter(post => !blocked.get(post.author.id))
-      }
+      const enriched = await postService.enrichPostsBatch(page.filter(post => !post.deleted), result.preloaded)
+      await preloadBlockStatus(viewerRef.current, enriched)
       if (loadGeneration.current !== generation) return
       setLoadedPosts(current => {
         const seen = new Set(current.map(post => post.id))
@@ -224,15 +213,8 @@ function HashtagPageContent() {
     const loadTopPosts = async () => {
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: win })
-
-        // Filter out posts from blocked users, matching the Latest path.
-        const viewerId = viewerRef.current
-        if (viewerId && fetched.length > 0) {
-          const authorIds = Array.from(new Set(fetched.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(viewerId, authorIds)
-          fetched = fetched.filter(post => !blockedMap.get(post.author.id))
-        }
+        const fetched = await topLikedPostsHydrated({ hashtag: tag, limit: 20, window: win })
+        await preloadBlockStatus(viewerRef.current, fetched)
 
         if (!cancelled) setTopByWindow((prev) => ({ ...prev, [win]: fetched }))
       } catch (error) {
