@@ -83,6 +83,29 @@ export function createSlotLock() {
   }
 }
 
+/**
+ * The quote or repost slot writes this tab made, per session, viewer and
+ * post. Every card showing the post consults them before Quote: a card's own
+ * marks miss a write another card made, and a read right after a write may
+ * not show it yet.
+ */
+export function createSlotWrites(session: () => number = sessionGeneration) {
+  const written = new Map<string, OwnQuote | null>()
+  const keyOf = (viewerId: string, postId: string) => `${session()}|${viewerId}|${postId}`
+  return {
+    /** The viewer now holds `quote` in the slot, or (null) freed it. */
+    record(viewerId: string, postId: string, quote: OwnQuote | null) {
+      written.set(keyOf(viewerId, postId), quote)
+    },
+    /** `read` of the slot, with this tab's last write on it in its place. */
+    apply(viewerId: string, postId: string, read: Partial<Marks>): Partial<Marks> {
+      const quote = written.get(keyOf(viewerId, postId))
+      if (quote === undefined) return read
+      return quote ? { reposted: true, ownQuote: quote } : { reposted: false }
+    },
+  }
+}
+
 /** Marks a read found, keyed by target id. A target missing from the map was not read. */
 export type MarksReader = (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, Marks>>
 

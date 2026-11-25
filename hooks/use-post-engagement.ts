@@ -12,7 +12,7 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 import { sessionGeneration } from '@/lib/auth/session-generation'
-import { createSlotLock, fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
+import { createSlotLock, createSlotWrites, fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
   likes: number
@@ -64,6 +64,7 @@ async function createBareRepost(post: Post, viewerId: string): Promise<OwnQuote>
 
 /** A viewer's quote or repost slot on a post: Quote's check and a repost hold it across every card (Latest and Top each mount one). */
 const quoteSlots = createSlotLock()
+const slotWrites = createSlotWrites()
 
 /** The same viewer and target: a write's rollback never lands on another viewer's marks. */
 function sameMarks(a: KnownMarks | null, b: KnownMarks): a is KnownMarks {
@@ -158,13 +159,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
    * The marks a write of `need` starts from: known ones, or a read made now.
    * When the full read fails, just `need` is read, so another mark's failed
    * lookup never stops this write; from then on only the marks still unread
-   * are read, so a later read never overwrites a write in flight.
+   * are read, so a later read never overwrites a write in flight. `reread`
+   * reads `need` afresh whatever is known (a caller holding its slot).
    * Null (with a toast) when `need` cannot be read.
    */
-  const resolveMarks = useCallback(async (need: MarkName): Promise<KnownMarks | null> => {
+  const resolveMarks = useCallback(async (need: MarkName, reread = false): Promise<KnownMarks | null> => {
     if (!viewerId) return null
-    if (current && knowsMark(current, need)) return current
-    if (!current) {
+    if (!reread && current && knowsMark(current, need)) return current
+    if (!reread && !current) {
       try {
         const read = await readMarks(viewerId)
         // Marks another tap read or wrote meanwhile stay; the read only fills those still unread.
@@ -179,11 +181,12 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     try {
       const session = sessionGeneration()
       const { fetchUserMark } = await import('@/lib/services/post-stats-helpers')
-      const read = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
+      const fetched = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
+      const read = need === 'reposted' ? slotWrites.apply(viewerId, postId, fetched) : fetched
       const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
       const fits = (marks: KnownMarks | null): marks is KnownMarks =>
         marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
-      setOwnMarks((held) => fits(held) ? fillMark(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
+      setOwnMarks((held) => fits(held) ? (reread ? withMark : fillMark)(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
       return withMark(fits(current) ? current : fresh, need, read)
     } catch (error) {
       logger.error('Engagement: the viewer\'s marks could not be read:', error)
@@ -253,6 +256,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       // v11: a tombstone that clears the quote, freeing the slot for a redo.
       if (!(await postService.deleteOwnPost(quote.id, viewerId))) throw new Error('Repost operation failed')
       patchMarks(base, { reposted: false, ownQuote: undefined })
+      slotWrites.record(viewerId, postId, null)
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
       patchMarks(base, { reposted: true, ownQuote: quote })
@@ -265,19 +269,20 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       writesRef.current -= 1
       setRepostLoading(false)
     }
-  }, [viewerId, current, patchMarks])
+  }, [viewerId, current, patchMarks, postId])
 
   /**
-   * v10 Quote: the marks that say whether the quote slot is free, read now
-   * when unknown. It holds the slot (on every card showing this post), so a
-   * Repost tapped meanwhile is ignored rather than deciding the slot from another read.
-   * Null when they cannot be read or a repost is under way.
+   * v10 Quote: the marks that say whether the quote slot is free, read afresh
+   * (with this tab's own slot writes in place) since another card may have
+   * taken or freed it. It holds the slot on every card showing this post, so
+   * a Repost tapped meanwhile is ignored rather than deciding the slot from
+   * another read. Null when they cannot be read or a repost is under way.
    */
   const checkQuoteSlot = useCallback(async (): Promise<KnownMarks | null> => {
     if (!viewerId || repostLoading) return null
     setRepostLoading(true)
     try {
-      return await quoteSlots.hold(`${viewerId}|${postId}`, () => resolveMarks('reposted'))
+      return await quoteSlots.hold(`${viewerId}|${postId}`, () => resolveMarks('reposted', true))
     } finally {
       setRepostLoading(false)
     }
@@ -336,7 +341,9 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       if (!wasReposted) await settle()
       if (repostsAreQuotes()) {
         // (Undo returned above: here the viewer is reposting.)
-        patchMarks(before, { reposted: true, ownQuote: await createBareRepost(post, viewerId) })
+        const repost = await createBareRepost(post, viewerId)
+        slotWrites.record(viewerId, postId, repost)
+        patchMarks(before, { reposted: true, ownQuote: repost })
         toast.success('Reposted')
         return null
       }
@@ -355,6 +362,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           logger.error('Repost: the viewer\'s quote or repost could not be read:', lookupError)
           return null
         })
+        if (existing) slotWrites.record(viewerId, postId, existing)
         if (existing?.bare) {
           // Their own earlier repost landed (a double click, or a lost ack):
           // that is the repost they asked for.

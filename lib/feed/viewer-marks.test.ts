@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KindedTarget } from '@/lib/contract-topology'
 import { bumpSessionGeneration, sessionGeneration } from '@/lib/auth/session-generation'
-import { createMarksLoader, createSlotLock, fillMark, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
+import { createMarksLoader, createSlotLock, createSlotWrites, fillMark, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
 
 const unmarked: Marks = { liked: false, reposted: false, bookmarked: false }
 
@@ -170,5 +170,30 @@ describe('createSlotLock', () => {
     const slots = createSlotLock()
     await expect(slots.hold('k', async () => { throw new Error('read failed') })).rejects.toThrow('read failed')
     expect(await slots.hold('k', async () => 'ok')).toBe('ok')
+  })
+})
+
+describe('createSlotWrites', () => {
+  it('shows a repost made on one card to another card whose marks still say the slot is free', () => {
+    let session = 1
+    const writes = createSlotWrites(() => session)
+    const latestStaleRead = { reposted: false }
+    expect(writes.apply('alice', 'p1', latestStaleRead)).toBe(latestStaleRead)
+
+    // Top reposts and its write finishes before Latest's Quote is tapped.
+    writes.record('alice', 'p1', { id: 'r', bare: true })
+    const latest = withMark(withMark(noMarksRead('alice', 1), 'reposted', latestStaleRead), 'reposted', writes.apply('alice', 'p1', latestStaleRead))
+    expect(latest.reposted).toBe(true)
+    expect(latest.ownQuote).toEqual({ id: 'r', bare: true })
+    // Other posts and viewers are untouched; undoing frees the slot again.
+    expect(writes.apply('alice', 'p2', latestStaleRead)).toBe(latestStaleRead)
+    expect(writes.apply('bob', 'p1', latestStaleRead)).toBe(latestStaleRead)
+    writes.record('alice', 'p1', null)
+    expect(writes.apply('alice', 'p1', { reposted: true, ownQuote: { id: 'r', bare: true } })).toEqual({ reposted: false })
+
+    // A new session (sign-out and back in) reads the chain again.
+    writes.record('alice', 'p1', { id: 'r2', bare: true })
+    session = 2
+    expect(writes.apply('alice', 'p1', latestStaleRead)).toBe(latestStaleRead)
   })
 })
