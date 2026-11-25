@@ -549,7 +549,7 @@ function PostCardView({
       // A late answer is dropped when the session or the composer changed meanwhile.
       const sameSession = sessionGuard()
       const sameCompose = composeGuard(useAppStore.getState)
-      const marks = await engagement.resolveMarks('reposted')
+      const marks = await engagement.checkQuoteSlot()
       if (!marks || !sameSession() || !sameCompose()) return
       if (marks.reposted && (!marks.ownQuote || marks.ownQuote.bare)) return
       held = marks.reposted ? marks.ownQuote ?? null : null

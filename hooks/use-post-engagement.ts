@@ -12,7 +12,7 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 import { sessionGeneration } from '@/lib/auth/session-generation'
-import { knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
+import { fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
   likes: number
@@ -165,8 +165,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       try {
         const read = await readMarks(viewerId)
         // Marks another tap read or wrote meanwhile stay; the read only fills those still unread.
-        setOwnMarks((held) => held && held.unread && sameMarks(held, read)
-          ? held.unread.reduce((marks, name) => withMark(marks, name, read), held)
+        setOwnMarks((held) => sameMarks(held, read)
+          ? (held.unread ?? []).reduce((marks, name) => withMark(marks, name, read), held)
           : read)
         return read
       } catch (error) {
@@ -180,7 +180,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
       const fits = (marks: KnownMarks | null): marks is KnownMarks =>
         marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
-      setOwnMarks((held) => fits(held) ? withMark(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
+      setOwnMarks((held) => fits(held) ? fillMark(held, need, read) : sessionGeneration() === session ? withMark(fresh, need, read) : held)
       return withMark(fits(current) ? current : fresh, need, read)
     } catch (error) {
       logger.error('Engagement: the viewer\'s marks could not be read:', error)
@@ -265,6 +265,25 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [viewerId, current, patchMarks])
 
   /**
+   * v10 Quote: the marks that say whether the quote slot is free, read now
+   * when unknown. Repost waits meanwhile, so the two never decide the one
+   * slot from different reads. Null when they cannot be read or a repost is
+   * under way.
+   */
+  const quoteCheckRef = useRef(false)
+  const checkQuoteSlot = useCallback(async (): Promise<KnownMarks | null> => {
+    if (repostLoading || quoteCheckRef.current) return null
+    quoteCheckRef.current = true
+    setRepostLoading(true)
+    try {
+      return await resolveMarks('reposted')
+    } finally {
+      quoteCheckRef.current = false
+      setRepostLoading(false)
+    }
+  }, [repostLoading, resolveMarks])
+
+  /**
    * Repost, or undo the viewer's repost. On v10 undo deletes the viewer's
    * quote post; one WITH text is never deleted here but returned, for the
    * caller to confirm and then pass to {@link removeOwnQuote}. Resolves null
@@ -273,7 +292,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const toggleRepost = useCallback(async (): Promise<OwnQuote | null> => {
     // The topology may forbid reposting this kind (v9 replies); this guard, not
     // the action row, enforces it.
-    if (!viewerId || !repostable || repostLoading) return null
+    if (!viewerId || !repostable || repostLoading || quoteCheckRef.current) return null
     setRepostLoading(true)
     const shown = current
     let before: KnownMarks | null
@@ -403,7 +422,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     toggleRepost,
     removeOwnQuote,
     toggleBookmark,
-    /** The marks for a write of one mark, read now when unknown; null (after a toast) when it cannot be read. */
-    resolveMarks,
+    checkQuoteSlot,
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KindedTarget } from '@/lib/contract-topology'
 import { bumpSessionGeneration, sessionGeneration } from '@/lib/auth/session-generation'
-import { createMarksLoader, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
+import { createMarksLoader, fillMark, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
 
 const unmarked: Marks = { liked: false, reposted: false, bookmarked: false }
 
@@ -133,6 +133,15 @@ describe('marks read one at a time', () => {
     expect(knowsMark(liked, 'liked')).toBe(true)
     expect(knowsMark(liked, 'bookmarked')).toBe(false)
     expect(knowsMark(null, 'liked')).toBe(false)
+  })
+
+  it('keeps a mark a newer read or write set when an older read lands after it', () => {
+    const unknown = noMarksRead('alice', 1)
+    // Repost's read and write land first and take the slot; Quote's earlier empty read lands late.
+    const reposted = withMark(unknown, 'reposted', { reposted: true, ownQuote: { id: 'r', bare: true } })
+    expect(fillMark(reposted, 'reposted', { reposted: false })).toBe(reposted)
+    expect(fillMark(unknown, 'reposted', { reposted: false }).reposted).toBe(false)
+    expect(knowsMark(fillMark(unknown, 'reposted', { reposted: false }), 'reposted')).toBe(true)
   })
 
   it('becomes fully known once every mark is read, with the repost\'s quote', () => {

@@ -62,6 +62,11 @@ export function withMark<T extends SomeMarks>(base: T, name: MarkName, read: Par
   return next
 }
 
+/** `held` with `name` filled from a late read, unless a newer read or write already set it. */
+export function fillMark<T extends SomeMarks>(held: T, name: MarkName, read: Partial<Marks>): T {
+  return knowsMark(held, name) ? held : withMark(held, name, read)
+}
+
 /** Marks a read found, keyed by target id. A target missing from the map was not read. */
 export type MarksReader = (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, Marks>>
 
