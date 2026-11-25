@@ -164,7 +164,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     if (!current) {
       try {
         const read = await readMarks(viewerId)
-        setOwnMarks(read)
+        // Marks another tap read or wrote meanwhile stay; the read only fills those still unread.
+        setOwnMarks((held) => held && held.unread && sameMarks(held, read)
+          ? held.unread.reduce((marks, name) => withMark(marks, name, read), held)
+          : read)
         return read
       } catch (error) {
         logger.warn('Engagement: the viewer\'s marks could not all be read; reading just the one this needs', error)
