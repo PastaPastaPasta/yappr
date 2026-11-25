@@ -2,9 +2,9 @@ import type { APIRequestContext } from '@playwright/test'
 import { appUrl } from './app'
 
 /**
- * The Next.js build id is embedded in the RSC flight payload inside every
- * exported page, with the quotes escaped. next.config.js sets it from
- * `git rev-parse --short HEAD` — the same source as
+ * app/layout.tsx embeds `{"buildId":"…"}` in every exported page (the
+ * `yappr-build` JSON script). next.config.js sets the build id from
+ * `git rev-parse --short HEAD`, the same source as
  * `NEXT_PUBLIC_GIT_COMMIT_HASH`, which the settings page renders.
  */
 const BUILD_ID_PATTERN = /\\?"buildId\\?":\\?"([^"\\]+)/

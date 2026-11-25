@@ -93,6 +93,8 @@ it('validates loaded subpath bundles and buildId against trusted expectations', 
 it('discovers independently hashed mirror lazy chunks without executing JavaScript', async () => {
   const source = 'w.u=function(e){return 42===e?"static/chunks/42-abc.js":"static/chunks/"+e+"."+({1795:"48762af95e1437d0"})[e]+".js"},w.miniCssF=function(e){}';
   expect(lazyChunks(source)).toEqual(['static/chunks/42-abc.js', 'static/chunks/1795.48762af95e1437d0.js']);
+  const arrow = 'u.u=e=>42===e?"static/chunks/42-abc.js":"static/chunks/"+(({277:"54a60aa6"})[e]||e)+"."+({277:"fd597ce659f2c58d",1795:"48762af95e1437d0"})[e]+".js",u.miniCssF=e=>{}';
+  expect(lazyChunks(arrow)).toEqual(['static/chunks/42-abc.js', 'static/chunks/54a60aa6.fd597ce659f2c58d.js', 'static/chunks/1795.48762af95e1437d0.js']);
   const html = metadata({ NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }) + '<script src="/_next/static/chunks/webpack-own.js"></script><script>"buildId":"abc1234"</script>';
   vi.stubGlobal('fetch', vi.fn(async url => new Response(String(url).endsWith('webpack-own.js') ? source : String(url).endsWith('.js') ? id : html)));
   await expect(smokeSite({ name: 'mirror', url: 'https://yappr.pages.dev/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] }, bundlePaths: ['/_next/static/chunks/other-provider-404.js'] })).resolves.toContain('1 contract ids');

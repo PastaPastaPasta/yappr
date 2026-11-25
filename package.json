@@ -16,7 +16,7 @@
     "contracts:snapshot": "node scripts/snapshot-contracts.mjs",
     "brand": "node scripts/brand-assets.mjs",
     "start": "next start",
-    "lint": "eslint --ext .js,.jsx,.mjs,.cjs,.ts,.tsx app components contexts hooks lib types --max-warnings 0",
+    "lint": "eslint --ext .js,.jsx,.mjs,.cjs,.ts,.mts,.cts,.tsx app components contexts hooks lib types --max-warnings 0",
     "lint:dead": "knip",
     "test": "vitest run",
     "test:watch": "vitest",
