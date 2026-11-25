@@ -8,7 +8,7 @@ import { staticNotFound } from './write-static-404.mjs'
 
 function visit(base, pathname, search = '', hash = '') {
   const redirects = []
-  const links = { home: {}, explore: {} }
+  const links = { home: {}, explore: {}, code: {}, title: {}, detail: {} }
   const html = staticNotFound(base)
   const location = { pathname, search, hash, replace: (url) => redirects.push(url) }
   for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
@@ -33,14 +33,19 @@ describe('GitHub Pages shared root 404', () => {
     expect(destination.html).toContain(`href="${prefix}/explore/"`)
   })
   it.each([
-    ['/devnet', '', '/staging/'],
-    ['/devnet/', '', '/staging/'],
-    ['/devnet/terms', '', '/staging/terms'],
-    ['/devnet/privacy/', '', '/staging/privacy/'],
-    ['/devnet/connect/', '?r=ab12&app=yappr-dev&ac=ok', '/staging/connect/?r=ab12&app=yappr-dev&ac=ok'],
-  ])('forwards the retired %s%s to /staging', (pathname, search, target) => {
-    expect(visit('', pathname, search).redirects).toEqual([target])
+    ['/devnet/connect', ''],
+    ['/devnet/connect/', '?r=ab12&app=yappr-dev&ac=ok'],
+  ])('forwards the retired %s%s App Connect return to the /staging bridge', (pathname, search) => {
+    expect(visit('', pathname, search, '#x').redirects).toEqual([`/staging/connect/${search}#x`])
     expect(visit('/staging', pathname, search).redirects).toEqual([])
+  })
+  it.each(['/devnet', '/devnet/', '/devnet/terms', '/devnet/privacy/', '/devnet/post', '/devnet/connector'])('says Yappr Dev is retired on %s without leaving the page', (pathname) => {
+    const { redirects, links } = visit('', pathname, '?id=postId')
+    expect(redirects).toEqual([])
+    expect(links.title.textContent).toBe('Yappr Dev has been retired')
+    expect(links.detail.textContent).toContain('devnet')
+    expect(links.home).toEqual({ href: '/staging/terms/', textContent: 'Terms' })
+    expect(links.explore).toEqual({ href: '/staging/privacy/', textContent: 'Privacy' })
   })
   it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/', '/betamax/'])('keeps root unknown routes at root: %s', (pathname) => {
     const root = visit('', pathname)

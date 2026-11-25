@@ -52,10 +52,16 @@ exports under `/devnet` into `out/`; nothing deploys it). They need a live
 devnet whose contracts and bot pool match `.env.devnet`, and a dedicated seed in
 `E2E_DEVNET_SEED_PHRASE` (gitignored `.env.local`). Playwright does not load
 `.env.local`, and the write specs read only `E2E_SEED_PHRASE`, so export the
-devnet seed under that name in the shell that runs them, from its private
-file and without echoing it (for example
-`export E2E_SEED_PHRASE="$(cat /path/to/devnet-seed.txt)"`); without it the
-write specs skip. Never reuse the testnet seed for a devnet pool.
+devnet seed under that name in the shell that runs them. This reads it from
+the environment or `.env.local` without echoing it, and exports nothing when
+it is missing or fails its checksum:
+
+```bash
+E2E_SEED_PHRASE="$(node --input-type=module -e "import { loadMnemonic } from './scripts/derive-identities.mjs'; process.stdout.write(loadMnemonic('E2E_DEVNET_SEED_PHRASE'))")" \
+  && export E2E_SEED_PHRASE || unset E2E_SEED_PHRASE
+```
+
+Without it the write specs skip. Never reuse the testnet seed for a devnet pool.
 
 After a devnet reset, provision the bot pool in derivation-index order and
 update only the public `E2E_IDENTITY_IDS` in `.env.devnet`. Verify that each
@@ -363,7 +369,7 @@ cleanup refuses the maker and the contract owner outright.
   `prove-merged-counts` and `measure-social-fees` need nothing:
   their writes land on a throwaway contract the app never reads.
 - **The devnet specs** do not clean up after themselves. Record the start
-  time before a local write run (`STARTED=$(date +%s%3N)`) and pass it as
+  time before a local write run (`STARTED=$(node -p 'Date.now()')`) and pass it as
   `--since "$STARTED"` to both spec-pool commands below, so the cleanup takes
   only that run's posts and replies.
 
