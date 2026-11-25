@@ -63,6 +63,7 @@ export default function RootLayout({
       <head>
         <SdkWasmPreload />
         <meta name="yappr-contract-config" content={JSON.stringify(monitoringContractConfig)} />
+        <script id="yappr-build" type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ buildId: process.env.NEXT_PUBLIC_GIT_COMMIT_HASH }) }} />
         <meta
           httpEquiv="Content-Security-Policy"
           content={`default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src ${IMG_SRC}; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https: wss: https://44.240.98.102:1443; worker-src 'self' blob:; child-src 'self' blob:; media-src ${MEDIA_SRC}; frame-src 'self' blob: https://www.youtube-nocookie.com https://www.youtube.com`}

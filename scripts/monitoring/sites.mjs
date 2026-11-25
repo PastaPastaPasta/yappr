@@ -8,9 +8,11 @@ export async function fetchText(url, signal) {
 
 // Parse webpack's static lazy-chunk filename table as data, never execute it.
 export function lazyChunks(source) {
-  const resolver = /\.u=function\([^)]*\)\{([\s\S]*?)\},[\w$]+\.miniCssF/.exec(source)?.[1] ?? '';
+  const match = /\.u=(?:function\([^)]*\)\{([\s\S]*?)\}|[\w$]+=>([\s\S]*?)),[\w$]+\.miniCssF/.exec(source);
+  const resolver = match?.[1] ?? match?.[2] ?? '';
   const literals = [...resolver.matchAll(/"(static\/chunks\/[\w./-]+\.js)"/g)].map(match => match[1]);
-  const hashed = [...resolver.matchAll(/(?:[,{])(\d+):"([a-f0-9]{16})"/g)].map(match => `static/chunks/${match[1]}.${match[2]}.js`);
+  const names = new Map([...resolver.matchAll(/(?:[,{])(\d+):"([a-f0-9]{8})"/g)].map(match => [match[1], match[2]]));
+  const hashed = [...resolver.matchAll(/(?:[,{])(\d+):"([a-f0-9]{16})"/g)].map(match => `static/chunks/${names.get(match[1]) ?? match[1]}.${match[2]}.js`);
   return [...new Set([...literals, ...hashed])];
 }
 

@@ -225,7 +225,11 @@ and no chunk contained the release social id. The project therefore does not
 run this repository's `npm run build`, or its env overrides win. Set its build
 command to `npm run build` (Node 20.12 or later), remove the dashboard
 `NEXT_PUBLIC_*` overrides, and check a preview's metadata before merging
-staging into master.
+staging into master. Since Next.js 16 this is required for the build to
+work at all: a plain `next build` defaults to Turbopack and stops on the webpack
+config, so only `npm run build` (or `next build --webpack` outside a release)
+builds. Tracked in
+[#989](https://github.com/PastaPastaPasta/yappr/issues/989).
 
 ## Cut-over record (2026-11-12)
 

@@ -29,7 +29,7 @@ try {
   console.error(error.message)
   process.exit(1)
 }
-const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modules/next/dist/bin/next', import.meta.url)), 'build'], {
+const result = spawnSync(process.execPath, [fileURLToPath(new URL('../node_modules/next/dist/bin/next', import.meta.url)), 'build', '--webpack'], {
   cwd: root, env, stdio: 'inherit',
 })
 if (result.error) console.error(result.error.message)

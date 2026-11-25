@@ -44,7 +44,7 @@ The `/moderation-log` page. It is a static route (query parameters only), not li
 
 ## Building one
 
-An archival frontend is a normal `next build` of this repository with its own env file. `npm run build` is the **release** build: it loads `.env.testnet` only, ignores the shell and refuses the flags, so use `next build` directly.
+An archival frontend is a normal `next build` of this repository with its own env file. `npm run build` is the **release** build: it loads `.env.testnet` only, ignores the shell and refuses the flags, so use `next build --webpack` directly.
 
 1. Copy the env file of the network you want to read (`.env.testnet`, or `.env.devnet` for a devnet) to a file of your own, for example `.env.archive`.
 2. Point it at the v18 set. The contract ids come from the activation PR that registered social v18, blog v10 and storefront v11 in the App Connect group; until then only a devnet copy of the set has them:
@@ -75,7 +75,7 @@ An archival frontend is a normal `next build` of this repository with its own en
 6. Build and publish the static export (`out/`):
 
    ```sh
-   set -a && . ./.env.archive && set +a && next build && node scripts/write-static-404.mjs out /archive
+   set -a && . ./.env.archive && set +a && next build --webpack && node scripts/write-static-404.mjs out /archive
    ```
 
    Leave `BASE_PATH` empty and drop the last argument when you host it at the root of its own domain.
