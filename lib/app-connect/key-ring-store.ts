@@ -1,5 +1,5 @@
 import type { AppConnectSession } from 'platform-auth'
-import { bytesToHex } from '@/lib/bytes'
+import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { toArrayBuffer } from '@/lib/crypto/aes-gcm'
 
 /**
@@ -221,6 +221,29 @@ export class AppConnectKeyRingStore {
 
   async deleteSecret(network: string, name: string): Promise<void> {
     await this.backend.delete(secretKey(network, name))
+  }
+
+  /**
+   * Deletes the secret only when `predicate` holds for its plaintext and the
+   * stored copy is still the one it read, so a secret another tab saved
+   * meanwhile stays. Nothing stored: false, no call. True when it deleted.
+   */
+  async deleteSecretIf(network: string, name: string, predicate: (plaintext: Uint8Array) => boolean): Promise<boolean> {
+    const key = secretKey(network, name)
+    const wrapped = await this.backend.get<WrappedBytes>(key)
+    if (!wrapped) return false
+    const plaintext = await this.unwrap(wrapped, `yappr:app-connect:secret:v1|${network}|${name}`)
+    if (!plaintext) return false
+    try {
+      if (!predicate(plaintext)) return false
+    } finally {
+      plaintext.fill(0)
+    }
+    // Each wrap has a fresh IV, so the IV names the copy that was read.
+    return this.backend.deleteIf(key, (value) => {
+      const iv = (value as Partial<WrappedBytes> | null)?.iv
+      return iv instanceof Uint8Array && bytesEqual(iv, wrapped.iv)
+    })
   }
 }
 

@@ -81,41 +81,31 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
     },
     async clear(record) {
       // Only if it is still ours: another tab may have stored a newer request in this slot.
-      await inOrder(async () => {
-        const network = appConnectSessions.network()
-        const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
-        if (!bytes) return
+      await inOrder(() => appConnectSessions.keyStore().deleteSecretIf(appConnectSessions.network(), secretName, (bytes) => {
         let stored: unknown = null
         try {
           stored = JSON.parse(decoder.decode(bytes))
         } catch {
           // Unreadable: not a request anyone can resume, so it may go.
-        } finally {
-          bytes.fill(0)
         }
-        const storedKey = (stored as { ephemeralPrivateKey?: unknown } | null)?.ephemeralPrivateKey
-        if (stored === null || storedKey === record.ephemeralPrivateKey) {
-          await appConnectSessions.keyStore().deleteSecret(network, secretName)
-        }
-      })
+        return stored === null || (stored as { ephemeralPrivateKey?: unknown }).ephemeralPrivateKey === record.ephemeralPrivateKey
+      }))
     },
     take(record) {
       return inOrder(async () => {
-        const network = appConnectSessions.network()
-        const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
-        if (!bytes) return false
-        let stored: StoredAppConnectRequest | null = null
-        try {
-          stored = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
-        } catch {
-          // Unreadable: not this request.
-        } finally {
-          bytes.fill(0)
-        }
-        const ours = stored?.ephemeralPrivateKey === record.ephemeralPrivateKey
-        // Ours, or stale or unreadable: either way of no use to anyone now.
-        if (ours || !stored) await appConnectSessions.keyStore().deleteSecret(network, secretName)
-        return ours
+        let ours = false
+        const deleted = await appConnectSessions.keyStore().deleteSecretIf(appConnectSessions.network(), secretName, (bytes) => {
+          let stored: StoredAppConnectRequest | null = null
+          try {
+            stored = parseStoredRequest(JSON.parse(decoder.decode(bytes)), Date.now())
+          } catch {
+            // Unreadable: not this request.
+          }
+          ours = stored?.ephemeralPrivateKey === record.ephemeralPrivateKey
+          // Ours, or stale or unreadable: either way of no use to anyone now.
+          return ours || !stored
+        })
+        return ours && deleted
       })
     },
   }
