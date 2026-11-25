@@ -192,6 +192,12 @@ keys are stored under that identity's ID.
 | Add as DashPay contact | `dashpay://user?id=<identity>&username=<name>` | iOS parses it (`DashPayUserLink.swift`); Android unverified (W6) | None needed |
 | Top up credits | None today | — | W5; fallback: "Open DashPay" plus instructions |
 
+The **`dash-st:` payload** is a tagged state transition
+(`StateTransition.toBytes()`, the standard DPP framing) for every kind, so a
+wallet decodes it with `StateTransition.fromBytes`. Links built before #612
+carried a key registration as a bare `IdentityUpdateTransition`; platform-wallet's
+decoder and Yappr's test-wallet responder still accept that form.
+
 The **`dash-st:` nonce trap:** an unsigned transition embeds a nonce, and
 anything else that uses the same nonce in the meantime makes it stale. The
 1.0 uses are `IdentityUpdate`s, which take the **identity** nonce; Yappr's own

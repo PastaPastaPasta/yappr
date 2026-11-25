@@ -94,7 +94,7 @@ describe('dash-st: IdentityUpdate', () => {
   it('parses the web encoding, signs with MASTER keyId 0, and the signature verifies', async () => {
     const unsigned = unsignedUpdate()
     const unsignedSignable = bytesToHex(unsigned.toStateTransition().getSignableBytes())
-    const uri = buildYapprStateTransitionUri(unsigned.toBytes(), 'devnet')
+    const uri = buildYapprStateTransitionUri(unsigned.toStateTransition().toBytes(), 'devnet')
     const { ports, broadcasts } = capturingPorts()
 
     const result = await respond({ uri, persona: testPersona() }, ports)
@@ -116,8 +116,8 @@ describe('dash-st: IdentityUpdate', () => {
     expect(bytesToHex(recoverSigner(signed))).toBe(bytesToHex(MASTER_PUBLIC_KEY))
   })
 
-  it('also accepts a StateTransition-encoded payload', async () => {
-    const uri = buildYapprStateTransitionUri(unsignedUpdate().toStateTransition().toBytes(), 'devnet')
+  it('still accepts an untagged IdentityUpdate, as links built before #612 carry', async () => {
+    const uri = buildYapprStateTransitionUri(unsignedUpdate().toBytes(), 'devnet')
     const { ports, broadcasts } = capturingPorts()
     await respond({ uri, persona: testPersona() }, ports)
     expect(bytesToHex(recoverSigner(StateTransition.fromBytes(broadcasts[0])))).toBe(bytesToHex(MASTER_PUBLIC_KEY))
