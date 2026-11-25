@@ -79,7 +79,7 @@ export function readEnvFile(path) {
 
 /**
  * Reads the BIP39 mnemonic from `variable` (default `E2E_SEED_PHRASE`; the
- * devnet CI pool's is `E2E_DEVNET_SEED_PHRASE`), falling back to `.env.local`.
+ * devnet spec pool's is `E2E_DEVNET_SEED_PHRASE`), falling back to `.env.local`.
  * Throws if it is missing or fails the checksum — never echoes the value.
  */
 export function loadMnemonic(variable = 'E2E_SEED_PHRASE') {

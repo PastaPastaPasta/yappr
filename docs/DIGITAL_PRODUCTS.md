@@ -1,7 +1,7 @@
 # Digital products (storefront v6)
 
-Deployment scope: the planned release uses storefront **v10**; current
-`/devnet` uses **v9**, while production defaults still select the old v1
+Deployment scope: the planned release uses storefront **v10**; `.env.devnet`
+(local devnet builds; the `/devnet` site is retired) uses **v9**, while production defaults still select the old v1
 contract. [NON_SOCIAL_CONTRACTS.md](NON_SOCIAL_CONTRACTS.md) distinguishes
 these deployments. Store, listing and review takedowns use the storefront's
 own elected moderation team; the old “no moderator takedown” limitation no

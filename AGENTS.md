@@ -188,8 +188,11 @@ rehearsal copy runs at `/beta`, and they are not part of the mainnet set
 social **v2**, DM **v3**, the old feature contracts and legacy login, and
 `/testing` still runs v2 through the `lib/constants.ts` defaults.
 `.env.devnet` selects Sakura **social v16**, blog **v8**, storefront **v9**,
-pollr **v7**, DM **v5** and App Connect. Keep paths used by any current build
-until the legacy cleanup (WP17) removes them.
+pollr **v7**, DM **v5** and App Connect; it feeds local devnet builds
+(`npm run build:devnet`) and the mobile devnet variant only. The `/devnet` site
+and the devnet E2E CI job were retired on 2026-11-25 (devnet-sakura is gone);
+the devnet-only specs now run locally only. Keep paths used by any current build until
+the legacy cleanup (WP17) removes them.
 The legacy v2 schema still has 500-character posts, a standalone profile,
 and `postHashtag`/`postMention` discovery documents.
 See [contracts/README.md](contracts/README.md),
@@ -210,7 +213,7 @@ notification document. Exact feature and index support goes through
 them. Never add system ownership fields to document content.
 
 Superseded topology designs and deployment experiments live in
-[docs/archive](docs/archive/README.md). Current `/devnet` v16, the registered
+[docs/archive](docs/archive/README.md). The devnet v16, the registered
 v17, experimental v18, registered release v19 and v20 documentation remain outside that archive.
 
 ### DPNS Integration

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { contractPins, contractRoles, readNetwork, schemaHash, siteNetwork, siteTopologies, thresholds } from './config.mjs';
+import { contractPins, contractRoles, readNetwork, schemaHash, siteTopologies, thresholds } from './config.mjs';
 import { incidentPlan } from './incident-plan.mjs';
 import { activityFilters, checkFresh, checkAppConnectGroup, countActivity } from './chain.mjs';
 import { lazyChunks, smokeSite } from './sites.mjs';
@@ -57,7 +57,7 @@ it('updates incidents by stable title, closes duplicates on recovery, and never 
   expect(incidentPlan([{ key: 'site/production', status: 'fail' }], existing)[0]).toMatchObject({ action: 'update', issues: existing });
   expect(incidentPlan([{ key: 'site/production', status: 'pass' }], existing)[0].action).toBe('close');
   expect(incidentPlan([{ key: 'site/production', status: 'skip' }], existing)).toEqual([]);
-  expect(incidentPlan([{ key: 'chain/devnet', status: 'fail' }], existing)[0].action).toBe('open');
+  expect(incidentPlan([{ key: 'chain/staging', status: 'fail' }], existing)[0].action).toBe('open');
 });
 
 it('rejects stale proofs and old protocol data', () => {
@@ -123,14 +123,14 @@ it('rejects a wrong active role even when a snapshot bundle contains the expecte
   await expect(smokeSite({ url: 'https://yap.pr/', buildId: 'abc1234', config: { env: { NEXT_PUBLIC_YAPPR_CONTRACT_ID: id }, pins: [{ id }] } })).rejects.toThrow('Active NEXT_PUBLIC_YAPPR_CONTRACT_ID: wrong-active-id');
 });
 
-it.each(['testing', 'devnet', 'staging'])('exposes every configured role for the %s build, including disabled and auxiliary registrations', async name => {
+it.each(['testing', 'staging'])('exposes every configured role for the %s build, including disabled and auxiliary registrations', async name => {
   const config = readNetwork(process.cwd(), name);
   try {
     vi.resetModules();
     for (const [key, value] of Object.entries(config.env)) vi.stubEnv(key, value);
     const { monitoringContractConfig } = await import('../../lib/monitoring-contract-config');
     expect(monitoringContractConfig.$topologies).toEqual(siteTopologies(config.env));
-    expect(monitoringContractConfig.$network).toEqual(siteNetwork(config.env, config.network));
+    expect(monitoringContractConfig.$network).toEqual({ network: config.network });
     expect(contractRoles(monitoringContractConfig)).toMatchObject(contractRoles(config.env));
   } finally { vi.unstubAllEnvs(); }
 });

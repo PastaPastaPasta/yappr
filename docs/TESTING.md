@@ -42,34 +42,31 @@ Because `.env.testing` only holds public data (contract IDs, identity IDs) it is
 checked in. Private key material — the seed phrase — lives in the gitignored
 `.env.local` and in the `E2E_SEED_PHRASE` GitHub Actions secret, never here.
 
-### Devnet CI credentials
+### Devnet specs (local only)
 
-The devnet topology job builds `.env.devnet` and uses the separate GitHub Actions
-secret `E2E_DEVNET_SEED_PHRASE`. The workflow maps it to the fixture's runtime
-`E2E_SEED_PHRASE` variable. Testnet continues to use the existing
-`E2E_SEED_PHRASE` secret and `.env.testing` identity pool.
+The devnet E2E CI job and the `/devnet` site are retired: devnet-sakura is gone.
+No CI job replaces it, so the devnet-only specs (topology, DM v5, storefront
+variants, username entry) have no CI coverage until they are pointed at a
+modern testnet set; they remain and run locally against a devnet build (`npm run build:devnet`, which reads `.env.devnet` and
+exports under `/devnet` into `out/`; nothing deploys it). They need a live
+devnet whose contracts and bot pool match `.env.devnet`, and a dedicated seed in
+`E2E_DEVNET_SEED_PHRASE` (gitignored `.env.local`), mapped to the fixture's
+runtime `E2E_SEED_PHRASE`. Never reuse the testnet seed for a devnet pool.
 
-After a devnet reset, retain a dedicated seed privately, provision the bot pool
-in derivation-index order, and update only the public `E2E_IDENTITY_IDS` in
-`.env.devnet`. Verify that each derived authentication key matches an enabled
-key on its registered identity before running write tests. Fund the identities'
-credits and YAPP balances separately from the contract maker. Never replace the
-testnet seed to repair devnet credentials.
+After a devnet reset, provision the bot pool in derivation-index order and
+update only the public `E2E_IDENTITY_IDS` in `.env.devnet`. Verify that each
+derived authentication key matches an enabled key on its registered identity
+before running write tests. Fund the identities' credits and YAPP balances
+separately from the contract maker. The SDK cannot connect without the
+devnet's quorum service (`NEXT_PUBLIC_QUORUM_URL` in `.env.devnet`, or
+`https://quorums.<NEXT_PUBLIC_DEVNET_NAME>.networks.dash.org` when that is
+empty), so check that it answers `/quorums` and `/previous` before a run.
 
-When the devnet's quorum service (`NEXT_PUBLIC_QUORUM_URL` in `.env.devnet`, or
-`https://quorums.<NEXT_PUBLIC_DEVNET_NAME>.networks.dash.org` when that is empty)
-does not answer `/quorums` and `/previous`, the job stops at "Check the devnet
-quorum service" with one error and runs no devnet spec: the SDK cannot connect
-without it, so every spec would only time out. The error alone does not say why.
-Check the URL and the devnet's entry on the network status page first; a
-temporary outage clears on a re-run. Re-provision as above only once the devnet
-is confirmed reset or retired.
-
-Publish a new dedicated secret from its private file, without printing the seed:
-
-```bash
-gh secret set E2E_DEVNET_SEED_PHRASE < /path/to/devnet-ci-mnemonic.txt
-```
+The SDK recovery smoke spec (`sdk-offline-recovery`) still runs in the testnet
+job, but it skips when testnet's endpoint pool survives ten failed reads. The
+devnet job was the only run with `E2E_REQUIRE_SDK_EXHAUSTION=1`, so CI no longer
+proves recovery after the pool is exhausted; set it locally on a configuration
+whose pool is small enough to exhaust.
 
 The DM v5 specs (`e2e/write/dm-v5-*.spec.ts`) need slots 1-8 of that pool:
 up to five identities talk to each other, each device on its own browser
@@ -77,9 +74,7 @@ context, and some also sign documents from Node (a squatted tag, a forged
 grant, bulk history). Every slot has the seed-derived ENCRYPTION key (key index 4) and a
 `yappr-dm-e2e-<n>` DPNS name the group pickers search for. Each file sets up
 what it needs (1:1 = 1-2, history = 5-6 with 1-2 as partners, groups = 1-5,
-recovery = 7-8), so a file can run alone. The CI devnet job runs the 1:1 and
-group files (non-blocking, like topology). The history file (a 120-message bulk
-write) and the recovery file (it deletes a bot's self-state) stay local-only:
+recovery = 7-8), so a file can run alone:
 
 ```bash
 npm run build:devnet
@@ -106,8 +101,8 @@ NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.d
 
 A wallet sign-in cannot be tapped through in these specs. The Node test-wallet responder in `mobile/tools/` answers an App Connect request the way a wallet does (see `mobile/tools/README.md`); `docs/PASSKEY_VAULT.md` describes the responder-driven flow the passkey spec uses.
 
-The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) is local-only
-too. Its seller creates a store (once per identity) and a variant listing from
+The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) runs the
+same way. Its seller creates a store (once per identity) and a variant listing from
 Node, with the action fees the app agrees to (the file's store and item fees). Its
 buyer then picks a combination, checks out, and the seller reads the order
 with its SKU. It uses pool slots 7 and 8. `E2E_STOREFRONT_SLOTS=<seller>,<buyer>`
@@ -119,17 +114,12 @@ E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
   npx playwright test --project=write --trace=off storefront-variants
 ```
 
-The devnet CI command disables Playwright traces because authentication fixture
-arguments include a private key. Screenshots and the HTML report remain available.
-This job is nonblocking: inspect the test results rather than treating the job's
-success status as proof that all tests passed.
+Pass `--trace=off` to these runs: authentication fixture arguments include a
+private key. Screenshots and the HTML report remain available.
 
 Runs share the bot identities, so two runs at once break each other: they take
 each other's identity nonces, pick the same next group number, and block or
-message bots the other run is asserting on. The CI job therefore holds the
-`devnet-e2e-shared-bots` concurrency group (one PR's run at a time). A local
-devnet write run must not overlap a CI devnet job either; check
-`gh run list --status in_progress` before starting one.
+message bots the other run is asserting on. Run one devnet write run at a time.
 
 ### Deployment
 
@@ -349,9 +339,9 @@ provisioning above. Until then the current /testing contracts cannot be reset.
 
 #### The social timeline
 
-The devnet has no test copy of the social contract: the /devnet site, the
-batteries and the devnet e2e job all use the published one, so a test post sits
-on Recent beside real people's. Test runs therefore take their posts and replies
+The devnet has no test copy of the social contract: the batteries and the
+devnet specs use the published one, so a test post sits on Recent beside real
+people's. Test runs therefore take their posts and replies
 down again, with the author's own delete. From social v11 a post or reply
 cannot be deleted; its author replaces it with a tombstone (`deleted: true`
 plus the fields the contract freezes: a post's tags, a reply's `rootPostId`,
@@ -368,15 +358,14 @@ cleanup refuses the maker and the contract owner outright.
   began, so two batteries must not share a bot at the same time.
   `prove-merged-counts` and `measure-social-fees` need nothing:
   their writes land on a throwaway contract the app never reads.
-- **The devnet e2e job** ends with an `if: always()` step that tombstones what
-  the CI pool wrote since the job started. It warns instead of failing; what a
-  failed cleanup left stays up until the command below is run by hand.
+- **The devnet specs** do not clean up after themselves; run the `--ci-pool`
+  command below after a local write run.
 
 To take test content down by hand (both commands are idempotent; `--plan`
 writes nothing and also reports who wrote the newest timeline posts):
 
 ```bash
-# CI pool (E2E_DEVNET_SEED_PHRASE, ids from .env.devnet)
+# Spec pool (E2E_DEVNET_SEED_PHRASE, ids from .env.devnet)
 NETWORK=devnet node scripts/clean-test-content.mjs --plan --ci-pool
 NETWORK=devnet node scripts/clean-test-content.mjs --live --ci-pool --since 2026-10-13T00:00:00Z
 
@@ -393,7 +382,7 @@ touches what is still live. The library behind both is
 #### Pollr, blog and storefront
 
 The feature batteries (`verify-pollr`, `verify-blog`, `verify-storefront`) act
-as seed-ledger personas on contracts the /devnet site lists. What each run
+as seed-ledger personas on the contracts `.env.devnet` lists. What each run
 leaves is handled per contract (`scripts/surface-cleanup.mjs`):
 
 - **pollr runs on a test contract.** A poll with a ballot can never be removed:
@@ -495,7 +484,7 @@ the banner) creates the profile.
   needs a username and would reopen the modal. `lib/auth/return-to.ts` accepts
   only an app-relative path starting with a single `/` (no `//`, scheme,
   backslash, whitespace or control characters), strips a leading base path
-  (`/testing`, `/devnet`), and never returns to `/dpns/register` or `/login`.
+  (`/testing`, `/staging`), and never returns to `/dpns/register` or `/login`.
 
 ### The DPNS gate respects `optional`
 

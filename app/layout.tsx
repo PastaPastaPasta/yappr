@@ -45,7 +45,8 @@ export const metadata: Metadata = {
     images: ['og-image.jpg'],
   },
   // Only the production build at the site root is indexed; /staging, /testing
-  // and /devnet are copies of it on other contracts (public/robots.txt too).
+  // and the other subpath builds are copies of it on other contracts
+  // (public/robots.txt too).
   robots: basePath ? { index: false, follow: false } : undefined,
 }
 

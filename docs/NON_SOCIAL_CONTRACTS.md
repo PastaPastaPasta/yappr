@@ -3,7 +3,7 @@
 The checked-in JSONs describe the **planned testnet release**, not every
 contract currently deployed. Platform SDK packages pin 5.0.0-rc.3 (PV14).
 The existing production default still uses its older testnet contracts;
-Sakura `/devnet` stays on beta.6 until release cut-over. Contract ids and pins
+The Sakura `/devnet` site was retired on 2026-11-25; `.env.devnet` keeps its set for local devnet builds. Contract ids and pins
 are deployment-specific: use `.env.devnet` for Sakura, `lib/constants.ts`
 for today's defaults, and [TESTNET_RELEASE.md](TESTNET_RELEASE.md) for the
 registration and configuration gates. Do not infer registration from a file's name.

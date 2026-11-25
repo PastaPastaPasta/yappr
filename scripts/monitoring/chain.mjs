@@ -126,7 +126,7 @@ async function main() {
     return;
   }
   const { env } = config;
-  const quorumUrl = env.NEXT_PUBLIC_QUORUM_URL || (config.network === 'devnet' ? `https://quorums.${env.NEXT_PUBLIC_DEVNET_NAME}.networks.dash.org` : 'https://quorums.testnet.networks.dash.org');
+  const quorumUrl = env.NEXT_PUBLIC_QUORUM_URL || 'https://quorums.testnet.networks.dash.org';
   let addresses = [...new Set((env.NEXT_PUBLIC_DAPI_ADDRESSES ?? '').split(',').map(address => address.trim()).filter(Boolean).map(address => new URL(address.includes('://') ? address : `https://${address}`).origin))];
   const discovery = await record('quorum', async () => {
     const list = JSON.parse(await fetchText(`${quorumUrl}/masternodes`));
@@ -141,7 +141,7 @@ async function main() {
   for (const address of addresses.slice(0, limits.NODE_SAMPLE)) {
     const start = Date.now();
     try {
-      const sdk = new EvoSDK({ network: config.network, trusted: true, addresses: [address], quorumUrl, ...(config.network === 'devnet' ? { devnetName: env.NEXT_PUBLIC_DEVNET_NAME } : {}), settings: { timeoutMs: 12000, connectTimeoutMs: 12000, retries: 0 } });
+      const sdk = new EvoSDK({ network: config.network, trusted: true, addresses: [address], quorumUrl, settings: { timeoutMs: 12000, connectTimeoutMs: 12000, retries: 0 } });
       await sdk.connect();
       // The system contract read ratchets rs-sdk's initial protocol floor.
       await sdk.contracts.fetch(DPNS);
@@ -222,7 +222,7 @@ async function main() {
     }
   }
   // Contract owners are the sponsors. Check all owners, including non-group contracts.
-  const pinnedMaker = env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER || env.DEVNET_MAKER_IDENTITY_ID || env.TESTNET_MAKER_IDENTITY_ID;
+  const pinnedMaker = env.NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER || env.TESTNET_MAKER_IDENTITY_ID;
   if (pinnedMaker) owners.add(pinnedMaker);
   for (const owner of owners) await record(`maker/${owner}`, async () => {
     const credits = await sdk.identities.balance(owner);

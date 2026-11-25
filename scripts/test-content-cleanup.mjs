@@ -24,12 +24,10 @@
  *
  * It takes everything an identity wrote since `since`, not only one run's
  * documents: two runs sharing a bot at once would clean each other's fixtures,
- * so a bot set runs one battery at a time (as the CI pool's concurrency group
- * already ensures for the e2e).
+ * so a bot set runs one battery or spec run at a time.
  *
- * Used by scripts/clean-test-content.mjs (the CLI and the devnet e2e job's
- * cleanup step) and by verify-v10's end-of-run cleanup (verify-lib
- * `runBattery`). Prints no key material.
+ * Used by scripts/clean-test-content.mjs (the CLI) and by verify-v10's
+ * end-of-run cleanup (verify-lib `runBattery`). Prints no key material.
  */
 import bs58 from 'bs58';
 import { Identifier } from '@dashevo/evo-sdk';
