@@ -228,7 +228,8 @@ command to `npm run build` (Node 20.12 or later), remove the dashboard
 staging into master. Since Next.js 16 this is required for the build to
 work at all: a plain `next build` defaults to Turbopack and stops on the webpack
 config, so only `npm run build` (or `next build --webpack` outside a release)
-builds.
+builds. Tracked in
+[#989](https://github.com/PastaPastaPasta/yappr/issues/989).
 
 ## Cut-over record (2026-11-12)
 
