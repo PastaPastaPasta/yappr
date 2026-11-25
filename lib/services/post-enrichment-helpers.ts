@@ -30,7 +30,7 @@ export function profileDataByOwnerId(profiles: readonly unknown[]): Map<string, 
 export async function enrichPostsBatch(
   posts: Post[],
   getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
-  getBatchUserInteractions: (targets: readonly KindedTarget[]) => Promise<Map<string, PostInteractionState>>,
+  getBatchUserInteractions: (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, PostInteractionState>>,
   currentUserId: string | null,
   supplied?: PreloadedEnrichment
 ): Promise<Post[]> {
@@ -53,7 +53,9 @@ export async function enrichPostsBatch(
       followStatusMap,
     ] = await Promise.all([
       getBatchPostStats(targets.filter(target => !preloaded.stats?.has(target.id))),
-      getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id))),
+      currentUserId
+        ? getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id)), currentUserId)
+        : Promise.resolve(new Map<string, PostInteractionState>()),
       identities,
       currentUserId
         ? blockService.checkBlockedBatch(currentUserId, authorIds)

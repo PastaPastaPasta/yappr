@@ -39,7 +39,7 @@ function HashtagPageContent() {
   const postingClosed = usePostingClosed()
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
 
-  const [loadedPosts, setPosts] = useState<Post[]>([])
+  const [loadedPosts, setLoadedPosts] = useState<Post[]>([])
   const posts = useWithoutBlockedAuthors(loadedPosts) ?? []
   const [isLoading, setIsLoading] = useState(true)
   const [hasMore, setHasMore] = useState(false)
@@ -70,7 +70,7 @@ function HashtagPageContent() {
     let cancelled = false
     loadedGeneration.current = null
     pendingPageGeneration.current = null
-    setPosts([])
+    setLoadedPosts([])
     setHasMore(false)
     setLastPostId(undefined)
     setIsLoadingMore(false)
@@ -99,7 +99,7 @@ function HashtagPageContent() {
           preloaded = page.preloaded
 
           if (fetchedPosts.length === 0) {
-            setPosts([])
+            setLoadedPosts([])
             setIsLoading(false)
             return
           }
@@ -109,7 +109,7 @@ function HashtagPageContent() {
           if (cancelled) return
 
           if (hashtagDocs.length === 0) {
-            setPosts([])
+            setLoadedPosts([])
             setIsLoading(false)
             return
           }
@@ -139,7 +139,7 @@ function HashtagPageContent() {
 
         if (cancelled) return
         loadedGeneration.current = generation
-        setPosts(enrichedPosts)
+        setLoadedPosts(enrichedPosts)
         if (hashtagsAreInline()) {
           // Advance using the raw page, including posts hidden by viewer filters.
           setLastPostId(fetchedPosts[fetchedPosts.length - 1]?.id)
@@ -147,7 +147,7 @@ function HashtagPageContent() {
         }
       } catch (error) {
         logger.error('Failed to load hashtag posts:', error)
-        if (!cancelled) setPosts([])
+        if (!cancelled) setLoadedPosts([])
       } finally {
         if (!cancelled) setIsLoading(false)
       }
@@ -181,7 +181,7 @@ function HashtagPageContent() {
         enriched = enriched.filter(post => !blocked.get(post.author.id))
       }
       if (loadGeneration.current !== generation) return
-      setPosts(current => {
+      setLoadedPosts(current => {
         const seen = new Set(current.map(post => post.id))
         return [...current, ...enriched.filter(post => !seen.has(post.id))]
       })

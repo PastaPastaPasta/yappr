@@ -1,5 +1,4 @@
 import { logger } from '@/lib/logger';
-import type { TtlMap } from '@/lib/caches/ttl-map';
 import {
   bookmarkIndexFor,
   groupByInteractionSurface,
@@ -9,7 +8,6 @@ import {
   type TargetKind,
 } from '@/lib/contract-topology';
 import type { OwnQuote } from '@/lib/feed/quote-reposts';
-import { moderationViewAll } from '@/lib/moderation-view';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -40,64 +38,6 @@ async function viewerReposts(currentUserId: string, ids: string[], kind: TargetK
 /** Reply-count roots of the reply targets that carry one (v10 pins them). */
 function rootsOf(targets: readonly KindedTarget[]): Map<string, string> {
   return new Map(targets.flatMap((target) => (target.rootPostId ? [[target.id, target.rootPostId] as const] : [])));
-}
-
-/**
- * Stats and interactions are cached and deduplicated per (surface, id): a `post`
- * id and a `reply` id are drawn from the same keyspace but, on the v9 topology,
- * are answered by different doctypes. A count read under the moderator view
- * sums every lane, so it is kept apart from the listed lane's.
- */
-function statsCacheKey(target: KindedTarget): string {
-  return `${target.kind}:${target.id}${moderationViewAll() ? ':all-lanes' : ''}`;
-}
-
-export async function fetchPostStats(
-  target: KindedTarget,
-  statsCache: TtlMap<string, PostStats>
-): Promise<PostStats> {
-  const { id: postId, kind } = target;
-  const cacheKey = statsCacheKey(target);
-  const cached = statsCache.get(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const [{ likeService }, { repostService }, { replyService }, { postService }] = await Promise.all([
-      import('./like-service'),
-      import('./repost-service'),
-      import('./reply-service'),
-      import('./post-service'),
-    ]);
-
-    const [likes, reposts, replies, quotes] = await Promise.all([
-      likeService.countLikes(postId, kind),
-      // No repost doctype to count: a v9 reply, and everything on v10, where a
-      // repost is a quote and the quote count below already holds it.
-      repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
-      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v9 a
-      // post counts its whole thread and a reply its direct children (v10 pins
-      // the reply's root). v9 counts include tombstones; v10 deletes leave the
-      // tree, so it is exact.
-      replyService.countReplies(postId, kind, target.rootPostId),
-      postService.countQuotes(postId, kind),
-    ]);
-
-    const stats: PostStats = {
-      postId,
-      likes,
-      reposts,
-      replies,
-      quotes,
-      views: 0,
-    };
-
-    statsCache.set(cacheKey, stats);
-
-    return stats;
-  } catch (error) {
-    logger.error('Error getting post stats:', error);
-    return { postId, likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 };
-  }
 }
 
 /**
@@ -189,7 +129,7 @@ export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Pro
           repostIndexFor(kind)
             ? repostService.countRepostsForPosts(ids)
             : Promise.resolve(new Map<string, number>()),
-          // Per-kind count tree — see fetchPostStats.
+          // Per-kind count tree: on v9 a post counts its whole thread and a reply its direct children.
           replyService.countRepliesForPosts(ids, kind, rootsOf(targets)),
           postService.countQuotesForPosts(ids, kind),
         ]);

@@ -329,7 +329,14 @@ export function PrivatePostContent({
 
   const readability = readabilityOf(state, isOwner)
   const viewerId = user?.identityId
+  // On a viewer change this runs before the reset above lands, with the previous
+  // viewer's state: skip that run so it is not saved as the new viewer's.
+  const readabilityViewerRef = useRef(viewerId)
   useEffect(() => {
+    if (readabilityViewerRef.current !== viewerId) {
+      readabilityViewerRef.current = viewerId
+      return
+    }
     if (readability === 'pending') return
     lastReadability.set(readabilityKey(post.id, viewerId), readability)
     onReadabilityChange?.(readability)

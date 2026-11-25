@@ -72,6 +72,8 @@ export interface ProgressiveEnrichment {
   stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
   /** The viewer's marks, with the viewer they were read for. */
   interactions: ViewerMarks | undefined
+  /** The list is still reading the viewer's marks for this card. */
+  marksPending?: boolean
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
   /** The viewer `isBlocked` and `isFollowing` were read for; unset when signed out or not read. */
@@ -109,6 +111,8 @@ interface PostCardProps {
    * they chose to hide those: post detail and threads never grow holes.
    */
   keepIfUnreadable?: boolean
+  /** A read already under way will bring the viewer's marks, so the card does not read them itself. */
+  marksPending?: boolean
 }
 
 /**
@@ -144,6 +148,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const { quotedPost, loading, unavailable, hidden: quoteHidden } = useQuotedPost(post)
   const [enriched, setEnriched] = useState<Post | null>(null)
+  const [enriching, setEnriching] = useState(false)
   const [removed, setRemoved] = useState(false)
   const [removing, setRemoving] = useState(false)
 
@@ -160,12 +165,16 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
     // A v11 tombstone renders as a stub (or not at all): no counts to read.
     if (!quotedId || !target || isHiddenTombstone(target)) return
     let current = true
+    setEnriching(true)
     import('@/lib/services/post-service')
       .then(({ postService }) => postService.enrichPostsBatch([target]))
       .then(([result]) => {
         if (current && result) setEnriched(result)
       })
       .catch((error) => logger.warn('Reposted post enrichment failed; showing it without counts', error))
+      .finally(() => {
+        if (current) setEnriching(false)
+      })
     return () => {
       current = false
     }
@@ -222,6 +231,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
         // Deleting the target drops the repost that showed it.
         onDelete={onDelete ? () => onDelete(post.id) : undefined}
         keepIfUnreadable={keepIfUnreadable}
+        marksPending={enriching}
       />
     )
   }
@@ -279,6 +289,7 @@ function PostCardView({
   bookmarkAction,
   replyBlockedReason,
   keepIfUnreadable = false,
+  marksPending = false,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -383,6 +394,7 @@ function PostCardView({
       reposts: repostsAreQuotePosts ? stats.quotes : stats.reposts,
       // Whichever read named this viewer; usePostEngagement reads them itself otherwise.
       marks: marksFor(progressiveEnrichment?.interactions, viewerId) ?? postMarks(post),
+      marksPending: marksPending || progressiveEnrichment?.marksPending === true,
     },
     targetKind
   )

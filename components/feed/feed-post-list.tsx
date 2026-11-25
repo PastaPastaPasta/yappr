@@ -31,6 +31,7 @@ interface FeedPostListProps {
     avatarUrl: string | undefined;
     stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined;
     interactions: ViewerMarks | undefined;
+    marksPending?: boolean;
     isBlocked: boolean | undefined;
     isFollowing: boolean | undefined;
     relationsFor?: string;

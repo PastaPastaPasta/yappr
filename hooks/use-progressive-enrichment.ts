@@ -58,9 +58,16 @@ export interface EnrichmentState {
   // Post data keyed by postId
   stats: Map<string, PostStats>             // postId → stats
   interactions: Map<string, ViewerMarks>    // postId → the viewer's marks, with that viewer
+  marksPending: Set<string>                 // postIds whose marks this hook is still reading
   replyTo: Map<string, ReplyToData>         // postId → parent post data (for replies)
   // Loading phase
   phase: 'idle' | 'loading' | 'complete'
+}
+
+function mergeMaps<K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> {
+  const merged = new Map(prev)
+  next.forEach((value, key) => merged.set(key, value))
+  return merged
 }
 
 function createEmptyEnrichmentState(relationsFor?: string): EnrichmentState {
@@ -73,6 +80,7 @@ function createEmptyEnrichmentState(relationsFor?: string): EnrichmentState {
     followStatus: new Map(),
     stats: new Map(),
     interactions: new Map(),
+    marksPending: new Set(),
     replyTo: new Map(),
     phase: 'idle'
   }
@@ -86,7 +94,6 @@ interface UseProgressiveEnrichmentOptions {
 
 interface UseProgressiveEnrichmentResult {
   enrichProgressively: (posts: Post[], preloaded?: PreloadedEnrichment) => void
-  enrichmentState: EnrichmentState
   reset: () => void
   isAuthorBlocked: (authorId: string) => boolean
   getPostEnrichment: (post: Post) => {
@@ -96,6 +103,7 @@ interface UseProgressiveEnrichmentResult {
     avatarUrl: string | undefined
     stats: PostStats | undefined
     interactions: ViewerMarks | undefined
+    marksPending: boolean
     isBlocked: boolean | undefined
     isFollowing: boolean | undefined
     relationsFor: string | undefined
@@ -145,35 +153,28 @@ export function useProgressiveEnrichment(
 
   /** Merges relations read for `viewer`, unless the viewer has changed since. */
   const mergeRelations = useCallback((viewer: string, slice: 'blockStatus' | 'followStatus', values: Map<string, boolean>) => {
-    setEnrichmentState(prev => {
-      if (prev.relationsFor !== viewer || viewerRef.current !== viewer) return prev
-      const merged = new Map(prev[slice])
-      values.forEach((value, key) => merged.set(key, value))
-      return { ...prev, [slice]: merged }
-    })
+    setEnrichmentState(prev => prev.relationsFor !== viewer || viewerRef.current !== viewer
+      ? prev
+      : { ...prev, [slice]: mergeMaps(prev[slice], values) })
   }, [])
 
-  /** Reads `viewer`'s block and follow status for the given authors. Resolves once both settle. */
-  const loadRelations = useCallback((viewer: string, ids: { authorIds: string[]; blockIds: string[]; followIds: string[] }, isValid: () => boolean): Promise<unknown> => {
+  /** Reads `viewer`'s block and follow status for the given authors. */
+  const loadRelations = useCallback((viewer: string, ids: { authorIds: string[]; blockIds: string[]; followIds: string[] }, isValid: () => boolean) => {
     // Priority 5: Block status (always query for filtering).
-    const blockPromise = ids.blockIds.length > 0
-      ? blockService.checkBlockedBatch(viewer, ids.blockIds).then(blockStatus => {
+    if (ids.blockIds.length > 0) {
+      blockService.checkBlockedBatch(viewer, ids.blockIds).then(blockStatus => {
         blockStatusCache.seed(viewer, blockStatus)
         if (isValid()) mergeRelations(viewer, 'blockStatus', blockStatus)
-      })
-      : Promise.resolve()
-    blockPromise.catch(err => logger.error('Progressive enrichment: block status failed', err))
+      }).catch(err => logger.error('Progressive enrichment: block status failed', err))
+    }
 
     // Priority 5: Follow status (skip if on Following tab - all authors are followed by definition)
-    let followPromise: Promise<unknown> = Promise.resolve()
     if (!skipFollowStatus) {
-      followPromise = ids.followIds.length > 0
-        ? followService.getFollowStatusBatch(ids.followIds, viewer).then(followStatus => {
-          followStatusCache.seed(viewer, followStatus)
-          if (isValid()) mergeRelations(viewer, 'followStatus', followStatus)
-        })
-        : Promise.resolve()
-      followPromise.catch(err => logger.error('Progressive enrichment: follow status failed', err))
+      if (ids.followIds.length === 0) return
+      followService.getFollowStatusBatch(ids.followIds, viewer).then(followStatus => {
+        followStatusCache.seed(viewer, followStatus)
+        if (isValid()) mergeRelations(viewer, 'followStatus', followStatus)
+      }).catch(err => logger.error('Progressive enrichment: follow status failed', err))
     } else {
       // On Following tab, mark all authors as followed
       const followStatus = new Map<string, boolean>()
@@ -181,7 +182,6 @@ export function useProgressiveEnrichment(
       followStatusCache.seed(viewer, followStatus)
       mergeRelations(viewer, 'followStatus', followStatus)
     }
-    return Promise.allSettled([blockPromise, followPromise])
   }, [mergeRelations, skipFollowStatus])
 
   // A new viewer with the list still on screen: the old one's relations go, and the new one's are read.
@@ -196,7 +196,7 @@ export function useProgressiveEnrichment(
       authorIds: Array.from(seen.authorIds),
       blockIds: Array.from(seen.blockIds),
       followIds: Array.from(seen.followIds),
-    }, () => true).catch(err => logger.error('Progressive enrichment: relations for the new viewer failed', err))
+    }, () => true)
   }, [currentUserId, loadRelations])
 
   /**
@@ -216,8 +216,20 @@ export function useProgressiveEnrichment(
 
     const run = async () => {
       if (!preloaded) {
-        const { loadPostEnrichment } = await import('@/lib/feed/load-post-enrichment')
-        preloaded = await loadPostEnrichment(posts, viewerId)
+        // The composite read carries the viewer's marks: cards wait for it rather than reading their own.
+        const pendingIds = viewerId ? posts.map(post => post.id) : []
+        const setPending = (pending: boolean) => setEnrichmentState(prev => {
+          const marksPending = new Set(prev.marksPending)
+          pendingIds.forEach(id => (pending ? marksPending.add(id) : marksPending.delete(id)))
+          return { ...prev, marksPending }
+        })
+        if (pendingIds.length > 0) setPending(true)
+        try {
+          const { loadPostEnrichment } = await import('@/lib/feed/load-post-enrichment')
+          preloaded = await loadPostEnrichment(posts, viewerId)
+        } finally {
+          if (pendingIds.length > 0) setPending(false)
+        }
         if (!isValid()) return
       }
       // Extract IDs (deduplicate to prevent "duplicate values for In query" errors).
@@ -241,13 +253,6 @@ export function useProgressiveEnrichment(
       const followLookupIds = Array.from(
         new Set([...authorIds, ...posts.map(p => p.quotedPost?.author.id).filter((id): id is string => !!id)])
       )
-
-      // Helper to merge Maps (TypeScript-compatible without downlevelIteration)
-      const mergeMaps = <K, V>(prev: Map<K, V>, next: Map<K, V>): Map<K, V> => {
-        const merged = new Map(prev)
-        next.forEach((value, key) => merged.set(key, value))
-        return merged
-      }
 
       // Set loading phase, merging whatever arrived with the posts
       setEnrichmentState(prev => ({
@@ -361,7 +366,6 @@ export function useProgressiveEnrichment(
       followLookupIds.forEach(id => seen.followIds.add(id))
       if (viewerId) {
         loadRelations(viewerId, { authorIds, blockIds, followIds: followLookupIds }, isValid)
-          .catch(err => logger.error('Progressive enrichment: relations failed', err))
       }
 
       // Track completion using the SAME promises (no duplicate queries!). Each
@@ -403,6 +407,7 @@ export function useProgressiveEnrichment(
       avatarUrl: enrichmentState.avatars.get(authorId),
       stats: enrichmentState.stats.get(postId),
       interactions: marksFor(enrichmentState.interactions.get(postId), currentUserId),
+      marksPending: enrichmentState.marksPending.has(postId),
       isBlocked: relationsKnown ? enrichmentState.blockStatus.get(authorId) : undefined,
       isFollowing: relationsKnown ? enrichmentState.followStatus.get(authorId) : undefined,
       relationsFor: relationsKnown ? currentUserId : undefined,
@@ -425,7 +430,6 @@ export function useProgressiveEnrichment(
 
   return {
     enrichProgressively,
-    enrichmentState,
     reset,
     isAuthorBlocked,
     getPostEnrichment

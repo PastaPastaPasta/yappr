@@ -1,13 +1,12 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
-import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService, QueryOptions, DocumentResult, postTimelineClauses, queryRawDocuments } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
-import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, type PostInteractionState } from './post-stats-helpers';
+import { fetchBatchPostStats, fetchBatchUserInteractions, type PostInteractionState } from './post-stats-helpers';
 import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
@@ -231,8 +230,6 @@ export async function mentionFieldsFor(content: string): Promise<Record<string, 
 }
 
 class PostService extends BaseDocumentService<Post> {
-  private statsCache = new TtlMap<string, PostStats>(60_000);
-
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
   private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, PostInteractionState>>();
@@ -335,7 +332,6 @@ class PostService extends BaseDocumentService<Post> {
     return post;
   }
 
-
   /**
    * Batch enrich multiple posts efficiently.
    * Uses batch queries to minimize network requests.
@@ -345,7 +341,7 @@ class PostService extends BaseDocumentService<Post> {
     const enriched = await enrichPostsBatchHelper(
       posts,
       (targets) => this.getBatchPostStats(targets),
-      (targets) => this.getBatchUserInteractions(targets),
+      (targets, viewerId) => this.getBatchUserInteractions(targets, viewerId),
       this.getCurrentUserId(),
       preloaded
     );
@@ -760,14 +756,6 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get statistics (likes, reposts, replies) for a post or reply
-   */
-  private async getPostStats(target: KindedTarget): Promise<PostStats> {
-    return fetchPostStats(target, this.statsCache);
-  }
-
-
-  /**
    * Get current user ID from localStorage session
    */
   private getCurrentUserId(): string | null {
@@ -778,8 +766,7 @@ class PostService extends BaseDocumentService<Post> {
    * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, PostInteractionState>> {
-    const currentUserId = this.getCurrentUserId();
+  async getBatchUserInteractions(targets: readonly KindedTarget[], currentUserId = this.getCurrentUserId()): Promise<Map<string, PostInteractionState>> {
     // Signed out, there are no marks to read.
     if (!currentUserId || targets.length === 0) return new Map<string, PostInteractionState>();
 

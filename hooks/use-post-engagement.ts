@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { logger } from '@/lib/logger'
@@ -18,6 +18,8 @@ export interface EngagementSnapshot {
   reposts: number
   /** The viewer's marks, when a read for a viewer found them (lib/feed/viewer-marks.ts). */
   marks?: ViewerMarks
+  /** The list is still reading marks for this card; the card waits rather than reading them too. */
+  marksPending?: boolean
 }
 
 /** Marks known for one viewer and one target. */
@@ -118,10 +120,12 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       }
     : null, [snapshotViewer, postId, snapshotLiked, snapshotReposted, snapshotBookmarked, snapshotQuoteId, snapshotQuoteBare])
 
-  // Marks from this card's own read or writes; a newer snapshot replaces them.
+  // Marks from this card's own read or writes; a newer snapshot replaces them,
+  // unless a write is pending (the snapshot may predate it).
   const [ownMarks, setOwnMarks] = useState<KnownMarks | null>(null)
+  const writesRef = useRef(0)
   useEffect(() => {
-    setOwnMarks(null)
+    if (writesRef.current === 0) setOwnMarks(null)
   }, [snapshotMarks])
   const ownKnown = ownMarks && ownMarks.targetId === postId ? marksFor(ownMarks, viewerId) ?? null : null
   const current = ownKnown ?? snapshotMarks
@@ -132,7 +136,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [postId, targetKind])
 
   // Signed in with nothing read for this viewer: read the marks now.
-  const needsRead = Boolean(viewerId) && current === null
+  const needsRead = Boolean(viewerId) && current === null && !initial.marksPending
   useEffect(() => {
     if (!needsRead || !viewerId) return
     let live = true
@@ -173,9 +177,12 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const toggleLike = useCallback(async () => {
     if (!viewerId || likeLoading) return
     setLikeLoading(true)
+    writesRef.current += 1
     try {
+      const shown = current
       const before = await resolveMarks()
-      if (!before) return
+      // Unknown marks showed as unliked: a read finding a like just shows it.
+      if (!before || (!shown && before.liked)) return
       const wasLiked = before.liked
       patchMarks(before, { liked: !wasLiked })
       setLikes((count) => count + (wasLiked ? -1 : 1))
@@ -196,21 +203,22 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
         reportSpendError(error, viewerId, 'You need YAPP to like posts. Buy some to continue.', 'Failed to update like. Please try again.')
       }
     } finally {
+      writesRef.current -= 1
       setLikeLoading(false)
     }
-  }, [viewerId, likeLoading, resolveMarks, patchMarks, settle, postId, post.author.id, post.tags, targetKind])
+  }, [viewerId, likeLoading, current, resolveMarks, patchMarks, settle, postId, post.author.id, post.tags, targetKind])
 
   /**
    * v10: delete the viewer's quote or repost of the post. Callers confirm a
    * quote with text first ({@link toggleRepost} hands such a quote back).
    */
-  const removeOwnQuote = useCallback(async (quote: OwnQuote) => {
+  const removeOwnQuote = useCallback(async (quote: OwnQuote, base: KnownMarks | null = current) => {
     // Offered only once the viewer's repost was read; nothing to undo against otherwise.
-    const base = current
     if (!viewerId || !base) return
     patchMarks(base, { reposted: false })
     setReposts((count) => Math.max(0, count - 1))
     setRepostLoading(true)
+    writesRef.current += 1
     try {
       const { postService } = await import('@/lib/services/post-service')
       // v11: a tombstone that clears the quote, freeing the slot for a redo.
@@ -225,6 +233,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       // author on v11; v12 accepts it (retractedWhen).
       if (!reportBarredWrite(error, viewerId)) toast.error('Failed to update repost. Please try again.')
     } finally {
+      writesRef.current -= 1
       setRepostLoading(false)
     }
   }, [viewerId, current, patchMarks])
@@ -240,13 +249,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     // the action row, enforces it.
     if (!viewerId || !repostable || repostLoading) return null
     setRepostLoading(true)
+    const shown = current
     let before: KnownMarks | null
     try {
       before = await resolveMarks()
     } finally {
       setRepostLoading(false)
     }
-    if (!before) return null
+    if (!before || (!shown && before.reposted)) return null
     if (repostsAreQuotes() && before.reposted) {
       let quote = before.ownQuote ?? null
       if (!quote) {
@@ -268,13 +278,14 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       }
       patchMarks(before, { ownQuote: quote })
       if (!quote.bare) return quote
-      await removeOwnQuote(quote)
+      await removeOwnQuote(quote, before)
       return null
     }
     const wasReposted = before.reposted
     patchMarks(before, { reposted: !wasReposted })
     setReposts((count) => count + (wasReposted ? -1 : 1))
     setRepostLoading(true)
+    writesRef.current += 1
     try {
       // Removal needs no gate: the repost document already exists.
       if (!wasReposted) await settle()
@@ -314,17 +325,20 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       }
       reportSpendError(error, viewerId, 'You need YAPP to repost. Buy some to continue.', 'Failed to update repost. Please try again.')
     } finally {
+      writesRef.current -= 1
       setRepostLoading(false)
     }
     return null
-  }, [viewerId, repostable, repostLoading, resolveMarks, patchMarks, settle, post, postId, targetKind, removeOwnQuote])
+  }, [viewerId, repostable, repostLoading, current, resolveMarks, patchMarks, settle, post, postId, targetKind, removeOwnQuote])
 
   const toggleBookmark = useCallback(async () => {
     if (!viewerId || !bookmarkable || bookmarkLoading) return
     setBookmarkLoading(true)
+    writesRef.current += 1
     try {
+      const shown = current
       const before = await resolveMarks()
-      if (!before) return
+      if (!before || (!shown && before.bookmarked)) return
       const wasBookmarked = before.bookmarked
       patchMarks(before, { bookmarked: !wasBookmarked })
       try {
@@ -339,9 +353,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
         toast.error('Failed to update bookmark. Please try again.')
       }
     } finally {
+      writesRef.current -= 1
       setBookmarkLoading(false)
     }
-  }, [viewerId, bookmarkable, bookmarkLoading, resolveMarks, patchMarks, settle, postId])
+  }, [viewerId, bookmarkable, bookmarkLoading, current, resolveMarks, patchMarks, settle, postId])
 
   return {
     repostable,
