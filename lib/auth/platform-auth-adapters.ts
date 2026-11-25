@@ -80,11 +80,12 @@ function readStoredSession(): AuthSessionSnapshot | null {
   if (!savedSession) return null
 
   try {
-    const parsed = JSON.parse(savedSession) as { user?: Record<string, unknown>; timestamp?: number }
+    const parsed = JSON.parse(savedSession) as { user?: Record<string, unknown>; timestamp?: number; signIn?: unknown }
     if (!parsed.user) return null
     const user = fromSessionUser(parsed.user)
     if (!user) return null
-    return toSessionSnapshot(user, typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now())
+    const snapshot = toSessionSnapshot(user, typeof parsed.timestamp === 'number' ? parsed.timestamp : Date.now())
+    return parsed.signIn === 'wallet' || parsed.signIn === 'key' ? { ...snapshot, signIn: parsed.signIn } : snapshot
   } catch (error) {
     logger.error('Failed to parse session:', error)
     return null
@@ -96,13 +97,21 @@ function readStoredSession(): AuthSessionSnapshot | null {
  * saved session can be restored. A stored key that belongs to another
  * identity must not restore it either, so the key must also sign for the
  * session identity. Shared metadata alone never signs this tab in.
+ *
+ * The browser's latest sign-in sets the shared session's mode. A raw-key
+ * session restores on the raw key this tab can read (localStorage, or this
+ * tab's sessionStorage for a CRITICAL key) before any wallet grant another
+ * tab has stored for the identity since (#732). Without a usable key the
+ * grant may still restore it.
  */
 async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
-  // An App Connect key ring restores from IndexedDB alone, without the network.
-  if (isAppConnectBuild() && await appConnectSessions.restore(identityId)) return true
-  const wif = getPrivateKey(identityId)
-  if (!wif) return false
   const session = readStoredSession()
+  const wif = getPrivateKey(identityId)
+  const keySignIn = wif !== null && session?.user.identityId === identityId && session.signIn === 'key'
+  // An App Connect key ring restores from IndexedDB alone, without the network.
+  const restoreRing = async () => isAppConnectBuild() && await appConnectSessions.restore(identityId)
+  if (!keySignIn && await restoreRing()) return true
+  if (!wif) return false
   // `data` is optional on the session shape and required by the matcher.
   const sessionKeys = session?.user.identityId === identityId
     ? session.user.publicKeys.map((key) => ({ ...key, data: key.data }))
@@ -111,8 +120,10 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
     await ensureSdk()
     return (await identityService.getIdentity(identityId))?.publicKeys ?? null
   }, keyNetwork())
-  if (!belongs) logger.warn(`Session restore: the stored key does not belong to ${identityId}; leaving this tab signed out`)
-  return belongs
+  if (belongs) return true
+  if (keySignIn && await restoreRing()) return true
+  logger.warn(`Session restore: the stored key does not belong to ${identityId}; leaving this tab signed out`)
+  return false
 }
 
 /**
@@ -163,6 +174,7 @@ function toStoredSession(snapshot: AuthSessionSnapshot): Record<string, unknown>
       publicKeys: snapshot.user.publicKeys,
     },
     timestamp: snapshot.timestamp,
+    ...(snapshot.signIn ? { signIn: snapshot.signIn } : {}),
   }
 }
 

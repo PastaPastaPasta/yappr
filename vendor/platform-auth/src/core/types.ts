@@ -27,9 +27,14 @@ export interface AuthUser {
   publicKeys: AuthPublicKey[]
 }
 
+/** How a session signed in: through a key ring the platform holds (`wallet`) or a private key (`key`). */
+export type SignInMode = 'wallet' | 'key'
+
 export interface AuthSessionSnapshot {
   user: AuthUser
   timestamp: number
+  /** Absent on sessions saved before it was recorded. */
+  signIn?: SignInMode
 }
 
 export interface SessionStore {

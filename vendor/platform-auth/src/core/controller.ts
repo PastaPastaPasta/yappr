@@ -7,6 +7,7 @@ import type {
   PlatformAuthIntent,
   PlatformAuthResult,
   PlatformAuthState,
+  SignInMode,
   YapprDecryptedKeyExchangeResult,
   YapprKeyExchangeConfig,
   YapprKeyRegistrationRequest,
@@ -364,7 +365,7 @@ export class PlatformAuthController {
         // Read before it is replaced, and waited for only if the key store fails (a restore may hold it meanwhile).
         const previousSession = privateKey === null ? null : Promise.resolve(this.deps.sessionStore.getSession()).catch(() => null)
         const previousUser = this.state.user
-        await this.persistSessionUser(user)
+        await this.persistSessionUser(user, privateKey === null ? 'wallet' : 'key')
         if (privateKey !== null) {
           options.beforeStore?.()
           try {
@@ -688,23 +689,31 @@ export class PlatformAuthController {
     return this.state.user?.identityId === identityId
   }
 
-  private async persistSessionUser(user: AuthUser): Promise<void> {
+  private async persistSessionUser(user: AuthUser, signIn: SignInMode): Promise<void> {
     const snapshot: AuthSessionSnapshot = {
       user,
       timestamp: this.now(),
+      signIn,
     }
     await this.deps.sessionStore.setSession(snapshot)
     this.patchState({ user })
   }
 
   private async updateSessionUser(updater: (user: AuthUser) => AuthUser): Promise<void> {
-    const current = this.state.user
-    if (!current) return
+    if (!this.state.user) return
 
+    const epoch = this.epoch
+    // The sign-in mode is the stored session's, which a later sign-in in another tab may have set.
+    const stored = await Promise.resolve(this.deps.sessionStore.getSession()).catch(() => null)
+    const current = this.state.user
+    // A sign-in or sign-out while the session was read stands, and so does a stored
+    // session that another tab ended or replaced with another identity's.
+    if (this.epoch !== epoch || !current || stored?.user.identityId !== current.identityId) return
     const updated = updater(current)
     await this.deps.sessionStore.setSession({
       user: updated,
       timestamp: this.now(),
+      ...(stored.signIn ? { signIn: stored.signIn } : {}),
     })
     this.patchState({ user: updated })
   }
