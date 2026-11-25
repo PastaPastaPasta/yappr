@@ -67,6 +67,22 @@ export function fillMark<T extends SomeMarks>(held: T, name: MarkName, read: Par
   return knowsMark(held, name) ? held : withMark(held, name, read)
 }
 
+/** One action at a time per key: `hold` runs `action` unless another holds the key, and then resolves null. */
+export function createSlotLock() {
+  const held = new Set<string>()
+  return {
+    async hold<T>(key: string, action: () => Promise<T | null>): Promise<T | null> {
+      if (held.has(key)) return null
+      held.add(key)
+      try {
+        return await action()
+      } finally {
+        held.delete(key)
+      }
+    },
+  }
+}
+
 /** Marks a read found, keyed by target id. A target missing from the map was not read. */
 export type MarksReader = (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, Marks>>
 

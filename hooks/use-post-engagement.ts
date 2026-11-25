@@ -12,7 +12,7 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 import { sessionGeneration } from '@/lib/auth/session-generation'
-import { fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
+import { createSlotLock, fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
   likes: number
@@ -61,6 +61,9 @@ async function createBareRepost(post: Post, viewerId: string): Promise<OwnQuote>
   const created = await postService.createPost(viewerId, '', { ...resolveQuoteReference(post).fields })
   return { id: created.id, bare: true }
 }
+
+/** A viewer's quote or repost slot on a post: Quote's check and a repost hold it across every card (Latest and Top each mount one). */
+const quoteSlots = createSlotLock()
 
 /** The same viewer and target: a write's rollback never lands on another viewer's marks. */
 function sameMarks(a: KnownMarks | null, b: KnownMarks): a is KnownMarks {
@@ -266,22 +269,19 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
 
   /**
    * v10 Quote: the marks that say whether the quote slot is free, read now
-   * when unknown. Repost waits meanwhile, so the two never decide the one
-   * slot from different reads. Null when they cannot be read or a repost is
-   * under way.
+   * when unknown. It holds the slot (on every card showing this post), so a
+   * Repost tapped meanwhile is ignored rather than deciding the slot from another read.
+   * Null when they cannot be read or a repost is under way.
    */
-  const quoteCheckRef = useRef(false)
   const checkQuoteSlot = useCallback(async (): Promise<KnownMarks | null> => {
-    if (repostLoading || quoteCheckRef.current) return null
-    quoteCheckRef.current = true
+    if (!viewerId || repostLoading) return null
     setRepostLoading(true)
     try {
-      return await resolveMarks('reposted')
+      return await quoteSlots.hold(`${viewerId}|${postId}`, () => resolveMarks('reposted'))
     } finally {
-      quoteCheckRef.current = false
       setRepostLoading(false)
     }
-  }, [repostLoading, resolveMarks])
+  }, [viewerId, postId, repostLoading, resolveMarks])
 
   /**
    * Repost, or undo the viewer's repost. On v10 undo deletes the viewer's
@@ -289,10 +289,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
    * caller to confirm and then pass to {@link removeOwnQuote}. Resolves null
    * otherwise.
    */
-  const toggleRepost = useCallback(async (): Promise<OwnQuote | null> => {
+  const runToggleRepost = useCallback(async (): Promise<OwnQuote | null> => {
     // The topology may forbid reposting this kind (v9 replies); this guard, not
     // the action row, enforces it.
-    if (!viewerId || !repostable || repostLoading || quoteCheckRef.current) return null
+    if (!viewerId || !repostable || repostLoading) return null
     setRepostLoading(true)
     const shown = current
     let before: KnownMarks | null
@@ -375,6 +375,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     }
     return null
   }, [viewerId, repostable, repostLoading, current, resolveMarks, patchMarks, settle, post, postId, targetKind, removeOwnQuote])
+  const toggleRepost = useCallback(async (): Promise<OwnQuote | null> =>
+    viewerId ? quoteSlots.hold(`${viewerId}|${postId}`, runToggleRepost) : null, [viewerId, postId, runToggleRepost])
 
   const toggleBookmark = useCallback(async () => {
     if (!viewerId || !bookmarkable || bookmarkLoading) return

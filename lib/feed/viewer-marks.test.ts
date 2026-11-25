@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { KindedTarget } from '@/lib/contract-topology'
 import { bumpSessionGeneration, sessionGeneration } from '@/lib/auth/session-generation'
-import { createMarksLoader, fillMark, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
+import { createMarksLoader, createSlotLock, fillMark, knowsMark, marksFor, noMarksRead, postMarks, withMark, type Marks, type MarksReader } from './viewer-marks'
 
 const unmarked: Marks = { liked: false, reposted: false, bookmarked: false }
 
@@ -150,5 +150,25 @@ describe('marks read one at a time', () => {
     marks = withMark(marks, 'bookmarked', { bookmarked: true })
     expect(marks).toEqual({ viewerId: 'alice', session: 1, liked: false, reposted: true, bookmarked: true, ownQuote: { id: 'q', bare: false } })
     expect(withMark(marks, 'reposted', { reposted: false }).ownQuote).toBeUndefined()
+  })
+})
+
+describe('createSlotLock', () => {
+  it('lets one action hold a key until it settles, across callers', async () => {
+    const slots = createSlotLock()
+    let release = () => {}
+    const quote = slots.hold('alice|p1', () => new Promise<string>((resolve) => { release = () => resolve('quote') }))
+    // Another card's Repost on the same post is ignored meanwhile; another post is free.
+    expect(await slots.hold('alice|p1', async () => 'repost')).toBeNull()
+    expect(await slots.hold('alice|p2', async () => 'repost')).toBe('repost')
+    release()
+    expect(await quote).toBe('quote')
+    expect(await slots.hold('alice|p1', async () => 'repost')).toBe('repost')
+  })
+
+  it('frees the key when the action fails', async () => {
+    const slots = createSlotLock()
+    await expect(slots.hold('k', async () => { throw new Error('read failed') })).rejects.toThrow('read failed')
+    expect(await slots.hold('k', async () => 'ok')).toBe('ok')
   })
 })
