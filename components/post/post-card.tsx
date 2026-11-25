@@ -543,9 +543,10 @@ function PostCardView({
     // v10 allows one quote or repost per author and target; a second would be
     // refused (40105), so the viewer is taken to their quote (a bare repost
     // hides this item: it is undone from the Repost item instead). Unknown
-    // marks are read first, so the composer never opens on a held slot.
+    // marks are read first, so the composer never opens on a held slot, and
+    // the check holds the slot, so it is skipped while a repost of it is under way on any card.
     let held = ownQuote
-    if (repostsAreQuotePosts && !engagement.marks) {
+    if (repostsAreQuotePosts) {
       // A late answer is dropped when the session or the composer changed meanwhile.
       const sameSession = sessionGuard()
       const sameCompose = composeGuard(useAppStore.getState)
