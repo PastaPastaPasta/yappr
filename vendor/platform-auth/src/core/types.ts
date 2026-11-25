@@ -27,15 +27,29 @@ export interface AuthUser {
   publicKeys: AuthPublicKey[]
 }
 
+/** How a session signed in: through a key ring the platform holds (`wallet`) or a private key (`key`). */
+export type SignInMode = 'wallet' | 'key'
+
 export interface AuthSessionSnapshot {
   user: AuthUser
   timestamp: number
+  /** Absent on sessions saved before it was recorded. */
+  signIn?: SignInMode
 }
 
 export interface SessionStore {
   getSession(): MaybePromise<AuthSessionSnapshot | null>
   setSession(snapshot: AuthSessionSnapshot): MaybePromise<void>
   clearSession(): MaybePromise<void>
+  /**
+   * Records a refreshed `user` (balance, username) for the stored session
+   * while it is `user`'s identity; false when it is not (another tab ended it
+   * or signed another identity in). It must never write the sign-in record
+   * itself, so a refresh racing another tab's sign-in or sign-out can neither
+   * replace nor bring that record back. Without it, an update rewrites the
+   * whole session.
+   */
+  updateUser?(user: AuthUser, timestamp: number): MaybePromise<boolean>
 }
 
 /**

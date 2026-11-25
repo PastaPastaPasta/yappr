@@ -70,6 +70,9 @@ export function scopedKeysWithPrefix(prefix: string): string[] {
 /** localStorage key holding the persisted login session. */
 export const SESSION_STORAGE_KEY = scopedKey('yappr_session')
 
+/** localStorage key holding the session's refreshed balance and username, apart from the sign-in record. */
+export const SESSION_PROFILE_KEY = scopedKey('yappr_session_profile')
+
 /**
  * Whether this browser holds a saved login session. A cheap synchronous hint
  * for reserving layout while the session restores; it proves nothing about

@@ -7,6 +7,7 @@ import type {
   PlatformAuthIntent,
   PlatformAuthResult,
   PlatformAuthState,
+  SignInMode,
   YapprDecryptedKeyExchangeResult,
   YapprKeyExchangeConfig,
   YapprKeyRegistrationRequest,
@@ -364,7 +365,7 @@ export class PlatformAuthController {
         // Read before it is replaced, and waited for only if the key store fails (a restore may hold it meanwhile).
         const previousSession = privateKey === null ? null : Promise.resolve(this.deps.sessionStore.getSession()).catch(() => null)
         const previousUser = this.state.user
-        await this.persistSessionUser(user)
+        await this.persistSessionUser(user, privateKey === null ? 'wallet' : 'key')
         if (privateKey !== null) {
           options.beforeStore?.()
           try {
@@ -688,10 +689,11 @@ export class PlatformAuthController {
     return this.state.user?.identityId === identityId
   }
 
-  private async persistSessionUser(user: AuthUser): Promise<void> {
+  private async persistSessionUser(user: AuthUser, signIn: SignInMode): Promise<void> {
     const snapshot: AuthSessionSnapshot = {
       user,
       timestamp: this.now(),
+      signIn,
     }
     await this.deps.sessionStore.setSession(snapshot)
     this.patchState({ user })
@@ -702,10 +704,15 @@ export class PlatformAuthController {
     if (!current) return
 
     const updated = updater(current)
-    await this.deps.sessionStore.setSession({
-      user: updated,
-      timestamp: this.now(),
-    })
+    const store = this.deps.sessionStore
+    if (store.updateUser) {
+      if (!await store.updateUser(updated, this.now())) return
+    } else {
+      await store.setSession({
+        user: updated,
+        timestamp: this.now(),
+      })
+    }
     this.patchState({ user: updated })
   }
 

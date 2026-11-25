@@ -224,10 +224,29 @@ class AppConnectSessionManager {
     return session
   }
 
-  /** Loads the stored session for `identityId` without touching the network. */
-  async restore(identityId: string): Promise<boolean> {
+  /** Whether the browser stores a grant for `identityId`, without making it this tab's. */
+  async hasStoredGrant(identityId: string): Promise<boolean> {
+    try {
+      return (await this.keyStore().load(this.network()))?.identityId === identityId
+    } catch (error) {
+      logger.warn('App Connect: could not read the key ring:', error)
+      return false
+    }
+  }
+
+  /** Where the sign-out and raw-key sign-in fence stands now; pass it to `restore` to cancel on anything after it. */
+  lifecycleMark(): number {
+    return this.lifecycle
+  }
+
+  /**
+   * Loads the stored session for `identityId` without touching the network.
+   * `since` (a `lifecycleMark`): a sign-out or raw-key sign-in for the
+   * identity after it cancels the restore, even one before this call.
+   */
+  async restore(identityId: string, since?: number): Promise<boolean> {
     if (this.active?.identityId === identityId) return true
-    const startedAt = this.lifecycle
+    const startedAt = since ?? this.lifecycle
     let session: AppConnectSession | null
     try {
       session = await this.keyStore().load(this.network())

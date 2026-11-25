@@ -1,4 +1,4 @@
-import { SESSION_STORAGE_KEY, scopedKey } from '@/lib/storage-scope'
+import { SESSION_PROFILE_KEY, SESSION_STORAGE_KEY, scopedKey } from '@/lib/storage-scope'
 import { readJson } from '../read-json'
 
 /**
@@ -28,7 +28,7 @@ export interface AccountRecord {
  * lib keeps these per-identity stores under one global key, so a switch
  * stashes the old account's copy and restores the new one's.
  */
-const STASHED_KEYS = { notifications: scopedKey('yappr-notifications') } as const
+const STASHED_KEYS = { notifications: scopedKey('yappr-notifications'), profile: SESSION_PROFILE_KEY } as const
 
 const stashKey = (identityId: string, name: string) => `yappr_engine_stash:${identityId}:${name}`
 
