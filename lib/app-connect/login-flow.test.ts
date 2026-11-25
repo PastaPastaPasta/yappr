@@ -42,6 +42,8 @@ function harness(options: {
   returnTo?: string
   callbackRequestHash?: string
   onCarry?: (requestHashHex: string) => void
+  /** Runs before the stored request is taken. */
+  beforeTake?: () => Promise<void>
 } = {}): Harness {
   let candidates: AppConnectCandidate[] = []
   const clock = { now: T0 }
@@ -65,6 +67,7 @@ function harness(options: {
       save: async (r) => { records.value = r },
       clear: async (record) => { if (records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey) records.value = null },
       take: async (record) => {
+        await options.beforeTake?.()
         const ours = records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey
         if (ours) records.value = null
         return ours
@@ -577,12 +580,32 @@ describe('AppConnectLogin return page', () => {
     expect(replaced.records.value).toBe(newer)
   })
 
-  it('takes the stored request with the page, so no other tab can carry it again', async () => {
+  it('takes the stored request with the page, so of two callback tabs only one carries it', async () => {
     const { records, hash } = await origin('/messages')
-    const tab = await callbackTab(records, hash)
+    const a = await callbackTab(records, hash)
+    const b = await callbackTab(records, hash)
+    await confirm(a)
+    await confirm(b)
+    const results = await Promise.all([a.login.acceptCarrying(ALICE), b.login.acceptCarrying(ALICE)])
+    expect(results.map((result) => result?.grant.identityId)).toEqual([ALICE, ALICE])
+    expect(results.filter((result) => result?.returnTo === '/messages')).toHaveLength(1)
+  })
+
+  it('accepts nothing once "That\'s not me" restarts the flow while the request is being taken', async () => {
+    const { records, hash } = await origin('/messages')
+    let release = () => {}
+    const taking = new Promise<void>((resolve) => { release = resolve })
+    const tab = harness({ records, callbackRequestHash: hash, beforeTake: () => taking })
+    await tab.login.start()
     await confirm(tab)
-    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages' })
-    expect(records.value).toBeNull()
+    const accepting = tab.login.acceptCarrying(ALICE)
+    tab.setCandidates([])
+    const restarting = tab.login.reject()
+    release()
+    expect(await accepting).toBeNull()
+    await restarting
+    expect(last(tab)).toMatchObject({ phase: 'waiting' })
+    expect(tab.login.requestHashHex()).not.toBe(hash)
   })
 
   it('replacements keep exactly the replaced request\'s page, and the callback tab still applies it', async () => {

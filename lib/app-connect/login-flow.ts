@@ -382,7 +382,10 @@ export class AppConnectLogin {
     const page = this.carriedHash !== null ? active.record.returnTo : undefined
     const live = page !== undefined
       && this.now() - active.record.createdAt < APP_CONNECT_MAX_REQUEST_AGE_MS
-      && await this.deps.records.take(active.record).catch(() => false)
+      && await this.deps.records.take(active.record).catch((error: unknown) => {
+        this.deps.onError?.('App Connect: could not take the request', error)
+        return false
+      })
     // A restart or finish while checking: the answer it held is gone.
     if (this.active !== active) return null
     const grant = this.accept(identityId)
