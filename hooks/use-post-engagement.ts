@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import toast from 'react-hot-toast'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { logger } from '@/lib/logger'
@@ -12,6 +12,7 @@ import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { readScoped, writeScoped } from '@/lib/storage-scope'
 import { sessionGeneration } from '@/lib/auth/session-generation'
+import { createCountShifts, shiftedCount, type CountBase } from '@/lib/feed/count-shifts'
 import { createSlotLock, createSlotWrites, fillMark, knowsMark, loadViewerMarks, marksFor, noMarksRead, withMark, type MarkName, type SomeMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 
 export interface EngagementSnapshot {
@@ -65,6 +66,8 @@ async function createBareRepost(post: Post, viewerId: string): Promise<OwnQuote>
 /** A viewer's quote or repost slot on a post: Quote's check and a repost hold it across every card (Latest and Top each mount one). */
 const quoteSlots = createSlotLock()
 const slotWrites = createSlotWrites()
+/** This tab's repost writes, shown on every card of the post. */
+const repostShifts = createCountShifts()
 
 /** The same viewer and target: a write's rollback never lands on another viewer's marks. */
 function sameMarks(a: KnownMarks | null, b: KnownMarks): a is KnownMarks {
@@ -95,7 +98,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   const bookmarkable = canBookmark(targetKind)
   const postId = post.id
   const [likes, setLikes] = useState(initial.likes)
-  const [reposts, setReposts] = useState(initial.reposts)
+  // The snapshot's repost count plus this tab's repost writes since it, on any card.
+  const [repostBase, setRepostBase] = useState<CountBase>(() => ({ count: initial.reposts, shift: repostShifts.get(postId) }))
+  const repostShift = useSyncExternalStore(repostShifts.subscribe, () => repostShifts.get(postId), () => 0)
+  const reposts = shiftedCount(repostBase, repostShift)
   const [likeLoading, setLikeLoading] = useState(false)
   const [repostLoading, setRepostLoading] = useState(false)
   const [bookmarkLoading, setBookmarkLoading] = useState(false)
@@ -103,8 +109,10 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   // Follow the counts as the enrichment snapshot fills in.
   useEffect(() => {
     setLikes(initial.likes)
-    setReposts(initial.reposts)
-  }, [initial.likes, initial.reposts])
+  }, [initial.likes])
+  useEffect(() => {
+    setRepostBase({ count: initial.reposts, shift: repostShifts.get(postId) })
+  }, [initial.reposts, postId])
 
   // The snapshot's marks count only when they were read for this viewer in this session.
   const snapshot = marksFor(initial.marks, viewerId)
@@ -142,18 +150,25 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     return { ...read, targetId: postId }
   }, [postId, targetKind])
 
-  // Signed in with nothing read for this viewer: read the marks now.
-  const needsRead = Boolean(viewerId) && current === null && !initial.marksPending
+  /** Stores a full read, keeping marks another tap read or wrote meanwhile: it only fills those still unread. */
+  const storeRead = useCallback((read: KnownMarks) => {
+    setOwnMarks((held) => sameMarks(held, read)
+      ? (held.unread ?? []).reduce((marks, name) => withMark(marks, name, read), held)
+      : read)
+  }, [])
+
+  // Signed in with marks unread for this viewer (some, after a tap read only its own): read them now.
+  const needsRead = Boolean(viewerId) && (current === null || Boolean(current.unread)) && !initial.marksPending
   useEffect(() => {
     if (!needsRead || !viewerId) return
     let live = true
     readMarks(viewerId)
-      .then((read) => { if (live) setOwnMarks(read) })
+      .then((read) => { if (live) storeRead(read) })
       .catch((error) => logger.warn('Engagement: the viewer\'s marks could not be read; a tap reads them again', error))
     return () => {
       live = false
     }
-  }, [needsRead, viewerId, readMarks])
+  }, [needsRead, viewerId, readMarks, storeRead])
 
   /**
    * The marks a write of `need` starts from: known ones, or a read made now.
@@ -169,10 +184,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     if (!reread && !current) {
       try {
         const read = await readMarks(viewerId)
-        // Marks another tap read or wrote meanwhile stay; the read only fills those still unread.
-        setOwnMarks((held) => sameMarks(held, read)
-          ? (held.unread ?? []).reduce((marks, name) => withMark(marks, name, read), held)
-          : read)
+        storeRead(read)
         return read
       } catch (error) {
         logger.warn('Engagement: the viewer\'s marks could not all be read; reading just the one this needs', error)
@@ -196,7 +208,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       toast.error('Could not check this post right now. Please try again.')
       return null
     }
-  }, [viewerId, current, readMarks, postId, targetKind])
+  }, [viewerId, current, readMarks, storeRead, postId, targetKind])
 
   /** Applies `change` to the marks of `base`'s viewer and target, and to nothing else. */
   const patchMarks = useCallback((base: KnownMarks, change: Partial<ViewerMarks>) => {
@@ -251,7 +263,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     // Offered only once the viewer's repost was read; nothing to undo against otherwise.
     if (!viewerId || !base) return
     patchMarks(base, { reposted: false })
-    setReposts((count) => Math.max(0, count - 1))
+    repostShifts.shift(postId, -1)
     setRepostLoading(true)
     writesRef.current += 1
     try {
@@ -263,7 +275,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       toast.success(quote.bare ? 'Removed repost' : 'Quote deleted')
     } catch (error) {
       patchMarks(base, { reposted: true, ownQuote: quote })
-      setReposts((count) => count + 1)
+      repostShifts.shift(postId, 1)
       logger.error('Repost error:', error)
       // Undo is a tombstone (a replace), refused to a banned or suspended
       // author on v11; v12 accepts it (retractedWhen).
@@ -338,7 +350,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
     }
     const wasReposted = before.reposted
     patchMarks(before, { reposted: !wasReposted })
-    setReposts((count) => count + (wasReposted ? -1 : 1))
+    repostShifts.shift(postId, wasReposted ? -1 : 1)
     setRepostLoading(true)
     writesRef.current += 1
     try {
@@ -358,7 +370,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       toast.success(wasReposted ? 'Removed repost' : 'Reposted')
     } catch (error) {
       patchMarks(before, { reposted: wasReposted })
-      setReposts((count) => count + (wasReposted ? 1 : -1))
+      repostShifts.shift(postId, wasReposted ? 1 : -1)
       logger.error('Repost error:', error)
       if (repostsAreQuotes() && !wasReposted && isDuplicateUniqueIndexError(error)) {
         // The viewer already holds this target's one quote/repost slot (marks
@@ -372,7 +384,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
           // Their own earlier repost landed (a double click, or a lost ack):
           // that is the repost they asked for.
           patchMarks(before, { reposted: true, ownQuote: existing })
-          setReposts((count) => count + 1)
+          repostShifts.shift(postId, 1)
           toast.success('Reposted')
           return null
         }
