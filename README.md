@@ -44,7 +44,7 @@ CI runs lint, type check, unit tests, knip and the build on every pull request; 
 
 | | |
 |---|---|
-| Framework | Next.js 14 App Router, `output: 'export'`, no dynamic routes (query parameters instead) |
+| Framework | Next.js 16 App Router (webpack builds), `output: 'export'`, no dynamic routes (query parameters instead) |
 | Chain | `@dashevo/evo-sdk` + `@dashevo/wasm-sdk`, trusted mode, direct DAPI |
 | Crypto | `@noble/hashes`, `@noble/ciphers`, `@noble/secp256k1` |
 | UI | Tailwind, Radix primitives, Framer Motion, Heroicons, Zustand |

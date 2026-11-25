@@ -75,7 +75,7 @@ An archival frontend is a normal `next build` of this repository with its own en
 6. Build and publish the static export (`out/`):
 
    ```sh
-   set -a && . ./.env.archive && set +a && next build && node scripts/write-static-404.mjs out /archive
+   set -a && . ./.env.archive && set +a && next build --webpack && node scripts/write-static-404.mjs out /archive
    ```
 
    Leave `BASE_PATH` empty and drop the last argument when you host it at the root of its own domain.

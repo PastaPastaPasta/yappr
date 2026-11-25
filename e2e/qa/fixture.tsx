@@ -27,7 +27,7 @@ import { KeyLoginForm } from '@/components/auth/key-login-form'
 import '@/app/globals.css'
 
 const scenario = new URLSearchParams(location.search).get('scenario')
-const router = { back() {}, forward() {}, refresh() {}, push(href: string) { location.assign(href) }, replace(href: string) { location.replace(href) }, prefetch: async () => undefined }
+const router = { back() {}, forward() {}, refresh() {}, push(href: string) { location.assign(href) }, replace(href: string) { location.replace(href) }, prefetch: async () => undefined, bfcacheId: 'fixture' }
 function ReaderFixture() {
   const { resolvedTheme, setTheme } = useTheme()
   return <><button onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>Toggle reader theme</button><BlogViewer blocks={[{ type: 'paragraph', content: [{ type: 'text', text: 'Published prose remains a document.', styles: {} }] }]} theme={resolvedTheme === 'dark' ? 'dark' : 'light'} /></>

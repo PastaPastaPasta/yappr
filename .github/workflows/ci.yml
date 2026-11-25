@@ -129,12 +129,9 @@ jobs:
       - name: Run knip
         run: npx knip
 
-  # Known advisories in shipped (production) dependencies. Report-only until the
-  # dependency fixes land: the tree still has open high/critical advisories, so
-  # blocking now would turn every PR red. Tracked in
-  # https://github.com/PastaPastaPasta/yappr/issues/766, which makes this job
-  # blocking by dropping the `|| echo` fallback. Dev-only tooling is omitted
-  # because it never reaches the static export.
+  # Blocks on any high or critical advisory in shipped (production)
+  # dependencies. Dev-only tooling is omitted because it never reaches the
+  # static export.
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -147,10 +144,8 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Audit production dependencies (report-only)
-        run: |
-          npm audit --omit=dev --audit-level=high \
-            || echo "::warning::npm audit found high or critical advisories in production dependencies (report-only until issue 766)"
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
   build:
     name: Build
