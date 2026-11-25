@@ -55,6 +55,7 @@ beforeEach(() => {
   data.clear()
   sessions.restore.mockClear()
   sessions.hasStoredGrant.mockClear()
+  sessions.lifecycleMark.mockImplementation(() => 0)
   chain.getIdentity.mockReset()
   chain.getIdentity.mockImplementation(async () => identity)
 })
@@ -171,8 +172,13 @@ describe('restoring a session by how it signed in (#732)', () => {
 
   it('pins the grant restore to the moment the reload began', async () => {
     await tab().loginWithAuthKey('alice', WIF)
-    chain.getIdentity.mockImplementation(async () => ({ ...identity, publicKeys: [{ ...identity.publicKeys[0], disabledAt: 1 }] }))
-    sessions.lifecycleMark.mockReturnValueOnce(41)
+    // The manager's fence: a raw-key sign-in lands while the fresh lookup is pending and moves it on.
+    let lifecycle = 41
+    sessions.lifecycleMark.mockImplementation(() => lifecycle)
+    chain.getIdentity.mockImplementation(async () => {
+      lifecycle = 42
+      return { ...identity, publicKeys: [{ ...identity.publicKeys[0], disabledAt: 1 }] }
+    })
 
     await tab().restoreSession()
     expect(sessions.restore).toHaveBeenCalledWith('alice', 41)

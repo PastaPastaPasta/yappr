@@ -1,6 +1,6 @@
 'use client'
 
-import { scopedKey, SESSION_STORAGE_KEY } from '@/lib/storage-scope'
+import { scopedKey, SESSION_PROFILE_KEY, SESSION_STORAGE_KEY } from '@/lib/storage-scope'
 import type {
   AuthSessionSnapshot,
   AuthUser,
@@ -81,7 +81,6 @@ function fromSessionUser(savedUser: Record<string, unknown>): AuthUser | null {
  * writes this record instead, so it can never replace or bring back a
  * sign-in (#732). It counts only for the same identity, saved after the sign-in.
  */
-const SESSION_PROFILE_KEY = scopedKey('yappr_session_profile')
 
 interface StoredProfile {
   identityId: string
