@@ -85,7 +85,7 @@ has no manual authorities: its only supply is the 100-YAPP identity claim.
 
 - `yappr-social-contract-v2.json` and `yappr-profile-contract.json` support the
   current production defaults. Social v9–v15 still have client/test/tool
-  references, while v16 is required by `.env.devnet` builds; age alone is not a deletion
+  references, while v17 is required by `.env.devnet` builds; age alone is not a deletion
   criterion.
 - `yappr-dm-contract.json` is the old v4 authored shape; production still uses
   its existing v3 deployment. The release registers neither a legacy DM

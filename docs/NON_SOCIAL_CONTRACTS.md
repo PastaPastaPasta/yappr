@@ -3,12 +3,14 @@
 The checked-in JSONs describe the **planned testnet release**, not every
 contract currently deployed. Platform SDK packages pin 5.0.0-rc.3 (PV14).
 The existing production default still uses its older testnet contracts;
-The Sakura `/devnet` site was retired on 2026-11-25; `.env.devnet` keeps its set for local devnet builds. Contract ids and pins
+The Sakura `/devnet` site was retired on 2026-11-25. The `/devnet` column below
+is the historical Sakura beta.6 set; `.env.devnet` now selects Sakura's release
+rehearsal set (the planned-release versions) for local devnet builds. Contract ids and pins
 are deployment-specific: use `.env.devnet` for Sakura, `lib/constants.ts`
 for today's defaults, and [TESTNET_RELEASE.md](TESTNET_RELEASE.md) for the
 registration and configuration gates. Do not infer registration from a file's name.
 
-| Feature | Production default today | `/devnet` (`.env.devnet`) | Planned release | Schema / reference |
+| Feature | Production default today | Historical Sakura `/devnet` | Planned release | Schema / reference |
 | --- | --- | --- | --- | --- |
 | Storefront | v1 | v9 (v8 contract updated in place, version 2) | v10 | `contracts/yappr-storefront-contract.json`; [v10](STOREFRONT_V10.md), [devnet v9](STOREFRONT_V9.md) |
 | Blog | v1 topology (legacy deployment) | v8 | v9 | `contracts/yappr-blog-contract.json`; [v9](BLOG_V9.md) |

@@ -50,8 +50,12 @@ variants, username entry) have no CI coverage until they are pointed at a
 modern testnet set; they remain and run locally against a devnet build (`npm run build:devnet`, which reads `.env.devnet` and
 exports under `/devnet` into `out/`; nothing deploys it). They need a live
 devnet whose contracts and bot pool match `.env.devnet`, and a dedicated seed in
-`E2E_DEVNET_SEED_PHRASE` (gitignored `.env.local`), mapped to the fixture's
-runtime `E2E_SEED_PHRASE`. Never reuse the testnet seed for a devnet pool.
+`E2E_DEVNET_SEED_PHRASE` (gitignored `.env.local`). Playwright does not load
+`.env.local`, and the write specs read only `E2E_SEED_PHRASE`, so export the
+devnet seed under that name in the shell that runs them, from its private
+file and without echoing it (for example
+`export E2E_SEED_PHRASE="$(cat /path/to/devnet-seed.txt)"`); without it the
+write specs skip. Never reuse the testnet seed for a devnet pool.
 
 After a devnet reset, provision the bot pool in derivation-index order and
 update only the public `E2E_IDENTITY_IDS` in `.env.devnet`. Verify that each
@@ -358,16 +362,18 @@ cleanup refuses the maker and the contract owner outright.
   began, so two batteries must not share a bot at the same time.
   `prove-merged-counts` and `measure-social-fees` need nothing:
   their writes land on a throwaway contract the app never reads.
-- **The devnet specs** do not clean up after themselves; run the `--ci-pool`
-  command below after a local write run.
+- **The devnet specs** do not clean up after themselves. Record the start
+  time before a local write run (`STARTED=$(date +%s%3N)`) and pass it as
+  `--since "$STARTED"` to both spec-pool commands below, so the cleanup takes
+  only that run's posts and replies.
 
 To take test content down by hand (both commands are idempotent; `--plan`
 writes nothing and also reports who wrote the newest timeline posts):
 
 ```bash
 # Spec pool (E2E_DEVNET_SEED_PHRASE, ids from .env.devnet)
-NETWORK=devnet node scripts/clean-test-content.mjs --plan --ci-pool
-NETWORK=devnet node scripts/clean-test-content.mjs --live --ci-pool --since 2026-10-13T00:00:00Z
+NETWORK=devnet node scripts/clean-test-content.mjs --plan --ci-pool --since "$STARTED"
+NETWORK=devnet node scripts/clean-test-content.mjs --live --ci-pool --since "$STARTED"
 
 # Battery bots (E2E_SEED_PHRASE, ids from DEVNET_IDENTITY_IDS or index:id)
 NETWORK=devnet DEVNET_IDENTITY_IDS=<bot0>,<bot1>,<bot2> \

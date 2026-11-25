@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-/** GitHub Pages always serves the site's root 404, even for another deployment. */
+/**
+ * GitHub Pages always serves the site's root 404, even for another deployment.
+ * The retired /devnet prefix forwards to /staging, so installed Yappr Dev
+ * builds keep their terms, privacy and App Connect return pages.
+ */
 export function staticNotFound(basePath = '') {
   if (basePath && !/^\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(basePath)) throw new Error('Invalid deployment prefix')
   const home = `${basePath}/`
@@ -15,6 +19,11 @@ export function staticNotFound(basePath = '') {
 </style></head><body><main><p>404</p><h1>This page doesn’t exist</h1><p>The link may be broken, or the page may have moved.</p><nav aria-label="Recovery"><a id="home" href="${home}">Go home</a><a id="explore" href="${home}explore/">Explore</a></nav></main>
 <script>
 (function () {
+  var retired = location.pathname.match(/^\\/devnet(\\/.*)?$/);
+  if (retired && ${JSON.stringify(basePath)} === '') {
+    location.replace('/staging' + (retired[1] || '/') + location.search + location.hash);
+    return;
+  }
   var match = location.pathname.match(/^\\/(testing|staging-old|staging|beta)(?:\\/|$)/);
   var prefix = match ? '/' + match[1] : ${JSON.stringify(basePath)};
   if (prefix !== ${JSON.stringify(basePath)} && location.pathname !== prefix + '/404.html') location.replace(prefix + '/404.html');

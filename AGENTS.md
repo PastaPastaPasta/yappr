@@ -187,8 +187,9 @@ rehearsal copy runs at `/beta`, and they are not part of the mainnet set
 (D45). Until the staging merge, master's root still selects
 social **v2**, DM **v3**, the old feature contracts and legacy login, and
 `/testing` still runs v2 through the `lib/constants.ts` defaults.
-`.env.devnet` selects Sakura **social v16**, blog **v8**, storefront **v9**,
-pollr **v7**, DM **v5** and App Connect; it feeds local devnet builds
+`.env.devnet` selects Sakura's release rehearsal set: **social v17**, blog
+**v9**, storefront **v10**, pollr **v8**, DM **v5**, the passkey vault and App
+Connect; it feeds local devnet builds
 (`npm run build:devnet`) and the mobile devnet variant only. The `/devnet` site
 and the devnet E2E CI job were retired on 2026-11-25 (devnet-sakura is gone);
 the devnet-only specs now run locally only. Keep paths used by any current build until

@@ -6,11 +6,11 @@ import { spawnSync } from 'node:child_process'
 import { runInNewContext } from 'node:vm'
 import { staticNotFound } from './write-static-404.mjs'
 
-function visit(base, pathname) {
+function visit(base, pathname, search = '', hash = '') {
   const redirects = []
   const links = { home: {}, explore: {} }
   const html = staticNotFound(base)
-  const location = { pathname, replace: (url) => redirects.push(url) }
+  const location = { pathname, search, hash, replace: (url) => redirects.push(url) }
   for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
     runInNewContext(script, { location, document: { getElementById: (id) => links[id] } })
   }
@@ -32,7 +32,17 @@ describe('GitHub Pages shared root 404', () => {
     expect(destination.redirects).toEqual([])
     expect(destination.html).toContain(`href="${prefix}/explore/"`)
   })
-  it.each(['/other/', '/devnet/', '/devnet/feed/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/', '/betamax/'])('keeps root unknown routes at root: %s', (pathname) => {
+  it.each([
+    ['/devnet', '', '/staging/'],
+    ['/devnet/', '', '/staging/'],
+    ['/devnet/terms', '', '/staging/terms'],
+    ['/devnet/privacy/', '', '/staging/privacy/'],
+    ['/devnet/connect/', '?r=ab12&app=yappr-dev&ac=ok', '/staging/connect/?r=ab12&app=yappr-dev&ac=ok'],
+  ])('forwards the retired %s%s to /staging', (pathname, search, target) => {
+    expect(visit('', pathname, search).redirects).toEqual([target])
+    expect(visit('/staging', pathname, search).redirects).toEqual([])
+  })
+  it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/', '/betamax/'])('keeps root unknown routes at root: %s', (pathname) => {
     const root = visit('', pathname)
     expect(root.redirects).toEqual([])
     expect(root.html).toContain('href="/"')

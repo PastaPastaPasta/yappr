@@ -85,9 +85,9 @@ The release set is registered on testnet (2026-10-21) and pinned in
 `.env.testnet`, which `npm run build` uses for `/staging` and, after the
 staging→master merge, for root. Until that merge, master's root still uses
 **social v2**, **DM v3** and the old feature contracts. `.env.devnet` (local
-devnet builds only; the `/devnet` site is retired) selects **social v16**,
-**DM v5**, **blog v8**, **storefront v9** and **pollr v7** with App Connect
-enabled. Those paths stay supported until the
+devnet builds only; the `/devnet` site is retired) selects Sakura's release
+rehearsal set: **social v17**, **DM v5**, **blog v9**, **storefront v10**,
+**pollr v8** and the passkey vault, with App Connect enabled. Those paths stay supported until the
 legacy cleanup; authored contract JSONs are not a deployment record. See [the contract index](contracts/README.md),
 [non-social features](docs/NON_SOCIAL_CONTRACTS.md) and
 [cut-over deferrals](docs/RELEASE_CLEANUP.md).

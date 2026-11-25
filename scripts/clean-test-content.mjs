@@ -45,7 +45,7 @@
  *                    devnet (E2E_SEED_PHRASE elsewhere), from the env or .env.local
  * Every derived key is checked against the identity on chain before it signs.
  * Options:
- *   --since <ms|iso> only documents created at or after it (the CI step passes its job start)
+ *   --since <ms|iso> only documents created at or after it (pass a run's start time)
  *   --until <ms|iso> only documents created at or before it
  *   --after <type>:<id> start the owner scan of `post` or `reply` after that document (one
  *                    identity only). With --until, resumes a scan the page cap cut short, through
