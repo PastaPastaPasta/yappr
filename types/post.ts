@@ -32,9 +32,13 @@ export interface Media {
 
 /** Pre-fetched enrichment data to avoid N+1 queries in feed */
 export interface PostEnrichment {
-  authorIsBlocked: boolean
-  authorIsFollowing: boolean
+  /** Unset when not read (or the read failed). */
+  authorIsBlocked?: boolean
+  /** Unset when not read (or the read failed). */
+  authorIsFollowing?: boolean
   authorAvatarUrl: string
+  /** The viewer `authorIsBlocked` and `authorIsFollowing` were read for; unset when they are defaults. */
+  viewerId?: string
 }
 
 export interface Post {
@@ -61,6 +65,14 @@ export interface Post {
   bookmarked?: boolean
   /** v10: the viewer's own quote or bare repost of this post/reply, when `reposted`. */
   ownQuote?: OwnQuote
+  /**
+   * The viewer a read of `liked`, `reposted`, `bookmarked` and `ownQuote` was
+   * for. Unset when no read set them: they are then defaults, never the
+   * viewer's marks (lib/feed/viewer-marks.ts).
+   */
+  marksFor?: string
+  /** The session generation the read behind `marksFor` started in. */
+  marksSession?: number
   media?: Media[]
   quotedPostId?: string // ID of quoted post (for fetching if quotedPost not populated)
   quotedPostOwnerId?: string // ID of quoted post owner (for notification queries)

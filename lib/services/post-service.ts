@@ -1,13 +1,12 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
-import { TtlMap } from '@/lib/caches/ttl-map';
 import { BaseDocumentService, QueryOptions, DocumentResult, postTimelineClauses, queryRawDocuments } from './document-service';
 import { Post, PostQueryOptions, Reply } from '../../types';
 import type { BlogPost } from '@/lib/types';
 import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
-import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
+import { fetchBatchPostStats, fetchBatchUserInteractions, type PostInteractionState } from './post-stats-helpers';
 import { HASHTAG_MAX_LENGTH, postListingWherePrefix, postListingsCarryLiveMarker, privateFeedClientSupported, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, inlineMentions, inlinePostTags, inlineTags, tagFieldsFor, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { extractMentions, indexedTags } from '@/lib/post-helpers';
@@ -16,7 +15,7 @@ import { tombstoneDocument } from './tombstone-helpers';
 import { createInLiveLane } from './live-lane';
 import { postModerationOf } from '@/lib/feed/post-moderation';
 import { nextReadVersion, withoutHiddenItems } from '@/lib/moderation-view';
-import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
+import { enrichPostsBatch as enrichPostsBatchHelper, resolvePostAuthor as resolvePostAuthorHelper, resolvePostAuthorsBatch as resolvePostAuthorsBatchHelper } from './post-enrichment-helpers';
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes, type AuthorPostCounts } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
@@ -231,8 +230,6 @@ export async function mentionFieldsFor(content: string): Promise<Record<string, 
 }
 
 class PostService extends BaseDocumentService<Post> {
-  private statsCache = new TtlMap<string, PostStats>(60_000);
-
   // Request deduplicators for batch/count operations
   private statsDeduplicator = new RequestDeduplicator<string, Map<string, PostStats>>();
   private interactionsDeduplicator = new RequestDeduplicator<string, Map<string, PostInteractionState>>();
@@ -246,7 +243,7 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Transform document to Post type.
    * Returns a Post with default placeholder values - callers should use
-   * enrichPostFull() or enrichPostsBatch() to populate stats and author data.
+   * enrichPostsBatch() to populate stats and author data.
    */
   protected transformDocument(doc: Record<string, unknown>): Post {
     // SDK may nest document fields under 'data' property
@@ -336,18 +333,6 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Enrich a single post with all data (stats, interactions, author).
-   * Returns a new Post object with enriched data.
-   */
-  async enrichPostFull(post: Post): Promise<Post> {
-    return enrichPostFullHelper(
-      post,
-      (target) => this.getPostStats(target),
-      (target) => this.getUserInteractions(target)
-    );
-  }
-
-  /**
    * Batch enrich multiple posts efficiently.
    * Uses batch queries to minimize network requests.
    * Returns new Post objects with enriched data including _enrichment for N+1 avoidance.
@@ -356,7 +341,7 @@ class PostService extends BaseDocumentService<Post> {
     const enriched = await enrichPostsBatchHelper(
       posts,
       (targets) => this.getBatchPostStats(targets),
-      (targets) => this.getBatchUserInteractions(targets),
+      (targets, viewerId) => this.getBatchUserInteractions(targets, viewerId),
       this.getCurrentUserId(),
       preloaded
     );
@@ -771,20 +756,6 @@ class PostService extends BaseDocumentService<Post> {
   }
 
   /**
-   * Get statistics (likes, reposts, replies) for a post or reply
-   */
-  private async getPostStats(target: KindedTarget): Promise<PostStats> {
-    return fetchPostStats(target, this.statsCache);
-  }
-
-  /**
-   * Get user interactions with a post or reply
-   */
-  private async getUserInteractions(target: KindedTarget): Promise<PostInteractionState> {
-    return fetchUserInteractions(target, this.getCurrentUserId());
-  }
-
-  /**
    * Get current user ID from localStorage session
    */
   private getCurrentUserId(): string | null {
@@ -795,13 +766,9 @@ class PostService extends BaseDocumentService<Post> {
    * Batch get user interactions for multiple posts/replies.
    * Deduplicates in-flight requests.
    */
-  async getBatchUserInteractions(targets: readonly KindedTarget[]): Promise<Map<string, PostInteractionState>> {
-    const currentUserId = this.getCurrentUserId();
-    if (!currentUserId || targets.length === 0) {
-      const result = new Map<string, PostInteractionState>();
-      targets.forEach(({ id }) => result.set(id, { liked: false, reposted: false, bookmarked: false }));
-      return result;
-    }
+  async getBatchUserInteractions(targets: readonly KindedTarget[], currentUserId = this.getCurrentUserId()): Promise<Map<string, PostInteractionState>> {
+    // Signed out, there are no marks to read.
+    if (!currentUserId || targets.length === 0) return new Map<string, PostInteractionState>();
 
     // Include userId in the key since interactions are user-specific, and the
     // doctype set because the same id list answers differently per surface.
@@ -868,19 +835,24 @@ class PostService extends BaseDocumentService<Post> {
    * Count quotes of a post or reply — O(1) count tree on the quote field for
    * that kind (`quoteCount` on v2, plus `quoteReplyCount` on v9; v10 serves
    * `==` off the rangeCountable `quotesOfPost`/`quotesOfReply`). On v10 bare
-   * reposts are quotes, so this is the repost count too.
+   * reposts are quotes, so this is the repost count too. A failed read throws.
    */
-  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
+  async readQuoteCount(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     const quoteField = quoteFieldFor(kind);
     if (!quoteField) return 0;
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
+    return documentCount(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [[quoteField, '==', quotedPostId]],
+    });
+  }
+
+  /** As readQuoteCount(), reading a failure as 0. */
+  async countQuotes(quotedPostId: string, kind: TargetKind = 'post'): Promise<number> {
     try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
-      return await documentCount(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [[quoteField, '==', quotedPostId]],
-      });
+      return await this.readQuoteCount(quotedPostId, kind);
     } catch (error) {
       logger.error('Error counting quotes:', error);
       return 0;
@@ -905,8 +877,8 @@ class PostService extends BaseDocumentService<Post> {
    * v10: the author's own quote or bare repost of each target, through the
    * unique `ownerAndQuotedPost`/`ownerAndQuotedReply [$ownerId, field]` index
    * (`$ownerId == author && field in [...]`, one query per 100 targets). A
-   * target has at most one. Empty where the topology has no such index, and
-   * on error (fails closed: nothing reads as reposted).
+   * target has at most one. Empty where the topology has no such index; a
+   * failed read throws, so an unread repost never reads as "not reposted".
    */
   async getOwnQuotes(ownerId: string, targetIds: string[], kind: TargetKind = 'post'): Promise<Map<string, OwnQuote>> {
     const index = ownQuoteIndexFor(kind);
@@ -931,7 +903,7 @@ class PostService extends BaseDocumentService<Post> {
       return result;
     } catch (error) {
       logger.error('Error fetching own quotes:', error);
-      return new Map();
+      throw error;
     }
   }
 

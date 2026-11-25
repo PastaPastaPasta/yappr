@@ -1,6 +1,6 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment';
 import { logger } from '@/lib/logger';
-import { Post, User } from '../types';
+import { Post } from '../types';
 import { loadIdentityBatch } from './identity-batch';
 import { blockService } from './block-service';
 import { followService } from './follow-service';
@@ -9,6 +9,8 @@ import { blockStatusCache, followStatusCache } from '../caches/user-status-cache
 import { targetOf, type KindedTarget } from '../contract-topology';
 import type { PostStats } from './post-service';
 import type { PostInteractionState } from './post-stats-helpers';
+import type { ViewerMarks } from '../feed/viewer-marks';
+import { sessionGeneration } from '@/lib/auth/session-generation';
 
 /**
  * Owner-keyed profile data from a `getProfilesByIdentityIds` result, with the
@@ -26,52 +28,16 @@ export function profileDataByOwnerId(profiles: readonly unknown[]): Map<string, 
   return map;
 }
 
-export async function enrichPostFull(
-  post: Post,
-  getPostStats: (target: KindedTarget) => Promise<PostStats>,
-  getUserInteractions: (target: KindedTarget) => Promise<PostInteractionState>
-): Promise<Post> {
-  try {
-    const target = targetOf(post);
-    const [stats, interactions, author] = await Promise.all([
-      getPostStats(target),
-      getUserInteractions(target),
-      unifiedProfileService.getProfileWithUsername(post.author.id),
-    ]);
-
-    const authorToUse = author || post.author;
-    const hasDpns = Boolean(authorToUse.username && !authorToUse.username.includes('...'));
-
-    return {
-      ...post,
-      likes: stats.likes,
-      reposts: stats.reposts,
-      replies: stats.replies,
-      quotes: stats.quotes,
-      views: stats.views,
-      liked: interactions.liked,
-      reposted: interactions.reposted,
-      bookmarked: interactions.bookmarked,
-      ownQuote: interactions.ownQuote,
-      author: {
-        ...authorToUse,
-        hasDpns,
-      } as User & { hasDpns: boolean },
-    };
-  } catch (error) {
-    logger.error('Error enriching post:', error);
-    return post;
-  }
-}
-
 export async function enrichPostsBatch(
   posts: Post[],
   getBatchPostStats: (targets: readonly KindedTarget[]) => Promise<Map<string, PostStats>>,
-  getBatchUserInteractions: (targets: readonly KindedTarget[]) => Promise<Map<string, PostInteractionState>>,
+  getBatchUserInteractions: (targets: readonly KindedTarget[], viewerId: string) => Promise<Map<string, PostInteractionState>>,
   currentUserId: string | null,
   supplied?: PreloadedEnrichment
 ): Promise<Post[]> {
   if (posts.length === 0) return posts;
+  // The viewer's marks belong to the session this read started in.
+  const session = sessionGeneration();
 
   try {
     // Tagged with each post's kind so the batch queries hit the right doctypes
@@ -90,7 +56,9 @@ export async function enrichPostsBatch(
       followStatusMap,
     ] = await Promise.all([
       getBatchPostStats(targets.filter(target => !preloaded.stats?.has(target.id))),
-      getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id))),
+      currentUserId
+        ? getBatchUserInteractions(targets.filter(target => !preloaded.interactions?.has(target.id)), currentUserId)
+        : Promise.resolve(new Map<string, PostInteractionState>()),
       identities,
       currentUserId
         ? blockService.checkBlockedBatch(currentUserId, authorIds)
@@ -101,7 +69,10 @@ export async function enrichPostsBatch(
     ]);
 
     preloaded.stats?.forEach((stats, postId) => statsMap.set(postId, { ...stats, postId }));
-    preloaded.interactions?.forEach((marks, postId) => interactionsMap.set(postId, marks));
+    // Each mark names the viewer it was read for: the batch read's is this one.
+    const marksMap = new Map<string, ViewerMarks>();
+    if (currentUserId) interactionsMap.forEach((marks, postId) => marksMap.set(postId, { ...marks, viewerId: currentUserId, session }));
+    preloaded.interactions?.forEach((marks, postId) => marksMap.set(postId, marks));
 
     if (currentUserId) {
       blockStatusCache.seed(currentUserId, blockStatusMap);
@@ -112,12 +83,12 @@ export async function enrichPostsBatch(
 
     return posts.map((post) => {
       const stats = statsMap.get(post.id);
-      const interactions = interactionsMap.get(post.id);
+      const interactions = marksMap.get(post.id);
       const username = usernameMap.get(post.author.id);
       const profileData = profileMap.get(post.author.id);
 
-      const authorIsBlocked = blockStatusMap.get(post.author.id) ?? false;
-      const authorIsFollowing = followStatusMap.get(post.author.id) ?? false;
+      const authorIsBlocked = blockStatusMap.get(post.author.id);
+      const authorIsFollowing = followStatusMap.get(post.author.id);
       const authorAvatarUrl = avatarUrlMap.get(post.author.id) ?? '';
 
       return {
@@ -127,10 +98,9 @@ export async function enrichPostsBatch(
         replies: stats?.replies ?? post.replies,
         quotes: stats?.quotes ?? post.quotes,
         views: stats?.views ?? post.views,
-        liked: interactions?.liked ?? post.liked,
-        reposted: interactions?.reposted ?? post.reposted,
-        bookmarked: interactions?.bookmarked ?? post.bookmarked,
-        ownQuote: interactions ? interactions.ownQuote : post.ownQuote,
+        ...(interactions
+          ? { liked: interactions.liked, reposted: interactions.reposted, bookmarked: interactions.bookmarked, ownQuote: interactions.ownQuote, marksFor: interactions.viewerId, marksSession: interactions.session }
+          : {}),
         author: {
           ...post.author,
           username: username || post.author.username,
@@ -142,6 +112,7 @@ export async function enrichPostsBatch(
           authorIsBlocked,
           authorIsFollowing,
           authorAvatarUrl,
+          viewerId: currentUserId ?? undefined,
         },
       };
     });

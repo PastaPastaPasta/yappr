@@ -686,6 +686,14 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
+    return this.readBlockFollows(userId).catch((error: unknown) => {
+      logger.error('Error getting block follows:', error)
+      return []
+    })
+  }
+
+  /** As getBlockFollows(), but a failed read rejects: block decisions must not read it as no followed lists. */
+  private async readBlockFollows(userId: string): Promise<string[]> {
     if (!this.available) return []
     // Check cache first — null means "never cached", while an empty
     // array is a valid cached result (the common case) and must not
@@ -695,17 +703,12 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       return cached
     }
 
-    try {
-      const data = await this.getBlockFollow(userId)
-      const followedUserIds = data?.followedUserIds ?? []
-      // Cache the result even when empty — only a confirmed answer
-      // reaches here, since query failures throw
-      setBlockFollows(userId, followedUserIds)
-      return followedUserIds
-    } catch (error) {
-      logger.error('Error getting block follows:', error)
-      return []
-    }
+    const data = await this.getBlockFollow(userId)
+    const followedUserIds = data?.followedUserIds ?? []
+    // Cache the result even when empty — only a confirmed answer
+    // reaches here, since query failures throw
+    setBlockFollows(userId, followedUserIds)
+    return followedUserIds
   }
 
   // ============================================================
@@ -718,15 +721,18 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async isBlocked(targetUserId: string, viewerId: string): Promise<boolean> {
     if (!viewerId || !targetUserId) return false
 
-    const blocked = await this.checkBlockedBatch(viewerId, [targetUserId])
-    return blocked.get(targetUserId) ?? false
+    const blocked = (await this.checkBlockedBatch(viewerId, [targetUserId])).get(targetUserId)
+    // Left out of the batch: a followed list could not be read.
+    if (blocked === undefined) throw new Error('Block status could not be read')
+    return blocked
   }
 
   /**
    * Why the viewer sees `targetUserId` as blocked: their own block document,
    * a followed block list, or both. Unlike isBlocked(), this always checks
    * both sources, so callers can offer the right remedy (delete the own block
-   * vs. manage followed block lists). A failed own-list read rejects.
+   * vs. manage followed block lists). A failed own-list read rejects, and so
+   * does "not blocked" when a followed list could not be read: that is unknown.
    */
   async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
     // No blocks contract (v13 without one): nobody is blocked, whatever a cache recorded.
@@ -740,26 +746,31 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const cachedOwnBlock = cached?.isBlocked === true && cached.blockedBy === viewerId
     const [ownBlockedIds, followedBlockers] = await Promise.all([
       this.getOwnBlockedIds(viewerId),
-      this.getBlockFollows(viewerId),
+      // Unread followed lists leave an inherited block unknown, not absent.
+      this.readBlockFollows(viewerId).catch((error: unknown) => {
+        logger.error('Error getting block follows:', error)
+        return null
+      }),
     ])
     const isOwnBlock = cachedOwnBlock || ownBlockedIds.includes(targetUserId)
     // The merged filter covers followed lists too; a miss rules out an inherited block.
     const mergedFilter = getMergedBloomFilter(viewerId)
-    const { blocks, complete } = mergedFilter && !mergedFilter.mightContain(targetUserId)
+    const inheritedRead = mergedFilter && !mergedFilter.mightContain(targetUserId)
       ? { blocks: new Map<string, InheritedBlock>(), complete: true }
-      : await this.queryInheritedBlocksBatch([targetUserId], followedBlockers)
+      : await this.queryInheritedBlocksBatch([targetUserId], followedBlockers ?? [])
+    const { blocks } = inheritedRead
+    const complete = inheritedRead.complete && followedBlockers !== null
     const inherited = blocks.get(targetUserId)
     const isBlocked = isOwnBlock || inherited !== undefined
 
+    if (!isBlocked && !complete) throw new Error('Block status could not be read')
+
     // Own block takes precedence in the cache, matching checkBlockedBatch().
-    // A negative is only cached when every followed list was actually read.
-    if (isBlocked || complete) {
-      addConfirmedBlocksBatch(viewerId, new Map([[targetUserId, {
-        isBlocked,
-        blockedBy: isOwnBlock ? viewerId : inherited?.blockedBy ?? '',
-        message: isOwnBlock ? cached?.message : inherited?.message,
-      }]]))
-    }
+    addConfirmedBlocksBatch(viewerId, new Map([[targetUserId, {
+      isBlocked,
+      blockedBy: isOwnBlock ? viewerId : inherited?.blockedBy ?? '',
+      message: isOwnBlock ? cached?.message : inherited?.message,
+    }]]))
 
     return {
       isBlocked,
@@ -868,13 +879,14 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     // Phase 3: Verify possible positives
     try {
       const batchResults = new Map<string, { blockedBy: string; isBlocked: boolean; message?: string }>()
-      const followedBlockers = await this.getBlockFollows(viewerId)
+      // A failed read of which lists the viewer follows rejects: the possible positives stay unknown.
+      const followedBlockers = await this.readBlockFollows(viewerId)
       const { blocks: inheritedBlocks, complete } = await this.queryInheritedBlocksBatch(possiblePositives, followedBlockers)
       for (const targetId of possiblePositives) {
         const inherited = inheritedBlocks.get(targetId)
-        result.set(targetId, Boolean(inherited))
-        // A failed blocker query must not be cached as "not blocked".
+        // A failed blocker query leaves the target unknown, neither reported nor cached as "not blocked".
         if (!inherited && !complete) continue
+        result.set(targetId, Boolean(inherited))
         batchResults.set(targetId, {
           blockedBy: inherited?.blockedBy ?? '',
           isBlocked: Boolean(inherited),
@@ -884,13 +896,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       addConfirmedBlocksBatch(viewerId, batchResults)
     } catch (error) {
+      // The possible positives stay unknown (left out).
       logger.error('Error in batch block check:', error)
-      // On error, assume not blocked for unchecked
-      for (const targetId of possiblePositives) {
-        if (!result.has(targetId)) {
-          result.set(targetId, false)
-        }
-      }
     }
 
     return result

@@ -432,10 +432,10 @@ export async function queryOwnedPostIds(
 
     return found;
   } catch (error) {
-    // Fail closed: a failed batch/SDK acquisition returns an empty set rather
-    // than partial results, so callers never highlight a subset of posts.
+    // A failed batch or SDK acquisition throws rather than returning a partial
+    // or empty set: an unread mark must stay unknown, never read as "not marked".
     logger.error(params.errorLabel, error);
-    return new Set();
+    throw error;
   }
 }
 

@@ -99,12 +99,18 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
   const {
     enrichProgressively,
-    enrichmentState,
     reset: resetEnrichment,
+    isAuthorBlocked,
     getPostEnrichment,
   } = useProgressiveEnrichment({
     currentUserId: user?.identityId,
   });
+  // For You is the same list for every viewer, so a sign-in keeps it (its loaded
+  // pages and cursor) and only the viewer's relations and marks are read again.
+  // Following is the viewer's own, so a new viewer loads it afresh.
+  const viewerRef = useRef(user?.identityId);
+  viewerRef.current = user?.identityId;
+  const followingViewer = activeTab === 'following' ? user?.identityId : undefined;
 
   const applyRepostAndQuoteEnrichment = useCallback(
     (postsToEnrich: Post[]) => {
@@ -248,7 +254,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
       setError(null);
 
       try {
-        if (activeTab === 'following' && !user?.identityId) {
+        const viewerId = activeTab === 'following' ? followingViewer : viewerRef.current;
+        if (activeTab === 'following' && !viewerId) {
           logger.debug('Feed: Skipping Following feed load - user not logged in');
           setLoading(false);
           return;
@@ -256,10 +263,11 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
         logger.debug(`Feed: Loading ${activeTab} posts from Dash Platform...`, isPaginating ? '(paginating)' : '');
 
+        // Per viewer: the cached page carries the viewer's marks.
         const cacheKey =
           activeTab === 'following'
-            ? `feed_following_${user?.identityId}`
-            : `feed_for_you_${feedLanguage || 'all'}`;
+            ? `feed_following_${viewerId}`
+            : `feed_for_you_${feedLanguage || 'all'}_${viewerId ?? 'signed-out'}`;
 
         if (!forceRefresh && !isPaginating) {
           const cached = readCachedFeedPage(
@@ -294,13 +302,13 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         // Enrichment that arrived with the posts (composite For You pages).
         let forYouPreloaded: PreloadedEnrichment | undefined;
 
-        if (activeTab === 'following' && user?.identityId) {
+        if (activeTab === 'following' && viewerId) {
           let followingPosts: Post[] = [];
           let followingCursor: FollowingFeedWindow | null = null;
           let followingHasMore = false;
 
           await loadFollowingFeed({
-            userId: user.identityId,
+            userId: viewerId,
             timeWindow: pagination?.timeWindow,
             forceRefresh,
             onBatchReady: (batchPosts, nextWindow, batchHasMore) => {
@@ -330,7 +338,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
           const forYouResult = await loadForYouFeed({
             startAfter: pagination?.startAfter,
             feedLanguage,
-            currentUserId: user?.identityId,
+            currentUserId: viewerId,
           });
           // The tab may have changed while this page was in flight; its posts,
           // cursor and cache entry belong to the view that asked for them.
@@ -399,7 +407,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
         if (isCurrent()) setLoading(false);
       }
     },
-    [activeTab, applyRepostAndQuoteEnrichment, enrichProgressively, feedLanguage, setData, setError, setLoading, user?.identityId]
+    [activeTab, applyRepostAndQuoteEnrichment, enrichProgressively, feedLanguage, followingViewer, setData, setError, setLoading]
   );
 
   const loadMore = useCallback(async () => {
@@ -602,17 +610,12 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     if (!posts) return null;
 
     return posts.filter((post) => {
-      if (enrichmentState.blockStatus.size > 0 && enrichmentState.blockStatus.get(post.author.id)) {
-        return false;
-      }
+      if (isAuthorBlocked(post.author.id)) return false;
       // v10: a bare repost is shown as its target's author's post.
       const repostedAuthorId = repostedAuthorIdOf(post);
-      if (repostedAuthorId && enrichmentState.blockStatus.get(repostedAuthorId)) {
-        return false;
-      }
-      return true;
+      return !(repostedAuthorId && isAuthorBlocked(repostedAuthorId));
     });
-  }, [enrichmentState.blockStatus, posts]);
+  }, [isAuthorBlocked, posts]);
 
   return {
     posts,

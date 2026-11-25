@@ -1,15 +1,16 @@
 import { logger } from '@/lib/logger';
-import type { TtlMap } from '@/lib/caches/ttl-map';
+import { isMissingDocumentTypeError } from '@/lib/error-utils';
 import {
   bookmarkIndexFor,
   groupByInteractionSurface,
   ownQuoteIndexFor,
   repostIndexFor,
+  repostsAreQuotes,
   type KindedTarget,
   type TargetKind,
 } from '@/lib/contract-topology';
 import type { OwnQuote } from '@/lib/feed/quote-reposts';
-import { moderationViewAll } from '@/lib/moderation-view';
+import type { MarkName } from '@/lib/feed/viewer-marks';
 import type { PostStats } from './post-service';
 
 export interface PostInteractionState {
@@ -29,11 +30,11 @@ export interface PostInteractionState {
 async function viewerReposts(currentUserId: string, ids: string[], kind: TargetKind): Promise<Map<string, OwnQuote | null>> {
   if (ownQuoteIndexFor(kind)) {
     const { postService } = await import('./post-service');
-    return postService.getOwnQuotes(currentUserId, ids, kind);
+    return noneIfTypeMissing(postService.getOwnQuotes(currentUserId, ids, kind), new Map<string, OwnQuote | null>());
   }
   if (!repostIndexFor(kind)) return new Map();
   const { repostService } = await import('./repost-service');
-  const reposted = await repostService.getUserRepostedPostIds(currentUserId, ids);
+  const reposted = await noneIfTypeMissing(repostService.getUserRepostedPostIds(currentUserId, ids), new Set<string>());
   return new Map(Array.from(reposted, (id) => [id, null]));
 }
 
@@ -42,134 +43,69 @@ function rootsOf(targets: readonly KindedTarget[]): Map<string, string> {
   return new Map(targets.flatMap((target) => (target.rootPostId ? [[target.id, target.rootPostId] as const] : [])));
 }
 
+/** A contract without the document type holds none of it; any other failure stays a failure. */
+function noneIfTypeMissing<T>(read: Promise<T>, none: T): Promise<T> {
+  return read.catch((error: unknown) => {
+    if (isMissingDocumentTypeError(error)) return none;
+    throw error;
+  });
+}
+
+/** The viewer's likes among `ids`. */
+async function viewerLikes(currentUserId: string, ids: string[], kind: TargetKind): Promise<Set<string>> {
+  const { likeService } = await import('./like-service');
+  return noneIfTypeMissing(likeService.getUserLikedPostIds(currentUserId, ids, kind), new Set<string>());
+}
+
+/** The viewer's bookmarks among `ids`; none where the kind cannot be bookmarked. */
+async function viewerBookmarks(currentUserId: string, ids: string[], kind: TargetKind): Promise<Set<string>> {
+  if (!bookmarkIndexFor(kind)) return new Set();
+  const { bookmarkService } = await import('./bookmark-service');
+  const bookmarks = await noneIfTypeMissing(bookmarkService.getUserBookmarksForPosts(currentUserId, ids), []);
+  return new Set(bookmarks.map((bookmark) => bookmark.postId));
+}
+
 /**
- * Stats and interactions are cached and deduplicated per (surface, id): a `post`
- * id and a `reply` id are drawn from the same keyspace but, on the v9 topology,
- * are answered by different doctypes. A count read under the moderator view
- * sums every lane, so it is kept apart from the listed lane's.
+ * Just one of the viewer's marks on `target`, for an action whose full read
+ * failed on a mark it does not need. Rejects when that one read fails.
  */
-function statsCacheKey(target: KindedTarget): string {
-  return `${target.kind}:${target.id}${moderationViewAll() ? ':all-lanes' : ''}`;
+export async function fetchUserMark(target: KindedTarget, currentUserId: string, mark: MarkName): Promise<Partial<PostInteractionState>> {
+  const [{ kind }] = groupByInteractionSurface([target]);
+  const ids = [target.id];
+  if (mark === 'liked') return { liked: (await viewerLikes(currentUserId, ids, kind)).has(target.id) };
+  if (mark === 'bookmarked') return { bookmarked: (await viewerBookmarks(currentUserId, ids, kind)).has(target.id) };
+  const ownQuote = (await viewerReposts(currentUserId, ids, kind)).get(target.id);
+  return { reposted: ownQuote !== undefined, ...(ownQuote ? { ownQuote } : {}) };
 }
 
-export async function fetchPostStats(
-  target: KindedTarget,
-  statsCache: TtlMap<string, PostStats>
-): Promise<PostStats> {
-  const { id: postId, kind } = target;
-  const cacheKey = statsCacheKey(target);
-  const cached = statsCache.get(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const [{ likeService }, { repostService }, { replyService }, { postService }] = await Promise.all([
-      import('./like-service'),
-      import('./repost-service'),
-      import('./reply-service'),
-      import('./post-service'),
-    ]);
-
-    const [likes, reposts, replies, quotes] = await Promise.all([
-      likeService.countLikes(postId, kind),
-      // No repost doctype to count: a v9 reply, and everything on v10, where a
-      // repost is a quote and the quote count below already holds it.
-      repostIndexFor(kind) ? repostService.countReposts(postId) : Promise.resolve(0),
-      // Polymorphic on v2 (one `parentId` count tree serves both kinds); on v9 a
-      // post counts its whole thread and a reply its direct children (v10 pins
-      // the reply's root). v9 counts include tombstones; v10 deletes leave the
-      // tree, so it is exact.
-      replyService.countReplies(postId, kind, target.rootPostId),
-      postService.countQuotes(postId, kind),
-    ]);
-
-    const stats: PostStats = {
-      postId,
-      likes,
-      reposts,
-      replies,
-      quotes,
-      views: 0,
-    };
-
-    statsCache.set(cacheKey, stats);
-
-    return stats;
-  } catch (error) {
-    logger.error('Error getting post stats:', error);
-    return { postId, likes: 0, reposts: 0, replies: 0, quotes: 0, views: 0 };
-  }
-}
-
-export async function fetchUserInteractions(
-  target: KindedTarget,
-  currentUserId: string | null
-): Promise<PostInteractionState> {
-  if (!currentUserId) {
-    return { liked: false, reposted: false, bookmarked: false };
-  }
-
-  const { id: postId, kind } = target;
-
-  try {
-    const [{ likeService }, { bookmarkService }] = await Promise.all([
-      import('./like-service'),
-      import('./bookmark-service'),
-    ]);
-
-    // Kinds the topology forbids reposting/bookmarking have no document to look
-    // for, so those queries are skipped rather than pointed at the wrong doctype.
-    const [liked, reposts, bookmarked] = await Promise.all([
-      likeService.isLiked(postId, currentUserId, kind),
-      viewerReposts(currentUserId, [postId], kind),
-      bookmarkIndexFor(kind) ? bookmarkService.isBookmarked(postId, currentUserId) : Promise.resolve(false),
-    ]);
-
-    const ownQuote = reposts.get(postId);
-    return { liked, reposted: reposts.has(postId), bookmarked, ...(ownQuote ? { ownQuote } : {}) };
-  } catch (error) {
-    logger.error('Error getting user interactions:', error);
-    return { liked: false, reposted: false, bookmarked: false };
-  }
-}
-
+/**
+ * The viewer's marks on each target. A target whose read failed is left out
+ * rather than given defaults, so callers can tell "not marked" from "not read".
+ */
 export async function fetchBatchUserInteractions(
   targets: readonly KindedTarget[],
   currentUserId: string
 ): Promise<Map<string, PostInteractionState>> {
   const result = new Map<string, PostInteractionState>();
-
-  targets.forEach(({ id }) => {
-    result.set(id, { liked: false, reposted: false, bookmarked: false });
-  });
-
   if (targets.length === 0) {
     return result;
   }
 
-  try {
-    const [{ likeService }, { bookmarkService }] = await Promise.all([
-      import('./like-service'),
-      import('./bookmark-service'),
-    ]);
-
-    // One pass per distinct interaction surface. On v2 both kinds share one
-    // surface, so this is a single pass over every id — the same three queries
-    // the pre-topology code issued.
-    await Promise.all(
-      groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+  // One pass per distinct interaction surface. On v2 both kinds share one
+  // surface, so this is a single pass over every id — the same three queries
+  // the pre-topology code issued.
+  await Promise.all(
+    groupByInteractionSurface(targets).map(async ({ kind, ids }) => {
+      try {
         // Query only the CURRENT user's own likes/reposts (bounded by page size
         // via the composite indexes) instead of fetching all users' likes capped
         // at 100 and filtering client-side — which could miss the user's own on
         // busy pages.
-        const [likedPostIds, reposts, userBookmarks] = await Promise.all([
-          likeService.getUserLikedPostIds(currentUserId, ids, kind),
+        const [likedPostIds, reposts, bookmarkedPostIds] = await Promise.all([
+          viewerLikes(currentUserId, ids, kind),
           viewerReposts(currentUserId, ids, kind),
-          bookmarkIndexFor(kind)
-            ? bookmarkService.getUserBookmarksForPosts(currentUserId, ids)
-            : Promise.resolve([]),
+          viewerBookmarks(currentUserId, ids, kind),
         ]);
-
-        const bookmarkedPostIds = new Set(userBookmarks.map((bookmark) => bookmark.postId));
 
         ids.forEach((postId) => {
           const ownQuote = reposts.get(postId);
@@ -180,13 +116,29 @@ export async function fetchBatchUserInteractions(
             ...(ownQuote ? { ownQuote } : {}),
           });
         });
-      })
-    );
-  } catch (error) {
-    logger.error('Error getting batch user interactions:', error);
-  }
+      } catch (error) {
+        logger.error('Error getting batch user interactions:', error);
+      }
+    })
+  );
 
   return result;
+}
+
+/**
+ * The repost total a card shows for `target`, read now: on v10 its quotes
+ * (bare reposts included), otherwise its repost documents. A failed read
+ * throws, so the card keeps its last confirmed total.
+ */
+export async function fetchRepostTotal(target: KindedTarget): Promise<number> {
+  const [{ kind }] = groupByInteractionSurface([target]);
+  if (repostsAreQuotes()) {
+    const { postService } = await import('./post-service');
+    return postService.readQuoteCount(target.id, kind);
+  }
+  if (!repostIndexFor(kind)) return 0;
+  const { repostService } = await import('./repost-service');
+  return repostService.readRepostCount(target.id);
 }
 
 export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Promise<Map<string, PostStats>> {
@@ -222,7 +174,7 @@ export async function fetchBatchPostStats(targets: readonly KindedTarget[]): Pro
           repostIndexFor(kind)
             ? repostService.countRepostsForPosts(ids)
             : Promise.resolve(new Map<string, number>()),
-          // Per-kind count tree — see fetchPostStats.
+          // Per-kind count tree: on v9 a post counts its whole thread and a reply its direct children.
           replyService.countRepliesForPosts(ids, kind, rootsOf(targets)),
           postService.countQuotesForPosts(ids, kind),
         ]);

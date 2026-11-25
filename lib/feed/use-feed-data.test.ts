@@ -40,7 +40,7 @@ vi.mock('@/components/ui/loading-state', () => ({ useAsyncState: () => ({
 }) }));
 vi.mock('@/lib/cache-manager', () => ({ cacheManager: { get: mocks.cached, set: mocks.cacheSet, clear: vi.fn() } }));
 vi.mock('@/hooks/use-progressive-enrichment', () => ({ useProgressiveEnrichment: () => ({
-  enrichProgressively: vi.fn(), enrichmentState: { blockStatus: new Map() },
+  enrichProgressively: vi.fn(), isAuthorBlocked: () => false,
   reset: vi.fn(), getPostEnrichment: vi.fn(),
 }) }));
 vi.mock('@/lib/feed/enrich-posts', () => ({ enrichPostsWithRepostsAndQuotes: mocks.enrich }));

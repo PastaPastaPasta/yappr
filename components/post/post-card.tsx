@@ -16,6 +16,8 @@ import { HiddenContentStub, ModerationLabel } from '@/components/moderation/mode
 import { archivalBuild, isHidden, moderationViewAll } from '@/lib/moderation-view'
 import { cn } from '@/lib/utils'
 import { useAppStore, useSettingsStore } from '@/lib/store'
+import { sessionGuard } from '@/lib/auth/session-generation'
+import { composeGuard } from '@/lib/compose/drafts'
 import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useRelativeTime } from '@/hooks/use-relative-time'
@@ -37,7 +39,8 @@ import { isSensitivePost, shouldGateSensitive } from '@/lib/sensitive-content'
 import { findPollrPollLink, getEmbeddedPollId, stripPollrPollLink } from '@/lib/poll-embed'
 import { authorDeletesLeaveHoles, contractTakesReports, deletesAreTombstones, moderatorDeletableTypes, referencesMayDangle, repostsAreQuotes, selfLikesAreRefused, targetKindOf, tombstonesAreHidden, type TargetKind } from '@/lib/contract-topology'
 import { quoteTargetOf } from '@/lib/feed/quote-targets'
-import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
+import { isBareRepost } from '@/lib/feed/quote-reposts'
+import { marksFor, postMarks, type ViewerMarks } from '@/lib/feed/viewer-marks'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { shownReplyCount } from '@/lib/feed/visible-reply-counts'
 import { logger } from '@/lib/logger'
@@ -69,9 +72,14 @@ export interface ProgressiveEnrichment {
   profileLoaded?: boolean
   avatarUrl: string | undefined
   stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined
-  interactions: { liked: boolean; reposted: boolean; bookmarked: boolean; ownQuote?: OwnQuote } | undefined
+  /** The viewer's marks, with the viewer they were read for. */
+  interactions: ViewerMarks | undefined
+  /** The list is still reading the viewer's marks for this card. */
+  marksPending?: boolean
   isBlocked: boolean | undefined
   isFollowing: boolean | undefined
+  /** The viewer `isBlocked` and `isFollowing` were read for; unset when signed out or not read. */
+  relationsFor?: string
   replyTo?: { id: string; authorId: string; authorUsername: string | null }
 }
 
@@ -105,6 +113,8 @@ interface PostCardProps {
    * they chose to hide those: post detail and threads never grow holes.
    */
   keepIfUnreadable?: boolean
+  /** A read already under way will bring the viewer's marks, so the card does not read them itself. */
+  marksPending?: boolean
 }
 
 /**
@@ -140,11 +150,15 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
   const { quotedPost, loading, unavailable, hidden: quoteHidden } = useQuotedPost(post)
   const [enriched, setEnriched] = useState<Post | null>(null)
+  // The target and viewer the last enrichment settled for; until it does, its
+  // read brings the viewer's marks, so the target card does not read them too.
+  const [enrichedFor, setEnrichedFor] = useState<string | null>(null)
   const [removed, setRemoved] = useState(false)
   const [removing, setRemoving] = useState(false)
 
   // Keyed on the target's id, not the object: a feed replacing post objects
-  // must not re-enrich. The ref hands the effect the current object.
+  // must not re-enrich. The ref hands the effect the current object. A new
+  // viewer re-reads it, for their own block status of its author.
   const quotedRef = useRef(quotedPost)
   useEffect(() => {
     quotedRef.current = quotedPost
@@ -155,16 +169,20 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
     // A v11 tombstone renders as a stub (or not at all): no counts to read.
     if (!quotedId || !target || isHiddenTombstone(target)) return
     let current = true
+    const key = `${quotedId}|${viewerId ?? ''}`
     import('@/lib/services/post-service')
       .then(({ postService }) => postService.enrichPostsBatch([target]))
       .then(([result]) => {
         if (current && result) setEnriched(result)
       })
       .catch((error) => logger.warn('Reposted post enrichment failed; showing it without counts', error))
+      .finally(() => {
+        if (current) setEnrichedFor(key)
+      })
     return () => {
       current = false
     }
-  }, [quotedId])
+  }, [quotedId, viewerId])
   // The target renders at once and picks up its counts when they arrive.
   const target = enriched && enriched.id === quotedId ? enriched : quotedPost
 
@@ -179,7 +197,8 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
   // The target is what shows, so a blocked author, or a sensitive target the
   // viewer hides, must not come back through someone else's repost. (Feeds
   // filter both before render; this covers every other list.)
-  const targetBlocked = enriched?._enrichment?.authorIsBlocked === true
+  const targetRelations = enriched?._enrichment
+  const targetBlocked = targetRelations?.viewerId === viewerId && targetRelations?.authorIsBlocked === true
   const targetHidden = target !== null && sensitiveContentMode === 'hide' && isSensitivePost(target) && target.author.id !== viewerId
   // A target proved removed leaves nothing to browse: only the reposter sees
   // the stub, to remove the repost.
@@ -216,6 +235,7 @@ function BareRepostCard({ post, enrichment, onDelete, keepIfUnreadable }: PostCa
         // Deleting the target drops the repost that showed it.
         onDelete={onDelete ? () => onDelete(post.id) : undefined}
         keepIfUnreadable={keepIfUnreadable}
+        marksPending={Boolean(viewerId) && enrichedFor !== `${quotedId}|${viewerId}`}
       />
     )
   }
@@ -273,6 +293,7 @@ function PostCardView({
   bookmarkAction,
   replyBlockedReason,
   keepIfUnreadable = false,
+  marksPending = false,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -324,6 +345,10 @@ function PostCardView({
   const setHideUnreadablePrivate = useSettingsStore((s) => s.setHideUnreadablePrivatePosts)
   const privatePost = isPrivatePost(post)
   const [privateReadability, setPrivateReadability] = useState<PrivateReadability>(() => knownPrivateReadability(post.id, viewerId))
+  // A new viewer (a sign-in with the page open) decrypts afresh; the last viewer's answer is not theirs.
+  useEffect(() => {
+    setPrivateReadability(knownPrivateReadability(post.id, viewerId))
+  }, [post.id, viewerId])
   const unreadablePrivate = privatePost && !isOwnPost && privateReadability === 'unreadable'
   const hiddenAsUnreadable = hideUnreadablePrivate && privatePost && !isOwnPost && !keepIfUnreadable && !isTombstoned && privateReadability !== 'readable'
 
@@ -369,12 +394,11 @@ function PostCardView({
     post,
     viewerId,
     {
-      liked: progressiveEnrichment?.interactions?.liked ?? post.liked ?? false,
       likes: stats.likes,
-      reposted: progressiveEnrichment?.interactions?.reposted ?? post.reposted ?? false,
       reposts: repostsAreQuotePosts ? stats.quotes : stats.reposts,
-      bookmarked: progressiveEnrichment?.interactions?.bookmarked ?? post.bookmarked ?? false,
-      ownQuote: progressiveEnrichment?.interactions?.ownQuote ?? post.ownQuote,
+      // Whichever read named this viewer; usePostEngagement reads them itself otherwise.
+      marks: marksFor(progressiveEnrichment?.interactions, viewerId) ?? postMarks(post),
+      marksPending: marksPending || progressiveEnrichment?.marksPending === true,
     },
     targetKind
   )
@@ -448,17 +472,18 @@ function PostCardView({
   // Whether each hashtag/mention index document actually landed on Platform.
   const { validations: hashtagValidations } = usePostFieldValidation('hashtag', post)
   const { validations: mentionValidations } = usePostFieldValidation('mention', post)
-  const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, {
-    initialValue: progressiveEnrichment?.isBlocked ?? legacyEnrichment?.authorIsBlocked,
-  })
-  const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, {
-    initialValue: progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing,
-  })
+  // Block and follow status from a read for another viewer (the page stayed open through a sign-in) don't count.
+  const relations = progressiveEnrichment?.relationsFor === viewerId ? progressiveEnrichment : undefined
+  const legacyRelations = legacyEnrichment?.viewerId === viewerId ? legacyEnrichment : undefined
+  const knownBlocked = relations?.isBlocked ?? legacyRelations?.authorIsBlocked
+  const knownFollowing = relations?.isFollowing ?? legacyRelations?.authorIsFollowing
+  const { isBlocked, isLoading: blockLoading, toggleBlock } = useBlock(post.author.id, { initialValue: knownBlocked })
+  const { isFollowing, isLoading: followLoading, toggleFollow } = useFollow(post.author.id, { initialValue: knownFollowing })
   // Live follow state beats the enrichment snapshot as soon as useFollow
   // settles: the snapshot goes stale the moment the viewer unfollows, and a
   // stale true would leave this author's media ungated. While the hook is
   // resolving, the snapshot covers that window (undefined gates until then).
-  const authorIsFollowing = followLoading ? progressiveEnrichment?.isFollowing ?? legacyEnrichment?.authorIsFollowing : isFollowing
+  const authorIsFollowing = followLoading ? knownFollowing : isFollowing
   const mediaGate = useMediaGate(post.author.id, authorIsFollowing)
   // Batch-resolved when the loader attached one, otherwise fetched here.
   const { quotedPost, loading: quotedPostLoading, unavailable: quotedPostUnavailable, hidden: quotedPostHidden } = useQuotedPost(post)
@@ -513,13 +538,25 @@ function PostCardView({
     if (!requireAuth()) return
     return engagement.toggleBookmark()
   }
-  const handleQuote = () => {
+  const handleQuote = async () => {
     if (isTombstoned || !requireAuth()) return
     // v10 allows one quote or repost per author and target; a second would be
     // refused (40105), so the viewer is taken to their quote (a bare repost
-    // hides this item: it is undone from the Repost item instead).
-    if (ownQuote) {
-      router.push(`/post?id=${ownQuote.id}`)
+    // hides this item: it is undone from the Repost item instead). Unknown
+    // marks are read first, so the composer never opens on a held slot, and
+    // the check holds the slot, so it is skipped while a repost of it is under way on any card.
+    let held = ownQuote
+    if (repostsAreQuotePosts) {
+      // A late answer is dropped when the session or the composer changed meanwhile.
+      const sameSession = sessionGuard()
+      const sameCompose = composeGuard(useAppStore.getState)
+      const marks = await engagement.checkQuoteSlot()
+      if (!marks || !sameSession() || !sameCompose()) return
+      if (marks.reposted && (!marks.ownQuote || marks.ownQuote.bare)) return
+      held = marks.reposted ? marks.ownQuote ?? null : null
+    }
+    if (held) {
+      router.push(`/post?id=${held.id}`)
       return
     }
     openCompose({ quotingPost: enrichedPost })
@@ -604,9 +641,10 @@ function PostCardView({
       profileLoaded,
       avatarUrl,
       stats: progressiveEnrichment?.stats ?? stats,
-      interactions: progressiveEnrichment?.interactions ?? { liked: engagement.liked, reposted: engagement.reposted, bookmarked: engagement.bookmarked, ownQuote: engagement.ownQuote ?? undefined },
-      isBlocked: progressiveEnrichment?.isBlocked ?? isBlocked,
+      interactions: engagement.marks,
+      isBlocked: blockLoading ? knownBlocked : isBlocked,
       isFollowing: authorIsFollowing,
+      relationsFor: viewerId,
       replyTo: progressiveEnrichment?.replyTo,
     })
   }
@@ -931,7 +969,9 @@ function PostCardView({
             }}
             like={{ count: engagement.likes, active: engagement.liked, loading: engagement.likeLoading, allowed: hideAvatar || !(isOwnPost && selfLikesAreRefused(targetKind)), onClick: handleLike }}
             bookmark={bookmarkable ? bookmarkAction ?? { active: engagement.bookmarked, loading: engagement.bookmarkLoading, onClick: handleBookmark } : undefined}
-            onQuote={handleQuote}
+            onQuote={() => {
+              handleQuote().catch((error: unknown) => logger.error('Quote failed:', error))
+            }}
             // v10's one slot: a bare repost is undone from the Repost item (no
             // Quote, which would be refused); a quote with text is visited.
             quoteLabel={ownQuote ? (ownQuote.bare ? null : 'View your quote') : undefined}

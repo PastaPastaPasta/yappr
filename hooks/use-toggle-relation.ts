@@ -64,6 +64,11 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
   const requestRef = useRef(0)
   // While a write is pending, `load` must not settle state underneath it.
   const toggleInFlightRef = useRef(false)
+  // The viewer and subject `isOn` was last settled for. Anything else (a failed
+  // check, or a viewer change with the page still open) leaves `isOn` unknown,
+  // and a toggle checks again before writing.
+  const knownForRef = useRef<string | null>(null)
+  const relationKey = `${viewerId ?? ''}|${subjectId}`
   // The latest callbacks, so `load` does not have to depend on them.
   const optionsRef = useRef(options)
   optionsRef.current = options
@@ -77,15 +82,18 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
       if (toggleInFlightRef.current) return
       if (!viewerId || !subjectId || isSelf) {
         // Logged out, or no subject yet: the relation cannot hold.
+        knownForRef.current = null
         setIsOn(false)
         setIsLoading(false)
         return
       }
+      const key = `${viewerId}|${subjectId}`
       if (initialValue !== undefined && !force) {
         // A prefetched value may arrive after this hook already started its
         // own query; the cleanup above orphaned that query, so settle here.
         // A newer cache entry (e.g. from a toggle in another row) wins.
         setIsOn(cache.get(viewerId, subjectId) ?? initialValue)
+        knownForRef.current = key
         setIsLoading(false)
         return
       }
@@ -94,19 +102,24 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         const cached = cache.get(viewerId, subjectId)
         if (cached !== null) {
           setIsOn(cached)
+          knownForRef.current = key
           setIsLoading(false)
           return
         }
       }
 
+      knownForRef.current = null
       setIsLoading(true)
       try {
         const value = await optionsRef.current.check(viewerId, subjectId)
         if (!isCurrent()) return
         cache.set(viewerId, subjectId, value)
         setIsOn(value)
+        knownForRef.current = key
       } catch (error) {
         logger.error(`${label}: status check failed:`, error)
+        // Unknown: show the neutral state rather than another viewer's; a toggle checks again.
+        if (isCurrent()) setIsOn(false)
       } finally {
         if (isCurrent()) setIsLoading(false)
       }
@@ -128,18 +141,38 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         openLoginPrompt()
         return
       }
-      if (!subjectId || isLoading) return
+      if (!subjectId || isLoading || toggleInFlightRef.current) return
       if (isSelf && selfError) {
         toast.error(selfError)
         return
       }
 
-      const wasOn = isOn
-      const { turnOn, turnOff, onMessage, offMessage, failedMessage, onOptimistic, onRollback } = optionsRef.current
+      const { check, turnOn, turnOff, onMessage, offMessage, failedMessage, onOptimistic, onRollback } = optionsRef.current
 
       toggleInFlightRef.current = true
-      setIsOn(!wasOn)
       setIsLoading(true)
+      const wasOn = isOn
+      if (knownForRef.current !== relationKey) {
+        try {
+          const value = await check(viewerId, subjectId)
+          cache.set(viewerId, subjectId, value)
+          knownForRef.current = relationKey
+          if (value !== isOn) {
+            // The button showed the other state: show the real one, and write nothing the viewer did not ask for.
+            setIsOn(value)
+            toggleInFlightRef.current = false
+            setIsLoading(false)
+            return
+          }
+        } catch (error) {
+          logger.error(`${label}: status check before toggle failed:`, error)
+          toast.error('Could not check this right now. Please try again.')
+          toggleInFlightRef.current = false
+          setIsLoading(false)
+          return
+        }
+      }
+      setIsOn(!wasOn)
       cache.set(viewerId, subjectId, !wasOn)
       onOptimistic?.(!wasOn)
 
@@ -160,7 +193,7 @@ export function useToggleRelation<TArg = void, TResult extends ToggleResult = To
         setIsLoading(false)
       }
     },
-    [viewerId, subjectId, isLoading, isSelf, isOn, cache, label, selfError, openLoginPrompt]
+    [viewerId, subjectId, relationKey, isLoading, isSelf, isOn, cache, label, selfError, openLoginPrompt]
   )
 
   const refresh = useCallback(() => {

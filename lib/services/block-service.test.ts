@@ -215,12 +215,36 @@ describe('block provenance', () => {
       if (followedReadFails) throw new Error('StaleNode')
       return [block(authors[0], 0, followed)]
     })
-    expect(await blockService.getBlockProvenance(authors[0], viewer))
-      .toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
-    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(false)
+    // Unknown, not "not blocked": provenance and a single check reject, and the batch leaves it out.
+    await expect(blockService.getBlockProvenance(authors[0], viewer)).rejects.toThrow('Block status could not be read')
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
+    await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
 
     // Once the followed list reads again, the block shows up instead of a cached miss.
     followedReadFails = false
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
+    expect(await blockService.getBlockProvenance(authors[0], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })
+  })
+
+  it('does not cache "not blocked" when which lists the viewer follows could not be read', async () => {
+    let discoveryFails = true
+    query.mockImplementation(async q => {
+      if (q.documentTypeName === 'blockFollow') {
+        if (discoveryFails) throw new Error('StaleNode')
+        return [{ $id: identity(9), $ownerId: viewer, followedBlockers: [followed] }]
+      }
+      return q.documentTypeName === 'block' && q.where[0][2] === followed ? [block(authors[0], 0, followed)] : []
+    })
+    await expect(blockService.getBlockProvenance(authors[0], viewer)).rejects.toThrow('Block status could not be read')
+    expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).has(authors[0])).toBe(false)
+    await expect(blockService.isBlocked(authors[0], viewer)).rejects.toThrow('Block status could not be read')
+    // The viewer's own block still shows, so it can be lifted.
+    addOwnBlock(viewer, authors[1])
+    expect(await blockService.getBlockProvenance(authors[1], viewer))
+      .toEqual({ isBlocked: true, isOwnBlock: true, inheritedFrom: null })
+
+    discoveryFails = false
     expect((await blockService.checkBlockedBatch(viewer, [authors[0]])).get(authors[0])).toBe(true)
     expect(await blockService.getBlockProvenance(authors[0], viewer))
       .toEqual({ isBlocked: true, isOwnBlock: false, inheritedFrom: followed })

@@ -27,7 +27,6 @@ import type {
   PostStats,
   PreloadedEnrichment,
   ProfileData,
-  UserInteractions,
 } from '@/hooks/use-progressive-enrichment';
 import { Post } from '@/lib/types';
 import { getEvoSdk } from '@/lib/services/evo-sdk-service';
@@ -43,6 +42,8 @@ import { transformRawPost } from './transform-raw-post';
 import { isHiddenItem } from '@/lib/moderation-view';
 import { markQuoteHidden } from './post-moderation';
 import type { OwnQuote } from './quote-reposts';
+import type { ViewerMarks } from './viewer-marks';
+import { sessionGeneration } from '@/lib/auth/session-generation';
 
 /**
  * Batch a feed page, engagement counts, quoted posts, author profiles/names
@@ -97,6 +98,8 @@ export interface CompositeFeedPage {
 export async function loadCompositeFeedPage(
   options: CompositeFeedPageOptions
 ): Promise<CompositeFeedPage> {
+  // The viewer's marks belong to the session this read started in.
+  const session = sessionGeneration();
   const sdk = await getEvoSdk();
 
   const { query, slots } = buildFeedPageQuery(options);
@@ -107,7 +110,7 @@ export async function loadCompositeFeedPage(
     : null;
   const result = await sdk.documents.composite(query);
   validateCompositeResult(result, query);
-  return decodeFeedPage(result, slots, options, early);
+  return decodeFeedPage(result, slots, options, early, session);
 }
 
 /** Validate the response shape before decode can seed any derived caches. */
@@ -314,20 +317,32 @@ function sharedRootOf(sourcePosts: Post[] | undefined): string | null {
   return roots.size === 1 && root ? root : null;
 }
 
-/**
- * v10: the viewer's own quote or repost of each id (null when logged out, off
- * v10, or when the read fails; `getOwnQuotes` itself fails closed).
- */
-function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promise<Map<string, OwnQuote> | null> {
+/** A read of the viewer's marks beside the composite that failed: the page's marks stay unknown. */
+const MARKS_UNREAD = Symbol('marks-unread');
+type MarksRead<T> = T | typeof MARKS_UNREAD;
+
+/** The v10 marks reads that start before the composite, when the page's ids are known up front. */
+interface EarlyMarks {
+  ownQuotes: Promise<MarksRead<Map<string, OwnQuote> | null>>;
+  liked: Promise<MarksRead<Set<string>>> | null;
+}
+
+function unreadOnFailure<T>(read: Promise<T>, label: string): Promise<MarksRead<T>> {
+  return read.catch((error) => {
+    logger.warn(label, error);
+    return MARKS_UNREAD;
+  });
+}
+
+/** v10: the viewer's own quote or repost of each id (null when logged out or off v10). */
+function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promise<MarksRead<Map<string, OwnQuote> | null>> {
   const kind = options.kind ?? 'post';
   const viewer = options.currentUserId;
   if (!viewer || !ownQuoteIndexFor(kind) || ids.length === 0) return Promise.resolve(null);
-  return import('@/lib/services/post-service')
-    .then(({ postService }) => postService.getOwnQuotes(viewer, ids, kind))
-    .catch((error) => {
-      logger.warn('Feed: own quote lookup failed', error);
-      return null;
-    });
+  return unreadOnFailure(
+    import('@/lib/services/post-service').then(({ postService }) => postService.getOwnQuotes(viewer, ids, kind)),
+    'Feed: own quote lookup failed'
+  );
 }
 
 // ---- Result ----
@@ -337,11 +352,14 @@ function loadOwnQuotes(ids: string[], options: CompositeFeedPageOptions): Promis
  * like-count index (`target in [ids] && $ownerId == me`); null when logged
  * out or where the composite carries them (v2, v9).
  */
-function loadViewerLikes(ids: string[], options: CompositeFeedPageOptions): Promise<Set<string>> | null {
+function loadViewerLikes(ids: string[], options: CompositeFeedPageOptions): Promise<MarksRead<Set<string>>> | null {
   const kind = options.kind ?? 'post';
   const viewer = options.currentUserId;
   if (!viewer || !likeIndexFor(kind).ownerIsTerminal || ids.length === 0) return null;
-  return import('@/lib/services/like-service').then(({ likeService }) => likeService.getUserLikedPostIds(viewer, ids, kind));
+  return unreadOnFailure(
+    import('@/lib/services/like-service').then(({ likeService }) => likeService.getUserLikedPostIds(viewer, ids, kind)),
+    'Feed: viewer like lookup failed'
+  );
 }
 
 /**
@@ -358,8 +376,8 @@ async function loadSeparateReads(
   sourcePosts: Post[],
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions,
-  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
-): Promise<{ ownQuotes: Map<string, OwnQuote> | null; replyCounts: Map<string, number> | null; liked: Set<string> | null }> {
+  early: EarlyMarks | null
+): Promise<{ ownQuotes: MarksRead<Map<string, OwnQuote> | null>; replyCounts: Map<string, number> | null; liked: MarksRead<Set<string>> | null }> {
   const kind = options.kind ?? 'post';
   const [ownQuotes, replyCounts, liked] = await Promise.all([
     early?.ownQuotes ?? loadOwnQuotes(pageIds, options),
@@ -451,7 +469,8 @@ async function decodeFeedPage(
   result: CompositeDocumentsResult,
   slots: SubQuerySlots,
   options: CompositeFeedPageOptions,
-  early: { ownQuotes: Promise<Map<string, OwnQuote> | null> | null; liked: Promise<Set<string>> | null } | null
+  early: EarlyMarks | null,
+  session: number
 ): Promise<CompositeFeedPage> {
   let rawPosts = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   if (options.documentIds) {
@@ -518,16 +537,20 @@ async function decodeFeedPage(
   const usernames = usernamesByIdentity(documentsAt(result, slots.usernames), authorIds, rawPosts.length);
   dpnsService.seedUsernames(usernames);
 
-  // The viewer's marks; only meaningful when logged in.
+  // The viewer's marks; only meaningful when logged in, and only when every read of them succeeded.
   const preloaded: PreloadedEnrichment = { usernames, profiles, avatars, stats };
-  if (options.currentUserId) {
+  const viewerId = options.currentUserId;
+  if (viewerId && separate.liked !== MARKS_UNREAD && separate.ownQuotes !== MARKS_UNREAD) {
+    const ownQuotes = separate.ownQuotes;
     const liked = separate.liked ?? targetIdsOf(documentsAt(result, slots.myLikes), likeIndexFor(options.kind ?? 'post').field);
     const reposted = targetIdsOf(documentsAt(result, slots.myReposts), repostIndexFor(options.kind ?? 'post')?.field ?? 'postId');
     const bookmarked = targetIdsOf(documentsAt(result, slots.myBookmarks), bookmarkIndexFor(options.kind ?? 'post')?.field ?? 'postId');
-    const interactions = new Map<string, UserInteractions>();
+    const interactions = new Map<string, ViewerMarks>();
     for (const id of pageIds) {
-      const ownQuote = separate.ownQuotes?.get(id);
+      const ownQuote = ownQuotes?.get(id);
       interactions.set(id, {
+        viewerId,
+        session,
         liked: liked.has(id),
         reposted: ownQuote ? true : reposted.has(id),
         bookmarked: bookmarked.has(id),
@@ -595,6 +618,9 @@ async function decodeFeedPage(
       post.liked = mine.liked;
       post.reposted = mine.reposted;
       post.bookmarked = mine.bookmarked;
+      post.ownQuote = mine.ownQuote;
+      post.marksFor = mine.viewerId;
+      post.marksSession = mine.session;
     }
   }
 

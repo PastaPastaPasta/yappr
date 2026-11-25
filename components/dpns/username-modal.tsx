@@ -7,7 +7,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { useAuth } from '@/contexts/auth-context'
 import { rememberUsernameSkip } from '@/lib/username-skip'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { currentReturnToParam, onLoginPage, returnToOrDefault } from '@/lib/auth/return-to'
+import { currentReturnToParam, onUsernameDetour, returnToOrDefault } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
 import { WalletUsernameGuide } from './wallet-username-guide'
@@ -19,7 +19,7 @@ interface UsernameModalProps {
   onClose: () => void
   /**
    * Called instead of `onClose` when the user dismisses the modal (close button
-   * or backdrop). Skip and Continue navigate on their own, so they never run it.
+   * or backdrop). Skip and Continue never run it.
    */
   onDismiss?: () => void
   customIdentityId?: string
@@ -45,8 +45,9 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   const handleSkip = () => {
     if (currentIdentityId) rememberUsernameSkip(currentIdentityId)
     onClose()
-    // On /login the sign-in goes on once this closes (contexts/auth-context.tsx).
-    if (!onLoginPage()) router.push(returnToOrDefault(currentReturnToParam()))
+    // The username detour goes back to its `next`. Over any other page the page
+    // stays; on /login the sign-in goes on once this closes (contexts/auth-context.tsx).
+    if (onUsernameDetour()) router.push(returnToOrDefault(currentReturnToParam()))
   }
 
   const handleComplete = () => {

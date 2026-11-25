@@ -15,7 +15,7 @@ import { hashtagService, TrendingHashtag } from '@/lib/services/hashtag-service'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
-import { checkBlockedForAuthors } from '@/hooks/use-block'
+import { preloadBlockStatus, useWithoutBlockedAuthors } from '@/hooks/use-block'
 import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import { TrendingHashtagRow, TrendingHashtagRowSkeleton } from '@/components/explore/trending-hashtag-row'
 import { ScrollTabs, scrollTabId } from '@/components/ui/scroll-tabs'
@@ -36,6 +36,10 @@ type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 export default function ExplorePage() {
   const router = useRouter()
   const { user } = useAuth()
+  // Read by the loads, which don't re-run for a new viewer: a sign-in keeps the
+  // search and the Top lists, and the render filters them for the new viewer's blocks.
+  const viewerRef = useRef(user?.identityId)
+  viewerRef.current = user?.identityId
   const postingClosed = usePostingClosed()
   const blogPostsOpen = useModeratedTypeOpen('blogPost', true, 'blog')
   const sensitiveContentMode = useSettingsStore((s) => s.sensitiveContentMode)
@@ -63,7 +67,8 @@ export default function ExplorePage() {
   const blogsLoadedRef = useRef(false)
   const blogCacheRef = useRef<{ blogIds: string[]; blogMap: Map<string, Blog> } | null>(null)
   const trendingHashtags = trendingByWindow[trendingWindow]
-  const topPosts = topByWindow[topWindow]
+  const topPosts = useWithoutBlockedAuthors(topByWindow[topWindow] ?? null) ?? undefined
+  const visibleSearchResults = useWithoutBlockedAuthors(searchResults) ?? []
   const tabLoadingLabel: Record<ExploreTab, string | null> = {
     hashtags: trendingHashtags ? null : 'Loading trending tags',
     top: topPosts ? null : 'Loading top posts',
@@ -93,11 +98,6 @@ export default function ExplorePage() {
     if (match) selectTab(match)
   }, [selectTab])
 
-  // The Top lists are filtered by the viewer's blocks: drop them on sign-in/out.
-  useEffect(() => {
-    setTopByWindow({})
-  }, [user?.identityId])
-
   // Load the global most-liked posts while the Top tab is open (v9 on — the
   // ranking is one proved `documents.ranked()` page). A revisit shows the kept
   // list and refreshes it quietly; hydration is session-cached for a minute.
@@ -108,14 +108,9 @@ export default function ExplorePage() {
     const loadTopPosts = async () => {
       try {
         const { topLikedPostsHydrated } = await import('@/lib/services/ranked-likes')
-        let posts = await topLikedPostsHydrated({ limit: 20, window: win })
-
-        // Filter out posts from blocked users, same as the search results above.
-        if (user?.identityId && posts.length > 0) {
-          const authorIds = Array.from(new Set(posts.map(p => p.author.id)))
-          const blockedMap = await checkBlockedForAuthors(user.identityId, authorIds)
-          posts = posts.filter(post => !blockedMap.get(post.author.id))
-        }
+        const posts = await topLikedPostsHydrated({ limit: 20, window: win })
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerRef.current, posts)
 
         setTopByWindow((prev) => ({ ...prev, [win]: posts }))
       } catch (error) {
@@ -126,7 +121,7 @@ export default function ExplorePage() {
     }
 
     loadTopPosts().catch(err => logger.error('Failed to load top posts:', err))
-  }, [activeTab, user?.identityId, topWindow])
+  }, [activeTab, topWindow])
 
   // Load trending hashtags (the hashtag service caches each window for 5 minutes).
   useEffect(() => {
@@ -216,24 +211,18 @@ export default function ExplorePage() {
         const { postService } = await import('@/lib/services/post-service')
         const { documents: recentPosts } = await postService.getTimeline({ limit: 100 })
 
-        const authorIds = Array.from(new Set(recentPosts.map(p => p.author.id).filter(Boolean)))
-        const blockedMap = user?.identityId
-          ? await checkBlockedForAuthors(user.identityId, authorIds)
-          : new Map<string, boolean>()
-
         const needle = searchQuery.toLowerCase()
         const filtered = recentPosts
-          .filter(post =>
-            !post.deleted &&
-            post.content.toLowerCase().includes(needle) &&
-            !blockedMap.get(post.author.id)
-          )
+          .filter(post => !post.deleted && post.content.toLowerCase().includes(needle))
           .map(post => ({
             ...post,
             author: { ...post.author, username: '', displayName: '', avatar: '', hasDpns: undefined },
           }))
 
-        setSearchResults(await postService.enrichPostsBatch(filtered))
+        const results = await postService.enrichPostsBatch(filtered)
+        // Kept in full; blocked authors are filtered at render, for whoever is viewing.
+        await preloadBlockStatus(viewerRef.current, results)
+        setSearchResults(results)
 
         // Search blog posts — reuse cached blog data from mount when available
         const { blogPostService } = await import('@/lib/services')
@@ -266,7 +255,7 @@ export default function ExplorePage() {
 
     const debounceTimer = setTimeout(searchAll, 300)
     return () => clearTimeout(debounceTimer)
-  }, [searchQuery, user?.identityId])
+  }, [searchQuery])
 
   const handleBlogPostClick = (post: BlogPostWithAuthor) => {
     if (post.blogId && post.slug) {
@@ -343,7 +332,7 @@ export default function ExplorePage() {
                     <Spinner size="md" className="mx-auto mb-4" />
                     <p className="text-gray-500">Searching...</p>
                   </div>
-                ) : (searchResults.length > 0 || blogSearchResults.length > 0) ? (
+                ) : (visibleSearchResults.length > 0 || blogSearchResults.length > 0) ? (
                   <>
                     {/* Blog post search results */}
                     {blogSearchResults.length > 0 && (
@@ -366,16 +355,16 @@ export default function ExplorePage() {
                     )}
 
                     {/* Regular post search results */}
-                    {searchResults.length > 0 && (
+                    {visibleSearchResults.length > 0 && (
                       <div>
                         {blogSearchResults.length > 0 && (
                           <div className="px-4 py-2 bg-gray-50 dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800">
                             <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400">
-                              Posts ({searchResults.length})
+                              Posts ({visibleSearchResults.length})
                             </h3>
                           </div>
                         )}
-                        {filterHiddenSensitive(searchResults, sensitiveContentMode, user?.identityId).map((post) => <PostCard key={post.id} post={post} />)}
+                        {filterHiddenSensitive(visibleSearchResults, sensitiveContentMode, user?.identityId).map((post) => <PostCard key={post.id} post={post} />)}
                       </div>
                     )}
                   </>

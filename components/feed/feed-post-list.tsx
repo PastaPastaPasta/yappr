@@ -10,7 +10,8 @@ import { PostCard } from '@/components/post/post-card';
 import { useSettingsStore } from '@/lib/store';
 import { useAuth } from '@/contexts/auth-context';
 import { filterHiddenSensitive } from '@/lib/sensitive-content';
-import { collapseReposts, type OwnQuote } from '@/lib/feed/quote-reposts';
+import { collapseReposts } from '@/lib/feed/quote-reposts';
+import type { ViewerMarks } from '@/lib/feed/viewer-marks';
 
 interface FeedPostListProps {
   posts: Post[] | null;
@@ -29,9 +30,11 @@ interface FeedPostListProps {
     displayName: string | undefined;
     avatarUrl: string | undefined;
     stats: { likes: number; reposts: number; replies: number; quotes: number; views: number } | undefined;
-    interactions: { liked: boolean; reposted: boolean; bookmarked: boolean; ownQuote?: OwnQuote } | undefined;
+    interactions: ViewerMarks | undefined;
+    marksPending?: boolean;
     isBlocked: boolean | undefined;
     isFollowing: boolean | undefined;
+    relationsFor?: string;
     replyTo?: { id: string; authorId: string; authorUsername: string | null };
   };
 }

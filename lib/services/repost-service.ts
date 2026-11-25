@@ -206,15 +206,20 @@ class RepostService {
     });
   }
 
-  /** Count reposts of a post — O(1) `byPost` count tree. */
+  /** Count reposts of a post — O(1) `byPost` count tree. A failed read throws. */
+  async readRepostCount(postId: string): Promise<number> {
+    const sdk = await this.sdk();
+    return documentCount(sdk, {
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [['postId', '==', postId]],
+    });
+  }
+
+  /** As readRepostCount(), reading a failure as 0. */
   async countReposts(postId: string): Promise<number> {
     try {
-      const sdk = await this.sdk();
-      return await documentCount(sdk, {
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [['postId', '==', postId]],
-      });
+      return await this.readRepostCount(postId);
     } catch (error) {
       logger.error('Error counting reposts:', error);
       return 0;

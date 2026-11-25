@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { composeDraftKey, hasUnpostedContent, switchDraft } from './drafts'
+import { composeDraftKey, hasUnpostedContent, switchDraft, composeGuard } from './drafts'
 
 describe('composeDraftKey', () => {
   it('keys a new post, a reply and a quote apart', () => {
@@ -73,5 +73,34 @@ describe('switchDraft', () => {
     const stash = { 'reply:Y': { text: 'y' } }
     switchDraft({ currentKey: 'post', current: { text: 'a' }, isEmpty, nextKey: 'reply:Y', stash, fresh })
     expect(stash).toEqual({ 'reply:Y': { text: 'y' } })
+  })
+})
+
+describe('composeGuard', () => {
+  const reply = { id: 'r1' }
+  const quote = { id: 'q1' }
+
+  it('holds while the composer stays as it was', () => {
+    let state = { isComposeOpen: false, replyingTo: null, quotingPost: null } as { isComposeOpen: boolean; replyingTo: { id: string } | null; quotingPost: { id: string } | null }
+    const unchanged = composeGuard(() => state)
+    expect(unchanged()).toBe(true)
+    state = { ...state }
+    expect(unchanged()).toBe(true)
+  })
+
+  it('breaks when a reply opened meanwhile, so a late quote never takes over its draft', () => {
+    let state = { isComposeOpen: false, replyingTo: null as { id: string } | null, quotingPost: null as { id: string } | null }
+    const unchanged = composeGuard(() => state)
+    state = { isComposeOpen: true, replyingTo: reply, quotingPost: null }
+    expect(unchanged()).toBe(false)
+  })
+
+  it('breaks when the composer closed or moved to another target', () => {
+    let state = { isComposeOpen: true, replyingTo: null as { id: string } | null, quotingPost: quote as { id: string } | null }
+    const unchanged = composeGuard(() => state)
+    state = { ...state, isComposeOpen: false }
+    expect(unchanged()).toBe(false)
+    state = { isComposeOpen: true, replyingTo: reply, quotingPost: null }
+    expect(unchanged()).toBe(false)
   })
 })

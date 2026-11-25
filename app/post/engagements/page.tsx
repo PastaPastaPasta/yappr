@@ -7,10 +7,10 @@ import { motion } from 'framer-motion'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { withAuth, useAuth } from '@/contexts/auth-context'
-import { useRequireAuth } from '@/hooks/use-require-auth'
+import { useFollow } from '@/hooks/use-follow'
 import { LoadingState, useAsyncState } from '@/components/ui/loading-state'
 import ErrorBoundary from '@/components/error-boundary'
-import { followService, likeService, repostService, postService } from '@/lib/services'
+import { likeService, repostService, postService } from '@/lib/services'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -32,26 +32,20 @@ interface EngagementUser {
   bio?: string
   hasDpnsName: boolean
   hasProfile: boolean
-  isFollowing: boolean
   // For quotes tab
   quoteContent?: string
   quotePostId?: string
 }
 
 /**
- * Batch resolve user data for a list of owner IDs.
- * Returns engagement user objects with DPNS names, profiles, and follow status.
+ * Batch resolve user data for a list of owner IDs: DPNS names and profiles.
+ * Follow status is the viewer's, read per row (`FollowRowButton`), so the list
+ * stays right when the viewer signs in or switches account with it open.
  */
 async function resolveEngagementUsers(
-  ownerIds: string[],
-  currentUserId: string | undefined
-): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile' | 'isFollowing'>[]> {
-  const [{ usernames: dpnsNamesMap, profiles }, followStatus] = await Promise.all([
-    loadIdentityBatch(ownerIds),
-    currentUserId
-      ? followService.getFollowStatusBatch(ownerIds, currentUserId)
-      : Promise.resolve(new Map<string, boolean>())
-  ])
+  ownerIds: string[]
+): Promise<Pick<EngagementUser, 'id' | 'username' | 'displayName' | 'bio' | 'hasDpnsName' | 'hasProfile'>[]> {
+  const { usernames: dpnsNamesMap, profiles } = await loadIdentityBatch(ownerIds)
 
   const profileMap = new Map(profiles.map((p) => [p.$ownerId, p]))
 
@@ -66,20 +60,37 @@ async function resolveEngagementUsers(
       displayName: profileDisplayName || username || `User ${id.slice(-8)}`,
       bio: profile?.bio,
       hasDpnsName: !!username,
-      hasProfile: !!profileDisplayName,
-      isFollowing: followStatus.get(id) || false
+      hasProfile: !!profileDisplayName
     }
   })
+}
+
+/** Follow or unfollow one listed account, as the current viewer (read per viewer, shared with every other follow control). */
+function FollowRowButton({ userId }: { userId: string }) {
+  const { isFollowing, isLoading, toggleFollow } = useFollow(userId)
+  return (
+    <Button
+      variant={isFollowing ? 'outline' : 'default'}
+      size="sm"
+      onClick={() => {
+        toggleFollow().catch((error: unknown) => logger.error('Follow toggle failed:', error))
+      }}
+      className="ml-4 flex-shrink-0"
+      disabled={isLoading}
+    >
+      {isLoading ? <Spinner size="sm" className={isFollowing ? undefined : 'border-white'} /> : isFollowing ? 'Following' : 'Follow'}
+    </Button>
+  )
 }
 
 /** v10 reads the whole quote list once to split it into reposts and quotes: the query's page cap. */
 const QUOTE_LIST_LIMIT = 100
 
 /** One quote post's author, with the quote itself for the Quotes tab. */
-async function quoteUsersOf(quotePosts: Post[], currentUserId: string | undefined): Promise<EngagementUser[]> {
+async function quoteUsersOf(quotePosts: Post[]): Promise<EngagementUser[]> {
   if (quotePosts.length === 0) return []
   const ownerIds = quotePosts.map(p => p.author.id).filter(Boolean)
-  const baseUsers = await resolveEngagementUsers(ownerIds, currentUserId)
+  const baseUsers = await resolveEngagementUsers(ownerIds)
 
   // Create Map for O(1) lookups - avoids index mismatch when filter(Boolean) removes IDs
   const baseUsersMap = new Map(baseUsers.map(u => [u.id, u]))
@@ -91,8 +102,7 @@ async function quoteUsersOf(quotePosts: Post[], currentUserId: string | undefine
       username: post.author.id?.slice(-8) || 'unknown',
       displayName: 'User ' + (post.author.id?.slice(-8) || 'unknown'),
       hasDpnsName: false,
-      hasProfile: false,
-      isFollowing: false
+      hasProfile: false
     }),
     quoteContent: post.content,
     quotePostId: post.id
@@ -103,7 +113,6 @@ function EngagementsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user } = useAuth()
-  const { requireAuth } = useRequireAuth()
   const postId = searchParams.get('id')
   // Which doctype the id belongs to. Every query on this page reads a different
   // doctype for a reply than for a post on the v9 topology, and an id alone does
@@ -129,7 +138,6 @@ function EngagementsPageContent() {
   // so each is a floor ("100+"), not an exact count.
   const [splitTruncated, setSplitTruncated] = useState(false)
 
-  const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
 
   // Load likes
   const loadLikes = useCallback(async () => {
@@ -148,7 +156,7 @@ function EngagementsPageContent() {
         return
       }
 
-      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
+      const users = await resolveEngagementUsers(ownerIds)
       setData(users)
     } catch (error) {
       logger.error('Failed to load likes:', error)
@@ -156,7 +164,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, targetKind, user?.identityId, likesState])
+  }, [postId, targetKind, likesState])
 
   // v10: load the quote list once and split it between the two tabs. Only the
   // (stable) setters are used, so the loader keeps its identity across renders.
@@ -171,8 +179,8 @@ function EngagementsPageContent() {
     try {
       const { reposts, quotes } = splitRepostsAndQuotes(await postService.getQuotePosts(postId, targetKind, { limit: QUOTE_LIST_LIMIT }))
       const [repostUsers, quoteUsers] = await Promise.all([
-        quoteUsersOf(reposts, user?.identityId),
-        quoteUsersOf(quotes, user?.identityId),
+        quoteUsersOf(reposts),
+        quoteUsersOf(quotes),
       ])
       setRepostsData(repostUsers)
       setQuotesData(quoteUsers)
@@ -189,7 +197,7 @@ function EngagementsPageContent() {
       setRepostsLoading(false)
       setQuotesLoading(false)
     }
-  }, [postId, targetKind, user?.identityId, setRepostsLoading, setRepostsError, setRepostsData, setQuotesLoading, setQuotesError, setQuotesData])
+  }, [postId, targetKind, setRepostsLoading, setRepostsError, setRepostsData, setQuotesLoading, setQuotesError, setQuotesData])
 
   // The counts effect below runs once per target; it reaches the current
   // loader through this ref rather than re-running when the loader changes.
@@ -216,7 +224,7 @@ function EngagementsPageContent() {
         return
       }
 
-      const users = await resolveEngagementUsers(ownerIds, user?.identityId)
+      const users = await resolveEngagementUsers(ownerIds)
       setData(users)
     } catch (error) {
       logger.error('Failed to load reposts:', error)
@@ -224,7 +232,7 @@ function EngagementsPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [postId, user?.identityId, repostsState, repostsFromQuotes, loadQuoteList])
+  }, [postId, repostsState, repostsFromQuotes, loadQuoteList])
 
   // Load quotes
   const loadQuotes = useCallback(async () => {
@@ -237,14 +245,14 @@ function EngagementsPageContent() {
 
     try {
       const quotePosts = await postService.getQuotePosts(postId, targetKind)
-      setData(await quoteUsersOf(quotePosts, user?.identityId))
+      setData(await quoteUsersOf(quotePosts))
     } catch (error) {
       logger.error('Failed to load quotes:', error)
       setError(error instanceof Error ? error.message : 'Failed to load quotes')
     } finally {
       setLoading(false)
     }
-  }, [postId, targetKind, user?.identityId, quotesState, repostsFromQuotes, loadQuoteList])
+  }, [postId, targetKind, quotesState, repostsFromQuotes, loadQuoteList])
 
   // Load data for active tab (only if not yet loaded)
   useEffect(() => {
@@ -288,70 +296,6 @@ function EngagementsPageContent() {
       cancelled = true
     }
   }, [postId, targetKind, repostable, repostsFromQuotes])
-
-  const handleFollow = async (userId: string) => {
-    const authedUser = requireAuth()
-    if (!authedUser) return
-
-    setActionInProgress(prev => new Set(prev).add(userId))
-
-    try {
-      const result = await followService.followUser(authedUser.identityId, userId)
-      if (result.success) {
-        // Update local state in all tabs
-        const updateUsers = (users: EngagementUser[] | null) =>
-          (users || []).map(u => u.id === userId ? { ...u, isFollowing: true } : u)
-
-        likesState.setData(updateUsers)
-        repostsState.setData(updateUsers)
-        quotesState.setData(updateUsers)
-        toast.success('Following!')
-      } else {
-        toast.error('Failed to follow user')
-      }
-    } catch (error) {
-      logger.error('Error following user:', error)
-      toast.error('Failed to follow user')
-    } finally {
-      setActionInProgress(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(userId)
-        return newSet
-      })
-    }
-  }
-
-  const handleUnfollow = async (userId: string) => {
-    const authedUser = requireAuth()
-    if (!authedUser) return
-
-    setActionInProgress(prev => new Set(prev).add(userId))
-
-    try {
-      const result = await followService.unfollowUser(authedUser.identityId, userId)
-      if (result.success) {
-        // Update local state in all tabs
-        const updateUsers = (users: EngagementUser[] | null) =>
-          (users || []).map(u => u.id === userId ? { ...u, isFollowing: false } : u)
-
-        likesState.setData(updateUsers)
-        repostsState.setData(updateUsers)
-        quotesState.setData(updateUsers)
-        toast.success('Unfollowed')
-      } else {
-        toast.error('Failed to unfollow user')
-      }
-    } catch (error) {
-      logger.error('Error unfollowing user:', error)
-      toast.error('Failed to unfollow user')
-    } finally {
-      setActionInProgress(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(userId)
-        return newSet
-      })
-    }
-  }
 
   const getCurrentState = () => {
     switch (activeTab) {
@@ -528,37 +472,7 @@ function EngagementsPageContent() {
                             )}
                           </div>
 
-                          {/* Follow/Unfollow button */}
-                          {user?.identityId !== engagement.id && (
-                            engagement.isFollowing ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleUnfollow(engagement.id)}
-                                className="ml-4 flex-shrink-0"
-                                disabled={actionInProgress.has(engagement.id)}
-                              >
-                                {actionInProgress.has(engagement.id) ? (
-                                  <Spinner size="sm" />
-                                ) : (
-                                  'Following'
-                                )}
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                onClick={() => handleFollow(engagement.id)}
-                                className="ml-4 flex-shrink-0"
-                                disabled={actionInProgress.has(engagement.id)}
-                              >
-                                {actionInProgress.has(engagement.id) ? (
-                                  <Spinner size="sm" className="border-white" />
-                                ) : (
-                                  'Follow'
-                                )}
-                              </Button>
-                            )
-                          )}
+                          {user?.identityId !== engagement.id && <FollowRowButton userId={engagement.id} />}
                         </div>
                       </div>
                     </div>

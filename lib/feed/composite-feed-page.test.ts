@@ -280,8 +280,26 @@ describe('composite feed page on v10', () => {
     expect(subs.filter((sub) => sub.documentType === 'post').map((sub) => sub.kind ?? 'documents')).toEqual(['counts', 'documents']);
     expect(subs.some((sub) => sub.documentType === 'repost')).toBe(false);
     expect(mocks.getOwnQuotes).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), 'post');
-    expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
+    expect(page.preloaded.interactions?.get(docs[2].$id)).toEqual({ viewerId: ownerIds[0], session: 0, liked: false, reposted: true, bookmarked: false, ownQuote: { id: 'myRepost', bare: true } });
     expect(page.preloaded.interactions?.get(docs[0].$id)?.reposted).toBe(false);
+    // The posts carry the same marks, naming the viewer they were read for.
+    const reposted = page.posts.find((post) => post.id === docs[2].$id);
+    expect(reposted).toMatchObject({ reposted: true, ownQuote: { id: 'myRepost', bare: true }, marksFor: ownerIds[0] });
+  });
+
+  it.each([
+    ['own quote', () => mocks.getOwnQuotes.mockRejectedValueOnce(new Error('quorum'))],
+    ['like', () => mocks.getUserLikedPostIds.mockRejectedValueOnce(new Error('quorum'))],
+  ] as const)('leaves the page\'s marks unknown, never unmarked, when the viewer\'s %s read fails', async (_, fail) => {
+    mocks.composite.mockImplementation(echo(docs));
+    fail();
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    const page = await loadCompositeFeedPage({ language: 'en', limit: 20, currentUserId: ownerIds[0] });
+    // The page itself still loads, with its counts.
+    expect(page.posts).toHaveLength(docs.length);
+    expect(page.preloaded.stats?.size).toBe(docs.length);
+    expect(page.preloaded.interactions).toBeUndefined();
+    expect(page.posts.every((post) => post.marksFor === undefined)).toBe(true);
   });
 
   it.each([

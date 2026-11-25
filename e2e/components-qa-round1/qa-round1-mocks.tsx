@@ -55,7 +55,7 @@ export const usePostDetail = () => {
     },
   }
 }
-const enrichment = { enrichProgressively: noop, getPostEnrichment: noop, reset: noop, enrichmentState: { blockStatus: new Map() } }
+const enrichment = { enrichProgressively: noop, getPostEnrichment: noop, reset: noop, isAuthorBlocked: () => false }
 export const useProgressiveEnrichment = () => enrichment
 let feedReads = 0
 export async function loadForYouFeed() {

@@ -27,6 +27,20 @@ export function composeDraftKey({ replyingTo, quotingPost }: DraftTarget): strin
 }
 
 /**
+ * True while the composer is still as it was when this was called: open or
+ * closed, on the same target. An action that awaits before opening the
+ * composer checks it, so a late answer never takes over a draft opened meanwhile.
+ */
+export function composeGuard(read: () => DraftTarget & { isComposeOpen: boolean }): () => boolean {
+  const intent = () => {
+    const state = read()
+    return `${state.isComposeOpen}|${composeDraftKey(state)}`
+  }
+  const started = intent()
+  return () => intent() === started
+}
+
+/**
  * Whether dismissing the composer would lose something the author typed.
  * Parts already posted are not a draft: they are on the network.
  */
