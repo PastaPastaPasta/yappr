@@ -116,9 +116,6 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   // The repost count as read, with the viewer's repost as read with it (lib/feed/repost-count.ts).
   const snapshotOwn = snapshotViewer ? snapshotReposted : undefined
   const [repostBase, setRepostBase] = useState<CountBase>({ count: initial.reposts, own: snapshotOwn })
-  useEffect(() => {
-    setRepostBase({ count: initial.reposts, own: snapshotOwn })
-  }, [initial.reposts, snapshotOwn, postId])
   const snapshotQuoteBare = snapshot?.ownQuote?.bare === true
   const snapshotMarks = useMemo<KnownMarks | null>(() => snapshotViewer
     ? {
@@ -141,7 +138,16 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
   }, [snapshotMarks])
   const ownKnown = ownMarks && ownMarks.targetId === postId ? marksFor(ownMarks, viewerId) ?? null : null
   const current = ownKnown ?? snapshotMarks
-  const reposts = countWithOwn(repostBase, knowsMark(current, 'reposted') ? current?.reposted === true : undefined)
+  const ownNow = knowsMark(current, 'reposted') ? current?.reposted === true : undefined
+  const reposts = countWithOwn(repostBase, ownNow)
+  const ownNowRef = useRef(ownNow)
+  useEffect(() => {
+    ownNowRef.current = ownNow
+  }, [ownNow])
+  // A new count without the snapshot's marks is taken with the viewer's repost as the card knows it.
+  useEffect(() => {
+    setRepostBase({ count: initial.reposts, own: snapshotOwn ?? ownNowRef.current })
+  }, [initial.reposts, snapshotOwn, postId])
 
   const readMarks = useCallback(async (viewer: string): Promise<KnownMarks> => {
     const read = await loadViewerMarks(viewer, { id: postId, kind: targetKind })
@@ -194,6 +200,7 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       const { fetchUserMark } = await import('@/lib/services/post-stats-helpers')
       const fetched = await fetchUserMark({ id: postId, kind: targetKind }, viewerId, need)
       const read = need === 'reposted' ? slotWrites.apply(viewerId, postId, fetched) : fetched
+      if (need === 'reposted') setRepostBase((base) => base.own === undefined ? { ...base, own: read.reposted === true } : base)
       const fresh: KnownMarks = { ...noMarksRead(viewerId, session), targetId: postId }
       const fits = (marks: KnownMarks | null): marks is KnownMarks =>
         marks !== null && marks.viewerId === viewerId && marks.session === session && marks.targetId === postId
