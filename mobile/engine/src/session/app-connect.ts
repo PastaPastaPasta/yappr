@@ -319,7 +319,7 @@ export function createAppConnectFlow(options: { emit(state: AppConnectFlowDTO): 
      * everything else. The caller adopts the grant, which wipes its keys.
      */
     accept(identityId: string): AppConnectGrant | null {
-      const grant = login?.accept(identityId) ?? null
+      const grant = login?.accept(identityId)?.grant ?? null
       reset()
       return grant
     },
