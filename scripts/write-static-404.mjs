@@ -27,13 +27,11 @@ export function staticNotFound(basePath = '') {
     }
     document.getElementById('code').textContent = 'Yappr Dev';
     document.getElementById('title').textContent = 'Yappr Dev has been retired';
-    document.getElementById('detail').textContent = 'The Dash devnet behind Yappr Dev has been shut down, so its posts, profiles and messages are gone. Yappr\u2019s terms and privacy policy still apply to every version of the app.';
+    document.getElementById('detail').textContent = 'The Dash devnet behind Yappr Dev has been shut down, so its posts, profiles and messages are gone. Yappr itself carries on, on Dash testnet.';
     var home = document.getElementById('home');
-    home.href = '/staging/terms/';
-    home.textContent = 'Terms';
-    var explore = document.getElementById('explore');
-    explore.href = '/staging/privacy/';
-    explore.textContent = 'Privacy';
+    home.href = '/';
+    home.textContent = 'Go to Yappr';
+    document.getElementById('explore').remove();
     return;
   }
   var match = location.pathname.match(/^\\/(testing|staging-old|staging|beta)(?:\\/|$)/);

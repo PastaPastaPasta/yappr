@@ -8,7 +8,7 @@ import { staticNotFound } from './write-static-404.mjs'
 
 function visit(base, pathname, search = '', hash = '') {
   const redirects = []
-  const links = { home: {}, explore: {}, code: {}, title: {}, detail: {} }
+  const links = { home: {}, explore: { remove() { this.removed = true } }, code: {}, title: {}, detail: {} }
   const html = staticNotFound(base)
   const location = { pathname, search, hash, replace: (url) => redirects.push(url) }
   for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
@@ -44,8 +44,9 @@ describe('GitHub Pages shared root 404', () => {
     expect(redirects).toEqual([])
     expect(links.title.textContent).toBe('Yappr Dev has been retired')
     expect(links.detail.textContent).toContain('devnet')
-    expect(links.home).toEqual({ href: '/staging/terms/', textContent: 'Terms' })
-    expect(links.explore).toEqual({ href: '/staging/privacy/', textContent: 'Privacy' })
+    expect(links.detail.textContent).toContain('testnet')
+    expect(links.home).toEqual({ href: '/', textContent: 'Go to Yappr' })
+    expect(links.explore.removed).toBe(true)
   })
   it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/', '/betamax/'])('keeps root unknown routes at root: %s', (pathname) => {
     const root = visit('', pathname)
