@@ -70,7 +70,7 @@ env:
           commands:
             - tapOn: "Creators"
       - extendedWaitUntil:
-          visible: "Top creators by likes received|No ranked creators yet"
+          visible: "Top creators by likes received|Most followed|No ranked creators yet"
           timeout: 90000
 
 # Search a person and open the profile.
