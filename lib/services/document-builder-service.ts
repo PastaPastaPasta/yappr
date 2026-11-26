@@ -13,8 +13,10 @@
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { Document } from '@dashevo/evo-sdk';
+import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { Document, PlatformVersion } from '@dashevo/evo-sdk';
+import type { DocumentObject } from '@dashevo/evo-sdk';
+import { networkPlatformVersion } from '@/lib/platform-version';
 import bs58 from 'bs58';
 
 /**
@@ -23,6 +25,32 @@ import bs58 from 'bs58';
  */
 async function ensureWasmReady(): Promise<void> {
   await getEvoSdk();
+}
+
+/**
+ * The tagged object `Document.fromObject` takes. The `Document` constructor
+ * turns `Uint8Array` properties into integer arrays on wasm-sdk 4.1+, which
+ * Platform refuses ("not a byte"), so writes build through `fromObject`.
+ */
+function toCanonicalDocumentObject(fields: {
+  id: string;
+  ownerId: string;
+  contractId: string;
+  documentTypeName: string;
+  revision: number;
+  entropy?: Uint8Array;
+  data: Record<string, unknown>;
+}): DocumentObject {
+  return {
+    $formatVersion: '0',
+    $id: requireDocumentIdentifierBytes(fields.id, 'document id'),
+    $ownerId: requireDocumentIdentifierBytes(fields.ownerId, 'ownerId'),
+    $dataContractId: requireDocumentIdentifierBytes(fields.contractId, 'dataContractId'),
+    $type: fields.documentTypeName,
+    $revision: BigInt(fields.revision),
+    ...(fields.entropy ? { $entropy: fields.entropy } : {}),
+    ...fields.data,
+  } as unknown as DocumentObject;
 }
 
 class DocumentBuilderService {
@@ -64,21 +92,14 @@ class DocumentBuilderService {
       entropy?: Uint8Array;
     }
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
+    const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
+    const id = options?.id ?? bs58.encode(Document.generateId(documentTypeName, ownerId, contractId, entropy));
 
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(1),
-      id: options?.id,
-      entropy: options?.entropy,
-    });
-
-    return document;
+    return Document.fromObject(
+      toCanonicalDocumentObject({ id, ownerId, contractId, documentTypeName, revision: 1, entropy, data }),
+      platformVersion
+    );
   }
 
   /**
@@ -103,20 +124,12 @@ class DocumentBuilderService {
     data: Record<string, unknown>,
     newRevision: number
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
 
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(newRevision),
-      id: documentId,
-    });
-
-    return document;
+    return Document.fromObject(
+      toCanonicalDocumentObject({ id: documentId, ownerId, contractId, documentTypeName, revision: newRevision, data }),
+      platformVersion
+    );
   }
 
   /**

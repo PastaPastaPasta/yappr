@@ -80,14 +80,14 @@ class VaultService extends BaseDocumentService<VaultDocument> {
   }
 
   /**
-   * Override extractContentFields to convert Uint8Array fields to number[] for platform serialization.
-   * Without this, the merge path in BaseDocumentService.update would send raw Uint8Array values.
+   * Content fields for the update merge. Byte fields stay `Uint8Array`; Platform refuses
+   * them as `number[]` ("not an array of bytes").
    */
   protected extractContentFields(doc: VaultDocument): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    if (doc.encryptedData) result.encryptedData = Array.from(doc.encryptedData);
-    if (doc.passwordEncryptedData) result.passwordEncryptedData = Array.from(doc.passwordEncryptedData);
-    if (doc.pbkdf2Salt) result.pbkdf2Salt = Array.from(doc.pbkdf2Salt);
+    if (doc.encryptedData) result.encryptedData = doc.encryptedData;
+    if (doc.passwordEncryptedData) result.passwordEncryptedData = doc.passwordEncryptedData;
+    if (doc.pbkdf2Salt) result.pbkdf2Salt = doc.pbkdf2Salt;
     if (doc.pbkdf2Iterations !== undefined) result.pbkdf2Iterations = doc.pbkdf2Iterations;
     return result;
   }
@@ -118,11 +118,10 @@ class VaultService extends BaseDocumentService<VaultDocument> {
 
     const existing = await this.getVault(identityId);
 
-    // Build the document data — convert Uint8Array to number[] for platform serialization
     const docData: Record<string, unknown> = {};
-    if (fields.encryptedData) docData.encryptedData = Array.from(fields.encryptedData);
-    if (fields.passwordEncryptedData) docData.passwordEncryptedData = Array.from(fields.passwordEncryptedData);
-    if (fields.pbkdf2Salt) docData.pbkdf2Salt = Array.from(fields.pbkdf2Salt);
+    if (fields.encryptedData) docData.encryptedData = fields.encryptedData;
+    if (fields.passwordEncryptedData) docData.passwordEncryptedData = fields.passwordEncryptedData;
+    if (fields.pbkdf2Salt) docData.pbkdf2Salt = fields.pbkdf2Salt;
     if (fields.pbkdf2Iterations !== undefined) docData.pbkdf2Iterations = fields.pbkdf2Iterations;
 
     if (existing) {
