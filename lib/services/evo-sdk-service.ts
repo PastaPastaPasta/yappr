@@ -9,6 +9,7 @@ import type { AppNetwork } from '../constants';
 import { SDK_FACADES } from './sdk-facades';
 import { DAPI_REQUEST_TIMEOUT_MS, installDapiPathShim } from './dapi-path-shim';
 import { observeSdkFailures } from './sdk-failure-observer';
+import { networkPlatformVersion } from '@/lib/platform-version.mjs';
 import { installReadRetry } from './sdk-read-retry';
 import { installLaneFanout } from './sdk-lane-fanout';
 
@@ -337,7 +338,7 @@ class EvoSdkService {
     const bundle = await this._bundle();
     if (!bundle) return seeded;
     const { DataContract, PlatformVersion } = await import('@dashevo/evo-sdk');
-    const platformVersion = PlatformVersion.latest();
+    const platformVersion = networkPlatformVersion(PlatformVersion, sdk);
     for (const id of ids) {
       const entry = bundle.contracts[id];
       if (!entry) continue;

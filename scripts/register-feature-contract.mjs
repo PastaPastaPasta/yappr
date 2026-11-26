@@ -42,6 +42,7 @@ import { REPO_ROOT, createSdkHandle, ledgerEntry, loadLedger, socialContractId, 
 import { network } from './sdk-env.mjs';
 import { auditModeration, contractSource, registrationJson, requireModeratorsExist, renderModeration, withInterim, withModerators } from './register-lib.mjs';
 import { MAINNET_ELECTION_DELAY, withElectionDelay } from './registration-policy.mjs';
+import { networkPlatformVersion } from '../lib/platform-version.mjs';
 
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
@@ -181,12 +182,13 @@ try {
 
 try {
   await ensureInitialized();
-  const platformVersion = PlatformVersion.current();
   const socialId = needsSocialId(args.file) ? args.social ?? socialContractId() : null;
-  const build = (ownerId, identityNonce) => buildContract({ file: args.file, ownerId, identityNonce, socialId, platformVersion, moderators: args.moderators, interim: args.interim });
+  const build = (ownerId, identityNonce, platformVersion) => buildContract({ file: args.file, ownerId, identityNonce, socialId, platformVersion, moderators: args.moderators, interim: args.interim });
 
   if (args.dryRun) {
-    const { dataContract, documentSchemas } = build(DRY_RUN_OWNER, 1n);
+    // Offline: no network to ask, so the newest version the SDK knows.
+    const platformVersion = PlatformVersion.latest();
+    const { dataContract, documentSchemas } = build(DRY_RUN_OWNER, 1n, platformVersion);
     console.log(`dry run: ${contractPath(args.file)} — ${Object.keys(dataContract.toJSON(platformVersion).documentSchemas).length} document types${socialId ? `, YAPP from ${socialId}` : ''}`);
     printAudit(documentSchemas, dataContract);
     process.exit(0);
@@ -206,7 +208,7 @@ try {
   console.log(`owner=${owner.label}`);
   await requireModeratorsExist(sdk, args.moderators);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
-  const { dataContract, documentSchemas } = build(owner.ownerId, identityNonce);
+  const { dataContract, documentSchemas } = build(owner.ownerId, identityNonce, networkPlatformVersion(PlatformVersion, sdk));
   printAudit(documentSchemas, dataContract);
   console.log(`publishing ${args.file} (${Object.keys(documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey: owner.identityKey, signer: owner.signer });

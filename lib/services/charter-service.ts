@@ -57,6 +57,7 @@ import { stateTransitionService } from './state-transition-service'
 import { base58ToBytes, documentToPlainObject, identifierToBase58 } from './sdk-helpers'
 import { toProposal, toReason, type CharterProposal, type CharterReason } from './moderation-election-service'
 import { STALE_IDENTITY_ERROR, identityForUpdate, noteProvedIdentityRevision } from './identity-service'
+import { networkPlatformVersion } from '@/lib/platform-version.mjs'
 
 /** A join request as the leader's list shows it (its message is read separately). */
 export interface JoinRequest {
@@ -487,7 +488,7 @@ class CharterService {
     if (!contract) throw new Error('the charters contract could not be read')
     try {
       const fee = (type: keyof CreateFees, fields: Record<string, { present?: boolean; length?: number }> = {}) => {
-        const cost = w.documentCreateCost(contract, type, { fields }, w.PlatformVersion.latest())
+        const cost = w.documentCreateCost(contract, type, { fields }, networkPlatformVersion(w.PlatformVersion, sdk))
         return BigInt(cost.storage.credits.newValues) + BigInt(cost.processingCredits.newValues)
       }
       return {

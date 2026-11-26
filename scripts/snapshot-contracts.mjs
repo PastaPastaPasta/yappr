@@ -32,6 +32,7 @@ import { readEnvFile, REPO_ROOT } from './derive-identities.mjs';
 import { DASHPAY_CONTRACT_ID, SEEDED_TOPOLOGIES } from './seed/seed-lib.mjs';
 import { snapshotContractIds, snapshotEnvFiles } from './snapshot-contract-config.mjs';
 import releaseConfig from './release-config.cjs';
+import { networkPlatformVersion } from '../lib/platform-version.mjs';
 
 const qaAt = process.argv.indexOf('--qa');
 const qa = qaAt === -1 ? null : releaseConfig.QA_BUILDS[process.argv[qaAt + 1]];
@@ -72,7 +73,7 @@ const bundle = existsSync(outPath) && !prune
   ? JSON.parse(readFileSync(outPath, 'utf8'))
   : { network: key, generatedAt: '', contracts: {} };
 
-const platformVersion = PlatformVersion.latest();
+const platformVersion = networkPlatformVersion(PlatformVersion, sdk);
 let refreshed = 0;
 for (const id of ids) {
   const contract = fetched.get(id);

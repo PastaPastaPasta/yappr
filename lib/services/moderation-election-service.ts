@@ -6,6 +6,7 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants';
 import type { ElectedModerationDeclaration } from '@/lib/contract-topology';
 import { electedDeclarationOf } from '@/lib/moderated-contracts';
 import { getEvoSdk } from './evo-sdk-service';
+import { networkPlatformVersion } from '@/lib/platform-version.mjs';
 import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
 
 /**
@@ -232,9 +233,9 @@ function toContest(state: VoteState, endsAtMs: number | null, readApplication: A
 }
 
 /** The proposal and members a contender's application names; null when its bytes cannot be read. */
-function readApplication(charters: DataContract, serialized: Uint8Array): Pick<ElectionContender, 'submittedCharterId' | 'members'> | null {
+function readApplication(charters: DataContract, serialized: Uint8Array, platformVersion: PlatformVersion): Pick<ElectionContender, 'submittedCharterId' | 'members'> | null {
   try {
-    const doc = Document.fromBytes(serialized, charters, ELECTED_CHARTER, PlatformVersion.latest());
+    const doc = Document.fromBytes(serialized, charters, ELECTED_CHARTER, platformVersion);
     try {
       const data = documentToPlainObject(doc);
       const submittedCharterId = identifierToBase58(data.submittedCharterId);
@@ -359,7 +360,7 @@ class ModerationElectionService {
       : undefined;
     let contest: ElectionContest;
     try {
-      contest = toContest(state, endsAtMs, charters ? (serialized) => readApplication(charters, serialized) : null, laterPages);
+      contest = toContest(state, endsAtMs, charters ? (serialized) => readApplication(charters, serialized, networkPlatformVersion(PlatformVersion, sdk)) : null, laterPages);
     } finally {
       charters?.free?.();
     }

@@ -138,7 +138,14 @@ changes consume identity nonces and move every planned id.
         will snapshot, plus the charters contract. Don't register unless all
         four come back present: otherwise `contracts:snapshot` can't build the
         bundle after registration and the filer can't prepare.
-  - [x] Mainnet Drive/DAPI version is compatible with the SDK for writes.
+  - [ ] Mainnet Drive/DAPI version is compatible with the SDK for writes.
+        **Reopened 2026-11-26:** testnet moved to protocol 15 (Drive
+        5.1.0-rc.1), whose DPNS contract 5.0.3 can't decode, so the pin moved
+        to **5.1.0** (#992). 5.1.0 reads mainnet (protocol 14) and stays at
+        14 there; documents and contracts are built at `sdk.version()`
+        (`lib/platform-version.mjs`), never `PlatformVersion.latest()` /
+        `current()`, which are 15 on 5.1. No write from it has been
+        rehearsed against protocol 14 yet: rehearse before registering. The 5.0.3 evidence below stays as the record.
         Read 2026-11-22 (`system.status`, read-only): **mainnet runs Drive and
         DAPI 5.0.3**, protocol 14, epoch 89. The pin moved from 5.0.0-rc.4 to
         **5.0.3** (#978), and by the rerun testnet ran Drive 5.0.3 too (it ran
@@ -376,8 +383,10 @@ Updated 2026-11-22 after the testnet rehearsal (section 12).
    derived from its balance.
 5. ~~System contracts on mainnet~~: present (2026-11-21, SDK rc.4; again
    2026-11-22 through `contracts:snapshot`). Re-check at the stop gate.
-6. ~~SDK versus mainnet Drive for writes~~: the pin is 5.0.3 (#978), and the
-   rehearsal reran from it against testnet Drive 5.0.3 (section 12.1).
+6. SDK versus mainnet Drive for writes. **[O]** Reopened 2026-11-26: the pin
+   moved from 5.0.3 (#978, rehearsed against testnet Drive 5.0.3 in section
+   12.1) to 5.1.0 (#992) for testnet's protocol 15. Rehearse its writes
+   against protocol 14 before registration.
 7. The mainnet voting URL. **[O]**
 8. Where mainnet is hosted, its deploy job and rollback. **[O]** The root
    build itself is rehearsed (section 12).

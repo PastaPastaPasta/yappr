@@ -17,6 +17,7 @@ import {
   type Identity,
   type IdentityPublicKey,
 } from '@dashevo/evo-sdk'
+import { networkPlatformVersion } from '../../../lib/platform-version.mjs'
 import type { Persona, PersonaKey } from './pool'
 import type { DevnetConfig, ResponderConfig } from './config'
 import { requireKeyExchangeContract } from './config'
@@ -120,7 +121,7 @@ export function livePorts(sdk: EvoSDK, config: ResponderConfig, log: (line: stri
           // One response per (owner, app contract): a re-login replaces it
           // (spec §7.3; every wallet does the same).
           const revision = existing.revision + BigInt(1)
-          const document = buildDocument({ contractId, documentTypeName: LOGIN_KEY_RESPONSE, ownerId: persona.identityId, id: bs58.decode(existing.documentId), revision, fields })
+          const document = buildDocument(sdk, { contractId, documentTypeName: LOGIN_KEY_RESPONSE, ownerId: persona.identityId, id: bs58.decode(existing.documentId), revision, fields })
           log(`replacing ${LOGIN_KEY_RESPONSE} ${existing.documentId} (revision ${revision}) with keyId ${identityKey.keyId}`)
           const ok = await confirmed(`replace ${existing.documentId}`, () => sdk.documents.replace({ document, identityKey, signer }))
           return { documentId: existing.documentId, action: 'replaced', confirmed: ok }
@@ -175,7 +176,7 @@ export async function createDocument(sdk: EvoSDK, input: {
   const entropy = crypto.getRandomValues(new Uint8Array(32))
   const nonce = ((await sdk.identities.contractNonce(ownerId, contractId)) ?? BigInt(0)) & NONCE_SEQUENCE_MASK
   const id = Document.generateId(documentTypeName, ownerId, contractId, entropy, nonce + BigInt(1))
-  const document = buildDocument({ contractId, documentTypeName, ownerId, id, revision: BigInt(1), entropy, fields: input.fields })
+  const document = buildDocument(sdk, { contractId, documentTypeName, ownerId, id, revision: BigInt(1), entropy, fields: input.fields })
   let documentId = bs58.encode(id)
   const confirmed = await confirmedWrite(`create ${documentTypeName} ${documentId}`, async () => {
     documentId = (await sdk.documents.create({ document, identityKey: input.identityKey, signer: input.signer })).id.toBase58()
@@ -183,7 +184,7 @@ export async function createDocument(sdk: EvoSDK, input: {
   return { documentId, confirmed }
 }
 
-export function buildDocument(input: {
+export function buildDocument(sdk: EvoSDK, input: {
   contractId: string
   documentTypeName: string
   ownerId: string
@@ -205,6 +206,6 @@ export function buildDocument(input: {
       ...(input.entropy ? { $entropy: input.entropy } : {}),
       ...input.fields,
     } as unknown as DocumentObject,
-    PlatformVersion.current(),
+    networkPlatformVersion(PlatformVersion, sdk),
   )
 }

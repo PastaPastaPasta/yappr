@@ -47,6 +47,7 @@ import { getEvoSdk } from './evo-sdk-service'
 import { documentBuilderService } from './document-builder-service'
 import { bytesToBase64QueryOperand, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { stateTransitionService, type CreateReceipt } from './state-transition-service'
+import { networkPlatformVersion } from '@/lib/platform-version.mjs'
 
 type ConnectedSdk = Awaited<ReturnType<typeof getEvoSdk>>
 
@@ -154,7 +155,7 @@ export async function readRegistrationFees(sdk: ConnectedSdk, label: string): Pr
     // getEvoSdk initialised this same glue; never compile the wasm a second time.
     const w = await import('@dashevo/wasm-sdk')
     const price = (type: string, fields: Record<string, { length: number }> = {}) =>
-      BigInt(w.documentCreateCost(contract, type, { fields }, w.PlatformVersion.latest()).totalCredits.newValues)
+      BigInt(w.documentCreateCost(contract, type, { fields }, networkPlatformVersion(w.PlatformVersion, sdk)).totalCredits.newValues)
     const name = { length: label.length }
     return {
       preorder: price('preorder'),

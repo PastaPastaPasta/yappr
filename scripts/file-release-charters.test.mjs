@@ -111,7 +111,7 @@ describe('read-only modes', () => {
       keys: {}, steps: { application: { id: id(8), owner: input.leader.identityId, type: 'electedCharter', state: 'broadcasting' } } });
     const application = { id: { toBase58: () => id(8) }, ownerId: { toBase58: () => input.leader.identityId }, free: vi.fn() };
     connected.document.mockReturnValue(application);
-    const sdk = { epoch: { current: vi.fn().mockResolvedValue({ protocolVersion: 14 }) },
+    const sdk = { version: () => 14, epoch: { current: vi.fn().mockResolvedValue({ protocolVersion: 14 }) },
       identities: { fetch: vi.fn() }, contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) },
       voting: { contestedResourceVoteState: vi.fn().mockResolvedValue({ contenders: [{ identityId: application.ownerId, serializedDocument: new Uint8Array([1]) }], free: vi.fn() }) },
       stateTransitions: { broadcastAndWait: vi.fn() } };
@@ -148,7 +148,7 @@ describe('read-only modes', () => {
 
 describe('journaled create recovery', () => {
   const step = () => ({ id: id(8), type: 'submittedCharter', owner: id(2), bytes: Buffer.from('same signed bytes').toString('base64'), state: 'prepared' });
-  const sdkFor = () => ({ documents: { get: vi.fn() }, system: { status: vi.fn().mockResolvedValue({ toJSON: () => ({ chain: { latestBlockHeight: '10' } }), free: vi.fn() }) }, stateTransitions: { broadcastAndWait: vi.fn() } });
+  const sdkFor = () => ({ version: () => 14, documents: { get: vi.fn() }, system: { status: vi.fn().mockResolvedValue({ toJSON: () => ({ chain: { latestBlockHeight: '10' } }), free: vi.fn() }) }, stateTransitions: { broadcastAndWait: vi.fn() } });
   it('carries a proved actor nonce across two sequential target journals and persists it for resume', async () => {
     vi.useFakeTimers();
     const prior = { network: 'devnet', devnet: 'sakura', targetContractId: id(1), configHash: 'a'.repeat(64), keys: {},
@@ -199,7 +199,7 @@ describe('journaled create recovery', () => {
     const application = { id: { toBase58: () => documentId }, ownerId: { toBase58: () => owner }, free: vi.fn() };
     connected.document.mockReturnValue(application);
     const earlier = Array.from({ length: 100 }, (_, i) => ({ identityId: { toBase58: () => id(i + 1) } }));
-    const sdk = { contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) }, moderationCharters: { seatedCharter: vi.fn().mockResolvedValue(null) },
+    const sdk = { version: () => 14, contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) }, moderationCharters: { seatedCharter: vi.fn().mockResolvedValue(null) },
       voting: { contestedResourceVoteState: vi.fn().mockImplementation(async (query) => ({ contenders: query.startAtContenderId === owner && query.startAtIncluded && query.limit === 1
         ? [{ identityId: application.ownerId, serializedDocument: new Uint8Array([1]) }] : earlier, free: vi.fn() })) } };
     expect(await existsStep(sdk, { id: documentId, owner, type: 'electedCharter' }, id(1))).toBe(true);
@@ -253,7 +253,7 @@ describe('journaled create recovery', () => {
   it('rejects a different elected document from the same leader as proof of this application', async () => {
     const application = { id: { toBase58: () => id(9) }, ownerId: { toBase58: () => id(2) }, free: vi.fn() };
     connected.document.mockReturnValue(application);
-    const sdk = { contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) }, voting: { contestedResourceVoteState: vi.fn().mockResolvedValue({ contenders: [{ identityId: application.ownerId, serializedDocument: new Uint8Array([1]) }], free: vi.fn() }) } };
+    const sdk = { version: () => 14, contracts: { fetch: vi.fn().mockResolvedValue({ free: vi.fn() }) }, voting: { contestedResourceVoteState: vi.fn().mockResolvedValue({ contenders: [{ identityId: application.ownerId, serializedDocument: new Uint8Array([1]) }], free: vi.fn() }) } };
     expect(await existsStep(sdk, { id: id(8), owner: id(2), type: 'electedCharter' }, id(1))).toBe(false);
     expect(application.free).toHaveBeenCalled();
   });

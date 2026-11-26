@@ -38,8 +38,8 @@ longer builds (the `/staging-old` QA build keeps its own exception). See
 `npm run build` (`npm run build:release`) loads `.env.testnet` explicitly, replaces ambient
 `NEXT_PUBLIC_*` values and `STORAGE_EPOCH` with this file's values (including
 blanks), forces `NEXT_PUBLIC_RELEASE=1`, validates, then runs `next build`. It requires Node
-20.12 or later (`util.parseEnv`); CI uses Node 22 and the IPFS Node 20 image
-must meet that minimum.
+22 or later: the Dash SDK packages declare `node >=22`, and the script uses
+`util.parseEnv`. CI and the IPFS image both use Node 22.
 It never delegates to `npm run build`, so switching that command cannot recurse.
 A missing file or missing/malformed required value fails with a list of errors.
 `next.config.js` also validates release mode during the production build phase,
@@ -225,7 +225,7 @@ preview from the **yappr** project (commit `79b371f`) still exported the legacy
 configuration: its `yappr-contract-config` metadata named `9oDC6xdg…` and DM v3,
 and no chunk contained the release social id. The project therefore does not
 run this repository's `npm run build`, or its env overrides win. Set its build
-command to `npm run build` (Node 20.12 or later), remove the dashboard
+command to `npm run build` (Node 22 or later), remove the dashboard
 `NEXT_PUBLIC_*` overrides, and check a preview's metadata before merging
 staging into master. Since Next.js 16 this is required for the build to
 work at all: a plain `next build` defaults to Turbopack and stops on the webpack

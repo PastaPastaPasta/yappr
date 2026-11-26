@@ -110,6 +110,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
 import { auditModeration, requireModeratorsExist, withInterim, withModerators } from './register-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
+import { networkPlatformVersion } from '../lib/platform-version.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
@@ -322,7 +323,8 @@ const contractFile = contractPath(args.contractFile);
 
 try {
   await ensureInitialized();
-  const platformVersion = PlatformVersion.current();
+  // Offline dry run: no network to ask, so the newest version the SDK knows.
+  const platformVersion = PlatformVersion.latest();
 
   if (args.dryRun) {
     // No identity, no network: prove the JSON assembles into a valid contract.
@@ -371,11 +373,12 @@ try {
   await requireModeratorsExist(sdk, args.moderators);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
 
+  const livePlatformVersion = networkPlatformVersion(PlatformVersion, sdk);
   const { dataContract, file } = buildDraftContract({
     contractFile,
     ownerId: owner.ownerId,
     identityNonce,
-    platformVersion,
+    platformVersion: livePlatformVersion,
     moderators: args.moderators,
     interim: args.interim,
   });
@@ -389,7 +392,7 @@ try {
 
   // A dropped token block would only show up much later, as "insufficient token
   // balance" on the first post, so check it here while the contract is fresh.
-  const publishedTokens = published.toJSON(platformVersion).tokens;
+  const publishedTokens = published.toJSON(livePlatformVersion).tokens;
   const tokenCount = publishedTokens ? Object.keys(publishedTokens).length : 0;
   console.log(`yappr social contract published: ${contractId}`);
   console.log(`token configurations on the published contract: ${tokenCount}`);

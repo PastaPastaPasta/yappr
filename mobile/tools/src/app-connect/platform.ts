@@ -143,7 +143,7 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
       const high = persona.key('high')
       const identityKey = await poolKeyOnChain(sdk, persona, high)
       // indexOnly: the delete is by the entry's values, so the document carries all three.
-      const document = buildDocument({
+      const document = buildDocument(sdk, {
         contractId: APP_CONNECT_CONTRACT_ID,
         documentTypeName: LOGIN_KEY_RESPONSE,
         ownerId: persona.identityId,

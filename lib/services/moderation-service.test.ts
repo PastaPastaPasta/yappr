@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
+  version: () => 14,
   contracts: {
     fetch: vi.fn(),
     fetchWithProof: vi.fn(),
@@ -72,7 +73,7 @@ vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => walletSe
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true }) }))
 vi.mock('@dashevo/wasm-sdk', () => ({
   Document: { fromBytes },
-  PlatformVersion: { latest: () => 'latest' },
+  PlatformVersion: class { constructor(readonly version: number) {} },
 }))
 vi.mock('@/lib/contract-topology', () => ({
   contractIsModerated: () => topology.moderated,
@@ -595,7 +596,7 @@ describe('remove then restore', () => {
     sdk.contracts.moderatorRestoreDocument.mockResolvedValue({})
     const result = await moderationService.restoreDocument(MODERATOR, 'reply', 'D4')
     expect(result.success).toBe(true)
-    expect(fromBytes).toHaveBeenCalledWith(bytes, contract, 'reply', 'latest')
+    expect(fromBytes).toHaveBeenCalledWith(bytes, contract, 'reply', expect.objectContaining({ version: 14 }))
     expect(sdk.contracts.moderatorRestoreDocument).toHaveBeenCalledWith(expect.objectContaining({ documentTypeName: 'reply', document: { restored: true } }))
     expect(await moderationService.restoreDocument(MODERATOR, 'reply', 'D4')).toMatchObject({ success: false, errorCode: 'NO_SNAPSHOT' })
   })

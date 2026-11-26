@@ -1,5 +1,6 @@
 import { ChosenWriteNotSentError } from './identity-nonce'
 import type { EvoSDK } from '@dashevo/evo-sdk'
+import { networkPlatformVersion } from '@/lib/platform-version.mjs'
 import {
   BatchTransition, BatchedTransition, ContractFeeClaim, ContractUserModeration,
   Document, DocumentDeleteTransition, DocumentReplaceTransition, PrivateKey, PlatformVersion, Identifier,
@@ -118,7 +119,7 @@ export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, w
           $dataContractId: new Identifier(target.dataContractId).toBase58(),
           $type: target.documentTypeName, $revision: '1',
         }
-        const document = target instanceof Document ? target : Document.fromJSON(encoded, PlatformVersion.current())
+        const document = target instanceof Document ? target : Document.fromJSON(encoded, networkPlatformVersion(PlatformVersion, sdk))
         const result = await send(batch(new BatchedTransition(new DocumentDeleteTransition({ document, identityContractNonce: nonce }).toDocumentTransition())), true)
         requireDocument(result, document.id.toBase58(), true)
       }),
@@ -156,7 +157,7 @@ export function chosenNonceWrites(sdk: EvoSDK, ownerId: string, nonce: bigint, w
       }),
       moderatorRestoreDocument: unsent(async (options: Parameters<Contracts['moderatorRestoreDocument']>[0]): Promise<void> => {
         const contract = await prepare(options.contractId)
-        const result = await moderate({ action: 'restoreDocument', dataContractId: options.contractId, documentTypeName: options.documentTypeName, document: options.document.toBytes(contract, PlatformVersion.current()) })
+        const result = await moderate({ action: 'restoreDocument', dataContractId: options.contractId, documentTypeName: options.documentTypeName, document: options.document.toBytes(contract, networkPlatformVersion(PlatformVersion, sdk)) })
         if (!(result instanceof VerifiedContractDocumentRemoval)) throw unverifiedResult()
       }),
       moderatorChangeDocumentFields: unsent(async (options: Parameters<Contracts['moderatorChangeDocumentFields']>[0]) => {

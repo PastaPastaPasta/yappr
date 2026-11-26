@@ -100,3 +100,21 @@ describe('Dash Pay contact read failures and retry', () => {
     expect(query).toHaveBeenCalledTimes(3)
   })
 })
+
+describe('Dash Pay contact request query operands', () => {
+  it('names the recipient of incoming requests by its base58 identifier', async () => {
+    query.mockResolvedValueOnce([])
+    await dashPayContactsService.getIncomingContactRequests(userId)
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      documentTypeName: 'contactRequest', where: [['toUserId', '==', userId]],
+    }))
+  })
+
+  it('names the owner of outgoing requests by its base58 identifier', async () => {
+    query.mockResolvedValueOnce([])
+    await dashPayContactsService.getOutgoingContactRequests(userId)
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({
+      documentTypeName: 'contactRequest', where: [['$ownerId', '==', userId]],
+    }))
+  })
+})

@@ -2,6 +2,8 @@ import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
+import { PlatformVersion } from '@dashevo/wasm-sdk';
+import { networkPlatformVersion } from '@/lib/platform-version.mjs';
 import { signerService } from './signer-service';
 import { documentBuilderService } from './document-builder-service';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
@@ -715,7 +717,7 @@ class StateTransitionService {
       };
 
       const entropy = crypto.getRandomValues(new Uint8Array(32));
-      const documentId = documentIdForCreate({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce });
+      const documentId = documentIdForCreate({ contractId, ownerId, documentTypeName: documentType, entropy, identityContractNonce: newNonce, platformVersion: networkPlatformVersion(PlatformVersion, sdk) });
       const resolvedData = typeof documentData === 'function' ? await documentData(documentId) : documentData;
       logger.debug(`Creating ${documentType} document ${documentId} with data:`, resolvedData);
 

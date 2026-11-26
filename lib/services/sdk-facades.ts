@@ -24,6 +24,8 @@ export const SDK_FACADES = [
   'addresses',
   'shielded',
   'stateTransitions',
+  'decisionProposals',
+  'privateDocuments',
 ] as const satisfies readonly (keyof EvoSDK)[]
 
 export type SdkFacade = (typeof SDK_FACADES)[number]

@@ -9,7 +9,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
  */
 
 import { getEvoSdk } from './evo-sdk-service';
-import { identifierStringToLegacyNumberArray, queryDocuments, identifierToBase58 } from './sdk-helpers';
+import { queryDocuments, identifierToBase58 } from './sdk-helpers';
 import { followService } from './follow-service';
 import { unifiedProfileService, UnifiedProfileDocument } from './unified-profile-service';
 import { DASHPAY_CONTRACT_ID } from '../constants';
@@ -107,21 +107,17 @@ class DashPayContactsService {
 
   /**
    * Get all contact requests sent TO the user (incoming)
-   * Uses index: userIdCreatedAt.
-   *
-   * This is a raw query over an ordinary byte-array field, so it uses the legacy
-   * JSON `number[]` operand shape instead of the typed-write `Uint8Array` helper.
+   * Uses index: userIdCreatedAt. `toUserId` is an identifier field, so the
+   * operand is the base58 identifier string.
    */
   async getIncomingContactRequests(userId: string): Promise<ContactRequestDocument[]> {
     try {
       const sdk = await getEvoSdk();
 
-      const userIdBytes = identifierStringToLegacyNumberArray(userId);
-
       const documents = await queryDocuments(sdk, {
         dataContractId: DASHPAY_CONTRACT_ID,
         documentTypeName: 'contactRequest',
-        where: [['toUserId', '==', userIdBytes]],
+        where: [['toUserId', '==', userId]],
         orderBy: [['$createdAt', 'asc']],
         limit: 100
       });
