@@ -53,6 +53,21 @@ function toCanonicalDocumentObject(fields: {
   } as unknown as DocumentObject;
 }
 
+/**
+ * The entropy-only id the `Document` constructor used to assign. From protocol 14
+ * a create's real id also commits to its identity contract nonce, and
+ * `DocumentCreateTransition` derives and writes it back when signing. This id
+ * only keys the pending-transition cache before the nonce is read, so it uses
+ * the pre-14 derivation, which needs no nonce.
+ */
+const PROVISIONAL_ID_VERSION = 13;
+
+function provisionalDocumentId(documentTypeName: string, ownerId: string, contractId: string, entropy: Uint8Array): string {
+  return bs58.encode(
+    Document.generateId(documentTypeName, ownerId, contractId, entropy, null, new PlatformVersion(PROVISIONAL_ID_VERSION))
+  );
+}
+
 class DocumentBuilderService {
   async generateDocumentIdentity(
     contractId: string,
@@ -62,10 +77,9 @@ class DocumentBuilderService {
     await ensureWasmReady();
 
     const entropy = crypto.getRandomValues(new Uint8Array(32));
-    const idBytes = Document.generateId(documentTypeName, ownerId, contractId, entropy);
 
     return {
-      id: bs58.encode(idBytes),
+      id: provisionalDocumentId(documentTypeName, ownerId, contractId, entropy),
       entropy,
     };
   }
@@ -94,7 +108,7 @@ class DocumentBuilderService {
   ): Promise<InstanceType<typeof Document>> {
     const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
     const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
-    const id = options?.id ?? bs58.encode(Document.generateId(documentTypeName, ownerId, contractId, entropy));
+    const id = options?.id ?? provisionalDocumentId(documentTypeName, ownerId, contractId, entropy);
 
     return Document.fromObject(
       toCanonicalDocumentObject({ id, ownerId, contractId, documentTypeName, revision: 1, entropy, data }),
