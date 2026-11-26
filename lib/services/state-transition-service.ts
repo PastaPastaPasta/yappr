@@ -8,8 +8,6 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { promptForAuthKey } from '../auth-utils';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
-
-type DocumentData = Record<string, unknown>;
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -18,6 +16,8 @@ import {
   PrivateKey,
   Identifier,
 } from '@dashevo/evo-sdk';
+
+export type DocumentData = Record<string, unknown>;
 
 
 export interface StateTransitionResult {
@@ -278,18 +278,15 @@ class StateTransitionService {
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
-   * 1. Build the Document and wrap it in a DocumentCreateTransition
-   * 2. Bundle into a BatchTransition → StateTransition
-   * 3. Fetch the identity contract nonce from Platform and set it
-   * 4. Sign the StateTransition
-   * 5. Cache the signed ST bytes (localStorage)
-   * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
-   * 7. Wait via sdk.stateTransitions.waitForResponse()
+   * 1. Fetch the identity contract nonce and derive the document id it commits to
+   * 2. Build the Document and wrap it in a DocumentCreateTransition
+   * 3. Bundle into a BatchTransition → StateTransition, set the nonce and sign
+   * 4. Cache the signed ST bytes (localStorage)
+   * 5. Broadcast via sdk.stateTransitions.broadcastStateTransition()
+   * 6. Wait via sdk.stateTransitions.waitForResponse()
    *
-   * On timeout/retry, we reload the cached bytes and rebroadcast the
-   * SAME signed ST. Platform either accepts it (first broadcast) or
-   * recognizes it's already processed (replay). No new nonce = no
-   * double post, enforced at the protocol level.
+   * A caller that passes stable `entropy` can retry: a cached signed ST for the same id is
+   * rebroadcast. Without it every call derives a fresh id, so there is nothing to look up.
    */
   async createDocument(
     contractId: string,
@@ -345,7 +342,7 @@ class StateTransitionService {
       );
 
       // --- Check for a cached ST from a previous timed-out attempt ---
-      const cachedBytes = loadPendingSTBytes(documentId);
+      const cachedBytes = options?.entropy ? loadPendingSTBytes(documentId) : null;
       if (cachedBytes) {
         logger.info(`Found cached ST bytes for ${documentId} — checking Platform...`);
 
@@ -397,7 +394,7 @@ class StateTransitionService {
       }
 
       // --- Check if document already on Platform (e.g., from a previous session) ---
-      const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
+      const existingDoc = options?.entropy ? await this.checkDocumentExists(contractId, documentType, documentId) : null;
       if (existingDoc) {
         logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
         return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };

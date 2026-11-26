@@ -13,19 +13,11 @@
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
 import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { DocumentObject } from '@dashevo/evo-sdk';
 import { networkPlatformVersion } from '@/lib/platform-version';
 import bs58 from 'bs58';
-
-/**
- * Ensure WASM module is initialized by connecting SDK
- * This guarantees the shared WASM module is ready before creating objects
- */
-async function ensureWasmReady(): Promise<void> {
-  await getEvoSdk();
-}
 
 /**
  * The tagged object `Document.fromObject` takes. The `Document` constructor
@@ -196,34 +188,6 @@ class DocumentBuilderService {
     };
   }
 
-  /**
-   * Get the document ID from a newly created document
-   *
-   * After calling documentCreate, the document object has its ID populated.
-   * This helper extracts the ID in string format.
-   *
-   * @param document - The WASM Document after creation
-   * @returns The document ID as a string
-   */
-  getDocumentId(document: Document): string {
-    // The document.id property returns an Identifier which can be converted to string
-    const id = document.id;
-    if (typeof id === 'string') {
-      return id;
-    }
-    if (id && typeof (id as { toString?: () => string }).toString === 'function') {
-      return (id as { toString: () => string }).toString();
-    }
-    // Fallback: convert via toObject() and extract the id field
-    const obj = document.toObject() as { $id?: unknown };
-    if (obj.$id) {
-      const rawId = obj.$id;
-      if (typeof rawId === 'string') return rawId;
-      const base58 = identifierToBase58(rawId);
-      if (base58) return base58;
-    }
-    throw new Error('Unable to extract document ID from Document object');
-  }
 }
 
 // Singleton instance

@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
-import { stateTransitionService } from './state-transition-service';
+import { stateTransitionService, type DocumentData } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 
@@ -176,7 +176,7 @@ export abstract class BaseDocumentService<T> {
 
   async createWithOptions(
     ownerId: string,
-    data: Record<string, unknown> | ((documentId: string) => Record<string, unknown> | Promise<Record<string, unknown>>),
+    data: DocumentData | ((documentId: string) => DocumentData | Promise<DocumentData>),
     options?: {
       entropy?: Uint8Array;
     }
