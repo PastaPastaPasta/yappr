@@ -9,6 +9,7 @@
  * is initialized before creating any WASM objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
+import { networkPlatformVersion } from '@/lib/platform-version';
 import {
   IdentitySigner,
   PrivateKey,
@@ -125,8 +126,7 @@ class SignerService {
   async createIdentityPublicKey(
     keyData: IdentityPublicKeyType
   ): Promise<InstanceType<typeof IdentityPublicKey>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
 
     // Normalize the key data to match the expected JSON format
     // v3.1: SDK consistently returns camelCase, requires $formatVersion field
@@ -146,7 +146,7 @@ class SignerService {
     // Cast needed: TS can't narrow the ternary on data to string
     const identityKey = IdentityPublicKey.fromJSON(
       normalizedKeyData as Parameters<typeof IdentityPublicKey.fromJSON>[0],
-      PlatformVersion.current()
+      platformVersion
     );
 
     return identityKey;

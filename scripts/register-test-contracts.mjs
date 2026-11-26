@@ -18,7 +18,7 @@
  * The owner defaults to the first entry of E2E_IDENTITY_IDS in .env.testing.
  * Prints the `.env.testing` lines to paste when it finishes.
  */
-import { DataContract, EvoSDK, IdentitySigner } from '@dashevo/evo-sdk';
+import { DataContract, EvoSDK, IdentitySigner, PlatformVersion } from '@dashevo/evo-sdk';
 import {
   CRITICAL_AUTH_KEY_ID,
   criticalAuthKey,
@@ -80,7 +80,7 @@ function schemasOf(dataContract) {
  * after a broadcast can still return the pre-publish value.
  */
 async function publishContract(sdk, { label, ownerId, schemas, identityNonce, identityKey, signer }) {
-  const dataContract = new DataContract({ ownerId, identityNonce, schemas });
+  const dataContract = new DataContract({ ownerId, identityNonce, schemas, platformVersion: new PlatformVersion(sdk.version()) });
   console.log(`publishing ${label} contract (${Object.keys(schemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey, signer });
   const contractId = published.id.toBase58();

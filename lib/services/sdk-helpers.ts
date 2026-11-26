@@ -538,15 +538,6 @@ export function identifierStringToDocumentBytes(value: string): Uint8Array {
 }
 
 /**
- * Legacy helper for plain-object paths that still need JSON-serializable byte arrays.
- *
- * Prefer `identifierStringToDocumentBytes` for typed document writes.
- */
-export function identifierStringToLegacyNumberArray(value: string): number[] {
-  return Array.from(identifierStringToDocumentBytes(value));
-}
-
-/**
  * Encode raw bytes for ordinary `byteArray: true` query operands.
  *
  * Yappr uses base64 for these raw-query comparisons because `sdk.documents.query(...)` receives
