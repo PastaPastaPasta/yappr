@@ -7,7 +7,8 @@ import { pathToFileURL } from 'node:url'
  * GitHub Pages always serves the site's root 404, even for another deployment.
  * Installed Yappr Dev builds still open links under the retired /devnet prefix:
  * its App Connect return forwards to the /staging bridge (which accepts the
- * yappr-dev scheme), and every other /devnet link says the devnet is retired.
+ * yappr-dev scheme), its archived policy pages are served from site-archive, and
+ * every other /devnet link says the devnet is retired.
  */
 export function staticNotFound(basePath = '') {
   if (basePath && !/^\/[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*$/.test(basePath)) throw new Error('Invalid deployment prefix')

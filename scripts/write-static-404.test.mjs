@@ -39,7 +39,7 @@ describe('GitHub Pages shared root 404', () => {
     expect(visit('', pathname, search, '#x').redirects).toEqual([`/staging/connect/${search}#x`])
     expect(visit('/staging', pathname, search).redirects).toEqual([])
   })
-  it.each(['/devnet', '/devnet/', '/devnet/terms', '/devnet/privacy/', '/devnet/post', '/devnet/connector'])('says Yappr Dev is retired on %s without leaving the page', (pathname) => {
+  it.each(['/devnet', '/devnet/', '/devnet/settings', '/devnet/feed/', '/devnet/post', '/devnet/connector'])('says Yappr Dev is retired on %s without leaving the page', (pathname) => {
     const { redirects, links } = visit('', pathname, '?id=postId')
     expect(redirects).toEqual([])
     expect(links.title.textContent).toBe('Yappr Dev has been retired')

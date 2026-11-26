@@ -9,9 +9,10 @@ name: Deploy to GitHub Pages
 # QA on its seeded data) and the beta site (the same staging commit built
 # against that rehearsal group's "hide, don't delete" v18 members in .env.beta,
 # served under /beta). A push to either branch rebuilds all five so no deploy
-# can wipe another. The artifact is assembled from an empty directory each run,
-# so a deployment dropped from this list disappears from the site on the next
-# deploy.
+# can wipe another. The archived Yappr Dev policy pages in site-archive/devnet
+# are copied in from staging as they are. The artifact is assembled from an
+# empty directory each run, so a deployment dropped from this list disappears
+# from the site on the next deploy.
 #
 # The production and testing sites are never built from an unchecked master
 # tip. A run that follows a master CI run builds exactly that run's commit; a
@@ -247,6 +248,8 @@ jobs:
           else
             echo "::warning::beta build failed or was skipped — deploying without /beta"
           fi
+          # Yappr Dev is retired, but installed builds still open its policy pages.
+          cp -R staging/site-archive/devnet site/
 
       # Pages serves only site/404.html for every missing path. Generate it from
       # staging even while master still contains the older application's 404.
