@@ -2,6 +2,7 @@ import { chosenNonceWrites } from './chosen-nonce-writes';
 import { logger } from '@/lib/logger';
 import { reconcileFeePot } from '@/lib/reconcile-fee-pot';
 import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
+import { networkPlatformVersion } from '@/lib/platform-version.mjs';
 import type { EvoSDK, Identity, IdentityPublicKey, IdentitySigner } from '@dashevo/evo-sdk';
 import { nextIdentityContractNonce } from '@/lib/document-id';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
@@ -1624,7 +1625,7 @@ class ModerationService {
       if (!contract) throw new Error(`${this.contract.label} contract not found`);
       // A fresh Document for the call, never a caller's: nothing holds a wasm
       // borrow on it across the await.
-      const document = Document.fromBytes(bytes, contract, kind, PlatformVersion.latest());
+      const document = Document.fromBytes(bytes, contract, kind, networkPlatformVersion(PlatformVersion, sdk));
       await send(({ writer }) => writer.contracts.moderatorRestoreDocument({ identity: auth.identity, signer: auth.signer, contractId: this.contract.contractId, documentTypeName: kind, document }), this.documentScope(kind, documentId));
     });
     if (result.success || result.errorCode === 'ALREADY_RESTORED' || result.errorCode === 'RESTORE_WINDOW_ELAPSED'
@@ -1732,7 +1733,7 @@ class ModerationService {
         sdk.documents.get(this.contract.contractId, kind, documentId),
       ]);
       if (!contract || !document) return false;
-      return saveSnapshot(kind, documentId, document.toBytes(contract, PlatformVersion.latest()));
+      return saveSnapshot(kind, documentId, document.toBytes(contract, networkPlatformVersion(PlatformVersion, sdk)));
     } catch (error) {
       logger.warn('moderationService: could not snapshot the document before removal; it will not be restorable', error);
       return false;

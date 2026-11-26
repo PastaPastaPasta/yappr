@@ -32,6 +32,7 @@ import { contractSource, registrationJson, withInterim } from './register-lib.mj
 import { envValue, network } from './sdk-env.mjs';
 import { createSdkHandle, readback } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
+import { networkPlatformVersion } from '../lib/platform-version.mjs';
 
 function parseArgs(argv) {
   const args = { entry: null, live: false };
@@ -108,9 +109,9 @@ try {
   await ensureInitialized();
   const handle = createSdkHandle({ contractIds: [] });
   await handle.connect();
-  const platformVersion = PlatformVersion.latest();
   const deployedContract = await readback(handle, () => handle.sdk.contracts.fetch(contractId));
   if (!deployedContract) throw new Error(`${entry.name}: ${contractId} not found`);
+  const platformVersion = networkPlatformVersion(PlatformVersion, handle.sdk);
   const ownerId = deployedContract.ownerId.toBase58();
   const deployedJson = deployedContract.toJSON(platformVersion);
   const version = Number(deployedContract.version);

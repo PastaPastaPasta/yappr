@@ -336,8 +336,8 @@ class EvoSdkService {
     const seeded = new Set<string>();
     const bundle = await this._bundle();
     if (!bundle) return seeded;
-    const { DataContract, PlatformVersion } = await import('@dashevo/evo-sdk');
-    const platformVersion = PlatformVersion.latest();
+    const [{ DataContract, PlatformVersion }, { networkPlatformVersion }] = await Promise.all([import('@dashevo/evo-sdk'), import('@/lib/platform-version.mjs')]);
+    const platformVersion = networkPlatformVersion(PlatformVersion, sdk);
     for (const id of ids) {
       const entry = bundle.contracts[id];
       if (!entry) continue;

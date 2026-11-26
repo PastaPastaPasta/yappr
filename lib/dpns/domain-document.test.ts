@@ -26,7 +26,7 @@ import { buildSignedCreateTransition } from '@/lib/manual-batch'
 import documentSchemas from './fixtures/dpns-contract-documents-v1.json'
 import { saltedDomainHash } from './registration-journal'
 
-vi.mock('@/lib/services/evo-sdk-service', () => ({ getEvoSdk: async () => ({}) }))
+vi.mock('@/lib/services/evo-sdk-service', () => ({ getEvoSdk: async () => ({ version: () => 14 }) }))
 const { documentBuilderService } = await import('@/lib/services/document-builder-service')
 const { domainDocumentData } = await import('@/lib/services/dpns-registration')
 

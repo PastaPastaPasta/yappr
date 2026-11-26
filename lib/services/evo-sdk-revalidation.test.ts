@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@dashevo/evo-sdk', () => ({
   EvoSDK: class {
     connect = mocks.connect;
+    version = () => 14;
     contracts = {
       addKnown: mocks.addKnown,
       getMany: mocks.getMany,
@@ -28,7 +29,7 @@ vi.mock('@dashevo/evo-sdk', () => ({
     constructor(public options: unknown) { mocks.instances.push(this); }
   },
   DataContract: { fromBase64: (bytes: string) => ({ bytes, schemas: {} }) },
-  PlatformVersion: { latest: () => ({}) },
+  PlatformVersion: class { constructor(readonly version: number) {} },
 }));
 vi.mock('@/lib/contracts/bundled-contracts', () => ({
   bundleKey: () => 'devnet',

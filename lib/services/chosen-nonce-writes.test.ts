@@ -28,6 +28,7 @@ const broadcast = vi.fn(async (transition: StateTransition) => {
 })
 const strictBroadcast = vi.fn((transition: StateTransition) => broadcast(transition))
 const sdk = {
+  version: () => 14,
   contracts: { fetch: vi.fn(async () => ({})), addKnown: vi.fn(async () => true) },
   documents: { get: getDocument },
   tokens: { calculateId },

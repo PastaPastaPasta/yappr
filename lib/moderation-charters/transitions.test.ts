@@ -25,6 +25,7 @@ function signer() {
 }
 
 const sdkWithFund = (credits: bigint) => ({
+  version: () => 14,
   documents: { contestFundToJoin: vi.fn().mockResolvedValue({ credits, free: vi.fn() }) },
 }) as unknown as EvoSDK
 

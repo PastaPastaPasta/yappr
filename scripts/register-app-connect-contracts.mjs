@@ -113,6 +113,7 @@ import { balanceGate, createCostEstimate, directoryProblem, formatCredits, isEle
 import { envValue, keyNetwork, network } from './sdk-env.mjs';
 import { NONCE_SEQUENCE_MASK, createSdkHandle, readback, sleep } from './seed/seed-lib.mjs';
 import { resolveMakerOwner } from './social-battery-lib.mjs';
+import { networkPlatformVersion } from '../lib/platform-version.mjs';
 
 const SIGNATURE_ALLOWANCE = 100;
 const MODES = ['--plan', '--dry-run', '--signed-dry-run', '--live'];
@@ -296,7 +297,7 @@ async function proveAppendable(handle, plan, created, { resumed = false } = {}) 
   const read = (fn) => readback(handle, fn);
   const info = await read(() => handle.sdk.contractGroups.info(plan.groupId));
   if (!info || info.ownerId !== plan.groupOwner || info.adminIds.length !== 0) throw new Error(`group ${plan.groupId}: owner ${info?.ownerId}, admins ${info?.adminIds}; expected ${plan.groupOwner} alone`);
-  const platformVersion = PlatformVersion.latest();
+  const platformVersion = networkPlatformVersion(PlatformVersion, handle.sdk);
   for (const entry of plan.contracts.filter((c) => !created.includes(c))) {
     const [contract, memberships] = await Promise.all([read(() => handle.sdk.contracts.fetch(entry.id)), read(() => handle.sdk.contractGroups.forContractWithProof(entry.id))]);
     if (!contract || contract.ownerId.toBase58() !== plan.groupOwner) throw new Error(`${entry.name}: ${entry.id} is not registered by the maker; the group does not hold the entries --append-after names`);
@@ -600,7 +601,6 @@ async function main() {
   const appendProblem = testnetAppendProblem(network(), args.appendAfter, { testnetSet: args.testnetSet, maker: args.maker });
   if (appendProblem) throw new Error(appendProblem);
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const platformVersion = PlatformVersion.latest();
   const maker = makerFor(args);
   // Refused before anything is read from the chain: a key file others may read, a journal directory they may enter.
   // A --dry-run given a key file checks it too (on chain below), without signing.
@@ -634,6 +634,8 @@ async function main() {
     startNonce ??= chainNonce + 1n;
     if (args.mode !== 'live' && args.appendAfter === null && chainNonce !== startNonce - 1n) throw new Error(`the maker is at nonce ${chainNonce}; the anchor at ${startNonce} needs it at ${startNonce - 1n}`);
   }
+  // The proved epoch read above moved the SDK to the chain's protocol version; --plan stays offline at the newest the SDK knows.
+  const platformVersion = handle ? networkPlatformVersion(PlatformVersion, handle.sdk) : PlatformVersion.latest();
   // Before the balance gate, so a key file can be proved while the maker is still being funded.
   const signing = owner ? await verifySigningKey(handle.sdk, owner) : null;
   const planned = args.testnetSet === 'rehearsal' ? planRehearsalSet({ startNonce, generateId })

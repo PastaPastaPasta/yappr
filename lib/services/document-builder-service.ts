@@ -23,6 +23,7 @@ import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
 import { documentIdForCreate } from '@/lib/document-id';
 import { Document, PlatformVersion } from '@dashevo/wasm-sdk';
+import { networkPlatformVersion } from '@/lib/platform-version.mjs';
 import type { DocumentObject } from '@dashevo/evo-sdk';
 
 /**
@@ -59,11 +60,11 @@ function toCanonicalDocumentObject(fields: {
 }
 
 /**
- * Ensure WASM module is initialized by connecting SDK
- * This guarantees the shared WASM module is ready before creating objects
+ * Connect the SDK (which initializes the shared WASM module) and return the
+ * protocol version of the network it is connected to.
  */
-async function ensureWasmReady(): Promise<void> {
-  await getEvoSdk();
+async function networkVersion(): Promise<PlatformVersion> {
+  return networkPlatformVersion(PlatformVersion, await getEvoSdk());
 }
 
 class DocumentBuilderService {
@@ -95,8 +96,7 @@ class DocumentBuilderService {
       identityContractNonce: bigint;
     }
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = await networkVersion();
 
     const id = documentIdForCreate({
       contractId,
@@ -116,7 +116,7 @@ class DocumentBuilderService {
         entropy: identity.entropy,
         data,
       }),
-      PlatformVersion.current()
+      platformVersion
     );
   }
 
@@ -142,8 +142,7 @@ class DocumentBuilderService {
     data: Record<string, unknown>,
     newRevision: number
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = await networkVersion();
 
     // Replacements keep the existing id and carry no entropy — only creates need it.
     return Document.fromObject(
@@ -155,7 +154,7 @@ class DocumentBuilderService {
         revision: newRevision,
         data,
       }),
-      PlatformVersion.current()
+      platformVersion
     );
   }
 
@@ -183,7 +182,7 @@ class DocumentBuilderService {
     data: Record<string, unknown>,
     createdAtMs?: number
   ): Promise<InstanceType<typeof Document>> {
-    await ensureWasmReady();
+    const platformVersion = await networkVersion();
 
     return Document.fromObject(
       toCanonicalDocumentObject({
@@ -196,7 +195,7 @@ class DocumentBuilderService {
         createdAtMs,
         data,
       }),
-      PlatformVersion.current()
+      platformVersion
     );
   }
 
