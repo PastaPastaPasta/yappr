@@ -53,42 +53,29 @@ function toCanonicalDocumentObject(fields: {
   } as unknown as DocumentObject;
 }
 
-/**
- * The entropy-only id the `Document` constructor used to assign. From protocol 14
- * a create's real id also commits to its identity contract nonce, and
- * `DocumentCreateTransition` derives and writes it back when signing. This id
- * only keys the pending-transition cache before the nonce is read, so it uses
- * the pre-14 derivation, which needs no nonce.
- */
-const PROVISIONAL_ID_VERSION = 13;
-
-function provisionalDocumentId(documentTypeName: string, ownerId: string, contractId: string, entropy: Uint8Array): string {
-  return bs58.encode(
-    Document.generateId(documentTypeName, ownerId, contractId, entropy, null, new PlatformVersion(PROVISIONAL_ID_VERSION))
-  );
-}
-
 class DocumentBuilderService {
-  async generateDocumentIdentity(
+  /**
+   * The id a create transition signed with `identityContractNonce` will carry. From
+   * protocol 14 it commits to that nonce, so derive it before building the payload.
+   */
+  async documentIdForCreate(
     contractId: string,
     documentTypeName: string,
-    ownerId: string
-  ): Promise<{ id: string; entropy: Uint8Array }> {
-    await ensureWasmReady();
-
-    const entropy = crypto.getRandomValues(new Uint8Array(32));
-
-    return {
-      id: provisionalDocumentId(documentTypeName, ownerId, contractId, entropy),
-      entropy,
-    };
+    ownerId: string,
+    entropy: Uint8Array,
+    identityContractNonce: bigint
+  ): Promise<string> {
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
+    return bs58.encode(
+      Document.generateId(documentTypeName, ownerId, contractId, entropy, identityContractNonce, platformVersion)
+    );
   }
 
   /**
    * Build a Document object for document creation
    *
-   * Creates a new WASM Document with the provided data. The document ID
-   * will be generated automatically based on entropy.
+   * Creates a new WASM Document with the provided data under the id
+   * `documentIdForCreate` derived for the transition's nonce.
    *
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
@@ -101,17 +88,14 @@ class DocumentBuilderService {
     documentTypeName: string,
     ownerId: string,
     data: Record<string, unknown>,
-    options?: {
-      id?: string;
-      entropy?: Uint8Array;
+    identity: {
+      id: string;
+      entropy: Uint8Array;
     }
   ): Promise<InstanceType<typeof Document>> {
     const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
-    const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
-    const id = options?.id ?? provisionalDocumentId(documentTypeName, ownerId, contractId, entropy);
-
     return Document.fromObject(
-      toCanonicalDocumentObject({ id, ownerId, contractId, documentTypeName, revision: 1, entropy, data }),
+      toCanonicalDocumentObject({ id: identity.id, ownerId, contractId, documentTypeName, revision: 1, entropy: identity.entropy, data }),
       platformVersion
     );
   }

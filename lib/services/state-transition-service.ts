@@ -8,6 +8,8 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { promptForAuthKey } from '../auth-utils';
 import { extractErrorMessage, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError } from '../error-utils';
 import { documentToPlainObject } from './sdk-helpers';
+
+type DocumentData = Record<string, unknown>;
 import {
   DocumentCreateTransition,
   BatchedTransition,
@@ -293,9 +295,8 @@ class StateTransitionService {
     contractId: string,
     documentType: string,
     ownerId: string,
-    documentData: Record<string, unknown>,
+    documentDataOrBuilder: DocumentData | ((documentId: string) => DocumentData | Promise<DocumentData>),
     options?: {
-      documentId?: string;
       entropy?: Uint8Array;
     }
   ): Promise<StateTransitionResult> {
@@ -303,8 +304,6 @@ class StateTransitionService {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
       const privateKeyWif = await this.getPrivateKey(ownerId);
-
-      logger.info(`Creating ${documentType} document with data:`, documentData);
 
       // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
@@ -320,19 +319,30 @@ class StateTransitionService {
 
       logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
+      // From protocol 14 a new document's id commits to the identity contract nonce of its
+      // create transition, so read the nonce first and derive the id the transition will sign.
+      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
+      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
+      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
+      const rawNonce = currentNonce ?? BigInt(0);
+      const sequenceNumber = rawNonce & SEQUENCE_MASK;
+      const newNonce = sequenceNumber + BigInt(1);
+      logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
+
+      const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
+      const documentId = await documentBuilderService.documentIdForCreate(contractId, documentType, ownerId, entropy, newNonce);
+      const documentData = typeof documentDataOrBuilder === 'function' ? await documentDataOrBuilder(documentId) : documentDataOrBuilder;
+      logger.info(`Creating ${documentType} document ${documentId} with data:`, documentData);
+
       // Build the typed Document. Binary fields remain Uint8Array on this path.
       const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
         ownerId,
         documentData,
-        {
-          id: options?.documentId,
-          entropy: options?.entropy,
-        }
+        { id: documentId, entropy }
       );
-      const documentId = documentBuilderService.getDocumentId(document);
-      logger.info(`Built document, ID: ${documentId}`);
 
       // --- Check for a cached ST from a previous timed-out attempt ---
       const cachedBytes = loadPendingSTBytes(documentId);
@@ -394,17 +404,6 @@ class StateTransitionService {
       }
 
       // --- Build the StateTransition manually ---
-
-      // Fetch current identity contract nonce from Platform
-      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
-      // upper 24 bits = missing revision bitset. Only increment the sequence part.
-      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
-      // v3.1: getIdentityContractNonce returns bigint | undefined (was bigint | null)
-      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
-      const rawNonce = currentNonce ?? BigInt(0);
-      const sequenceNumber = rawNonce & SEQUENCE_MASK;
-      const newNonce = sequenceNumber + BigInt(1);
-      logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
       // v3.1: DocumentCreateTransition takes an options object
       const createTransition = new DocumentCreateTransition({

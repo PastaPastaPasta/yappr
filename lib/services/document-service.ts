@@ -176,14 +176,13 @@ export abstract class BaseDocumentService<T> {
 
   async createWithOptions(
     ownerId: string,
-    data: Record<string, unknown>,
+    data: Record<string, unknown> | ((documentId: string) => Record<string, unknown> | Promise<Record<string, unknown>>),
     options?: {
-      documentId?: string;
       entropy?: Uint8Array;
     }
   ): Promise<T> {
     try {
-      logger.info(`Creating ${this.documentType} document:`, data);
+      logger.info(`Creating ${this.documentType} document`);
 
       const result = await stateTransitionService.createDocument(
         this.contractId,
