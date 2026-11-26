@@ -28,3 +28,9 @@ test('formats credits as DASH', () => {
   assert.equal(formatDeposit(100_000_000_000n), '1 DASH')
   assert.equal(formatDeposit(12_345_000_000n), '0.12345 DASH')
 })
+
+test('recognises a domain refused for stating less than the fund to join', async () => {
+  const { contestNotPaidFor } = await import('../lib/dpns/contest-deposit.ts')
+  assert.equal(contestNotPaidFor(new Error('Contest for document abc was not paid for, needs payment of 20000000000 credits')), true)
+  assert.equal(contestNotPaidFor(new Error('Insufficient identity balance (code=40500)')), false)
+})

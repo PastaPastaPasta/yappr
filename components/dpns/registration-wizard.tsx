@@ -8,6 +8,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { UsernameEntry } from '@/lib/types'
+import { DEPOSIT_UNREADABLE_MESSAGE } from '@/lib/dpns/contest-deposit'
 import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
@@ -106,7 +107,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
             setUsernameContested(entry.id, true)
           } catch (error) {
             logger.error('Failed to read the vote deposit:', error)
-            updateUsernameStatus(entry.id, 'invalid', 'Could not read the vote deposit for this name. Try again.')
+            updateUsernameStatus(entry.id, 'invalid', DEPOSIT_UNREADABLE_MESSAGE)
           }
         } else {
           setUsernameDeposit(entry.id, null)
@@ -126,12 +127,16 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   // A deposit rose between the review and the signing: quote those names again, nothing else.
   const handleRequote = useCallback(async () => {
+    if (!isSdkReady) {
+      toast.error('Service is initializing. Please try again.')
+      return
+    }
     const entries = usernames
       .filter((u) => u.requote)
       .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
-    useDpnsRegistration.setState({ usernames: entries })
+    useDpnsRegistration.setState({ usernames: entries, contestedAcknowledged: false })
     await checkNames(entries)
-  }, [usernames, checkNames])
+  }, [isSdkReady, usernames, checkNames])
 
   const handleRegister = useCallback(async () => {
     if (!identityId) {
@@ -238,7 +243,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleBackToEdit = useCallback(() => {
     for (const entry of usernames) {
-      if (entry.status !== 'invalid') {
+      if (entry.status !== 'invalid' || entry.validationError === DEPOSIT_UNREADABLE_MESSAGE) {
         updateUsernameStatus(entry.id, 'pending')
       }
     }

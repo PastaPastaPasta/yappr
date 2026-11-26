@@ -4,7 +4,7 @@ import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
 import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
 import { documentBuilderService } from './document-builder-service';
-import { DepositChangedError, depositCap } from '@/lib/dpns/contest-deposit';
+import { DepositChangedError, contestNotPaidFor, depositCap } from '@/lib/dpns/contest-deposit';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
@@ -704,7 +704,7 @@ class DpnsService {
           success: false,
           isContested: false,
           error: error instanceof Error ? error.message : 'Registration failed',
-          ...(error instanceof DepositChangedError ? { requote: true } : {}),
+          ...(error instanceof DepositChangedError || contestNotPaidFor(error) ? { requote: true } : {}),
         });
       }
     }

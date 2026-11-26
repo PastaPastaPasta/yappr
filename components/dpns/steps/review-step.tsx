@@ -166,7 +166,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Each contested name pays the vote deposit shown, on top of the network fees. The deposit pays for the
           vote and isn&apos;t refunded, even if the vote picks someone else. No more than the deposit shown is ever
-          paid: if it goes up before you confirm, nothing is sent and you can review the new amount.
+          paid: if it goes up, the deposit isn&apos;t charged and you can review the new amount.
         </p>
       )}
 
