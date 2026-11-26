@@ -4,7 +4,7 @@ A decentralized social network and marketplace on Dash Platform. Posts, profiles
 
 <img src="public/yappr.png" alt="Yappr" width="200">
 
-Live at [yap.pr](https://yap.pr). A second copy at [yap.pr/testing](https://yap.pr/testing/) runs the same code against dedicated test contracts and is what the end-to-end suite drives; [yap.pr/devnet](https://yap.pr/devnet/) runs the Sakura contract set in `.env.devnet`. The [testnet release record](docs/TESTNET_RELEASE.md) tracks the planned clean-start release and its cut-over gates.
+Live at [yap.pr](https://yap.pr). A second copy at [yap.pr/testing](https://yap.pr/testing/) runs the same code against dedicated test contracts and is what the end-to-end suite drives; [yap.pr/staging](https://yap.pr/staging/) runs the staging branch against the testnet release set. The [testnet release record](docs/TESTNET_RELEASE.md) tracks the planned clean-start release and its cut-over gates.
 
 ## What it does
 
@@ -31,7 +31,7 @@ Everything the app needs is in the browser; there is nothing else to run. Contra
 | `npm run build` | Production static export into `out/` |
 | `npm run build:subpath` | The same, for a `/yappr` sub-path (GitHub Pages) |
 | `npm run build:testing` | Export against the test contracts in `.env.testing` under `/testing` |
-| `npm run build:devnet` | Export against `.env.devnet` under `/devnet` |
+| `npm run build:devnet` | Local-only export against `.env.devnet` under `/devnet`, for the devnet specs (not deployed) |
 | `npm run contracts:snapshot` | Snapshot the network's deployed contracts into `lib/contracts/bundled/` (`NETWORK=devnet`, or `NETWORK=testnet CONTRACT_IDS=…`). The app seeds the SDK from the bundle on load and revalidates it in the background once the SDK supports it |
 | `npm run lint` | ESLint over `app components contexts hooks lib types`; warnings fail |
 | `npm run test` | Vitest specs next to the pure modules in `lib/` |
@@ -84,9 +84,10 @@ no legacy contracts are registered and old data is not migrated.
 The release set is registered on testnet (2026-10-21) and pinned in
 `.env.testnet`, which `npm run build` uses for `/staging` and, after the
 staging→master merge, for root. Until that merge, master's root still uses
-**social v2**, **DM v3** and the old feature contracts. `/devnet` uses
-**social v16**, **DM v5**, **blog v8**, **storefront v9** and **pollr v7** on
-Sakura beta.6, with App Connect enabled. Those paths stay supported until the
+**social v2**, **DM v3** and the old feature contracts. `.env.devnet` (local
+devnet builds only; the `/devnet` site is retired) selects Sakura's release
+rehearsal set: **social v17**, **DM v5**, **blog v9**, **storefront v10**,
+**pollr v8** and the passkey vault, with App Connect enabled. Those paths stay supported until the
 legacy cleanup; authored contract JSONs are not a deployment record. See [the contract index](contracts/README.md),
 [non-social features](docs/NON_SOCIAL_CONTRACTS.md) and
 [cut-over deferrals](docs/RELEASE_CLEANUP.md).
@@ -106,7 +107,7 @@ Ownership is the platform's `$ownerId`. A schema may also require a target's own
 
 ### Storage in the browser
 
-A typed-in private key lives in local storage under the `yappr_secure_` prefix (a CRITICAL key typed in on an App Connect build stays in the tab only); a wallet sign-in's keys live in an AES-GCM-wrapped key ring in IndexedDB (`lib/app-connect/key-ring-store.ts`). Session metadata and preferences are in local storage. Every sub-path build (`/testing`, `/devnet`, `/staging`) prefixes its keys with its own scope so deployments sharing an origin never read each other's sessions (`lib/storage-scope.ts`). `/cookies` describes this to users.
+A typed-in private key lives in local storage under the `yappr_secure_` prefix (a CRITICAL key typed in on an App Connect build stays in the tab only); a wallet sign-in's keys live in an AES-GCM-wrapped key ring in IndexedDB (`lib/app-connect/key-ring-store.ts`). Session metadata and preferences are in local storage. Every sub-path build (`/testing`, `/staging`, `/staging-old`, `/beta`) prefixes its keys with its own scope so deployments sharing an origin never read each other's sessions (`lib/storage-scope.ts`). `/cookies` describes this to users.
 
 ## Contributing
 

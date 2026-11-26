@@ -1,7 +1,7 @@
 # Pre-cut-over cleanup (WP17)
 
 Verified against staging `e92b310e` on 2026-10-17. This cleanup preserves the
-current production default build and Sakura `/devnet` until WP15 switches the
+current production default build and Sakura `.env.devnet` builds until WP15 switches the
 release environment. D9 and D21/D22 apply to the release, not to today's defaults.
 No testnet or mainnet writes are part of this work.
 
@@ -33,9 +33,9 @@ No testnet or mainnet writes are part of this work.
 | --- | --- |
 | DM v3/v4 service, web/mobile legacy UI and merged legacy conversations (R-C2) | `DM_TOPOLOGY` still defaults to `v3`, with the current production DM id. The testnet mobile engine uses those same defaults. Remove once every shipping build explicitly uses DM v5. |
 | YAPP purchases, token-tip branch, and their builders/services (R-C3) | The production social default is `v2`; `yappIsLocked()` is false there. These are still live product paths, although v16/devnet and v17/release lock YAPP. `set-yapp-price.mjs` is already absent. |
-| Mobile key-exchange engine/screens, Maestro `10-sign-in-wallet`, controller methods, `NEXT_PUBLIC_LOGIN_PROTOCOL` legacy branch (R-C5) | Production web (master's root) and `/testing` still default to legacy sign-in. Builds that load `.env.testnet`, `.env.devnet` or `.env.beta` set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, and so do the native `testnet` and `staging-testnet` variants ([TESTNET_DEPLOY.md](TESTNET_DEPLOY.md)), so `/devnet` is not the only App Connect build. Keep #612 open until its key-registration path is removed or corrected. |
+| Mobile key-exchange engine/screens, Maestro `10-sign-in-wallet`, controller methods, `NEXT_PUBLIC_LOGIN_PROTOCOL` legacy branch (R-C5) | Production web (master's root) and `/testing` still default to legacy sign-in. Builds that load `.env.testnet`, `.env.devnet` or `.env.beta` set `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, and so do the native `testnet` and `staging-testnet` variants ([TESTNET_DEPLOY.md](TESTNET_DEPLOY.md)), so devnet builds are not the only App Connect builds. Keep #612 open until its key-registration path is removed or corrected. |
 | Token-authority fallback (R-C6) | Production v2 still needs its current token-authority gate; `.env.devnet` already supplies its own authority. Remove the default only with explicit production configuration; v17 gives all manual token authorities to `noOne`. |
-| Other social/feature JSONs and generic registration tools (R-C4/R-C7) | They still have build, test, script, or retired-contract manifest references. Do not prune by age alone. Keep v2 for production and v16 for `/devnet`; the release set is v17 / blog v9 / storefront v10 / pollr v8 / DM v5. |
+| Other social/feature JSONs and generic registration tools (R-C4/R-C7) | They still have build, test, script, or retired-contract manifest references. Do not prune by age alone. Keep v2 for production and v17 for `.env.devnet` builds; the release set is v17 / blog v9 / storefront v10 / pollr v8 / DM v5. |
 | `/testing` contract registration and complete environment | Owned by WP13/WP15. Its current social/profile overrides still use v2 defaults for other features. Smoke tests are read-only; no write suite is authorised here. |
 
 ## Other lanes and already-fixed items

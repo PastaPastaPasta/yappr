@@ -69,7 +69,7 @@ export const APP_CONNECT_ANCHOR_ID = envValue('NEXT_PUBLIC_LOGIN_PROTOCOL') === 
 export const NOT_V5_REASON = 'the env file does not set NEXT_PUBLIC_DM_TOPOLOGY=v5 with a DM v5 contract id'
 
 /**
- * Pool slots the DM specs use (derivation indices of the devnet CI seed). Slot 0
+ * Pool slots the DM specs use (derivation indices of the devnet spec seed). Slot 0
  * belongs to the topology spec. Every file sets up what it needs, so a file can
  * run alone: direct = A, B; history = E, F (+ A, B as passive partners);
  * groups = A–E; recovery = G, H. Files sharing an identity must not run at

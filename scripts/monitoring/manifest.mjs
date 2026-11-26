@@ -12,8 +12,7 @@ export async function expectations(root, name) {
   const { DataContract, PlatformVersion, ensureInitialized } = await import('@dashevo/evo-sdk');
   await ensureInitialized();
   const pv = PlatformVersion.latest();
-  const suffix = config.network === 'devnet' ? `devnet-${config.env.NEXT_PUBLIC_DEVNET_NAME}` : 'testnet';
-  const path = join(root, 'lib/contracts/bundled', `${suffix}.json`);
+  const path = join(root, 'lib/contracts/bundled/testnet.json');
   const snapshots = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')).contracts : {};
   config.pins = config.pins.map(pin => {
     const snapshot = snapshots[pin.id];
@@ -33,7 +32,7 @@ async function main() {
   const sources = { master: resolve(masterRoot), staging: resolve(stagingRoot) };
   const sites = [];
   const networks = {};
-  for (const name of ['production', 'testing', 'staging', 'devnet']) networks[name] = await expectations(sources[['staging', 'devnet'].includes(name) ? 'staging' : 'master'], name);
+  for (const name of ['production', 'testing', 'staging']) networks[name] = await expectations(sources[name === 'staging' ? 'staging' : 'master'], name);
   for (const site of SITES) {
     const root = sources[site.source];
     const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();

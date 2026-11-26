@@ -4,13 +4,15 @@ name: Deploy to GitHub Pages
 # (built from master, served at the root / yap.pr), the testing site (built
 # from the same master commit against the test contracts, served under
 # /testing), the staging site (built from the staging branch, served under
-# /staging), the devnet site (the same staging commit built against
-# .env.devnet, served under /devnet) and the staging-old site (the same staging
-# commit built against the retired D36 rehearsal set in .env.staging-old,
-# served under /staging-old for QA on its seeded data) and the beta site (the
-# same staging commit built against that rehearsal group's "hide, don't delete"
-# v18 members in .env.beta, served under /beta). A push to either branch
-# rebuilds all six so no deploy can wipe another.
+# /staging), the staging-old site (the same staging commit built against the
+# retired D36 rehearsal set in .env.staging-old, served under /staging-old for
+# QA on its seeded data) and the beta site (the same staging commit built
+# against that rehearsal group's "hide, don't delete" v18 members in .env.beta,
+# served under /beta). A push to either branch rebuilds all five so no deploy
+# can wipe another. The archived Yappr Dev policy pages in site-archive/devnet
+# are copied in from staging as they are. The artifact is assembled from an
+# empty directory each run, so a deployment dropped from this list disappears
+# from the site on the next deploy.
 #
 # The production and testing sites are never built from an unchecked master
 # tip. A run that follows a master CI run builds exactly that run's commit; a
@@ -183,21 +185,6 @@ jobs:
         env:
           BASE_PATH: /staging
 
-      # Same staging checkout and the same commit as the /staging build, rebuilt
-      # against .env.devnet (BASE_PATH=/devnet, so client-side storage is scoped
-      # to `devnet:` and stays isolated from / , /staging and /testing).
-      # continue-on-error because the devnet chain is disposable and resets
-      # without notice — a broken /devnet must never hold back /staging.
-      - name: Build devnet (staging)
-        id: devnet-build
-        if: steps.staging-build.outcome == 'success'
-        continue-on-error: true
-        working-directory: staging
-        run: |
-          rm -rf .next
-          npm run build:devnet
-          mv out out-devnet
-
       # Same staging checkout and commit again, against the D36 rehearsal set
       # (.env.staging-old) and its own contract snapshot. BASE_PATH=/staging-old
       # and its own STORAGE_EPOCH keep its storage apart from every other site.
@@ -249,12 +236,6 @@ jobs:
           else
             echo "::warning::staging build failed — deploying without an updated /staging"
           fi
-          if [ "${{ steps.devnet-build.outcome }}" = "success" ] && [ -d staging/out-devnet ]; then
-            mkdir -p site/devnet
-            cp -R staging/out-devnet/. site/devnet/
-          else
-            echo "::warning::devnet build failed or was skipped — deploying without an updated /devnet"
-          fi
           if [ "${{ steps.staging-old-build.outcome }}" = "success" ] && [ -d staging/out-staging-old ]; then
             mkdir -p site/staging-old
             cp -R staging/out-staging-old/. site/staging-old/
@@ -267,6 +248,8 @@ jobs:
           else
             echo "::warning::beta build failed or was skipped — deploying without /beta"
           fi
+          # Yappr Dev is retired, but installed builds still open its policy pages.
+          cp -R staging/site-archive/devnet site/
 
       # Pages serves only site/404.html for every missing path. Generate it from
       # staging even while master still contains the older application's 404.

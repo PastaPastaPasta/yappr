@@ -10,7 +10,7 @@ import v16 from '../contracts/yappr-social-contract-v16.json'
 
 // The pure half of the test-content cleanup (scripts/test-content-cleanup.mjs): the tombstone each
 // cut takes, which documents a run's cleanup touches, and whom it refuses. The chain half is
-// exercised live by verify-v10's end-of-run cleanup and the devnet e2e job.
+// exercised live by verify-v10's end-of-run cleanup and scripts/clean-test-content.mjs.
 
 const id = (fill: number) => new Uint8Array(32).fill(fill)
 const b58 = (fill: number) => bs58.encode(id(fill))

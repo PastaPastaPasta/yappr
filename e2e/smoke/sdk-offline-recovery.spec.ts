@@ -20,7 +20,7 @@ const failed = (page: Page) => page.getByRole('button', { name: 'Try Again', exa
 /**
  * Endpoint pools differ between networks, so by default a pool that survives
  * ten failed reads skips the spec. Set E2E_REQUIRE_SDK_EXHAUSTION=1 on a
- * configuration known to exhaust (the moutai devnet build) to make that a
+ * configuration known to exhaust (a small devnet pool) to make that a
  * failure instead, so a green run proves recovery was actually exercised.
  */
 const REQUIRE_EXHAUSTION = Boolean(process.env.E2E_REQUIRE_SDK_EXHAUSTION?.trim())

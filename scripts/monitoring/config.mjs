@@ -6,12 +6,11 @@ import { join } from 'node:path';
 import { parseEnv } from 'node:util';
 
 // D20: /staging builds the staging checkout from the same release file as root.
-export const NETWORKS = { production: '.env.testnet', staging: '.env.testnet', testing: '.env.testing', devnet: '.env.devnet' };
+export const NETWORKS = { production: '.env.testnet', staging: '.env.testnet', testing: '.env.testing' };
 export const SITES = [
   { name: 'production', url: 'https://yap.pr/', network: 'production', source: 'master' },
   { name: 'testing', url: 'https://yap.pr/testing/', network: 'testing', source: 'master' },
   { name: 'staging', url: 'https://yap.pr/staging/', network: 'staging', source: 'staging' },
-  { name: 'devnet', url: 'https://yap.pr/devnet/', network: 'devnet', source: 'staging' },
   { name: 'mirror', url: 'https://yappr.pages.dev/', network: 'production', source: 'master' },
 ];
 
@@ -48,7 +47,7 @@ export function readNetwork(root, name) {
   const env = Object.fromEntries(Object.entries(raw).filter(([key]) => key.startsWith('NEXT_PUBLIC_') || key.endsWith('_MAKER_IDENTITY_ID')));
   const pins = [...contractPins(env)].map(([id, version]) => ({ id, ...(version ? { version } : {}) }));
   if (!pins.length) return { name, skip: `${file} contains no contract ids; release not registered` };
-  return { name, env, pins, network: name === 'devnet' ? 'devnet' : 'testnet' };
+  return { name, env, pins, network: 'testnet' };
 }
 
 function canonical(value) {
@@ -74,15 +73,6 @@ export function thresholds(env = process.env) {
 
 export function contractRoles(env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => key.endsWith('_CONTRACT_ID') || ['NEXT_PUBLIC_APP_CONNECT_APP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_ID', 'NEXT_PUBLIC_APP_CONNECT_GROUP_OWNER', 'NEXT_PUBLIC_APP_CONNECT_GROUP_MEMBERS'].includes(key)).map(([key, value]) => [key, key.endsWith('_GROUP_MEMBERS') ? value.split(',').map(pin => pin.trim()).filter(Boolean).sort().join(',') : value]));
-}
-
-// Expected browser connection settings for this deployment's intended network.
-export function siteNetwork(env, network = 'testnet') {
-  return { network, ...(network === 'devnet' ? {
-    devnetName: env.NEXT_PUBLIC_DEVNET_NAME || 'moutai',
-    addresses: (env.NEXT_PUBLIC_DAPI_ADDRESSES || '').split(',').map(address => address.trim()).filter(Boolean),
-    quorumUrl: env.NEXT_PUBLIC_QUORUM_URL || '',
-  } : {}) };
 }
 
 // Defaults match the owning browser configuration functions. Explicit settings

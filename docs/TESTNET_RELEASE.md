@@ -15,7 +15,7 @@ This is the committed record of Yappr's first true release on Dash testnet. It h
 
 **Scope.**
 
-- **Branches.** `staging` is merged into `master` with a merge commit (never squash or rebase). `master` is already a strict ancestor of `staging`, so the merge itself is mechanical. `yap.pr/` is the master build, and `yap.pr/staging/` is the staging build; both run against the same production (testnet) contracts. `/testing` and `/devnet` keep their own contract sets.
+- **Branches.** `staging` is merged into `master` with a merge commit (never squash or rebase). `master` is already a strict ancestor of `staging`, so the merge itself is mechanical. `yap.pr/` is the master build, and `yap.pr/staging/` is the staging build; both run against the same production (testnet) contracts. `/testing` keeps its own contract set (the `/devnet` site was retired on 2026-11-25).
 - **No backwards compatibility.** Today's master and its testnet contracts and data are not migrated. Nothing from them is read, linked, or announced to users. Pre-mainnet, we design the data model properly and carry no legacy shims.
 - **Platform.** The release runs on Platform `5.0.0-rc.3` and moves to `5.0.0` final when that is published.
 - **Archives.** The versioned Cloudflare Pages mirrors (`yappr-v2.pages.dev`, `yappr-v2.thepasta.org`, and any v1, v3, and so on) stay forever as archives of earlier Yappr. They run on their old contracts and SDKs and are left untouched.

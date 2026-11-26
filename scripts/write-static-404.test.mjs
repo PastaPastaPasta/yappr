@@ -6,11 +6,11 @@ import { spawnSync } from 'node:child_process'
 import { runInNewContext } from 'node:vm'
 import { staticNotFound } from './write-static-404.mjs'
 
-function visit(base, pathname) {
+function visit(base, pathname, search = '', hash = '') {
   const redirects = []
-  const links = { home: {}, explore: {} }
+  const links = { home: {}, explore: { remove() { this.removed = true } }, code: {}, title: {}, detail: {} }
   const html = staticNotFound(base)
-  const location = { pathname, replace: (url) => redirects.push(url) }
+  const location = { pathname, search, hash, replace: (url) => redirects.push(url) }
   for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
     runInNewContext(script, { location, document: { getElementById: (id) => links[id] } })
   }
@@ -18,7 +18,7 @@ function visit(base, pathname) {
 }
 
 describe('GitHub Pages shared root 404', () => {
-  it.each(['devnet', 'testing', 'staging', 'staging-old', 'beta'])('routes /%s failures to that deployment without any runtime', (deployment) => {
+  it.each(['testing', 'staging', 'staging-old', 'beta'])('routes /%s failures to that deployment without any runtime', (deployment) => {
     const prefix = '/' + deployment
     const root = visit('', prefix + '/does-not-exist/')
     expect(root.redirects).toEqual([prefix + '/404.html'])
@@ -31,6 +31,22 @@ describe('GitHub Pages shared root 404', () => {
     const destination = visit(prefix, prefix + '/404.html')
     expect(destination.redirects).toEqual([])
     expect(destination.html).toContain(`href="${prefix}/explore/"`)
+  })
+  it.each([
+    ['/devnet/connect', ''],
+    ['/devnet/connect/', '?r=ab12&app=yappr-dev&ac=ok'],
+  ])('forwards the retired %s%s App Connect return to the /staging bridge', (pathname, search) => {
+    expect(visit('', pathname, search, '#x').redirects).toEqual([`/staging/connect/${search}#x`])
+    expect(visit('/staging', pathname, search).redirects).toEqual([])
+  })
+  it.each(['/devnet', '/devnet/', '/devnet/settings', '/devnet/feed/', '/devnet/post', '/devnet/connector'])('says Yappr Dev is retired on %s without leaving the page', (pathname) => {
+    const { redirects, links } = visit('', pathname, '?id=postId')
+    expect(redirects).toEqual([])
+    expect(links.title.textContent).toBe('Yappr Dev has been retired')
+    expect(links.detail.textContent).toContain('devnet')
+    expect(links.detail.textContent).toContain('testnet')
+    expect(links.home).toEqual({ href: '/', textContent: 'Go to Yappr' })
+    expect(links.explore.removed).toBe(true)
   })
   it.each(['/other/', '/devnetwork/no/', '/testing-elsewhere/', '/staging-older/', '/betamax/'])('keeps root unknown routes at root: %s', (pathname) => {
     const root = visit('', pathname)
