@@ -2,7 +2,7 @@
 
 A Node stand-in for DashPay, so agents and Maestro can sign in to Yappr without
 a human tapping through a wallet (ADR-001 E5.4). Given a `dashpay://connect`,
-`dash-key:` or `dash-st:` URI and a sakura pool persona, it does what a wallet would do:
+`dash-key:` or `dash-st:` URI and a pool persona, it does what a wallet would do:
 
 | URI | What the responder does |
 | --- | --- |
@@ -35,8 +35,13 @@ run, then runs it. npm packages are left external and resolve from the root
 | App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json` on devnet or `app-connect-network-testnet.json` in the same directory on testnet. See [Grant state](#grant-state). |
 
 The pool is tagged with its network (`"network": "devnet-sakura"` or `"network": "testnet"`). The
-responder refuses to start when the env file targets a different network. That
-catches a stale `.env.devnet`: staging's still points at the abandoned bonsia.
+responder refuses to start when the env file targets a different network, so a
+pool never answers for another network's env file.
+
+devnet-sakura has been retired, and `.env.devnet` (the default env file) still
+names it, so the sakura examples below no longer run. Until a new devnet is
+provisioned, answer `/staging` sign-ins with a `testnet` pool and
+`--env-file .env.testnet`.
 
 ## Usage
 
