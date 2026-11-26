@@ -2,7 +2,7 @@
 
 A Node stand-in for DashPay, so agents and Maestro can sign in to Yappr without
 a human tapping through a wallet (ADR-001 E5.4). Given a `dashpay://connect`,
-`dash-key:` or `dash-st:` URI and a sakura pool persona, it does what a wallet would do:
+`dash-key:` or `dash-st:` URI and a pool persona, it does what a wallet would do:
 
 | URI | What the responder does |
 | --- | --- |
@@ -35,8 +35,14 @@ run, then runs it. npm packages are left external and resolve from the root
 | App Connect state | `--state-file <path>`, else `YAPPR_APP_CONNECT_STATE`, else `~/.local/state/yappr-mobile-tools/app-connect-<devnet>.json` on devnet or `app-connect-network-testnet.json` in the same directory on testnet. See [Grant state](#grant-state). |
 
 The pool is tagged with its network (`"network": "devnet-sakura"` or `"network": "testnet"`). The
-responder refuses to start when the env file targets a different network. That
-catches a stale `.env.devnet`: staging's still points at the abandoned bonsia.
+responder refuses to start when the env file targets a different network, so a
+pool never answers for another network's env file.
+
+devnet-sakura has been retired, and `.env.devnet` (the default env file) still
+names it, so the sakura examples below no longer run until a new devnet is
+provisioned. Don't point the responder at `/staging` instead: it runs the
+release deployment, so sign in there with a real wallet, and keep responder
+runs to a rehearsal deployment ([below](#testnet-staging-rehearsal-retired)).
 
 ## Usage
 
@@ -324,11 +330,11 @@ then refuses a v1 request with "NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID is unset".
 
 ### Testnet staging rehearsal (retired)
 
-The D36 rehearsal set and its `.env.staging` were retired on 2026-10-21; `/staging` now runs the production release set, where no battery or responder writes are allowed. To replay against the rehearsal contracts, restore that env file from git history into a private path and pass it with `--env-file`:
+The D36 rehearsal set left `/staging` on 2026-10-21; `/staging` now runs the production release set, where no battery or responder writes are allowed. The rehearsal set still runs at `https://yap.pr/staging-old/` from the checked-in `.env.staging-old` ([TESTING.md](../../docs/TESTING.md)). Start the sign-in there and answer it with that env file:
 
 ```sh
 npm --prefix mobile/tools run build
-YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file "$REHEARSAL_ENV_FILE"
+YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file .env.staging-old
 ```
 
-Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry the staging APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.
+Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry `/staging-old`'s APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.
