@@ -5,6 +5,7 @@ import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { CheckCircle2, AlertTriangle, XCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UsernameStatus } from '@/lib/types'
+import { formatDeposit } from '@/lib/dpns/contest-deposit'
 
 interface ReviewStepProps {
   onBack: () => void
@@ -114,6 +115,11 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                         </span>
                       )}
                     </div>
+                    {entry.status === 'contested' && typeof entry.deposit === 'bigint' && (
+                      <div className="text-xs text-orange-600 mt-1" data-testid="dpns-deposit">
+                        {formatDeposit(entry.deposit)} vote deposit
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -154,6 +160,14 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
             </span>
           </label>
         </div>
+      )}
+
+      {contestedUsernames.some((u) => typeof u.deposit === 'bigint') && (
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Each contested name pays the vote deposit shown, on top of the network fees. The deposit pays for the
+          vote and isn&apos;t refunded, even if the vote picks someone else. No more than the deposit shown is ever
+          paid: if it goes up before you confirm, nothing is sent and you can review the new amount.
+        </p>
       )}
 
       {availableUsernames.length === 0 && (

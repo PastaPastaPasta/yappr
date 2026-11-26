@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
+import type { UsernameEntry } from '@/lib/types'
 import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
@@ -60,19 +61,21 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     updateUsernameStatus,
     setUsernameContested,
     setUsernameRegistered,
+    setUsernameDeposit,
     setCurrentRegistrationIndex,
     reset,
   } = useDpnsRegistration()
 
   const identityId = user?.identityId
 
-  const handleCheckAvailability = useCallback(async () => {
+  /** Check `entries`, read each contested name's vote deposit, then show the review. */
+  const checkNames = useCallback(async (entries: UsernameEntry[]) => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
 
-    const validUsernames = usernames.filter(
+    const validUsernames = entries.filter(
       (u) => u.label.trim() && u.status !== 'invalid'
     )
 
@@ -96,9 +99,17 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         } else if (!result.available) {
           updateUsernameStatus(entry.id, 'taken')
         } else if (result.contested) {
-          updateUsernameStatus(entry.id, 'contested')
-          setUsernameContested(entry.id, true)
+          // The deposit the review shows is the most the registration pays: no name goes on without one.
+          try {
+            setUsernameDeposit(entry.id, identityId ? await dpnsService.readContestDeposit(entry.label, identityId) : null)
+            updateUsernameStatus(entry.id, 'contested')
+            setUsernameContested(entry.id, true)
+          } catch (error) {
+            logger.error('Failed to read the vote deposit:', error)
+            updateUsernameStatus(entry.id, 'invalid', 'Could not read the vote deposit for this name. Try again.')
+          }
         } else {
+          setUsernameDeposit(entry.id, null)
           updateUsernameStatus(entry.id, 'available')
         }
       }
@@ -109,7 +120,18 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       toast.error('Failed to check availability. Please try again.')
       setStep('username-entry')
     }
-  }, [isSdkReady, usernames, setStep, updateUsernameStatus, setUsernameContested])
+  }, [isSdkReady, identityId, setStep, updateUsernameStatus, setUsernameContested, setUsernameDeposit])
+
+  const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
+
+  // A deposit rose between the review and the signing: quote those names again, nothing else.
+  const handleRequote = useCallback(async () => {
+    const entries = usernames
+      .filter((u) => u.requote)
+      .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
+    useDpnsRegistration.setState({ usernames: entries })
+    await checkNames(entries)
+  }, [usernames, checkNames])
 
   const handleRegister = useCallback(async () => {
     if (!identityId) {
@@ -170,6 +192,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         identityId,
         publicKeyId: matchedKey.keyId,
         privateKeyWif: privateKey,
+        approvedDeposit: u.deposit ?? null,
       }))
 
       const results = await dpnsService.registerUsernamesSequentially(
@@ -180,7 +203,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       for (let i = 0; i < results.length; i++) {
         const result = results[i]
         const entry = availableUsernames[i]
-        setUsernameRegistered(entry.id, result.success, result.error)
+        setUsernameRegistered(entry.id, result.success, result.error, result.requote)
         if (result.isContested) {
           setUsernameContested(entry.id, true)
         }
@@ -246,7 +269,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       {step === 'registering' && <RegisteringStep />}
 
       {step === 'complete' && (
-        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} />
+        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} onRequote={handleRequote} />
       )}
 
       {step === 'username-entry' && onSkip && (

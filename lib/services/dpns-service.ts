@@ -2,7 +2,9 @@ import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
+import { documentToPlainObject, identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { documentBuilderService } from './document-builder-service';
+import { DepositChangedError, depositCap } from '@/lib/dpns/contest-deposit';
 import { findMatchingKeyIndex, getSecurityLevelName, type IdentityPublicKeyInfo } from '@/lib/crypto/keys';
 import type { UsernameCheckResult, UsernameRegistrationResult } from '../types';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
@@ -458,13 +460,44 @@ class DpnsService {
   }
 
   /**
-   * Register a new username using the SDK API
+   * The vote deposit `label`'s domain would pay now, in credits, or null when
+   * the name goes to no vote: the SDK counts the contest's contenders (the
+   * deposit doubles from 250 of them) for the domain `identityId` would send.
+   * Rejects when the read fails.
+   */
+  async readContestDeposit(label: string, identityId: string): Promise<bigint | null> {
+    const sdk = await getEvoSdk();
+    const normalizedLabel = await sdk.dpns.convertToHomographSafe(label);
+    const domain = await documentBuilderService.buildDocumentForCreate(
+      DPNS_CONTRACT_ID,
+      DPNS_DOCUMENT_TYPE,
+      identityId,
+      {
+        label,
+        normalizedLabel,
+        parentDomainName: 'dash',
+        normalizedParentDomainName: 'dash',
+        records: { identity: requireDocumentIdentifierBytes(identityId, 'records.identity') },
+        subdomainRules: { allowSubdomains: false },
+      },
+      { id: identityId, entropy: crypto.getRandomValues(new Uint8Array(32)) }
+    );
+    const fund = await sdk.documents.contestFundToJoin(domain);
+    return fund ? BigInt(fund.credits) : null;
+  }
+
+  /**
+   * Register a new username using the SDK API. `approvedDeposit` is the vote
+   * deposit the user saw for a contested name (null when none was shown): it
+   * is re-read before anything is signed and nothing is sent when it rose
+   * (`DepositChangedError`), and the domain states it as the most it pays.
    */
   async registerUsername(
     label: string,
     identityId: string,
     privateKeyWif: string,
-    onPreorderSuccess?: () => void
+    onPreorderSuccess?: () => void,
+    approvedDeposit: bigint | null = null
   ): Promise<{ success: boolean }> {
     try {
       const sdk = await getEvoSdk();
@@ -511,6 +544,9 @@ class DpnsService {
         identityKey
       );
 
+      // The deposit read now must not be more than the one the user saw; the domain pays at most that.
+      const contestFund = depositCap(label, approvedDeposit, await this.readContestDeposit(label, identityId));
+
       // Register the name
       logger.info(`Registering DPNS name: ${label}`);
       await sdk.dpns.registerName({
@@ -518,7 +554,8 @@ class DpnsService {
         identity,
         identityKey: signingKey,
         signer,
-        preorderCallback: onPreorderSuccess
+        preorderCallback: onPreorderSuccess,
+        ...(contestFund !== null ? { contestFund } : {}),
       });
 
       // Clear cache for this identity
@@ -633,6 +670,8 @@ class DpnsService {
       identityId: string;
       privateKeyWif: string;
       publicKeyId?: number; // Deprecated, kept for backwards compatibility but ignored
+      /** The vote deposit the review showed, in credits (null: none). */
+      approvedDeposit?: bigint | null;
     }>,
     onProgress?: (index: number, total: number, label: string) => void
   ): Promise<UsernameRegistrationResult[]> {
@@ -649,7 +688,9 @@ class DpnsService {
         await this.registerUsername(
           reg.label,
           reg.identityId,
-          reg.privateKeyWif
+          reg.privateKeyWif,
+          undefined,
+          reg.approvedDeposit ?? null
         );
 
         results.push({
@@ -663,6 +704,7 @@ class DpnsService {
           success: false,
           isContested: false,
           error: error instanceof Error ? error.message : 'Registration failed',
+          ...(error instanceof DepositChangedError ? { requote: true } : {}),
         });
       }
     }

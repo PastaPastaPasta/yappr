@@ -101,6 +101,10 @@ export interface UsernameEntry {
   validationError?: string
   registrationError?: string
   registered?: boolean
+  /** A contested name's vote deposit as the review showed it, in credits. */
+  deposit?: bigint | null
+  /** Not registered because its deposit rose since the review: it needs a new quote. */
+  requote?: boolean
 }
 
 export interface UsernameCheckResult {
@@ -114,6 +118,8 @@ export interface UsernameRegistrationResult {
   success: boolean
   isContested: boolean
   error?: string
+  /** Its vote deposit rose since the review, so nothing was signed: quote it again. */
+  requote?: boolean
 }
 
 export interface Blog {
