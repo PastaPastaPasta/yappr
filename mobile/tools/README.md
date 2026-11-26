@@ -39,9 +39,10 @@ responder refuses to start when the env file targets a different network, so a
 pool never answers for another network's env file.
 
 devnet-sakura has been retired, and `.env.devnet` (the default env file) still
-names it, so the sakura examples below no longer run. Until a new devnet is
-provisioned, answer `/staging` sign-ins with a `testnet` pool and
-`--env-file .env.testnet`.
+names it, so the sakura examples below no longer run until a new devnet is
+provisioned. Don't point the responder at `/staging` instead: it runs the
+release deployment, so sign in there with a real wallet, and keep responder
+runs to a rehearsal deployment ([below](#testnet-staging-rehearsal-retired)).
 
 ## Usage
 
