@@ -104,6 +104,7 @@ class DocumentBuilderService {
       documentTypeName,
       entropy: identity.entropy,
       identityContractNonce: identity.identityContractNonce,
+      platformVersion,
     });
 
     return Document.fromObject(

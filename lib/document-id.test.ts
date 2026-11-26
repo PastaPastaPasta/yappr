@@ -21,16 +21,21 @@ const PINNED_V1_ID = 'e574ae73396611a517691d1f89275b6e99642cb9c176ce8cf879b1665c
 /** The entropy-only v0 id for the same inputs, which protocol 14 refuses. */
 const V0_ID = 'c9d161a89213b995b948be856ebedd1e6fea44b476866318c52e1e50dddcdee8'
 
-const vector = { contractId: CONTRACT, ownerId: OWNER, documentTypeName: 'note', entropy: ENTROPY, identityContractNonce: BigInt(1) }
+let vector: Parameters<typeof documentIdForCreate>[0]
 const hexOf = (base58: string) => bytesToHex(bs58.decode(base58))
 
 beforeAll(async () => {
   await ensureInitialized()
+  vector = { contractId: CONTRACT, ownerId: OWNER, documentTypeName: 'note', entropy: ENTROPY, identityContractNonce: BigInt(1), platformVersion: new PlatformVersion(14) }
 })
 
 describe('documentIdForCreate (wasm Document.generateId)', () => {
   it("matches the platform's pinned v1 vector the removed JS derivation was pinned to", () => {
     expect(hexOf(documentIdForCreate(vector))).toBe(PINNED_V1_ID)
+  })
+
+  it('derives the same id at protocol 14 and 15', () => {
+    expect(hexOf(documentIdForCreate({ ...vector, platformVersion: new PlatformVersion(15) }))).toBe(PINNED_V1_ID)
   })
 
   it('accepts base58 identifiers and returns the same id', () => {

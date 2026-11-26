@@ -9,6 +9,7 @@ import bs58 from 'bs58'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
+  version: () => 14,
   identities: { fetch: vi.fn(), contractNonce: vi.fn(), contractNonceWithProof: vi.fn() },
   documents: { get: vi.fn(), getWithProof: vi.fn() },
   stateTransitions: { broadcastStateTransition: vi.fn(), waitForResponse: vi.fn(), waitForAffectedState: vi.fn() },
@@ -18,6 +19,7 @@ const sdk = vi.hoisted(() => ({
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
 vi.mock('@dashevo/wasm-sdk', () => ({
   Identifier: class { constructor(readonly id: string) {} },
+  PlatformVersion: class { constructor(readonly version: number) {} },
   PrivateKey: { fromWIF: () => ({}) },
   StateTransition: { fromBytes: () => ({}) },
   TokenPaymentInfo: class {},

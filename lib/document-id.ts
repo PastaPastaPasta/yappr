@@ -22,7 +22,7 @@
  *    under its old id.
  */
 import bs58 from 'bs58'
-import { Document } from '@dashevo/wasm-sdk'
+import { Document, type PlatformVersion } from '@dashevo/wasm-sdk'
 import { NONCE_SEQUENCE_MASK, identityContractNonceConsumed, lastAcceptedNonce } from './nonce-rules.mjs'
 
 export { identityContractNonceConsumed }
@@ -60,12 +60,14 @@ export interface DocumentIdInputs {
   entropy: Uint8Array
   /** The identity contract nonce the create transition carries. */
   identityContractNonce: bigint
+  /** The connected network's protocol version (`networkPlatformVersion`). */
+  platformVersion: PlatformVersion
 }
 
 /**
  * The id a create transition with these inputs will carry, base58 — the form
  * the rest of the app addresses documents by. Derived by wasm-dpp2 at the
- * latest platform version, which is the one the transition is built for.
+ * connected network's protocol version.
  * Requires the wasm module to be initialized (any `getEvoSdk()` call has).
  */
 export function documentIdForCreate(inputs: DocumentIdInputs): string {
@@ -75,7 +77,8 @@ export function documentIdForCreate(inputs: DocumentIdInputs): string {
       inputs.ownerId,
       inputs.contractId,
       inputs.entropy,
-      inputs.identityContractNonce
+      inputs.identityContractNonce,
+      inputs.platformVersion
     )
   )
 }
