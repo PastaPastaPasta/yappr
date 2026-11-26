@@ -586,7 +586,7 @@
     },
     {
       "name": "@dashevo/evo-sdk",
-      "version": "5.1.0-rc.2",
+      "version": "5.1.0",
       "license": "MIT",
       "texts": [
         6
@@ -594,7 +594,7 @@
     },
     {
       "name": "@dashevo/wasm-sdk",
-      "version": "5.1.0-rc.2",
+      "version": "5.1.0",
       "license": "MIT",
       "texts": [
         6
