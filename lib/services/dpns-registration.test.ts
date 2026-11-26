@@ -472,10 +472,25 @@ describe('DPNS v3 (protocol 15): preorders by name hash', () => {
   })
 
   it('preorders anew when the one it saw land is gone (expired and cleaned up)', async () => {
-    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true })
+    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true, preorderLandedAt: Date.now() - 2 * 3_600_000 })
     creates('confirmed', 'confirmed')
     expect(await register()).toEqual({ state: 'registered' })
     expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+
+  it('reveals a preorder it saw land minutes ago even when a lagging node reads it absent', async () => {
+    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true, preorderLandedAt: Date.now() - 120_000 })
+    creates('confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['domain'])
+  })
+
+  it('quotes no preorder fee while the owner holds a revealable preorder', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    const withPreorder = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    m.v3Preorder = null
+    const fresh = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(withPreorder.fees).toBeLessThan(fresh.fees)
   })
 
   it('deletes an expiring preorder with the DPNS key, then preorders anew', async () => {

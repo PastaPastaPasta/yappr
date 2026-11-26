@@ -41,6 +41,12 @@ export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
+/** Whether `failure` refused a name because its vote deposit is no longer the one the user approved. */
+export function depositChanged(failure: unknown): boolean {
+  const error = failure instanceof DpnsNotSentError ? failure.cause : failure;
+  return error instanceof ContestFundChangedError || isContestFundError(error);
+}
+
 /**
  * What a failed DPNS registration tells the user. A contested name (fewer than
  * 20 characters, only letters, hyphens and the digits 0 and 1) joins a
@@ -51,12 +57,6 @@ export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'
  * registration pays only that (`lib/services/dpns-registration.ts`). The
  * refusals below are what remains.
  */
-/** Whether `failure` refused a name because its vote deposit is no longer the one the user approved. */
-export function depositChanged(failure: unknown): boolean {
-  const error = failure instanceof DpnsNotSentError ? failure.cause : failure;
-  return error instanceof ContestFundChangedError || isContestFundError(error);
-}
-
 export function describeDpnsRegistrationError(failure: unknown): string {
   const notSent = failure instanceof DpnsNotSentError;
   const error = notSent ? failure.cause : failure;

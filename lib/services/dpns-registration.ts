@@ -179,6 +179,12 @@ export const PREORDER_REVEAL_MARGIN_MS = 60_000n
  * `ttlSeconds`, can still be revealed by a domain broadcast at `nowMs` (the
  * time of the block a proof reports).
  */
+/** Whether a preorder this browser saw land at `landedAtMs` should still be revealable now. */
+function preorderStillLives(landedAtMs: number | undefined, ttlSeconds: number | null): boolean {
+  if (landedAtMs === undefined) return false
+  return preorderRevealable(BigInt(landedAtMs), ttlSeconds, BigInt(Date.now()))
+}
+
 export function preorderRevealable(createdAtMs: bigint | undefined, ttlSeconds: number | null, nowMs: bigint): boolean {
   if (ttlSeconds === null || createdAtMs === undefined) return true
   return nowMs + PREORDER_REVEAL_MARGIN_MS < createdAtMs + BigInt(ttlSeconds) * 1000n
@@ -244,7 +250,9 @@ export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: s
     readContestFund(sdk, ownerId, label, normalizedLabel, layout),
     readRegistrationFees(sdk, contract, label),
   ])
-  const preorderPaid = record?.preorderLanded === true || record?.preorder !== undefined
+  const preorderPaid = layout.scheme === 'nameHash'
+    ? (await pendingPreorder(sdk, layout.ttlSeconds, ownerId, normalizedLabel)).state === 'revealable'
+    : record?.preorderLanded === true || record?.preorder !== undefined
   return { label, contestFund, fees: (preorderPaid ? 0n : fees.preorder) + fees.domain }
 }
 
@@ -270,7 +278,7 @@ async function pendingPreorder(
   ttlSeconds: number | null,
   ownerId: string,
   normalizedLabel: string
-): Promise<{ state: 'none' | 'revealable' } | { state: 'expiring'; documentId: string }> {
+): Promise<{ state: 'none' } | { state: 'revealable'; createdAtMs?: number } | { state: 'expiring'; documentId: string }> {
   const response = await sdk.documents.queryWithProof({
     dataContractId: DPNS_CONTRACT_ID,
     documentTypeName: 'preorder',
@@ -279,7 +287,9 @@ async function pendingPreorder(
   })
   const preorder = [...response.data.values()].find((document) => document !== undefined)
   if (!preorder) return { state: 'none' }
-  if (preorderRevealable(preorder.createdAt, ttlSeconds, BigInt(response.metadata.timeMs))) return { state: 'revealable' }
+  if (preorderRevealable(preorder.createdAt, ttlSeconds, BigInt(response.metadata.timeMs))) {
+    return { state: 'revealable', ...(preorder.createdAt !== undefined ? { createdAtMs: Number(preorder.createdAt) } : {}) }
+  }
   const documentId = identifierToBase58(preorder.id)
   if (!documentId) throw new Error('the expiring DPNS preorder has no readable id')
   return { state: 'expiring', documentId }
@@ -538,6 +548,7 @@ async function settlePreorder(record: DpnsRegistrationRecord): Promise<{ replace
   if (settled === null) return null
   if (settled === 'landed') {
     record.preorderLanded = true
+    record.preorderLandedAt = Date.now()
     return saveRegistration(record) ? { landedNow: true } : null
   }
   if (settled === 'stalled') return { replacesNonce: record.preorder.nonce }
@@ -557,6 +568,7 @@ async function sendPreorder(
   const preorder = await sendStep(record, 'preorder', data, { signingKey: input.signingKey, replacesNonce })
   if (preorder === 'pending') return { state: 'pending', step: 'preorder' }
   record.preorderLanded = true
+  record.preorderLandedAt = Date.now()
   // Landed, and its receipt is stored: a record that fails to say so is settled next time.
   if (!saveRegistration(record)) return { state: 'pending', step: 'preorder' }
   return record
@@ -625,12 +637,13 @@ async function prepareNamePreorder(
   if (pending.state === 'revealable') {
     const kept = record ?? await startRecord(input)
     kept.preorderLanded = true
+    kept.preorderLandedAt = pending.createdAtMs ?? kept.preorderLandedAt
     return saveRegistration(kept) ? kept : { state: 'pending', step: 'preorder' }
   }
-  // Seen landing just now but not read back yet (a node behind): reveal it rather than pay
-  // another, which the network would refuse while it stands. A domain refused for want of it
-  // reads the chain again next time.
-  if (pending.state === 'none' && record && settled.landedNow) return record
+  // Seen landing within its lifetime but not read back (a node behind): reveal it rather than
+  // pay another, which the network would refuse while it stands. A domain refused for want of
+  // it reads the chain again next time.
+  if (pending.state === 'none' && record?.preorderLanded && (settled.landedNow || preorderStillLives(record.preorderLandedAt, ttlSeconds))) return record
   await requirePreorderFunds(sdk, input, layout, fees)
   const kept = record ?? await startRecord(input)
   if (pending.state === 'expiring') {
@@ -638,8 +651,9 @@ async function prepareNamePreorder(
     if (!deleted.success) throw new Error(deleted.error || 'The expired preorder could not be removed')
   }
   delete kept.preorderLanded
+  delete kept.preorderLandedAt
   if (settled.replacesNonce === undefined) delete kept.preorder
-  if (!saveRegistration(kept)) throw new DpnsNotSentError(new Error(REGISTRATION_NOT_KEPT_MESSAGE))
+  if (!saveRegistration(kept)) throw new Error(REGISTRATION_NOT_KEPT_MESSAGE)
   return sendPreorder(input, kept, layout, settled.replacesNonce)
 }
 

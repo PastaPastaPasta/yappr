@@ -38,6 +38,8 @@ export interface DpnsRegistrationRecord {
   preorder?: CreateReceipt
   /** Platform confirmed the preorder, or a proof showed it landed. */
   preorderLanded?: boolean
+  /** When this browser saw the preorder land (ms): a v3 preorder lives an hour from about then. */
+  preorderLandedAt?: number
   /** The signed domain, once it was about to be sent. */
   domain?: CreateReceipt
   /** The domain states a contest fund: it is stored in its vote, not by id, so only the vote settles it. */
@@ -61,6 +63,7 @@ interface StoredRecord {
   salt: string
   preorder?: StoredReceipt
   preorderLanded?: boolean
+  preorderLandedAt?: number
   domain?: StoredReceipt
   domainContested?: boolean
 }
@@ -134,6 +137,7 @@ export function loadRegistration(ownerId: string, normalizedLabel: string): Dpns
       salt,
       ...(stored.preorder ? { preorder: readReceipt(stored.preorder) } : {}),
       ...(stored.preorderLanded ? { preorderLanded: true } : {}),
+      ...(typeof stored.preorderLandedAt === 'number' ? { preorderLandedAt: stored.preorderLandedAt } : {}),
       ...(stored.domain ? { domain: readReceipt(stored.domain) } : {}),
       ...(stored.domainContested ? { domainContested: true } : {}),
     }
@@ -152,6 +156,7 @@ export function saveRegistration(record: DpnsRegistrationRecord): boolean {
     salt: bytesToBase64(record.salt),
     ...(record.preorder ? { preorder: storeReceipt(record.preorder) } : {}),
     ...(record.preorderLanded ? { preorderLanded: true } : {}),
+    ...(record.preorderLandedAt !== undefined ? { preorderLandedAt: record.preorderLandedAt } : {}),
     ...(record.domain ? { domain: storeReceipt(record.domain) } : {}),
     ...(record.domainContested ? { domainContested: true } : {}),
   }

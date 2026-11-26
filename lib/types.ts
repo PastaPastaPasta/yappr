@@ -75,7 +75,7 @@ export interface UsernameRegistrationResult {
   pending?: boolean
   isContested: boolean
   error?: string
-  /** Its vote deposit changed since the review, so nothing was paid for it: quote it again. */
+  /** Its vote deposit changed since the review, so the deposit was not paid: quote it again. */
   requote?: boolean
 }
 
