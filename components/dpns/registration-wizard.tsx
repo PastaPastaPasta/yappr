@@ -125,14 +125,15 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
 
-  // A deposit rose between the review and the signing: quote those names again, nothing else.
+  // A deposit rose between the review and the signing: check every name that failed again, quoting
+  // the new deposits; names that registered are done.
   const handleRequote = useCallback(async () => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
     const entries = usernames
-      .filter((u) => u.requote)
+      .filter((u) => u.registered === false)
       .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
     useDpnsRegistration.setState({ usernames: entries, contestedAcknowledged: false })
     await checkNames(entries)

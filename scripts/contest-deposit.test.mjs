@@ -1,3 +1,4 @@
+// Imports the TypeScript helper directly: needs Node 22.6 or newer (built-in type stripping).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DepositChangedError, depositCap, formatDeposit } from '../lib/dpns/contest-deposit.ts'
