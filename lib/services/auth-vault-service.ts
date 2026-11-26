@@ -3,7 +3,6 @@
 import { logger } from '@/lib/logger'
 import { DOCUMENT_TYPES, YAPPR_AUTH_VAULT_CONTRACT_ID } from '@/lib/constants'
 import { BaseDocumentService } from '@/lib/services/document-service'
-import { documentBuilderService } from '@/lib/services/document-builder-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { normalizeBytes } from '@/lib/services/sdk-helpers'
 import {
@@ -162,24 +161,19 @@ class AuthVaultService extends BaseDocumentService<AuthVaultDocument> {
 
     let vault = existing
     if (!vault) {
-      const { id: vaultId, entropy } = await documentBuilderService.generateDocumentIdentity(
-        this.contractId,
-        this.documentType,
-        identityId,
-      )
-      const encrypted = await encryptBundle(activeBundle, dek, vaultId)
-
-      vault = await this.createWithOptions(identityId, {
-        version: DEFAULT_VERSION,
-        secretKind: activeBundle.secretKind,
-        ciphertext: toDocumentBytes(encrypted.ciphertext),
-        iv: toDocumentBytes(encrypted.iv),
-        bundleHash: toDocumentBytes(encrypted.bundleHash),
-        updatedAt: activeBundle.updatedAt,
-        active: true,
-      }, {
-        documentId: vaultId,
-        entropy,
+      // The bundle is bound to the vault's document id, which commits to the create's
+      // nonce, so encrypt once createDocument has derived it.
+      vault = await this.createWithOptions(identityId, async (vaultId) => {
+        const encrypted = await encryptBundle(activeBundle, dek, vaultId)
+        return {
+          version: DEFAULT_VERSION,
+          secretKind: activeBundle.secretKind,
+          ciphertext: toDocumentBytes(encrypted.ciphertext),
+          iv: toDocumentBytes(encrypted.iv),
+          bundleHash: toDocumentBytes(encrypted.bundleHash),
+          updatedAt: activeBundle.updatedAt,
+          active: true,
+        }
       })
 
       return {

@@ -121,15 +121,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use 'in' pattern that works on feed page
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'like',
         where: [
-          ['postId', 'in', [postId]],
+          ['postId', '==', postId],
           ['$ownerId', '==', ownerId]
         ],
-        orderBy: [['postId', 'asc'], ['$ownerId', 'asc']],
         limit: 1
       });
 

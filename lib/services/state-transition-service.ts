@@ -17,6 +17,8 @@ import {
   Identifier,
 } from '@dashevo/evo-sdk';
 
+export type DocumentData = Record<string, unknown>;
+
 
 export interface StateTransitionResult {
   success: boolean;
@@ -276,26 +278,22 @@ class StateTransitionService {
    * Instead of using sdk.documents.create() (which atomically builds,
    * signs, broadcasts, and waits — bumping the nonce each time), we:
    *
-   * 1. Build the Document and wrap it in a DocumentCreateTransition
-   * 2. Bundle into a BatchTransition → StateTransition
-   * 3. Fetch the identity contract nonce from Platform and set it
-   * 4. Sign the StateTransition
-   * 5. Cache the signed ST bytes (localStorage)
-   * 6. Broadcast via sdk.stateTransitions.broadcastStateTransition()
-   * 7. Wait via sdk.stateTransitions.waitForResponse()
+   * 1. Fetch the identity contract nonce and derive the document id it commits to
+   * 2. Build the Document and wrap it in a DocumentCreateTransition
+   * 3. Bundle into a BatchTransition → StateTransition, set the nonce and sign
+   * 4. Cache the signed ST bytes (localStorage)
+   * 5. Broadcast via sdk.stateTransitions.broadcastStateTransition()
+   * 6. Wait via sdk.stateTransitions.waitForResponse()
    *
-   * On timeout/retry, we reload the cached bytes and rebroadcast the
-   * SAME signed ST. Platform either accepts it (first broadcast) or
-   * recognizes it's already processed (replay). No new nonce = no
-   * double post, enforced at the protocol level.
+   * A caller that passes stable `entropy` can retry: a cached signed ST for the same id is
+   * rebroadcast. Without it every call derives a fresh id, so there is nothing to look up.
    */
   async createDocument(
     contractId: string,
     documentType: string,
     ownerId: string,
-    documentData: Record<string, unknown>,
+    documentDataOrBuilder: DocumentData | ((documentId: string) => DocumentData | Promise<DocumentData>),
     options?: {
-      documentId?: string;
       entropy?: Uint8Array;
     }
   ): Promise<StateTransitionResult> {
@@ -303,8 +301,6 @@ class StateTransitionService {
       const sdk = await getEvoSdk();
       const wasm = sdk.wasm;
       const privateKeyWif = await this.getPrivateKey(ownerId);
-
-      logger.info(`Creating ${documentType} document with data:`, documentData);
 
       // Validate signing key
       const identity = await sdk.identities.fetch(ownerId);
@@ -320,22 +316,33 @@ class StateTransitionService {
 
       logger.info(`Using signing key id=${identityKey.keyId} with security level ${identityKey.securityLevel}`);
 
+      // From protocol 14 a new document's id commits to the identity contract nonce of its
+      // create transition, so read the nonce first and derive the id the transition will sign.
+      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
+      // upper 24 bits = missing revision bitset. Only increment the sequence part.
+      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
+      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
+      const rawNonce = currentNonce ?? BigInt(0);
+      const sequenceNumber = rawNonce & SEQUENCE_MASK;
+      const newNonce = sequenceNumber + BigInt(1);
+      logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
+
+      const entropy = options?.entropy ?? crypto.getRandomValues(new Uint8Array(32));
+      const documentId = await documentBuilderService.documentIdForCreate(contractId, documentType, ownerId, entropy, newNonce);
+      const documentData = typeof documentDataOrBuilder === 'function' ? await documentDataOrBuilder(documentId) : documentDataOrBuilder;
+      logger.info(`Creating ${documentType} document ${documentId} with data:`, documentData);
+
       // Build the typed Document. Binary fields remain Uint8Array on this path.
       const document = await documentBuilderService.buildDocumentForCreate(
         contractId,
         documentType,
         ownerId,
         documentData,
-        {
-          id: options?.documentId,
-          entropy: options?.entropy,
-        }
+        { id: documentId, entropy }
       );
-      const documentId = documentBuilderService.getDocumentId(document);
-      logger.info(`Built document, ID: ${documentId}`);
 
       // --- Check for a cached ST from a previous timed-out attempt ---
-      const cachedBytes = loadPendingSTBytes(documentId);
+      const cachedBytes = options?.entropy ? loadPendingSTBytes(documentId) : null;
       if (cachedBytes) {
         logger.info(`Found cached ST bytes for ${documentId} — checking Platform...`);
 
@@ -387,24 +394,13 @@ class StateTransitionService {
       }
 
       // --- Check if document already on Platform (e.g., from a previous session) ---
-      const existingDoc = await this.checkDocumentExists(contractId, documentType, documentId);
+      const existingDoc = options?.entropy ? await this.checkDocumentExists(contractId, documentType, documentId) : null;
       if (existingDoc) {
         logger.info(`Document ${documentId} already exists on Platform — skipping creation`);
         return { success: true, transactionHash: documentId, document: existingDoc, confirmed: true };
       }
 
       // --- Build the StateTransition manually ---
-
-      // Fetch current identity contract nonce from Platform
-      // DIP-30: nonce is u64 where lower 40 bits = sequence number,
-      // upper 24 bits = missing revision bitset. Only increment the sequence part.
-      const SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1); // 0xFFFFFFFFFF
-      // v3.1: getIdentityContractNonce returns bigint | undefined (was bigint | null)
-      const currentNonce = await wasm.getIdentityContractNonce(ownerId, contractId);
-      const rawNonce = currentNonce ?? BigInt(0);
-      const sequenceNumber = rawNonce & SEQUENCE_MASK;
-      const newNonce = sequenceNumber + BigInt(1);
-      logger.info(`Nonce: current=${currentNonce}, sequence=${sequenceNumber}, using=${newNonce}`);
 
       // v3.1: DocumentCreateTransition takes an options object
       const createTransition = new DocumentCreateTransition({

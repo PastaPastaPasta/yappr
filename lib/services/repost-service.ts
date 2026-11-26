@@ -151,15 +151,13 @@ class RepostService {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      // Use 'in' pattern - '==' fails on byte array fields
       const response = await sdk.documents.query({
         dataContractId: this.contractId,
         documentTypeName: 'post',
         where: [
-          ['quotedPostId', 'in', [postId]],
+          ['quotedPostId', '==', postId],
           ['$ownerId', '==', ownerId]
         ],
-        orderBy: [['quotedPostId', 'asc'], ['$ownerId', 'asc']],
         limit: 1
       });
 

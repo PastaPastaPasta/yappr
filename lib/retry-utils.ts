@@ -132,9 +132,8 @@ export async function retryPostCreation<T>(
     maxDelayMs: 8000,
     backoffMultiplier: 2,
     retryCondition: (error) => {
-      // defaultRetryCondition covers network/timeout errors — these are safe to retry
-      // because state-transition-service.createDocument() performs idempotency checks
-      // before each attempt (verifies on Platform + checks pending store).
+      // defaultRetryCondition covers network/timeout errors. A retried create gets a fresh
+      // document id, so one whose first attempt landed after a timeout can post twice.
       if (defaultRetryCondition(error)) return true
 
       const errorMessage = error instanceof Error ? error.message.toLowerCase() : ''

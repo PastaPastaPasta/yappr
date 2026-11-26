@@ -13,40 +13,61 @@
  * the WASM module is initialized before creating any Document objects.
  */
 import { getEvoSdk } from './evo-sdk-service';
-import { documentToPlainObject, identifierToBase58 } from './sdk-helpers';
-import { Document } from '@dashevo/evo-sdk';
+import { documentToPlainObject, requireDocumentIdentifierBytes } from './sdk-helpers';
+import { Document, PlatformVersion } from '@dashevo/evo-sdk';
+import type { DocumentObject } from '@dashevo/evo-sdk';
+import { networkPlatformVersion } from '@/lib/platform-version';
 import bs58 from 'bs58';
 
 /**
- * Ensure WASM module is initialized by connecting SDK
- * This guarantees the shared WASM module is ready before creating objects
+ * The tagged object `Document.fromObject` takes. The `Document` constructor
+ * turns `Uint8Array` properties into integer arrays on wasm-sdk 4.1+, which
+ * Platform refuses ("not a byte"), so writes build through `fromObject`.
  */
-async function ensureWasmReady(): Promise<void> {
-  await getEvoSdk();
+function toCanonicalDocumentObject(fields: {
+  id: string;
+  ownerId: string;
+  contractId: string;
+  documentTypeName: string;
+  revision: number;
+  entropy?: Uint8Array;
+  data: Record<string, unknown>;
+}): DocumentObject {
+  return {
+    $formatVersion: '0',
+    $id: requireDocumentIdentifierBytes(fields.id, 'document id'),
+    $ownerId: requireDocumentIdentifierBytes(fields.ownerId, 'ownerId'),
+    $dataContractId: requireDocumentIdentifierBytes(fields.contractId, 'dataContractId'),
+    $type: fields.documentTypeName,
+    $revision: BigInt(fields.revision),
+    ...(fields.entropy ? { $entropy: fields.entropy } : {}),
+    ...fields.data,
+  } as unknown as DocumentObject;
 }
 
 class DocumentBuilderService {
-  async generateDocumentIdentity(
+  /**
+   * The id a create transition signed with `identityContractNonce` will carry. From
+   * protocol 14 it commits to that nonce, so derive it before building the payload.
+   */
+  async documentIdForCreate(
     contractId: string,
     documentTypeName: string,
-    ownerId: string
-  ): Promise<{ id: string; entropy: Uint8Array }> {
-    await ensureWasmReady();
-
-    const entropy = crypto.getRandomValues(new Uint8Array(32));
-    const idBytes = Document.generateId(documentTypeName, ownerId, contractId, entropy);
-
-    return {
-      id: bs58.encode(idBytes),
-      entropy,
-    };
+    ownerId: string,
+    entropy: Uint8Array,
+    identityContractNonce: bigint
+  ): Promise<string> {
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
+    return bs58.encode(
+      Document.generateId(documentTypeName, ownerId, contractId, entropy, identityContractNonce, platformVersion)
+    );
   }
 
   /**
    * Build a Document object for document creation
    *
-   * Creates a new WASM Document with the provided data. The document ID
-   * will be generated automatically based on entropy.
+   * Creates a new WASM Document with the provided data under the id
+   * `documentIdForCreate` derived for the transition's nonce.
    *
    * @param contractId - The data contract ID
    * @param documentTypeName - The document type name (e.g., 'post', 'profile')
@@ -59,26 +80,16 @@ class DocumentBuilderService {
     documentTypeName: string,
     ownerId: string,
     data: Record<string, unknown>,
-    options?: {
-      id?: string;
-      entropy?: Uint8Array;
+    identity: {
+      id: string;
+      entropy: Uint8Array;
     }
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
-
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(1),
-      id: options?.id,
-      entropy: options?.entropy,
-    });
-
-    return document;
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
+    return Document.fromObject(
+      toCanonicalDocumentObject({ id: identity.id, ownerId, contractId, documentTypeName, revision: 1, entropy: identity.entropy, data }),
+      platformVersion
+    );
   }
 
   /**
@@ -103,20 +114,12 @@ class DocumentBuilderService {
     data: Record<string, unknown>,
     newRevision: number
   ): Promise<InstanceType<typeof Document>> {
-    // Ensure WASM is initialized before creating objects
-    await ensureWasmReady();
+    const platformVersion = networkPlatformVersion(PlatformVersion, await getEvoSdk());
 
-    // v3.1: Document constructor takes a single DocumentOptions object
-    const document = new Document({
-      properties: data,
-      documentTypeName,
-      dataContractId: contractId,
-      ownerId,
-      revision: BigInt(newRevision),
-      id: documentId,
-    });
-
-    return document;
+    return Document.fromObject(
+      toCanonicalDocumentObject({ id: documentId, ownerId, contractId, documentTypeName, revision: newRevision, data }),
+      platformVersion
+    );
   }
 
   /**
@@ -185,34 +188,6 @@ class DocumentBuilderService {
     };
   }
 
-  /**
-   * Get the document ID from a newly created document
-   *
-   * After calling documentCreate, the document object has its ID populated.
-   * This helper extracts the ID in string format.
-   *
-   * @param document - The WASM Document after creation
-   * @returns The document ID as a string
-   */
-  getDocumentId(document: Document): string {
-    // The document.id property returns an Identifier which can be converted to string
-    const id = document.id;
-    if (typeof id === 'string') {
-      return id;
-    }
-    if (id && typeof (id as { toString?: () => string }).toString === 'function') {
-      return (id as { toString: () => string }).toString();
-    }
-    // Fallback: convert via toObject() and extract the id field
-    const obj = document.toObject() as { $id?: unknown };
-    if (obj.$id) {
-      const rawId = obj.$id;
-      if (typeof rawId === 'string') return rawId;
-      const base58 = identifierToBase58(rawId);
-      if (base58) return base58;
-    }
-    throw new Error('Unable to extract document ID from Document object');
-  }
 }
 
 // Singleton instance
