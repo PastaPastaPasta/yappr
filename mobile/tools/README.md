@@ -330,11 +330,11 @@ then refuses a v1 request with "NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID is unset".
 
 ### Testnet staging rehearsal (retired)
 
-The D36 rehearsal set and its `.env.staging` were retired on 2026-10-21; `/staging` now runs the production release set, where no battery or responder writes are allowed. To replay against the rehearsal contracts, restore that env file from git history into a private path and pass it with `--env-file`:
+The D36 rehearsal set left `/staging` on 2026-10-21; `/staging` now runs the production release set, where no battery or responder writes are allowed. The rehearsal set still runs at `https://yap.pr/staging-old/` from the checked-in `.env.staging-old` ([TESTING.md](../../docs/TESTING.md)). Start the sign-in there and answer it with that env file:
 
 ```sh
 npm --prefix mobile/tools run build
-YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file "$REHEARSAL_ENV_FILE"
+YAPPR_SAKURA_IDENTITIES="$STAGING_PERSONA_LEDGER" node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789 --env-file .env.staging-old
 ```
 
-Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry the staging APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.
+Set `STAGING_PERSONA_LEDGER` to the protected testnet ledger path. Run `--help` for the persona selection options. The pool must be tagged `testnet`. App Connect requests carry `/staging-old`'s APP_ID; grant state is stored in the testnet namespace. Messaging derives from the persona's CRITICAL key and the requested app anchor, matching staging provisioning.
