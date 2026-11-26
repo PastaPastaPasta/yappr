@@ -51,6 +51,8 @@ const nextConfig = {
               name: 'evo-sdk',
               priority: 10,
               reuseExistingChunk: true,
+              // Cloudflare Pages refuses files over 25 MiB; the 5.1 SDK alone is ~15 MB.
+              maxSize: 20 * 1024 * 1024,
             },
           },
         },
