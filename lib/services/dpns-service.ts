@@ -3,7 +3,7 @@ import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_STALLED_MESSAGE, DPNS_STILL_CONFIRMING_MESSAGE, DpnsNotSentError, quoteDpnsName, registerDpnsName, type DpnsRegistrationOutcome } from './dpns-registration';
-import { shortBalanceMessage, totalQuote, type DpnsNameQuote, type DpnsQuote } from '@/lib/dpns/registration-quote';
+import { ContestFundChangedError, shortBalanceMessage, totalQuote, type DpnsNameQuote, type DpnsQuote } from '@/lib/dpns/registration-quote';
 import type { SigningKey } from '@/lib/auth/signing-keys';
 import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
@@ -51,6 +51,12 @@ export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'
  * registration pays only that (`lib/services/dpns-registration.ts`). The
  * refusals below are what remains.
  */
+/** Whether `failure` refused a name because its vote deposit is no longer the one the user approved. */
+export function depositChanged(failure: unknown): boolean {
+  const error = failure instanceof DpnsNotSentError ? failure.cause : failure;
+  return error instanceof ContestFundChangedError || isContestFundError(error);
+}
+
 export function describeDpnsRegistrationError(failure: unknown): string {
   const notSent = failure instanceof DpnsNotSentError;
   const error = notSent ? failure.cause : failure;
@@ -724,7 +730,7 @@ class DpnsService {
           ? { label: reg.label, success: false, pending: true, isContested, error: outcome.stalled ? DPNS_STALLED_MESSAGE : DPNS_STILL_CONFIRMING_MESSAGE }
           : { label: reg.label, success: true, isContested: outcome.state === 'joined-vote' || isContested });
       } catch (error) {
-        results.push({ label: reg.label, success: false, isContested, error: describeDpnsRegistrationError(error) });
+        results.push({ label: reg.label, success: false, isContested, error: describeDpnsRegistrationError(error), ...(depositChanged(error) ? { requote: true } : {}) });
       }
     }
 

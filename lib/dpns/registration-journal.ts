@@ -2,10 +2,13 @@
  * A DPNS name registration in progress, kept in this browser.
  *
  * Registering a name is two paid writes: a `preorder` that commits to the
- * name through a salted hash, then the `domain` that reveals the salt. The
- * domain is accepted only with a salt whose preorder exists, so the salt is
- * what makes a paid preorder usable later. Each step's signed transition is
- * kept here before it is broadcast, keyed by owner and name:
+ * name, then the `domain` that reveals it. Before DPNS v3 (protocol 14) the
+ * preorder holds a salted hash and the domain reveals the salt, so the salt is
+ * what makes a paid preorder usable later. From v3 (protocol 15) the preorder
+ * holds hashes of the name and of its owner with the name (`nameHash`,
+ * `ownerNameHash`), lives an hour, and the salt goes unused: the chain alone
+ * says whether the owner's preorder of the name exists. Each step's signed
+ * transition is kept here before it is broadcast, keyed by owner and name:
  *
  * - a retry after a lost answer settles that very transition
  *   (`stateTransitionService.settleCreate`) instead of paying a new preorder;
@@ -13,7 +16,7 @@
  * - the record goes once the name is registered (or its vote joined), or a
  *   step is proved never recorded and nothing else of it can still land.
  *
- * The salt must stay secret until the domain is sent (a preorder does not
+ * Before v3 the salt must stay secret until the domain is sent (a preorder does not
  * name its owner, so whoever holds the salt could use it). It sits in the
  * same localStorage as the signing key this browser already keeps.
  */
@@ -94,7 +97,25 @@ export function newPreorderSalt(): Uint8Array {
  * no preorder carries it).
  */
 export function saltedDomainHash(salt: Uint8Array, normalizedLabel: string): Uint8Array {
-  return sha256(sha256(concatBytes(salt, new TextEncoder().encode(`${normalizedLabel}.dash`))))
+  return sha256(sha256(concatBytes(salt, nameBytes(normalizedLabel))))
+}
+
+const nameBytes = (normalizedLabel: string) => new TextEncoder().encode(`${normalizedLabel}.dash`)
+
+/**
+ * DPNS v3's `nameHash`: double SHA-256 of `<normalizedLabel>.dash`, as the
+ * domain's `creatorRefersTo` `findBy` recomputes it.
+ */
+export function preorderNameHash(normalizedLabel: string): Uint8Array {
+  return sha256(sha256(nameBytes(normalizedLabel)))
+}
+
+/**
+ * DPNS v3's `ownerNameHash`: double SHA-256 of the owner's 32-byte id followed
+ * by `<normalizedLabel>.dash` (the `chooseFirst` `validWhen` key).
+ */
+export function preorderOwnerNameHash(ownerId: Uint8Array, normalizedLabel: string): Uint8Array {
+  return sha256(sha256(concatBytes(ownerId, nameBytes(normalizedLabel))))
 }
 
 /** The registration of `normalizedLabel` this browser started for `ownerId`, or null. */

@@ -58,6 +58,8 @@ export interface UsernameEntry {
   registered?: boolean
   /** Sent and not settled yet (`registered` is false): "Check again" continues it. */
   pending?: boolean
+  /** Not registered because its vote deposit changed since the review: it needs a new quote. */
+  requote?: boolean
 }
 
 export interface UsernameCheckResult {
@@ -73,6 +75,8 @@ export interface UsernameRegistrationResult {
   pending?: boolean
   isContested: boolean
   error?: string
+  /** Its vote deposit changed since the review, so nothing was paid for it: quote it again. */
+  requote?: boolean
 }
 
 export interface Blog {

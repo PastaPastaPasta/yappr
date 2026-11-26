@@ -10,10 +10,12 @@ interface CompleteStepProps {
   onContinue: () => void
   /** Continue the registrations still being confirmed (nothing is paid twice). */
   onCheckAgain: () => void
+  /** Quote again the names whose vote deposit changed since the review. */
+  onRequote: () => void
   checkingAgain: boolean
 }
 
-export function CompleteStep({ onRegisterMore, onContinue, onCheckAgain, checkingAgain }: CompleteStepProps) {
+export function CompleteStep({ onRegisterMore, onContinue, onCheckAgain, onRequote, checkingAgain }: CompleteStepProps) {
   const { usernames } = useDpnsRegistration()
 
   const registeredUsernames = usernames.filter((u) => u.registered === true)
@@ -22,6 +24,7 @@ export function CompleteStep({ onRegisterMore, onContinue, onCheckAgain, checkin
     (u) => u.registered === false && !u.pending && u.registrationError
   )
   const contestedRegistered = registeredUsernames.filter((u) => u.isContested)
+  const requoteUsernames = failedUsernames.filter((u) => u.requote)
 
   const getStatusIcon = (entry: typeof usernames[0]) => {
     if (entry.pending) {
@@ -123,6 +126,12 @@ export function CompleteStep({ onRegisterMore, onContinue, onCheckAgain, checkin
       {pendingUsernames.length > 0 && (
         <Button onClick={onCheckAgain} disabled={checkingAgain} className="w-full" data-testid="dpns-check-again">
           {checkingAgain ? 'Checking…' : 'Check and continue registering'}
+        </Button>
+      )}
+
+      {requoteUsernames.length > 0 && (
+        <Button onClick={onRequote} disabled={checkingAgain} className="w-full" data-testid="dpns-requote">
+          Review the new deposit
         </Button>
       )}
 
