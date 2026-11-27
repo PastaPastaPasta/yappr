@@ -8,7 +8,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { UsernameEntry } from '@/lib/types'
-import { DEPOSIT_UNREADABLE_MESSAGE } from '@/lib/dpns/contest-deposit'
+import { DEPOSIT_UNREADABLE_MESSAGE, grantedUsername } from '@/lib/dpns/contest-deposit'
 import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
@@ -215,9 +215,9 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         }
       }
 
-      const firstSuccess = results.find((r) => r.success)
-      if (firstSuccess) {
-        updateDPNSUsername(firstSuccess.label)
+      const granted = grantedUsername(results)
+      if (granted) updateDPNSUsername(granted)
+      if (results.some((r) => r.success)) {
         toast.success('Username registered successfully!')
       }
 
