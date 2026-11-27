@@ -1066,7 +1066,9 @@ class StateTransitionService {
     documentId: string,
     ownerId: string,
     /** Re-checked under the write lock right before sending (see withSdkSignedWrite). */
-    precondition?: () => Promise<boolean>
+    precondition?: () => Promise<boolean>,
+    /** As `createDocument`'s `signingKey`: for a delete only a particular key may sign. */
+    options: { signingKey?: SigningKey } = {}
   ): Promise<StateTransitionResult> {
     let key: SigningKey | null = null;
     // Set once the SDK is asked to sign and send: an error before that sent nothing.
@@ -1083,7 +1085,7 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      key = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'delete');
+      key = options.signingKey ?? await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'delete');
 
       const documentForDelete = documentBuilderService.buildDocumentForDelete(
         contractId,

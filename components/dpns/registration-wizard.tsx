@@ -75,13 +75,14 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     })
   }, [unfinished])
 
-  const handleCheckAvailability = useCallback(async () => {
+  /** Check `entries` and quote the registrable ones, then show the review. */
+  const checkNames = useCallback(async (entries: UsernameEntry[]) => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
 
-    const validUsernames = usernames.filter((entry) => {
+    const validUsernames = entries.filter((entry) => {
       const label = entry.label.trim()
       const error = label ? dpnsService.getUsernameValidationError(label) : null
       if (error) updateUsernameStatus(entry.id, 'invalid', error)
@@ -149,7 +150,28 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       toast.error('Failed to check availability. Please try again.')
       setStep('username-entry')
     }
-  }, [isSdkReady, usernames, identityId, setStep, updateUsernameStatus, setUsernameContested, setQuote])
+  }, [isSdkReady, identityId, setStep, updateUsernameStatus, setUsernameContested, setQuote])
+
+  const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
+
+  // What a name costs changed between the review and the signing: quote those names again. A name
+  // still being confirmed is carried along as it is (continuing it settles what was sent); one that
+  // failed for good stays listed with its reason and is not offered again.
+  const handleRequote = useCallback(async () => {
+    if (!isSdkReady) {
+      toast.error('Service is initializing. Please try again.')
+      return
+    }
+    const requoted = usernames
+      .filter((u) => u.registered === false && u.requote)
+      .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
+    const carried = usernames.filter((u) => u.registered === false && u.pending)
+    const failed = usernames
+      .filter((u) => u.registered === false && !u.pending && !u.requote)
+      .map((u): UsernameEntry => ({ ...u, status: 'invalid', validationError: u.registrationError }))
+    useDpnsRegistration.setState({ usernames: [...requoted, ...carried, ...failed], contestedAcknowledged: false })
+    await checkNames(requoted)
+  }, [isSdkReady, usernames, checkNames])
 
   /**
    * Register `entries` (all available, or the ones still being confirmed) with
@@ -203,13 +225,17 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      const approved = new Map(quote.quote.names.map((name) => [name.label, name.contestFund?.credits ?? null]))
-      const registrations = entries.map((u) => ({
-        label: u.label,
-        identityId,
-        privateKeyWif: privateKey,
-        contestFund: approved.get(u.label) ?? null,
-      }))
+      const approved = new Map(quote.quote.names.map((name) => [name.label, name]))
+      const registrations = entries.map((u) => {
+        const reviewed = approved.get(u.label)
+        return {
+          label: u.label,
+          identityId,
+          privateKeyWif: privateKey,
+          contestFund: reviewed?.contestFund?.credits ?? null,
+          approvedPlan: reviewed?.plan ?? { preorder: false, deletePreorder: false, domain: false },
+        }
+      })
 
       const results = await dpnsService.registerUsernamesSequentially(
         registrations,
@@ -220,7 +246,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       for (let i = 0; i < results.length; i++) {
         const result = results[i]
         const entry = entries[i]
-        setUsernameRegistered(entry.id, result.success, result.error, result.pending)
+        setUsernameRegistered(entry.id, result.success, result.error, result.pending, result.requote)
         if (result.isContested) {
           setUsernameContested(entry.id, true)
         }
@@ -274,7 +300,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       }
     }
 
-    await runRegistrations(availableUsernames, { needed: quote.status === 'ready' ? quote.quote.total : undefined, showProgress: true })
+    await runRegistrations(availableUsernames, { needed: quote.status === 'ready' ? quote.quote.needed : undefined, showProgress: true })
   }, [usernames, quote, runRegistrations, updateUsernameStatus, setStep])
 
   // Continues each registration still being confirmed: a step already sent is settled, never paid again.
@@ -333,7 +359,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       {step === 'registering' && <RegisteringStep />}
 
       {step === 'complete' && (
-        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} onCheckAgain={handleCheckAgain} checkingAgain={checkingAgain} />
+        <CompleteStep onRegisterMore={handleRegisterMore} onContinue={handleContinue} onCheckAgain={handleCheckAgain} onRequote={handleRequote} checkingAgain={checkingAgain} />
       )}
 
       {step === 'username-entry' && onSkip && (

@@ -23,7 +23,7 @@ interface DpnsRegistrationStore {
   updateUsernameLabel: (id: string, label: string) => void
   updateUsernameStatus: (id: string, status: UsernameStatus, validationError?: string) => void
   setUsernameContested: (id: string, isContested: boolean) => void
-  setUsernameRegistered: (id: string, success: boolean, error?: string, pending?: boolean) => void
+  setUsernameRegistered: (id: string, success: boolean, error?: string, pending?: boolean, requote?: boolean) => void
   setQuote: (quote: RegistrationQuoteState) => void
   setContestedAcknowledged: (acknowledged: boolean) => void
   setCurrentRegistrationIndex: (index: number) => void
@@ -69,7 +69,7 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
     set((state) => ({
       usernames: state.usernames.map((u) =>
         u.id === id
-          ? { ...u, label, status: 'pending' as UsernameStatus, validationError: undefined, isContested: false }
+          ? { id: u.id, label, status: 'pending' as UsernameStatus, isContested: false }
           : u
       ),
     })),
@@ -88,11 +88,11 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
       ),
     })),
 
-  setUsernameRegistered: (id, success, error, pending) =>
+  setUsernameRegistered: (id, success, error, pending, requote) =>
     set((state) => ({
       usernames: state.usernames.map((u) =>
         u.id === id
-          ? { ...u, registered: success, registrationError: error, pending: pending === true }
+          ? { ...u, registered: success, registrationError: error, pending: pending === true, requote: requote === true }
           : u
       ),
     })),

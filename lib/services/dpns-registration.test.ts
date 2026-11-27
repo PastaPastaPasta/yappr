@@ -9,10 +9,13 @@ import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CREATE_NOT_RECORDED_ERROR } from '@/lib/error-utils'
 import type { CreateReceipt, StateTransitionResult } from './state-transition-service'
+import v1Schemas from '@/lib/dpns/fixtures/dpns-contract-documents-v1.json'
+import v3Schemas from '@/lib/dpns/fixtures/dpns-contract-documents-v3.json'
 
 const OWNER = '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi'
 const KEY = { wif: 'wif', identityKey: {} as never, appConnect: false }
 const DEPOSIT = 10_000_000_000n
+const ON_CHAIN_PREORDER = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF'
 
 const m = vi.hoisted(() => ({
   fund: null as null | { indexName: string; credits: bigint },
@@ -24,8 +27,18 @@ const m = vi.hoisted(() => ({
   /** A preorder carrying the record's salted hash is on chain. */
   preorderOnChain: false,
   preorderQueries: 0,
+  /** The DPNS document schemas the network's contract has (v1: protocol 14, v3: protocol 15). */
+  schemas: {} as unknown,
+  /** v3: the owner's preorder of the name on chain, by its `$createdAt`, at block time `nowMs`. */
+  v3Preorder: null as null | { createdAt: bigint },
+  nowMs: 10_000_000n,
+  /** The SDK's protocol version, when not the schemas' own. */
+  sdkVersion: undefined as number | undefined,
+  /** How many contract reads a node behind the upgrade answers first (proved at the version before). */
+  staleContractProofs: 0,
   createDocument: vi.fn(),
   settleCreate: vi.fn(),
+  deleteDocument: vi.fn(),
 }))
 
 vi.mock('./evo-sdk-service', () => ({
@@ -36,12 +49,28 @@ vi.mock('./evo-sdk-service', () => ({
         m.preorderQueries += 1
         return m.preorderOnChain ? [{ $id: 'p' }] : []
       },
+      queryWithProof: async () => ({
+        data: new Map(m.v3Preorder ? [['p', { id: ON_CHAIN_PREORDER, createdAt: m.v3Preorder.createdAt }]] : [['p', undefined]]),
+        metadata: { timeMs: m.nowMs },
+      }),
       contestFundToJoin: async () => {
         const next = m.fundReads.shift()
         return next === undefined ? (m.fund ?? undefined) : { indexName: 'parentNameAndLabel', credits: next }
       },
     },
-    contracts: { fetch: async () => null },
+    protocol: { versionUpgradeStateWithProof: async () => ({}) },
+    version: () => m.sdkVersion ?? (m.schemas === v3Schemas ? 15 : 14),
+    contracts: {
+      fetchWithProof: async () => {
+        const stale = m.staleContractProofs > 0
+        if (stale) m.staleContractProofs -= 1
+        const version = m.sdkVersion ?? (m.schemas === v3Schemas ? 15 : 14)
+        return {
+          data: { toJSON: () => ({ documentSchemas: stale ? v1Schemas : m.schemas }) },
+          metadata: { protocolVersion: stale ? version - 1 : version },
+        }
+      },
+    },
     identities: {
       fetch: async () => ({ balance: m.balance }),
       contractNonceWithProof: async () => ({ data: m.nonceConsumed ? 10n : 0n, metadata: { height: 5 } }),
@@ -56,15 +85,17 @@ vi.mock('./evo-sdk-service', () => ({
 }))
 vi.mock('./document-builder-service', () => ({ documentBuilderService: { buildDocumentForCreate: async () => ({}) } }))
 vi.mock('./state-transition-service', () => ({
-  stateTransitionService: { createDocument: m.createDocument, settleCreate: m.settleCreate },
+  stateTransitionService: { createDocument: m.createDocument, settleCreate: m.settleCreate, deleteDocument: m.deleteDocument },
 }))
 vi.mock('@/lib/document-id', () => ({ identityContractNonceConsumed: (current: bigint, nonce: bigint) => current >= nonce }))
+vi.mock('@dashevo/wasm-sdk', () => ({ PlatformVersion: class { constructor(readonly version: number) {} } }))
 
-const { registerDpnsName, quoteDpnsName, DpnsNotSentError } = await import('./dpns-registration')
+const { registerDpnsName, quoteDpnsName, DpnsNotSentError, preorderRevealable } = await import('./dpns-registration')
+const { RegistrationPlanChangedError, DOMAIN_ADMISSION_FLOOR, PREORDER_DELETE_FEE, creditsNeeded } = await import('@/lib/dpns/registration-quote')
 const { getEvoSdk } = await import('./evo-sdk-service')
 const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils')
 const { ContestFundChangedError, BalanceTooLowError } = await import('@/lib/dpns/registration-quote')
-const { loadRegistration, registrationsInProgress, saltedDomainHash, saveRegistration } = await import('@/lib/dpns/registration-journal')
+const { loadRegistration, preorderNameHash, preorderOwnerNameHash, registrationsInProgress, saltedDomainHash, saveRegistration } = await import('@/lib/dpns/registration-journal')
 
 const store = new Map<string, string>()
 beforeEach(() => {
@@ -84,8 +115,13 @@ beforeEach(() => {
   m.nonceConsumed = false
   m.preorderOnChain = false
   m.preorderQueries = 0
+  m.schemas = v1Schemas
+  m.v3Preorder = null
+  m.sdkVersion = undefined
+  m.staleContractProofs = 0
   m.createDocument.mockReset()
   m.settleCreate.mockReset()
+  m.deleteDocument.mockReset()
 })
 afterEach(() => vi.unstubAllGlobals())
 
@@ -112,12 +148,14 @@ function creates(...answers: Array<'confirmed' | 'unconfirmed' | { refused: stri
   }
 }
 
-const register = (input: { contestFund?: bigint | null; owner?: string | null; durable?: () => Promise<void> } = {}) => registerDpnsName({
+type Plan = { preorder: boolean; deletePreorder: boolean; domain: boolean }
+const register = (input: { contestFund?: bigint | null; owner?: string | null; durable?: () => Promise<void>; plan?: Plan } = {}) => registerDpnsName({
   label: 'Alice',
   normalizedLabel: 'a11ce',
   ownerId: OWNER,
   signingKey: KEY,
   contestFund: input.contestFund,
+  ...(input.plan ? { approvedPlan: input.plan } : {}),
   readOwner: async () => input.owner ?? null,
   durable: input.durable,
 })
@@ -166,7 +204,7 @@ describe('a contested name: the approved deposit is the cap', () => {
   it('refuses the domain when the deposit changes after the preorder, keeps the preorder, and reuses it once approved', async () => {
     creates('confirmed')
     // The preorder lands; then others join and the deposit doubles before the domain is signed.
-    m.fundReads = [DEPOSIT, 2n * DEPOSIT]
+    m.fundReads = [DEPOSIT, DEPOSIT, 2n * DEPOSIT]
     await expect(register({ contestFund: DEPOSIT })).rejects.toBeInstanceOf(DpnsNotSentError)
     expect(stepsSent()).toEqual(['preorder'])
     expect(loadRegistration(OWNER, 'a11ce')?.preorderLanded).toBe(true)
@@ -373,7 +411,7 @@ describe('continuing a registration (review: must-fix 2 and the lows)', () => {
     m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
     creates('confirmed', 'unconfirmed')
     await register({ contestFund: DEPOSIT })
-    expect(await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).toEqual({ label: 'Alice', contestFund: null, fees: 0n })
+    expect(await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).toEqual({ label: 'Alice', contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false, domain: false } })
   })
 
   it('remembers that the domain it sent is contested, and settles it by its vote', async () => {
@@ -405,11 +443,11 @@ describe('continuing a registration (review: must-fix 2 and the lows)', () => {
 describe('a contested domain whose receipt was lost (second review)', () => {
   it('sends no second domain when the owner is already a contender, and calls it joined', async () => {
     m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
-    creates('confirmed')
     // The preorder landed; the domain went out but the app was killed before its receipt was kept.
+    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true })
     m.contenders = [OWNER]
     expect(await register({ contestFund: DEPOSIT })).toEqual({ state: 'joined-vote' })
-    expect(stepsSent()).toEqual(['preorder'])
+    expect(m.createDocument).not.toHaveBeenCalled()
     expect(loadRegistration(OWNER, 'a11ce')).toBeNull()
   })
 
@@ -419,5 +457,301 @@ describe('a contested domain whose receipt was lost (second review)', () => {
     await register({ contestFund: DEPOSIT })
     m.settleCreate.mockResolvedValueOnce('stalled')
     expect(await register({ contestFund: DEPOSIT })).toEqual({ state: 'pending', step: 'domain', stalled: true })
+  })
+})
+
+describe('DPNS v3 (protocol 15): preorders by name hash', () => {
+  const HOUR_MS = 3_600_000n
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('preorders a free name with nameHash and ownerNameHash, and sends no salt with the domain', async () => {
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+    const ownerBytes = (await import('bs58')).default.decode(OWNER)
+    expect(dataOf(0)).toEqual({ nameHash: preorderNameHash('a11ce'), ownerNameHash: preorderOwnerNameHash(ownerBytes, 'a11ce') })
+    expect(dataOf(1)).not.toHaveProperty('preorderSalt')
+    expect(dataOf(1)).toMatchObject({ label: 'Alice', normalizedLabel: 'a11ce', parentDomainName: 'dash', normalizedParentDomainName: 'dash' })
+    expect(m.preorderQueries).toBe(0)
+  })
+
+  it('hashes as Drive declares: sha256d of "<label>.dash", and of the owner id then "<label>.dash"', () => {
+    const d = (bytes: Buffer) => createHash('sha256').update(createHash('sha256').update(bytes).digest()).digest().toString('hex')
+    const owner = Buffer.alloc(32, 5)
+    expect(Buffer.from(preorderNameHash('a11ce')).toString('hex')).toBe(d(Buffer.from('a11ce.dash')))
+    expect(Buffer.from(preorderOwnerNameHash(owner, 'a11ce')).toString('hex')).toBe(d(Buffer.concat([owner, Buffer.from('a11ce.dash')])))
+  })
+
+  it('reveals a preorder of the name the owner already holds instead of paying another', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    creates('confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['domain'])
+  })
+
+  it('preorders anew when the one it saw land is gone (expired and cleaned up)', async () => {
+    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true, preorderLandedAt: Date.now() - 2 * 3_600_000 })
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+
+  it('reveals a preorder it saw land minutes ago even when a lagging node reads it absent', async () => {
+    saveRegistration({ ownerId: OWNER, label: 'Alice', normalizedLabel: 'a11ce', salt: new Uint8Array(32), preorderLanded: true, preorderLandedAt: Date.now() - 120_000 })
+    creates('confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['domain'])
+  })
+
+  it('quotes no preorder fee while the owner holds a revealable preorder', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    const withPreorder = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    m.v3Preorder = null
+    const fresh = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(withPreorder.fees).toBeLessThan(fresh.fees)
+  })
+
+  it('deletes an expiring preorder with the DPNS key, then preorders anew', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - HOUR_MS + 30_000n }
+    m.deleteDocument.mockResolvedValueOnce({ success: true })
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(m.deleteDocument).toHaveBeenCalledWith(expect.any(String), 'preorder', ON_CHAIN_PREORDER, OWNER, undefined, { signingKey: KEY })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+
+  it('sends nothing more when the expiring preorder could not be deleted', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - HOUR_MS }
+    m.deleteDocument.mockResolvedValueOnce({ success: false, error: 'refused' })
+    await expect(register()).rejects.toThrow('refused')
+    expect(m.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('caps a contested domain at the approved deposit, and refuses a changed one before anything is paid', async () => {
+    m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
+    creates('confirmed', 'confirmed')
+    expect(await register({ contestFund: DEPOSIT })).toEqual({ state: 'joined-vote' })
+    expect(optionsOf(1).prefundedVotingBalance).toEqual({ indexName: 'parentNameAndLabel', credits: DEPOSIT })
+
+    m.createDocument.mockReset()
+    m.fund = { indexName: 'parentNameAndLabel', credits: 2n * DEPOSIT }
+    const error = await register({ contestFund: DEPOSIT }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(ContestFundChangedError)
+    expect(m.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('refuses the domain when the deposit rises after the preorder, then reveals the same preorder once re-approved', async () => {
+    m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
+    creates('confirmed')
+    m.fundReads = [DEPOSIT, DEPOSIT, 2n * DEPOSIT]
+    await expect(register({ contestFund: DEPOSIT })).rejects.toBeInstanceOf(DpnsNotSentError)
+    expect(stepsSent()).toEqual(['preorder'])
+
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    m.fund = { indexName: 'parentNameAndLabel', credits: 2n * DEPOSIT }
+    m.createDocument.mockReset()
+    creates('confirmed')
+    expect(await register({ contestFund: 2n * DEPOSIT })).toEqual({ state: 'joined-vote' })
+    expect(stepsSent()).toEqual(['domain'])
+    expect(optionsOf(0).prefundedVotingBalance?.credits).toBe(2n * DEPOSIT)
+  })
+
+  it('calls a contested name joined, sending nothing, when its domain already consumed the preorder', async () => {
+    m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
+    m.contenders = [OWNER]
+    expect(await register({ contestFund: DEPOSIT })).toEqual({ state: 'joined-vote' })
+    expect(m.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('quotes the deposit and both fees for a fresh contested name', async () => {
+    m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote.contestFund).toEqual({ indexName: 'parentNameAndLabel', credits: DEPOSIT })
+    expect(quote.fees).toBeGreaterThan(0n)
+  })
+})
+
+describe('preorderRevealable', () => {
+  it('reveals a preorder only while it outlives a broadcast by a minute', () => {
+    expect(preorderRevealable(0n, 3600, 3_600_000n - 60_001n)).toBe(true)
+    expect(preorderRevealable(0n, 3600, 3_600_000n - 60_000n)).toBe(false)
+    expect(preorderRevealable(undefined, 3600, 10n ** 15n)).toBe(true)
+    expect(preorderRevealable(0n, null, 10n ** 15n)).toBe(true)
+  })
+})
+
+describe('protocol 15 review findings', () => {
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('reads the contract again when a node behind the upgrade proves the old one', async () => {
+    m.staleContractProofs = 2
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(Object.keys(dataOf(0)).sort()).toEqual(['nameHash', 'ownerNameHash'])
+  })
+
+  it('sends nothing when no read proves the contract at the network version', async () => {
+    m.staleContractProofs = 3
+    await expect(register()).rejects.toBeInstanceOf(DpnsNotSentError)
+    expect(m.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('pays no preorder unless the balance also holds what the domain needs to be admitted', async () => {
+    m.balance = DOMAIN_ADMISSION_FLOOR - 1n
+    const error = await register().catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(BalanceTooLowError)
+    expect(m.createDocument).not.toHaveBeenCalled()
+    m.balance = DOMAIN_ADMISSION_FLOOR + 100_000_000n
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+  })
+
+  it('quotes the floor as balance needed, not as a charge', async () => {
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote.reserve).toBeGreaterThan(0n)
+    expect(quote.fees + (quote.reserve ?? 0n)).toBeGreaterThanOrEqual(DOMAIN_ADMISSION_FLOOR)
+  })
+
+  it('sends no preorder the review did not show, and asks for a new quote', async () => {
+    const error = await register({ plan: { preorder: false, deletePreorder: false, domain: true } }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(m.createDocument).not.toHaveBeenCalled()
+  })
+
+  it('deletes an expiring preorder only when the review showed the delete', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - 3_600_000n + 30_000n }
+    const error = await register({ plan: { preorder: true, deletePreorder: false, domain: true } }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(m.deleteDocument).not.toHaveBeenCalled()
+
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote.plan).toEqual({ preorder: true, deletePreorder: true, domain: true })
+    m.deleteDocument.mockResolvedValueOnce({ success: true })
+    creates('confirmed', 'confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+  })
+
+  it('quotes the same steps the registration takes', async () => {
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    const reuse = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(reuse.plan).toEqual({ preorder: false, deletePreorder: false, domain: true })
+    creates('confirmed')
+    expect(await register({ plan: reuse.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['domain'])
+
+    m.v3Preorder = { createdAt: m.nowMs - 3_600_000n }
+    const expiring = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    m.v3Preorder = null
+    const fresh = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(expiring.fees - fresh.fees).toBe(PREORDER_DELETE_FEE)
+  })
+
+  it('keeps no lifetime for a preorder proved only by id, so a later absence preorders anew', async () => {
+    creates('unconfirmed')
+    expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
+    // It landed (by id); the index then reads it absent: revealed once, as a node behind.
+    m.settleCreate.mockResolvedValueOnce('landed')
+    creates({ refused: 'preorder not found (code=40120)' })
+    await expect(register()).rejects.toThrow(/40120/)
+    expect(loadRegistration(OWNER, 'a11ce')?.preorderLandedAt).toBeUndefined()
+    // Still absent: it expired, so the name is preordered anew rather than revealed for an hour.
+    m.createDocument.mockReset()
+    creates('confirmed', 'confirmed')
+    expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('second review: continuing without new charges', () => {
+  it('quotes a protocol-14 preorder sent without a verdict as continued, not paid again', async () => {
+    creates('unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote.plan).toEqual({ preorder: false, deletePreorder: false, domain: true })
+    // It landed: the domain goes out on that plan, nothing refused.
+    m.settleCreate.mockResolvedValueOnce('landed')
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+
+  it('asks for a new quote before replacing a continued preorder proved never recorded', async () => {
+    creates('unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    m.settleCreate.mockResolvedValueOnce('not-recorded')
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(m.createDocument).toHaveBeenCalledTimes(1)
+    expect((await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).plan?.preorder).toBe(true)
+  })
+
+  it('signs no new domain after a zero-fee review of a sent one, and asks for a new quote', async () => {
+    creates('confirmed', 'unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote).toMatchObject({ fees: 0n, plan: { domain: false } })
+    m.settleCreate.mockResolvedValueOnce('not-recorded')
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('round 4: a continued v3 preorder and the admission floor', () => {
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('settles no sent preorder for the first time unless the balance holds the floor', async () => {
+    creates('unconfirmed')
+    expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    // Continued, so not counted as a cost, but its fee stays in the balance needed.
+    expect(quote.plan?.preorder).toBe(false)
+    expect(creditsNeeded(quote)).toBeGreaterThan(DOMAIN_ADMISSION_FLOOR)
+
+    m.balance = DOMAIN_ADMISSION_FLOOR - 1n
+    // Proof alone doesn't settle it and the index doesn't show it: a re-send is needed, unfunded.
+    m.settleCreate.mockResolvedValueOnce(null)
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(BalanceTooLowError)
+    expect(m.settleCreate).toHaveBeenCalledTimes(1)
+    expect(m.settleCreate.mock.calls[0][1]?.mayResend?.()).toBe(false)
+    expect(m.createDocument).toHaveBeenCalledTimes(1)
+
+    // With the floor covered it is re-sent: the preorder lands for the first time and is revealed.
+    m.balance = 10n ** 12n
+    m.settleCreate.mockResolvedValueOnce(null).mockResolvedValueOnce('landed')
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('round 5: a landed preorder whose confirmation was lost', () => {
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('reveals it without asking for, or re-sending, another preorder fee', async () => {
+    creates('unconfirmed')
+    expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
+    // It landed and was charged; the tab closed before that was recorded. The index shows it.
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(creditsNeeded(quote)).toBe(DOMAIN_ADMISSION_FLOOR)
+    // The balance covers the domain and its admission, not another preorder.
+    m.balance = DOMAIN_ADMISSION_FLOOR
+    m.settleCreate.mockResolvedValueOnce(null)
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+    expect(m.settleCreate).toHaveBeenCalledTimes(1)
+    expect(m.settleCreate.mock.calls[0][1]?.mayResend?.()).toBe(false)
   })
 })
