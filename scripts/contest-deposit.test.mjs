@@ -45,27 +45,3 @@ test('recognises the SDK-shaped rejection by its numeric code, not its string fo
   assert.equal(contestNotPaidFor({ message: 'state error 40114' }), true)
 })
 
-test('only a granted name becomes the session username; a contender never replaces it', async () => {
-  const { grantedUsername } = await import('../lib/dpns/contest-deposit.ts')
-  // Onboarding: a usable name registers, then Register More enters a contested one.
-  let session = null
-  const first = grantedUsername([{ label: 'usable-name-27', success: true, isContested: false }])
-  session = first ?? session
-  const second = grantedUsername([{ label: 'abc', success: true, isContested: true }])
-  session = second ?? session
-  assert.equal(session, 'usable-name-27')
-  assert.equal(grantedUsername([{ label: 'abc', success: true, isContested: true }, { label: 'usable-name-28', success: true, isContested: false }]), 'usable-name-28')
-  assert.equal(grantedUsername([{ label: 'failed-name-29', success: false, isContested: false }]), null)
-})
-
-test('continuing after a vote-only result goes on without a name, keeping none', async () => {
-  const { continuesWithoutName, grantedUsername } = await import('../lib/dpns/contest-deposit.ts')
-  const results = [{ label: 'abc', success: true, isContested: true }]
-  // The contender is never saved as the session username…
-  assert.equal(grantedUsername(results), null)
-  // …and Continue takes the skip path instead of sending the user back to username setup.
-  assert.equal(continuesWithoutName(null, [{ registered: true, isContested: true }]), true)
-  assert.equal(continuesWithoutName('owned-name-27', [{ registered: true, isContested: true }]), false)
-  assert.equal(continuesWithoutName(null, [{ registered: true, isContested: false }]), false)
-  assert.equal(continuesWithoutName(null, [{ registered: false, isContested: true }]), false)
-})

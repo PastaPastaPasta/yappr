@@ -8,7 +8,8 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { UsernameEntry } from '@/lib/types'
-import { DEPOSIT_UNREADABLE_MESSAGE, continuesWithoutName, grantedUsername } from '@/lib/dpns/contest-deposit'
+import { DEPOSIT_UNREADABLE_MESSAGE } from '@/lib/dpns/contest-deposit'
+import { recordRegistration } from '@/lib/dpns/username-session'
 import { scopedKey } from '@/lib/storage-scope'
 import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
@@ -216,7 +217,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         }
       }
 
-      const granted = grantedUsername(results)
+      // A name that only joined its vote is never the username; with none, the user goes on without one.
+      const granted = recordRegistration(results, user?.dpnsUsername, sessionStorage, scopedKey('yappr_skip_dpns'))
       if (granted) updateDPNSUsername(granted)
       if (results.some((r) => r.success)) {
         toast.success('Username registered successfully!')
@@ -241,6 +243,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setUsernameRegistered,
     setUsernameContested,
     updateDPNSUsername,
+    user?.dpnsUsername,
   ])
 
   const handleBackToEdit = useCallback(() => {
@@ -257,13 +260,9 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   }, [reset])
 
   const handleContinue = useCallback(() => {
-    // Only joined a vote: go on without a name, as Skip does, rather than back to username setup.
-    if (continuesWithoutName(user?.dpnsUsername, usernames)) {
-      sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
-    }
     onComplete?.()
     router.push('/profile/create')
-  }, [user?.dpnsUsername, usernames, onComplete, router])
+  }, [onComplete, router])
 
   return (
     <div className="space-y-6">

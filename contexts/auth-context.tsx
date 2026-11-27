@@ -2,6 +2,7 @@
 
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
+import { needsUsernameSetup } from '@/lib/dpns/username-session'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { useRouter } from 'next/navigation'
@@ -295,9 +296,7 @@ export function withAuth<P extends object>(
     const { user, isAuthRestoring } = useAuth()
     const router = useRouter()
 
-    const skipDPNS = typeof window !== 'undefined'
-      && sessionStorage.getItem(scopedKey('yappr_skip_dpns')) === 'true'
-    const needsDPNS = !options?.optional && !options?.allowWithoutDPNS && user && !user.dpnsUsername && !skipDPNS
+    const needsDPNS = needsUsernameSetup(user, options, typeof window !== 'undefined' ? sessionStorage : null, scopedKey('yappr_skip_dpns'))
 
     useEffect(() => {
       if (isAuthRestoring) return

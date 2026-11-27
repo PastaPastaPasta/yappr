@@ -50,23 +50,6 @@ export function contestNotPaidFor(error: unknown): boolean {
 }
 
 /**
- * The name a registration batch grants the user now: the first non-contested
- * success. A contested one has only joined its vote, so it never becomes the
- * session's username (nor replaces one the user owns); null leaves it as is.
- */
-export function grantedUsername(results: ReadonlyArray<{ label: string; success: boolean; isContested: boolean }>): string | null {
-  return results.find((result) => result.success && !result.isContested)?.label ?? null
-}
-
-/**
- * Whether continuing goes on without a username, as Skip does: the user has
- * none granted and a name of theirs only joined its vote here.
- */
-export function continuesWithoutName(currentUsername: string | null | undefined, entries: ReadonlyArray<{ registered?: boolean; isContested: boolean }>): boolean {
-  return !currentUsername && entries.some((entry) => entry.registered === true && entry.isContested)
-}
-
-/**
  * The most `label`'s domain may pay into its vote: the approved deposit, when
  * the deposit read now (`current`, null for a name that goes to no vote) is not
  * more than it. Throws {@link DepositChangedError} otherwise.
