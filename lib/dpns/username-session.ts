@@ -26,6 +26,13 @@ export function senderStillActive(sender: Sender, session: SessionLike): boolean
   return session.getState().user?.identityId === sender.identityId && session.sessionEpoch() === sender.epoch
 }
 
+/** `fn`, made to do nothing once the sending session has ended or been replaced. */
+export function whileSenderActive<A extends unknown[]>(sender: Sender, session: SessionLike, fn: (...args: A) => unknown): (...args: A) => void {
+  return (...args) => {
+    if (senderStillActive(sender, session)) fn(...args)
+  }
+}
+
 /**
  * Record a batch's outcome for the session that sent it: returns the name to
  * save as its username, or null. A user with no username whose batch only

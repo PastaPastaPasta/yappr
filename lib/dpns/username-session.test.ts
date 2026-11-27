@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { stubBrowserStorage } from '../test-storage'
 import { hasSkippedUsername } from '../username-skip'
-import { grantedUsername, recordRegistration, senderStillActive } from './username-session'
+import { grantedUsername, recordRegistration, senderStillActive, whileSenderActive } from './username-session'
 
 function session(identityId: string | null, epoch = 1) {
   const state = { identityId, epoch }
@@ -57,6 +57,22 @@ describe('senderStillActive', () => {
     expect(senderStillActive(alice, session(null, 2))).toBe(false)
     expect(senderStillActive(alice, session('bob', 3))).toBe(false)
     expect(senderStillActive(alice, session('alice', 3))).toBe(false)
+  })
+})
+
+describe('whileSenderActive', () => {
+  it('drops wizard updates once the sending session has ended or been replaced', () => {
+    const current = session('alice')
+    const calls: string[] = []
+    const setStep = whileSenderActive(alice, current, (step: string) => calls.push(step))
+    setStep('registering')
+    current.state.identityId = null
+    current.state.epoch = 2
+    setStep('complete')
+    current.state.identityId = 'bob'
+    current.state.epoch = 3
+    setStep('review')
+    expect(calls).toEqual(['registering'])
   })
 })
 

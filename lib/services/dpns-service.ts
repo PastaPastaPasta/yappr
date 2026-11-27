@@ -737,7 +737,8 @@ class DpnsService {
         const outcome = await this.registerUsername(reg.label, reg.identityId, reg.privateKeyWif, { contestFund: reg.contestFund ?? null, ...(reg.approvedPlan ? { approvedPlan: reg.approvedPlan } : {}) });
         results.push(outcome.state === 'pending'
           ? { label: reg.label, success: false, pending: true, isContested, error: outcome.stalled ? DPNS_STALLED_MESSAGE : DPNS_STILL_CONFIRMING_MESSAGE }
-          : { label: reg.label, success: true, isContested: outcome.state === 'joined-vote' || isContested });
+          // A contestable name this identity already owns (it won the vote) is registered, not waiting.
+          : { label: reg.label, success: true, isContested: outcome.state === 'joined-vote' });
       } catch (error) {
         results.push({ label: reg.label, success: false, isContested, error: describeDpnsRegistrationError(error), ...(depositChanged(error) ? { requote: true } : {}) });
       }
