@@ -35,3 +35,12 @@ test('recognises a domain refused for stating less than the fund to join', async
   assert.equal(contestNotPaidFor(new Error('Contest for document abc was not paid for, needs payment of 20000000000 credits')), true)
   assert.equal(contestNotPaidFor(new Error('Insufficient identity balance (code=40500)')), false)
 })
+
+test('recognises the SDK-shaped rejection by its numeric code, not its string form', async () => {
+  const { contestNotPaidFor } = await import('../lib/dpns/contest-deposit.ts')
+  const sdkError = { code: 40114, message: 'Contest for document abc was not paid for' }
+  assert.equal(String(sdkError), '[object Object]')
+  assert.equal(contestNotPaidFor(sdkError), true)
+  assert.equal(contestNotPaidFor({ code: 40500, message: 'Insufficient identity balance' }), false)
+  assert.equal(contestNotPaidFor({ message: 'state error 40114' }), true)
+})

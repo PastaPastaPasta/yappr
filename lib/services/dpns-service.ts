@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger';
+import { extractErrorMessage } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { SecurityLevel, KeyPurpose, signerService } from './signer-service';
 import { DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE } from '../constants';
@@ -703,7 +704,7 @@ class DpnsService {
           label: reg.label,
           success: false,
           isContested: false,
-          error: error instanceof Error ? error.message : 'Registration failed',
+          error: extractErrorMessage(error) || 'Registration failed',
           ...(error instanceof DepositChangedError || contestNotPaidFor(error) ? { requote: true } : {}),
         });
       }

@@ -17,6 +17,9 @@ interface DpnsRegistrationStore {
   setUsernameContested: (id: string, isContested: boolean) => void
   setUsernameRegistered: (id: string, success: boolean, error?: string, requote?: boolean) => void
   setUsernameDeposit: (id: string, deposit: bigint | null) => void
+  /** A name that registered while another waits for a new quote, shown as the user's once they move on. */
+  unpublishedUsername: string | null
+  setUnpublishedUsername: (label: string | null) => void
   setContestedAcknowledged: (acknowledged: boolean) => void
   setCurrentRegistrationIndex: (index: number) => void
   reset: () => void
@@ -39,6 +42,7 @@ const initialState = {
   usernames: [createInitialUsername()],
   contestedAcknowledged: false,
   currentRegistrationIndex: 0,
+  unpublishedUsername: null as string | null,
 }
 
 export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => ({
@@ -87,6 +91,8 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
           : u
       ),
     })),
+
+  setUnpublishedUsername: (label) => set({ unpublishedUsername: label }),
 
   setUsernameDeposit: (id, deposit) =>
     set((state) => ({

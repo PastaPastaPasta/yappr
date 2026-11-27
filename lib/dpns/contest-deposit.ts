@@ -36,15 +36,17 @@ export class DepositChangedError extends Error {
 }
 
 /** Shown on a contested name whose deposit could not be read; checking again retries it. */
-export const DEPOSIT_UNREADABLE_MESSAGE = 'Could not read the vote deposit for this name. Try again.'
+export const DEPOSIT_UNREADABLE_MESSAGE = 'Could not read the vote deposit for this name. Go back and check it again.'
 
 /**
  * Whether Platform refused a contested domain for stating less than the fund
  * to join (40114): the deposit rose after the preorder, and was not paid.
  */
 export function contestNotPaidFor(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return /40114|DocumentContestNotPaidFor|contest for document .* was not paid for/i.test(message)
+  const fields = typeof error === 'object' && error !== null ? (error as { code?: unknown; message?: unknown }) : {}
+  if (fields.code === 40114) return true
+  const message = typeof fields.message === 'string' ? fields.message : String(error)
+  return /\b40114\b|DocumentContestNotPaidFor|contest for document .* was not paid for/i.test(message)
 }
 
 /**
