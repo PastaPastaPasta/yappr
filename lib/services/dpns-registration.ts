@@ -210,6 +210,11 @@ const DPNS_CONTRACT_FETCH_ATTEMPTS = 3
  * proves the contract it replaced, whose preorder the domain cannot reveal.
  */
 export async function fetchCurrentDpnsContract(sdk: ConnectedSdk) {
+  // Learn the network's version first (rs-sdk refreshes it too): a proved answer teaches the SDK
+  // a newer one, so a session still at 14 doesn't take a node behind the upgrade at its word.
+  await sdk.protocol.versionUpgradeStateWithProof().catch((error: unknown) => {
+    logger.warn('DPNS: could not refresh the protocol version:', extractErrorMessage(error))
+  })
   let last: [number, number] | null = null
   for (let attempt = 0; attempt < DPNS_CONTRACT_FETCH_ATTEMPTS; attempt++) {
     const parsedUnder = sdk.version()
@@ -241,11 +246,14 @@ export function admissionReserve(layout: DpnsPreorderLayout, domainFee: bigint):
  * owner's preorder on chain and the journal; before it from the journal.
  */
 async function plannedSteps(sdk: ConnectedSdk, layout: DpnsPreorderLayout, record: DpnsRegistrationRecord | null, ownerId: string, normalizedLabel: string): Promise<DpnsRegistrationPlan> {
-  if (layout.scheme === 'salted') return { preorder: !record?.preorderLanded, deletePreorder: false }
+  // A preorder this browser sent and has no verdict for is continued, not paid again; should it
+  // prove never recorded, the registration asks for a new quote before replacing it.
+  const sentUnsettled = record?.preorder !== undefined && !record.preorderLanded
+  if (layout.scheme === 'salted') return { preorder: !record?.preorderLanded && !sentUnsettled, deletePreorder: false, domain: true }
   const pending = await pendingPreorder(sdk, layout.ttlSeconds, ownerId, normalizedLabel)
-  if (pending.state === 'revealable') return { preorder: false, deletePreorder: false }
-  if (pending.state === 'expiring') return { preorder: true, deletePreorder: true }
-  return { preorder: !(record?.preorderLanded && preorderStillLives(record.preorderLandedAt, layout.ttlSeconds)), deletePreorder: false }
+  if (pending.state === 'revealable' || sentUnsettled) return { preorder: false, deletePreorder: false, domain: true }
+  if (pending.state === 'expiring') return { preorder: true, deletePreorder: true, domain: true }
+  return { preorder: !(record?.preorderLanded && preorderStillLives(record.preorderLandedAt, layout.ttlSeconds)), deletePreorder: false, domain: true }
 }
 
 type DpnsContract = NonNullable<Awaited<ReturnType<ConnectedSdk['contracts']['fetch']>>>
@@ -294,7 +302,7 @@ export async function readRegistrationFees(sdk: ConnectedSdk, contract: DpnsCont
  */
 export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: string, normalizedLabel: string): Promise<DpnsNameQuote> {
   const record = loadRegistration(ownerId, normalizedLabel)
-  if (record?.domain) return { label, contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false } }
+  if (record?.domain) return { label, contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false, domain: false } }
   const { contract, layout } = await readDpnsContract(sdk)
   const [contestFund, fees, plan] = await Promise.all([
     readContestFund(sdk, ownerId, label, normalizedLabel, layout),
@@ -559,7 +567,8 @@ async function registerLocked(input: RegisterDpnsNameInput): Promise<DpnsRegistr
   if ('state' in prepared) return prepared
   record = prepared
 
-  // The domain: the deposit read right before signing must be the approved one.
+  // The domain: one the review counted, and the deposit read right before signing the approved one.
+  requirePlanned(input, 'domain')
   const contestFund = await approvedFund(sdk, input, layout)
   await requireBalance(sdk, ownerId, creditsNeeded({ contestFund, fees: fees.domain, reserve: admissionReserve(layout, fees.domain) }))
   const domain = await sendStep(record, 'domain', domainDocumentData(record.label, normalizedLabel, ownerId, layout, record.salt), {
@@ -639,8 +648,9 @@ function requirePlanned(input: RegisterDpnsNameInput, step: keyof DpnsRegistrati
  * in the review, the deposit must be the approved one, and the balance must
  * pay them, the domain, and what the domain must find to be admitted.
  */
-async function requirePreorderFunds(sdk: ConnectedSdk, input: RegisterDpnsNameInput, layout: DpnsPreorderLayout, fees: Fees, deletePreorder = false): Promise<void> {
-  requirePlanned(input, 'preorder')
+async function requirePreorderFunds(sdk: ConnectedSdk, input: RegisterDpnsNameInput, layout: DpnsPreorderLayout, fees: Fees, deletePreorder = false, replacing = false): Promise<void> {
+  // A replacement at a stalled preorder's nonce stands in for that one: at most one executes.
+  if (!replacing) requirePlanned(input, 'preorder')
   if (deletePreorder) requirePlanned(input, 'deletePreorder')
   const contestFund = await approvedFund(sdk, input, layout)
   const stepFees = fees.preorder + fees.domain + (deletePreorder ? PREORDER_DELETE_FEE : 0n)
@@ -673,7 +683,7 @@ async function prepareSaltedPreorder(sdk: ConnectedSdk, input: RegisterDpnsNameI
       return saveRegistration(record) ? record : { state: 'pending', step: 'preorder' }
     }
   }
-  await requirePreorderFunds(sdk, input, layout, fees)
+  await requirePreorderFunds(sdk, input, layout, fees, false, settled.replacesNonce !== undefined)
   return sendPreorder(input, record ?? await startRecord(input), layout, settled.replacesNonce)
 }
 
@@ -711,7 +721,7 @@ async function prepareNamePreorder(
   // pay another, which the network would refuse while it stands. A domain refused for want of
   // it reads the chain again next time.
   if (pending.state === 'none' && record?.preorderLanded && (settled.landedNow || preorderStillLives(record.preorderLandedAt, ttlSeconds))) return record
-  await requirePreorderFunds(sdk, input, layout, fees, pending.state === 'expiring')
+  await requirePreorderFunds(sdk, input, layout, fees, pending.state === 'expiring', settled.replacesNonce !== undefined)
   const kept = record ?? await startRecord(input)
   if (pending.state === 'expiring') {
     const deleted = await stateTransitionService.deleteDocument(DPNS_CONTRACT_ID, 'preorder', pending.documentId, input.ownerId, undefined, { signingKey: input.signingKey })

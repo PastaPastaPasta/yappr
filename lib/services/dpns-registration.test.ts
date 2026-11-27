@@ -58,6 +58,7 @@ vi.mock('./evo-sdk-service', () => ({
         return next === undefined ? (m.fund ?? undefined) : { indexName: 'parentNameAndLabel', credits: next }
       },
     },
+    protocol: { versionUpgradeStateWithProof: async () => ({}) },
     version: () => m.sdkVersion ?? (m.schemas === v3Schemas ? 15 : 14),
     contracts: {
       fetchWithProof: async () => {
@@ -147,7 +148,7 @@ function creates(...answers: Array<'confirmed' | 'unconfirmed' | { refused: stri
   }
 }
 
-type Plan = { preorder: boolean; deletePreorder: boolean }
+type Plan = { preorder: boolean; deletePreorder: boolean; domain: boolean }
 const register = (input: { contestFund?: bigint | null; owner?: string | null; durable?: () => Promise<void>; plan?: Plan } = {}) => registerDpnsName({
   label: 'Alice',
   normalizedLabel: 'a11ce',
@@ -410,7 +411,7 @@ describe('continuing a registration (review: must-fix 2 and the lows)', () => {
     m.fund = { indexName: 'parentNameAndLabel', credits: DEPOSIT }
     creates('confirmed', 'unconfirmed')
     await register({ contestFund: DEPOSIT })
-    expect(await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).toEqual({ label: 'Alice', contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false } })
+    expect(await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).toEqual({ label: 'Alice', contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false, domain: false } })
   })
 
   it('remembers that the domain it sent is contested, and settles it by its vote', async () => {
@@ -616,19 +617,19 @@ describe('protocol 15 review findings', () => {
   })
 
   it('sends no preorder the review did not show, and asks for a new quote', async () => {
-    const error = await register({ plan: { preorder: false, deletePreorder: false } }).catch((e: unknown) => e)
+    const error = await register({ plan: { preorder: false, deletePreorder: false, domain: true } }).catch((e: unknown) => e)
     expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
     expect(m.createDocument).not.toHaveBeenCalled()
   })
 
   it('deletes an expiring preorder only when the review showed the delete', async () => {
     m.v3Preorder = { createdAt: m.nowMs - 3_600_000n + 30_000n }
-    const error = await register({ plan: { preorder: true, deletePreorder: false } }).catch((e: unknown) => e)
+    const error = await register({ plan: { preorder: true, deletePreorder: false, domain: true } }).catch((e: unknown) => e)
     expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
     expect(m.deleteDocument).not.toHaveBeenCalled()
 
     const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
-    expect(quote.plan).toEqual({ preorder: true, deletePreorder: true })
+    expect(quote.plan).toEqual({ preorder: true, deletePreorder: true, domain: true })
     m.deleteDocument.mockResolvedValueOnce({ success: true })
     creates('confirmed', 'confirmed')
     expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
@@ -637,7 +638,7 @@ describe('protocol 15 review findings', () => {
   it('quotes the same steps the registration takes', async () => {
     m.v3Preorder = { createdAt: m.nowMs - 60_000n }
     const reuse = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
-    expect(reuse.plan).toEqual({ preorder: false, deletePreorder: false })
+    expect(reuse.plan).toEqual({ preorder: false, deletePreorder: false, domain: true })
     creates('confirmed')
     expect(await register({ plan: reuse.plan })).toEqual({ state: 'registered' })
     expect(stepsSent()).toEqual(['domain'])
@@ -661,6 +662,42 @@ describe('protocol 15 review findings', () => {
     m.createDocument.mockReset()
     creates('confirmed', 'confirmed')
     expect(await register()).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('second review: continuing without new charges', () => {
+  it('quotes a protocol-14 preorder sent without a verdict as continued, not paid again', async () => {
+    creates('unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote.plan).toEqual({ preorder: false, deletePreorder: false, domain: true })
+    // It landed: the domain goes out on that plan, nothing refused.
+    m.settleCreate.mockResolvedValueOnce('landed')
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+
+  it('asks for a new quote before replacing a continued preorder proved never recorded', async () => {
+    creates('unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    m.settleCreate.mockResolvedValueOnce('not-recorded')
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(m.createDocument).toHaveBeenCalledTimes(1)
+    expect((await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')).plan?.preorder).toBe(true)
+  })
+
+  it('signs no new domain after a zero-fee review of a sent one, and asks for a new quote', async () => {
+    creates('confirmed', 'unconfirmed')
+    await register()
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(quote).toMatchObject({ fees: 0n, plan: { domain: false } })
+    m.settleCreate.mockResolvedValueOnce('not-recorded')
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
     expect(stepsSent()).toEqual(['preorder', 'domain'])
   })
 })

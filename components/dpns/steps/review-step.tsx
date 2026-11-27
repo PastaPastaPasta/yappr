@@ -86,7 +86,7 @@ function CostSummary({ quote, balance }: { quote: DpnsQuote; balance: bigint }):
         <>
           <CostRow label="Balance needed to start" value={formatDpnsCost(quote.needed)} />
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            The network only accepts a name when your balance holds this much. Only the total above is charged.
+            Yappr checks for this balance before starting. The extra balance is not a fee; the total above includes estimated network fees.
           </p>
         </>
       )}
@@ -187,6 +187,9 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                       </div>
                       {deposit !== null && (
                         <div className="text-xs text-orange-600 mt-1">{formatDpnsCost(deposit)} deposit</div>
+                      )}
+                      {entry.status === 'invalid' && entry.validationError && (
+                        <div className="text-xs text-red-600 mt-1">{entry.validationError}</div>
                       )}
                     </td>
                   </tr>

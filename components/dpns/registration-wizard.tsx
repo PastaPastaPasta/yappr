@@ -154,18 +154,23 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
 
-  // What a name costs changed between the review and the signing: check every name that didn't
-  // register again (a pending one continues from what was sent), with a new quote.
+  // What a name costs changed between the review and the signing: quote those names again. A name
+  // still being confirmed is carried along as it is (continuing it settles what was sent); one that
+  // failed for good stays listed with its reason and is not offered again.
   const handleRequote = useCallback(async () => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
-    const entries = usernames
-      .filter((u) => u.registered === false)
+    const requoted = usernames
+      .filter((u) => u.registered === false && u.requote)
       .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
-    useDpnsRegistration.setState({ usernames: entries, contestedAcknowledged: false })
-    await checkNames(entries)
+    const carried = usernames.filter((u) => u.registered === false && u.pending)
+    const failed = usernames
+      .filter((u) => u.registered === false && !u.pending && !u.requote)
+      .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'invalid', isContested: u.isContested, validationError: u.registrationError }))
+    useDpnsRegistration.setState({ usernames: [...requoted, ...carried, ...failed], contestedAcknowledged: false })
+    await checkNames(requoted)
   }, [isSdkReady, usernames, checkNames])
 
   /**
@@ -228,7 +233,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
           identityId,
           privateKeyWif: privateKey,
           contestFund: reviewed?.contestFund?.credits ?? null,
-          approvedPlan: reviewed?.plan ?? { preorder: false, deletePreorder: false },
+          approvedPlan: reviewed?.plan ?? { preorder: false, deletePreorder: false, domain: false },
         }
       })
 

@@ -35,10 +35,11 @@ export const PREORDER_DELETE_FEE = 20_000_000n
  */
 export const DOMAIN_ADMISSION_FLOOR = 300_000_000n
 
-/** The paid steps besides the domain a quote counted, and so the only ones the registration may send. */
+/** The paid steps a quote counted, and so the only ones the registration may sign anew. */
 export interface DpnsRegistrationPlan {
   preorder: boolean
   deletePreorder: boolean
+  domain: boolean
 }
 
 /** What a contested name pays into its vote, on the index it contests. */
