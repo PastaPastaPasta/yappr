@@ -57,3 +57,15 @@ test('only a granted name becomes the session username; a contender never replac
   assert.equal(grantedUsername([{ label: 'abc', success: true, isContested: true }, { label: 'usable-name-28', success: true, isContested: false }]), 'usable-name-28')
   assert.equal(grantedUsername([{ label: 'failed-name-29', success: false, isContested: false }]), null)
 })
+
+test('continuing after a vote-only result goes on without a name, keeping none', async () => {
+  const { continuesWithoutName, grantedUsername } = await import('../lib/dpns/contest-deposit.ts')
+  const results = [{ label: 'abc', success: true, isContested: true }]
+  // The contender is never saved as the session username…
+  assert.equal(grantedUsername(results), null)
+  // …and Continue takes the skip path instead of sending the user back to username setup.
+  assert.equal(continuesWithoutName(null, [{ registered: true, isContested: true }]), true)
+  assert.equal(continuesWithoutName('owned-name-27', [{ registered: true, isContested: true }]), false)
+  assert.equal(continuesWithoutName(null, [{ registered: true, isContested: false }]), false)
+  assert.equal(continuesWithoutName(null, [{ registered: false, isContested: true }]), false)
+})

@@ -8,7 +8,8 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { UsernameEntry } from '@/lib/types'
-import { DEPOSIT_UNREADABLE_MESSAGE, grantedUsername } from '@/lib/dpns/contest-deposit'
+import { DEPOSIT_UNREADABLE_MESSAGE, continuesWithoutName, grantedUsername } from '@/lib/dpns/contest-deposit'
+import { scopedKey } from '@/lib/storage-scope'
 import { identityService, IdentityPublicKey } from '@/lib/services/identity-service'
 import { getPrivateKey } from '@/lib/secure-storage'
 import { findMatchingKeyIndex, getSecurityLevelName, IdentityPublicKeyInfo } from '@/lib/crypto/keys'
@@ -256,9 +257,13 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   }, [reset])
 
   const handleContinue = useCallback(() => {
+    // Only joined a vote: go on without a name, as Skip does, rather than back to username setup.
+    if (continuesWithoutName(user?.dpnsUsername, usernames)) {
+      sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
+    }
     onComplete?.()
     router.push('/profile/create')
-  }, [onComplete, router])
+  }, [user?.dpnsUsername, usernames, onComplete, router])
 
   return (
     <div className="space-y-6">

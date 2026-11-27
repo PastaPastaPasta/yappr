@@ -59,6 +59,14 @@ export function grantedUsername(results: ReadonlyArray<{ label: string; success:
 }
 
 /**
+ * Whether continuing goes on without a username, as Skip does: the user has
+ * none granted and a name of theirs only joined its vote here.
+ */
+export function continuesWithoutName(currentUsername: string | null | undefined, entries: ReadonlyArray<{ registered?: boolean; isContested: boolean }>): boolean {
+  return !currentUsername && entries.some((entry) => entry.registered === true && entry.isContested)
+}
+
+/**
  * The most `label`'s domain may pay into its vote: the approved deposit, when
  * the deposit read now (`current`, null for a name that goes to no vote) is not
  * more than it. Throws {@link DepositChangedError} otherwise.
