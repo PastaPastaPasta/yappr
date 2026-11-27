@@ -63,7 +63,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setUsernameContested,
     setUsernameRegistered,
     setUsernameDeposit,
-    setUnpublishedUsername,
     setCurrentRegistrationIndex,
     reset,
   } = useDpnsRegistration()
@@ -217,15 +216,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       }
 
       const firstSuccess = results.find((r) => r.success)
-      const registered = useDpnsRegistration.getState().unpublishedUsername ?? firstSuccess?.label ?? null
-      if (registered && results.some((r) => r.requote)) {
-        // Showing it now would take the user off /dpns/register before they review the new deposit.
-        setUnpublishedUsername(registered)
-      } else if (registered) {
-        setUnpublishedUsername(null)
-        updateDPNSUsername(registered)
-      }
       if (firstSuccess) {
+        updateDPNSUsername(firstSuccess.label)
         toast.success('Username registered successfully!')
       }
 
@@ -247,7 +239,6 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setCurrentRegistrationIndex,
     setUsernameRegistered,
     setUsernameContested,
-    setUnpublishedUsername,
     updateDPNSUsername,
   ])
 
@@ -260,23 +251,14 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     setStep('username-entry')
   }, [usernames, updateUsernameStatus, setStep])
 
-  const publishRegistered = useCallback(() => {
-    const registered = useDpnsRegistration.getState().unpublishedUsername
-    if (!registered) return
-    setUnpublishedUsername(null)
-    updateDPNSUsername(registered)
-  }, [setUnpublishedUsername, updateDPNSUsername])
-
   const handleRegisterMore = useCallback(() => {
-    publishRegistered()
     reset()
-  }, [publishRegistered, reset])
+  }, [reset])
 
   const handleContinue = useCallback(() => {
-    publishRegistered()
     onComplete?.()
     router.push('/profile/create')
-  }, [publishRegistered, onComplete, router])
+  }, [onComplete, router])
 
   return (
     <div className="space-y-6">

@@ -12,6 +12,12 @@ export default function DPNSRegisterPage() {
   const { user, logout } = useAuth()
   const openLoginModal = useLoginModal((s) => s.open)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  // Whether the user arrived without a username: one registered here doesn't end the visit.
+  const [onboarding, setOnboarding] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (user && onboarding === null) setOnboarding(!user.dpnsUsername)
+  }, [user, onboarding])
 
   useEffect(() => {
     // Only open modal if user is authenticated
@@ -56,8 +62,8 @@ export default function DPNSRegisterPage() {
     )
   }
 
-  // If user already has a DPNS username, redirect
-  if (user.dpnsUsername) {
+  // If user already had a DPNS username when they arrived, redirect
+  if (user.dpnsUsername && onboarding !== true) {
     router.push('/feed')
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-neutral-900 flex items-center justify-center">

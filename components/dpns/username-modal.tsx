@@ -20,7 +20,7 @@ interface UsernameModalProps {
 
 export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUsernames }: UsernameModalProps) {
   const router = useRouter()
-  const { user, updateDPNSUsername } = useAuth()
+  const { user } = useAuth()
   const { reset } = useDpnsRegistration()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
@@ -35,22 +35,12 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
 
   const handleSkip = () => {
     sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
-    close()
+    onClose()
     router.push('/profile/create')
   }
 
-  // A name registered while another waited for a new quote becomes the user's once the modal closes.
-  const close = () => {
-    const { unpublishedUsername, setUnpublishedUsername } = useDpnsRegistration.getState()
-    if (unpublishedUsername) {
-      setUnpublishedUsername(null)
-      updateDPNSUsername(unpublishedUsername)
-    }
-    onClose()
-  }
-
   const handleComplete = () => {
-    close()
+    onClose()
   }
 
   return (
@@ -62,7 +52,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={close}
+            onClick={onClose}
             className={`fixed inset-0 bg-black/50 z-50 ${potatoMode ? '' : 'backdrop-blur-sm'}`}
           />
 
@@ -78,7 +68,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
             <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl p-8 max-w-md w-full relative max-h-[90vh] overflow-y-auto">
               {/* Close button */}
               <button
-                onClick={close}
+                onClick={onClose}
                 className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
               >
                 <X className="w-5 h-5" />
