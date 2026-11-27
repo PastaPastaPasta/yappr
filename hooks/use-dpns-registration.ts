@@ -15,7 +15,8 @@ interface DpnsRegistrationStore {
   updateUsernameLabel: (id: string, label: string) => void
   updateUsernameStatus: (id: string, status: UsernameStatus, validationError?: string) => void
   setUsernameContested: (id: string, isContested: boolean) => void
-  setUsernameRegistered: (id: string, success: boolean, error?: string) => void
+  setUsernameRegistered: (id: string, success: boolean, error?: string, requote?: boolean) => void
+  setUsernameDeposit: (id: string, deposit: bigint | null) => void
   setContestedAcknowledged: (acknowledged: boolean) => void
   setCurrentRegistrationIndex: (index: number) => void
   reset: () => void
@@ -78,12 +79,19 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
       ),
     })),
 
-  setUsernameRegistered: (id, success, error) =>
+  setUsernameRegistered: (id, success, error, requote) =>
     set((state) => ({
       usernames: state.usernames.map((u) =>
         u.id === id
-          ? { ...u, registered: success, registrationError: error }
+          ? { ...u, registered: success, registrationError: error, requote: requote === true }
           : u
+      ),
+    })),
+
+  setUsernameDeposit: (id, deposit) =>
+    set((state) => ({
+      usernames: state.usernames.map((u) =>
+        u.id === id ? { ...u, deposit } : u
       ),
     })),
 

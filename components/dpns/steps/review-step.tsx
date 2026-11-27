@@ -5,6 +5,7 @@ import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { CheckCircle2, AlertTriangle, XCircle, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { UsernameStatus } from '@/lib/types'
+import { DEPOSIT_UNREADABLE_MESSAGE, formatDeposit } from '@/lib/dpns/contest-deposit'
 
 interface ReviewStepProps {
   onBack: () => void
@@ -103,7 +104,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                     <div className="flex items-center gap-2">
                       {getStatusIcon(entry.status)}
                       <span className={cn('text-sm', getStatusTextClass(entry.status))}>
-                        {getStatusText(entry.status)}
+                        {entry.validationError === DEPOSIT_UNREADABLE_MESSAGE ? 'Deposit not read' : getStatusText(entry.status)}
                       </span>
                       {entry.status === 'contested' && (
                         <span
@@ -114,6 +115,16 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                         </span>
                       )}
                     </div>
+                    {entry.status === 'invalid' && entry.validationError && (
+                      <div className="text-xs text-red-600 mt-1" data-testid="dpns-row-error">
+                        {entry.validationError}
+                      </div>
+                    )}
+                    {entry.status === 'contested' && typeof entry.deposit === 'bigint' && (
+                      <div className="text-xs text-orange-600 mt-1" data-testid="dpns-deposit">
+                        {formatDeposit(entry.deposit)} vote deposit
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -156,9 +167,19 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
         </div>
       )}
 
+      {contestedUsernames.some((u) => typeof u.deposit === 'bigint') && (
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Each contested name pays the vote deposit shown, on top of the network fees. The deposit pays for the
+          vote and isn&apos;t refunded, even if the vote picks someone else. No more than the deposit shown is ever
+          paid: if it goes up, the deposit isn&apos;t charged and you can review the new amount.
+        </p>
+      )}
+
       {availableUsernames.length === 0 && (
         <div className="text-center py-4 text-gray-600 dark:text-gray-400">
-          No usernames available to register. Please go back and try different usernames.
+          {usernames.some((u) => u.validationError === DEPOSIT_UNREADABLE_MESSAGE)
+            ? 'A vote deposit could not be read. Go back and check the same names again.'
+            : 'No usernames available to register. Please go back and try different usernames.'}
         </div>
       )}
 

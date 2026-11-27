@@ -8,9 +8,11 @@ import { cn } from '@/lib/utils'
 interface CompleteStepProps {
   onRegisterMore: () => void
   onContinue: () => void
+  /** Quote again the names whose vote deposit rose since the review. */
+  onRequote: () => void
 }
 
-export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) {
+export function CompleteStep({ onRegisterMore, onContinue, onRequote }: CompleteStepProps) {
   const { usernames } = useDpnsRegistration()
 
   const registeredUsernames = usernames.filter((u) => u.registered === true)
@@ -18,6 +20,7 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
     (u) => u.registered === false && u.registrationError
   )
   const contestedRegistered = registeredUsernames.filter((u) => u.isContested)
+  const requoteUsernames = failedUsernames.filter((u) => u.requote)
 
   const getStatusIcon = (entry: typeof usernames[0]) => {
     if (entry.registered && entry.isContested) {
@@ -103,6 +106,12 @@ export function CompleteStep({ onRegisterMore, onContinue }: CompleteStepProps) 
           </tbody>
         </table>
       </div>
+
+      {requoteUsernames.length > 0 && (
+        <Button onClick={onRequote} className="w-full" data-testid="dpns-requote">
+          Review the new deposit
+        </Button>
+      )}
 
       <div className="flex gap-3">
         <Button variant="outline" onClick={onRegisterMore} className="flex-1">
