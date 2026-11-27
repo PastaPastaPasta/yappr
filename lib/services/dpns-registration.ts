@@ -309,11 +309,14 @@ export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: s
     readRegistrationFees(sdk, contract, label),
     plannedSteps(sdk, layout, record, ownerId, normalizedLabel),
   ])
+  // A v3 preorder sent without a verdict may still land, and be charged, when it is continued:
+  // the balance must hold its fee too, though the quote doesn't count it as a cost.
+  const continued = layout.scheme === 'nameHash' && record?.preorder !== undefined && !record.preorderLanded
   return {
     label,
     contestFund,
     fees: (plan.preorder ? fees.preorder : 0n) + (plan.deletePreorder ? PREORDER_DELETE_FEE : 0n) + fees.domain,
-    reserve: admissionReserve(layout, fees.domain),
+    reserve: admissionReserve(layout, fees.domain) + (continued ? fees.preorder : 0n),
     plan,
   }
 }
@@ -652,6 +655,11 @@ async function requirePreorderFunds(sdk: ConnectedSdk, input: RegisterDpnsNameIn
   // A replacement at a stalled preorder's nonce stands in for that one: at most one executes.
   if (!replacing) requirePlanned(input, 'preorder')
   if (deletePreorder) requirePlanned(input, 'deletePreorder')
+  await requirePreorderBalance(sdk, input, layout, fees, deletePreorder)
+}
+
+/** The deposit must be the approved one, and the balance must pay a preorder, its domain and the domain's admission. */
+async function requirePreorderBalance(sdk: ConnectedSdk, input: RegisterDpnsNameInput, layout: DpnsPreorderLayout, fees: Fees, deletePreorder = false): Promise<void> {
   const contestFund = await approvedFund(sdk, input, layout)
   const stepFees = fees.preorder + fees.domain + (deletePreorder ? PREORDER_DELETE_FEE : 0n)
   await requireBalance(sdk, input.ownerId, creditsNeeded({ contestFund, fees: stepFees, reserve: admissionReserve(layout, fees.domain) }))
@@ -702,6 +710,9 @@ async function prepareNamePreorder(
   ttlSeconds: number | null
 ): Promise<Prepared> {
   const layout: DpnsPreorderLayout = { scheme: 'nameHash', ttlSeconds }
+  // Settling may deliver a sent preorder for the first time, and charge it: only when the balance
+  // also holds the domain and what it must find to be admitted.
+  if (record?.preorder && !record.preorderLanded) await requirePreorderBalance(sdk, input, layout, fees)
   const settled = record ? await settlePreorder(record) : {}
   if (settled === null) return { state: 'pending', step: 'preorder' }
   let pending: Awaited<ReturnType<typeof pendingPreorder>>

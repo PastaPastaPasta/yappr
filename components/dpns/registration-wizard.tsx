@@ -168,7 +168,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     const carried = usernames.filter((u) => u.registered === false && u.pending)
     const failed = usernames
       .filter((u) => u.registered === false && !u.pending && !u.requote)
-      .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'invalid', isContested: u.isContested, validationError: u.registrationError }))
+      .map((u): UsernameEntry => ({ ...u, status: 'invalid', validationError: u.registrationError }))
     useDpnsRegistration.setState({ usernames: [...requoted, ...carried, ...failed], contestedAcknowledged: false })
     await checkNames(requoted)
   }, [isSdkReady, usernames, checkNames])
@@ -353,7 +353,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       {step === 'checking' && <CheckingStep />}
 
       {step === 'review' && (
-        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} hasExistingUsernames={hasExistingUsernames} />
+        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} onContinuePending={handleCheckAgain} continuingPending={checkingAgain} hasExistingUsernames={hasExistingUsernames} />
       )}
 
       {step === 'registering' && <RegisteringStep />}

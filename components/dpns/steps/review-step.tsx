@@ -10,6 +10,9 @@ import type { UsernameEntry, UsernameStatus } from '@/lib/types'
 interface ReviewStepProps {
   onBack: () => void
   onRegister: () => void
+  /** Continue the names still being confirmed, whatever the review allows to register. */
+  onContinuePending: () => void
+  continuingPending: boolean
   hasExistingUsernames?: boolean
 }
 
@@ -122,7 +125,7 @@ function ContestedExplanation({ quote, entries }: { quote: DpnsQuote; entries: U
   )
 }
 
-export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewStepProps): React.ReactNode {
+export function ReviewStep({ onBack, onRegister, onContinuePending, continuingPending, hasExistingUsernames }: ReviewStepProps): React.ReactNode {
   const {
     usernames,
     contestedAcknowledged,
@@ -250,6 +253,12 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
         <div className="text-center py-4 text-gray-600 dark:text-gray-400">
           No usernames available to register. Please go back and try different usernames.
         </div>
+      )}
+
+      {usernames.some((u) => u.pending) && (
+        <Button variant="outline" onClick={onContinuePending} disabled={continuingPending} className="w-full" data-testid="dpns-review-check-again">
+          {continuingPending ? 'Checking…' : 'Check and continue registering'}
+        </Button>
       )}
 
       <div className="flex gap-3">

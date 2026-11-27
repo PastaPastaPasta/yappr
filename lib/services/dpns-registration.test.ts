@@ -91,7 +91,7 @@ vi.mock('@/lib/document-id', () => ({ identityContractNonceConsumed: (current: b
 vi.mock('@dashevo/wasm-sdk', () => ({ PlatformVersion: class { constructor(readonly version: number) {} } }))
 
 const { registerDpnsName, quoteDpnsName, DpnsNotSentError, preorderRevealable } = await import('./dpns-registration')
-const { RegistrationPlanChangedError, DOMAIN_ADMISSION_FLOOR, PREORDER_DELETE_FEE } = await import('@/lib/dpns/registration-quote')
+const { RegistrationPlanChangedError, DOMAIN_ADMISSION_FLOOR, PREORDER_DELETE_FEE, creditsNeeded } = await import('@/lib/dpns/registration-quote')
 const { getEvoSdk } = await import('./evo-sdk-service')
 const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils')
 const { ContestFundChangedError, BalanceTooLowError } = await import('@/lib/dpns/registration-quote')
@@ -698,6 +698,34 @@ describe('second review: continuing without new charges', () => {
     m.settleCreate.mockResolvedValueOnce('not-recorded')
     const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
     expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(RegistrationPlanChangedError)
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('round 4: a continued v3 preorder and the admission floor', () => {
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('settles no sent preorder for the first time unless the balance holds the floor', async () => {
+    creates('unconfirmed')
+    expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    // Continued, so not counted as a cost, but its fee stays in the balance needed.
+    expect(quote.plan?.preorder).toBe(false)
+    expect(creditsNeeded(quote)).toBeGreaterThan(DOMAIN_ADMISSION_FLOOR)
+
+    m.balance = DOMAIN_ADMISSION_FLOOR - 1n
+    const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
+    expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(BalanceTooLowError)
+    expect(m.settleCreate).not.toHaveBeenCalled()
+    expect(m.createDocument).toHaveBeenCalledTimes(1)
+
+    // With the floor covered it settles: the preorder lands for the first time and is revealed.
+    m.balance = 10n ** 12n
+    m.settleCreate.mockResolvedValueOnce('landed')
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
     expect(stepsSent()).toEqual(['preorder', 'domain'])
   })
 })
