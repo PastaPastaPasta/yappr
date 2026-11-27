@@ -95,10 +95,12 @@ export function loginPageDestination(next: string | null | undefined, carried?: 
 
 /**
  * Where the DPNS wizard's Continue goes: back to `next` only when the user now
- * has a username. After a failed registration they go to /feed instead.
+ * has a username or goes on without one (a skip, or a name waiting for its
+ * vote). After a failed registration, with no skip on record, they go to
+ * /feed instead.
  */
-export function afterRegistrationRoute(hasUsername: boolean, next?: string | null): string {
-  return hasUsername ? returnToOrDefault(next) : DEFAULT_RETURN_TO
+export function afterRegistrationRoute(goesOn: boolean, next?: string | null): string {
+  return goesOn ? returnToOrDefault(next) : DEFAULT_RETURN_TO
 }
 
 /**

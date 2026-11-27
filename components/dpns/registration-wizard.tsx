@@ -24,6 +24,8 @@ import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
 import { afterRegistrationRoute, currentReturnToParam, onUsernameDetour } from '@/lib/auth/return-to'
+import { recordRegistration, senderStillActive } from '@/lib/dpns/username-session'
+import { hasSkippedUsername } from '@/lib/username-skip'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -33,7 +35,7 @@ interface DpnsRegistrationWizardProps {
 
 export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
   const router = useRouter()
-  const { user, updateDPNSUsername } = useAuth()
+  const { user, controller, updateDPNSUsername } = useAuth()
   const { isReady: isSdkReady } = useSdk()
   const {
     step,
@@ -188,6 +190,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       toast.error('Please sign in again.')
       return
     }
+    const sender = { identityId, epoch: controller.sessionEpoch(), username: user?.dpnsUsername }
     if (quote.status !== 'ready') {
       toast.error('The cost of registering could not be read. Check the names again.')
       setStep('review')
@@ -242,6 +245,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         (index) => { if (showProgress) setCurrentRegistrationIndex(index) },
         needed
       )
+      // Signed out or switched accounts meanwhile: the wizard now belongs to that session.
+      if (!senderStillActive(sender, controller)) return
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i]
@@ -252,10 +257,13 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         }
       }
 
-      const firstSuccess = results.find((r) => r.success)
-      if (firstSuccess) {
-        updateDPNSUsername(firstSuccess.label)
+      // A name that only joined its vote is never the username; with none, the user goes on without one.
+      const granted = recordRegistration(results, sender)
+      if (granted) {
+        updateDPNSUsername(granted)
         toast.success('Username registered successfully!')
+      } else if (results.some((r) => r.success)) {
+        toast.success('Your name is waiting for the community vote.')
       }
 
       setStep('complete')
@@ -273,6 +281,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     }
   }, [
     identityId,
+    controller,
+    user?.dpnsUsername,
     quote,
     setStep,
     setCurrentRegistrationIndex,
@@ -322,11 +332,14 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   }, [reset])
 
   const handleContinue = useCallback(() => {
-    const hasUsername = Boolean(user?.dpnsUsername) || usernames.some((u) => u.registered === true)
+    // A name waiting for its vote is not a username yet: after one, Continue goes on as Skip does.
+    const goesOn = Boolean(user?.dpnsUsername)
+      || usernames.some((u) => u.registered === true && !u.isContested)
+      || (identityId !== undefined && hasSkippedUsername(identityId))
     onComplete?.()
     // Only the username detour navigates; over any other page (or /login) the prompt just closes.
-    if (onUsernameDetour()) router.push(afterRegistrationRoute(hasUsername, currentReturnToParam()))
-  }, [onComplete, router, user?.dpnsUsername, usernames])
+    if (onUsernameDetour()) router.push(afterRegistrationRoute(goesOn, currentReturnToParam()))
+  }, [onComplete, router, user?.dpnsUsername, usernames, identityId])
 
   return (
     <div className="space-y-6">
