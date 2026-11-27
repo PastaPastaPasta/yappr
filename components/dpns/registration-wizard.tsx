@@ -353,7 +353,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       {step === 'checking' && <CheckingStep />}
 
       {step === 'review' && (
-        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} onContinuePending={handleCheckAgain} continuingPending={checkingAgain} hasExistingUsernames={hasExistingUsernames} />
+        <ReviewStep onBack={handleBackToEdit} onRegister={handleRegister} hasExistingUsernames={hasExistingUsernames} />
       )}
 
       {step === 'registering' && <RegisteringStep />}

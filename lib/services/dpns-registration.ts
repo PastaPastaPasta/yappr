@@ -245,15 +245,17 @@ export function admissionReserve(layout: DpnsPreorderLayout, domainFee: bigint):
  * from here, decided as {@link registerDpnsName} decides them: on v3 from the
  * owner's preorder on chain and the journal; before it from the journal.
  */
-async function plannedSteps(sdk: ConnectedSdk, layout: DpnsPreorderLayout, record: DpnsRegistrationRecord | null, ownerId: string, normalizedLabel: string): Promise<DpnsRegistrationPlan> {
+async function plannedSteps(sdk: ConnectedSdk, layout: DpnsPreorderLayout, record: DpnsRegistrationRecord | null, ownerId: string, normalizedLabel: string): Promise<{ plan: DpnsRegistrationPlan; mayResend: boolean }> {
   // A preorder this browser sent and has no verdict for is continued, not paid again; should it
   // prove never recorded, the registration asks for a new quote before replacing it.
   const sentUnsettled = record?.preorder !== undefined && !record.preorderLanded
-  if (layout.scheme === 'salted') return { preorder: !record?.preorderLanded && !sentUnsettled, deletePreorder: false, domain: true }
+  if (layout.scheme === 'salted') return { plan: { preorder: !record?.preorderLanded && !sentUnsettled, deletePreorder: false, domain: true }, mayResend: false }
   const pending = await pendingPreorder(sdk, layout.ttlSeconds, ownerId, normalizedLabel)
-  if (pending.state === 'revealable' || sentUnsettled) return { preorder: false, deletePreorder: false, domain: true }
-  if (pending.state === 'expiring') return { preorder: true, deletePreorder: true, domain: true }
-  return { preorder: !(record?.preorderLanded && preorderStillLives(record.preorderLandedAt, layout.ttlSeconds)), deletePreorder: false, domain: true }
+  // A sent preorder the index shows landed needs no re-send; otherwise re-sending it may charge it.
+  if (pending.state === 'revealable') return { plan: { preorder: false, deletePreorder: false, domain: true }, mayResend: false }
+  if (sentUnsettled) return { plan: { preorder: false, deletePreorder: false, domain: true }, mayResend: true }
+  if (pending.state === 'expiring') return { plan: { preorder: true, deletePreorder: true, domain: true }, mayResend: false }
+  return { plan: { preorder: !(record?.preorderLanded && preorderStillLives(record.preorderLandedAt, layout.ttlSeconds)), deletePreorder: false, domain: true }, mayResend: false }
 }
 
 type DpnsContract = NonNullable<Awaited<ReturnType<ConnectedSdk['contracts']['fetch']>>>
@@ -304,19 +306,18 @@ export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: s
   const record = loadRegistration(ownerId, normalizedLabel)
   if (record?.domain) return { label, contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false, domain: false } }
   const { contract, layout } = await readDpnsContract(sdk)
-  const [contestFund, fees, plan] = await Promise.all([
+  const [contestFund, fees, { plan, mayResend }] = await Promise.all([
     readContestFund(sdk, ownerId, label, normalizedLabel, layout),
     readRegistrationFees(sdk, contract, label),
     plannedSteps(sdk, layout, record, ownerId, normalizedLabel),
   ])
-  // A v3 preorder sent without a verdict may still land, and be charged, when it is continued:
-  // the balance must hold its fee too, though the quote doesn't count it as a cost.
-  const continued = layout.scheme === 'nameHash' && record?.preorder !== undefined && !record.preorderLanded
+  // A v3 preorder sent without a verdict and not shown landed may be charged when re-sent on
+  // continuing: the balance must hold its fee too, though the quote doesn't count it as a cost.
   return {
     label,
     contestFund,
     fees: (plan.preorder ? fees.preorder : 0n) + (plan.deletePreorder ? PREORDER_DELETE_FEE : 0n) + fees.domain,
-    reserve: admissionReserve(layout, fees.domain) + (continued ? fees.preorder : 0n),
+    reserve: admissionReserve(layout, fees.domain) + (mayResend ? fees.preorder : 0n),
     plan,
   }
 }
@@ -608,9 +609,11 @@ async function startRecord(input: RegisterDpnsNameInput): Promise<DpnsRegistrati
  * one replaces it at ('stalled': it may still land, so its receipt stays until
  * the replacement goes out).
  */
-async function settlePreorder(record: DpnsRegistrationRecord): Promise<{ replacesNonce?: bigint; landedNow?: boolean } | null> {
+async function settlePreorder(record: DpnsRegistrationRecord, { proofOnly = false }: { proofOnly?: boolean } = {}): Promise<{ replacesNonce?: bigint; landedNow?: boolean } | null> {
   if (!record.preorder || record.preorderLanded) return {}
-  const settled = await stateTransitionService.settleCreate(record.preorder)
+  const settled = proofOnly
+    ? await stateTransitionService.settleCreate(record.preorder, { mayResend: () => false })
+    : await stateTransitionService.settleCreate(record.preorder)
   if (settled === null) return null
   if (settled === 'landed') {
     // Proved by id, not when it was created: no lifetime is kept for it.
@@ -710,17 +713,19 @@ async function prepareNamePreorder(
   ttlSeconds: number | null
 ): Promise<Prepared> {
   const layout: DpnsPreorderLayout = { scheme: 'nameHash', ttlSeconds }
-  // Settling may deliver a sent preorder for the first time, and charge it: only when the balance
-  // also holds the domain and what it must find to be admitted.
-  if (record?.preorder && !record.preorderLanded) await requirePreorderBalance(sdk, input, layout, fees)
-  const settled = record ? await settlePreorder(record) : {}
-  if (settled === null) return { state: 'pending', step: 'preorder' }
+  // A sent preorder is settled by proof first, then read on the index: only one neither shows is
+  // re-sent, which may charge it, so only once the balance holds it, the domain and its admission.
+  let settled = record ? await settlePreorder(record, { proofOnly: true }) : {}
   let pending: Awaited<ReturnType<typeof pendingPreorder>>
   try {
     pending = await pendingPreorder(sdk, ttlSeconds, input.ownerId, input.normalizedLabel)
   } catch (error) {
-    if (record?.preorder && !record.preorderLanded) return { state: 'pending', step: 'preorder', ...(settled.replacesNonce !== undefined ? { stalled: true } : {}) }
+    if (record?.preorder && !record.preorderLanded) return { state: 'pending', step: 'preorder', ...(settled?.replacesNonce !== undefined ? { stalled: true } : {}) }
     throw new DpnsNotSentError(error)
+  }
+  if (pending.state !== 'revealable' && settled === null && record) {
+    await requirePreorderBalance(sdk, input, layout, fees)
+    settled = await settlePreorder(record)
   }
   if (pending.state === 'revealable') {
     const kept = record ?? await startRecord(input)
@@ -728,6 +733,7 @@ async function prepareNamePreorder(
     kept.preorderLandedAt = pending.createdAtMs ?? kept.preorderLandedAt
     return saveRegistration(kept) ? kept : { state: 'pending', step: 'preorder' }
   }
+  if (settled === null) return { state: 'pending', step: 'preorder' }
   // Seen landing within its lifetime but not read back (a node behind): reveal it rather than
   // pay another, which the network would refuse while it stands. A domain refused for want of
   // it reads the chain again next time.

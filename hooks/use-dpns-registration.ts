@@ -69,7 +69,7 @@ export const useDpnsRegistration = create<DpnsRegistrationStore>((set, get) => (
     set((state) => ({
       usernames: state.usernames.map((u) =>
         u.id === id
-          ? { ...u, label, status: 'pending' as UsernameStatus, validationError: undefined, isContested: false }
+          ? { id: u.id, label, status: 'pending' as UsernameStatus, isContested: false }
           : u
       ),
     })),

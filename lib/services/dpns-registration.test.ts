@@ -716,16 +716,42 @@ describe('round 4: a continued v3 preorder and the admission floor', () => {
     expect(creditsNeeded(quote)).toBeGreaterThan(DOMAIN_ADMISSION_FLOOR)
 
     m.balance = DOMAIN_ADMISSION_FLOOR - 1n
+    // Proof alone doesn't settle it and the index doesn't show it: a re-send is needed, unfunded.
+    m.settleCreate.mockResolvedValueOnce(null)
     const error = await register({ plan: quote.plan }).catch((e: unknown) => e)
     expect((error as InstanceType<typeof DpnsNotSentError>).cause).toBeInstanceOf(BalanceTooLowError)
-    expect(m.settleCreate).not.toHaveBeenCalled()
+    expect(m.settleCreate).toHaveBeenCalledTimes(1)
+    expect(m.settleCreate.mock.calls[0][1]?.mayResend?.()).toBe(false)
     expect(m.createDocument).toHaveBeenCalledTimes(1)
 
-    // With the floor covered it settles: the preorder lands for the first time and is revealed.
+    // With the floor covered it is re-sent: the preorder lands for the first time and is revealed.
     m.balance = 10n ** 12n
-    m.settleCreate.mockResolvedValueOnce('landed')
+    m.settleCreate.mockResolvedValueOnce(null).mockResolvedValueOnce('landed')
     creates('confirmed')
     expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
     expect(stepsSent()).toEqual(['preorder', 'domain'])
+  })
+})
+
+describe('round 5: a landed preorder whose confirmation was lost', () => {
+  beforeEach(() => {
+    m.schemas = v3Schemas
+  })
+
+  it('reveals it without asking for, or re-sending, another preorder fee', async () => {
+    creates('unconfirmed')
+    expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
+    // It landed and was charged; the tab closed before that was recorded. The index shows it.
+    m.v3Preorder = { createdAt: m.nowMs - 60_000n }
+    const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
+    expect(creditsNeeded(quote)).toBe(DOMAIN_ADMISSION_FLOOR)
+    // The balance covers the domain and its admission, not another preorder.
+    m.balance = DOMAIN_ADMISSION_FLOOR
+    m.settleCreate.mockResolvedValueOnce(null)
+    creates('confirmed')
+    expect(await register({ plan: quote.plan })).toEqual({ state: 'registered' })
+    expect(stepsSent()).toEqual(['preorder', 'domain'])
+    expect(m.settleCreate).toHaveBeenCalledTimes(1)
+    expect(m.settleCreate.mock.calls[0][1]?.mayResend?.()).toBe(false)
   })
 })
