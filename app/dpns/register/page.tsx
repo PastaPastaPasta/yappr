@@ -22,7 +22,7 @@ export default function DPNSRegisterPage() {
   }, [user])
 
   // Skip and Continue close the modal and navigate on their own (Skip keeps
-  // `next`; Continue keeps it only once a username exists).
+  // `next`; Continue keeps it once the user has a username or goes on without one).
   const handleClose = () => {
     setIsModalOpen(false)
   }

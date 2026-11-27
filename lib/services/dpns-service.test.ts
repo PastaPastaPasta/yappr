@@ -380,6 +380,21 @@ describe('registering a username', () => {
   });
 });
 
+describe('registerUsernamesSequentially outcomes', () => {
+  it('reports a contestable name the sender now owns as registered, and one that joined its vote as contested', async () => {
+    dpns.isContestedUsername.mockResolvedValue(true);
+    const register = vi.spyOn(dpnsService, 'registerUsername')
+      .mockResolvedValueOnce({ state: 'registered' })
+      .mockResolvedValueOnce({ state: 'joined-vote' });
+    const results = await dpnsService.registerUsernamesSequentially([
+      { label: 'abc', identityId: 'B', privateKeyWif: 'wif' },
+      { label: 'xyz', identityId: 'B', privateKeyWif: 'wif' },
+    ]);
+    expect(results.map((r) => [r.success, r.isContested])).toEqual([[true, false], [true, true]]);
+    register.mockRestore();
+  });
+});
+
 describe('depositChanged', () => {
   it('offers a new quote for an underpaid contest (40114), never for a full one (40141)', () => {
     expect(depositChanged(new Error('Contest for document x was not paid for, needs payment of 20000000000 credits'))).toBe(true)

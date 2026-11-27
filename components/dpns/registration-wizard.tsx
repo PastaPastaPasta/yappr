@@ -24,6 +24,8 @@ import { RegisteringStep } from './steps/registering-step'
 import { CompleteStep } from './steps/complete-step'
 import { keyNetwork } from '@/lib/constants'
 import { afterRegistrationRoute, currentReturnToParam, onUsernameDetour } from '@/lib/auth/return-to'
+import { recordRegistration, senderStillActive, whileSenderActive } from '@/lib/dpns/username-session'
+import { hasSkippedUsername } from '@/lib/username-skip'
 
 interface DpnsRegistrationWizardProps {
   onComplete?: () => void
@@ -33,7 +35,7 @@ interface DpnsRegistrationWizardProps {
 
 export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsernames }: DpnsRegistrationWizardProps): React.ReactNode {
   const router = useRouter()
-  const { user, updateDPNSUsername } = useAuth()
+  const { user, controller, updateDPNSUsername } = useAuth()
   const { isReady: isSdkReady } = useSdk()
   const {
     step,
@@ -188,11 +190,17 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       toast.error('Please sign in again.')
       return
     }
+    const sender = { identityId, epoch: controller.sessionEpoch(), username: user?.dpnsUsername }
     if (quote.status !== 'ready') {
       toast.error('The cost of registering could not be read. Check the names again.')
       setStep('review')
       return
     }
+
+    // After a sign-out or an account switch the wizard belongs to that session: this batch leaves it alone.
+    const live = <A extends unknown[]>(fn: (...args: A) => unknown) => whileSenderActive(sender, controller, fn)
+    const showError = live((message: string) => toast.error(message))
+    const showStep = live(setStep)
 
     if (showProgress) {
       setStep('registering')
@@ -204,8 +212,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     try {
       const identity = await identityService.getIdentity(identityId)
       if (!identity) {
-        toast.error('Identity not found.')
-        setStep('review')
+        showError('Identity not found.')
+        showStep('review')
         return
       }
 
@@ -216,12 +224,12 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         allowedSecurityLevels: [SecurityLevel.CRITICAL, SecurityLevel.HIGH],
       })
       if (!matched.ok) {
-        toast.error(
+        showError(
           matched.reason === 'rejected'
             ? `Your key has ${getSecurityLevelName(matched.match.securityLevel)} security level. DPNS requires a CRITICAL or HIGH authentication key.`
             : 'Your private key does not match any key on this identity.'
         )
-        setStep('review')
+        showStep('review')
         return
       }
 
@@ -239,28 +247,33 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
       const results = await dpnsService.registerUsernamesSequentially(
         registrations,
-        (index) => { if (showProgress) setCurrentRegistrationIndex(index) },
+        live((index: number) => { if (showProgress) setCurrentRegistrationIndex(index) }),
         needed
       )
+      if (!senderStillActive(sender, controller)) return
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i]
         const entry = entries[i]
         setUsernameRegistered(entry.id, result.success, result.error, result.pending, result.requote)
-        if (result.isContested) {
-          setUsernameContested(entry.id, true)
+        if (result.success || result.isContested) {
+          setUsernameContested(entry.id, result.isContested)
         }
       }
 
-      const firstSuccess = results.find((r) => r.success)
-      if (firstSuccess) {
-        updateDPNSUsername(firstSuccess.label)
+      // A name that only joined its vote is never the username; with none, the user goes on without one.
+      const granted = recordRegistration(results, sender)
+      if (granted) {
+        updateDPNSUsername(granted)
         toast.success('Username registered successfully!')
+      } else if (results.some((r) => r.success)) {
+        toast.success('Your name is waiting for the community vote.')
       }
 
       setStep('complete')
     } catch (error) {
       logger.error('Registration failed:', error)
+      if (!senderStillActive(sender, controller)) return
       const errorMessage = error instanceof Error ? error.message : 'Registration failed. Please try again.'
       toast.error(errorMessage)
       // The identity read or the key check failed: registerUsernamesSequentially, which sends, never throws.
@@ -273,6 +286,8 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     }
   }, [
     identityId,
+    controller,
+    user?.dpnsUsername,
     quote,
     setStep,
     setCurrentRegistrationIndex,
@@ -322,11 +337,14 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
   }, [reset])
 
   const handleContinue = useCallback(() => {
-    const hasUsername = Boolean(user?.dpnsUsername) || usernames.some((u) => u.registered === true)
+    // A name waiting for its vote is not a username yet: after one, Continue goes on as Skip does.
+    const goesOn = Boolean(user?.dpnsUsername)
+      || usernames.some((u) => u.registered === true && !u.isContested)
+      || (identityId !== undefined && hasSkippedUsername(identityId))
     onComplete?.()
     // Only the username detour navigates; over any other page (or /login) the prompt just closes.
-    if (onUsernameDetour()) router.push(afterRegistrationRoute(hasUsername, currentReturnToParam()))
-  }, [onComplete, router, user?.dpnsUsername, usernames])
+    if (onUsernameDetour()) router.push(afterRegistrationRoute(goesOn, currentReturnToParam()))
+  }, [onComplete, router, user?.dpnsUsername, usernames, identityId])
 
   return (
     <div className="space-y-6">
