@@ -3,7 +3,7 @@ import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { DPNS_STALLED_MESSAGE, DPNS_STILL_CONFIRMING_MESSAGE, DpnsNotSentError, quoteDpnsName, registerDpnsName, type DpnsRegistrationOutcome } from './dpns-registration';
-import { ContestFundChangedError, shortBalanceMessage, totalQuote, type DpnsNameQuote, type DpnsQuote } from '@/lib/dpns/registration-quote';
+import { ContestFundChangedError, RegistrationPlanChangedError, shortBalanceMessage, totalQuote, type DpnsNameQuote, type DpnsQuote, type DpnsRegistrationPlan } from '@/lib/dpns/registration-quote';
 import type { SigningKey } from '@/lib/auth/signing-keys';
 import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
@@ -41,10 +41,16 @@ export function formatCreditsAsDash(credits: bigint, round: 'up' | 'down' = 'up'
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-/** Whether `failure` refused a name because its vote deposit is no longer the one the user approved. */
+/**
+ * Whether `failure` refused a name because what it costs is no longer what the
+ * user approved (its vote deposit, or a step the review didn't show), so a new
+ * quote can let it through. A full contest takes no one at any price.
+ */
 export function depositChanged(failure: unknown): boolean {
   const error = failure instanceof DpnsNotSentError ? failure.cause : failure;
-  return error instanceof ContestFundChangedError || isContestFundError(error);
+  return error instanceof ContestFundChangedError
+    || error instanceof RegistrationPlanChangedError
+    || (!isContestFullError(error) && isContestFundError(error));
 }
 
 /**
@@ -510,7 +516,7 @@ class DpnsService {
     label: string,
     identityId: string,
     privateKeyWif: string,
-    options: { contestFund?: bigint | null; durable?: () => Promise<void> } = {}
+    options: { contestFund?: bigint | null; approvedPlan?: DpnsRegistrationPlan; durable?: () => Promise<void> } = {}
   ): Promise<DpnsRegistrationOutcome> {
     let signingKey: SigningKey;
     let normalizedLabel: string;
@@ -541,6 +547,7 @@ class DpnsService {
         ownerId: identityId,
         signingKey,
         contestFund: options.contestFund,
+        ...(options.approvedPlan ? { approvedPlan: options.approvedPlan } : {}),
         durable: options.durable,
         readOwner: (name) => this.readDomainOwner(name),
       });
@@ -688,6 +695,8 @@ class DpnsService {
       identityId: string;
       privateKeyWif: string;
       contestFund?: bigint | null;
+      /** The paid steps besides the domain the review showed for this name. */
+      approvedPlan?: DpnsRegistrationPlan;
     }>,
     onProgress?: (index: number, total: number, label: string) => void,
     needed?: bigint
@@ -725,7 +734,7 @@ class DpnsService {
       onProgress?.(i, registrations.length, reg.label);
       const isContested = await contestedOf(reg.label);
       try {
-        const outcome = await this.registerUsername(reg.label, reg.identityId, reg.privateKeyWif, { contestFund: reg.contestFund ?? null });
+        const outcome = await this.registerUsername(reg.label, reg.identityId, reg.privateKeyWif, { contestFund: reg.contestFund ?? null, ...(reg.approvedPlan ? { approvedPlan: reg.approvedPlan } : {}) });
         results.push(outcome.state === 'pending'
           ? { label: reg.label, success: false, pending: true, isContested, error: outcome.stalled ? DPNS_STALLED_MESSAGE : DPNS_STILL_CONFIRMING_MESSAGE }
           : { label: reg.label, success: true, isContested: outcome.state === 'joined-vote' || isContested });

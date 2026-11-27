@@ -67,7 +67,7 @@ function CostRow({ label, value, strong }: { label: React.ReactNode; value: stri
  */
 function CostSummary({ quote, balance }: { quote: DpnsQuote; balance: bigint }): React.ReactNode {
   const deposits = quote.names.filter((name) => name.contestFund !== null)
-  const short = shortBalanceMessage(balance, quote.total)
+  const short = shortBalanceMessage(balance, quote.needed)
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-2" data-testid="dpns-cost-summary">
       <h3 className="font-semibold text-sm mb-1">Cost</h3>
@@ -82,6 +82,14 @@ function CostSummary({ quote, balance }: { quote: DpnsQuote; balance: bigint }):
       <div className="border-t border-gray-200 dark:border-gray-700 pt-2">
         <CostRow label="Total" value={formatDpnsCost(quote.total)} strong />
       </div>
+      {quote.needed > quote.total && (
+        <>
+          <CostRow label="Balance needed to start" value={formatDpnsCost(quote.needed)} />
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            The network only accepts a name when your balance holds this much. Only the total above is charged.
+          </p>
+        </>
+      )}
       <CostRow label="Your balance" value={formatDpnsCost(balance)} />
       {short && (
         <p className="text-sm text-red-600 dark:text-red-400 pt-1" role="alert">
@@ -129,7 +137,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
   const contestedUsernames = usernames.filter((u) => u.status === 'contested')
   const ready = quote.status === 'ready' ? quote : null
   const depositOf = (label: string) => ready?.quote.names.find((name) => name.label === label)?.contestFund?.credits ?? null
-  const affordable = ready !== null && ready.balance >= ready.quote.total
+  const affordable = ready !== null && ready.balance >= ready.quote.needed
 
   // Only show contested warning if user has no existing usernames to fall back on
   const allContestedWarning = availableUsernames.length > 0 && nonContestedUsernames.length === 0 && !hasExistingUsernames

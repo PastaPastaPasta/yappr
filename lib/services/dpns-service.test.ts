@@ -17,7 +17,7 @@ vi.mock('@/lib/contract-topology', async (importOriginal) => ({
 }));
 vi.mock('./signer-service', () => ({ signerService: {} }));
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: false, reason: 'no-match' }) }));
-import { describeDpnsRegistrationError, dpnsService, formatCreditsAsDash } from './dpns-service';
+import { depositChanged, describeDpnsRegistrationError, dpnsService, formatCreditsAsDash } from './dpns-service';
 import { DpnsNotSentError } from './dpns-registration';
 
 beforeEach(() => {
@@ -379,3 +379,10 @@ describe('registering a username', () => {
     expect(identities.fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('depositChanged', () => {
+  it('offers a new quote for an underpaid contest (40114), never for a full one (40141)', () => {
+    expect(depositChanged(new Error('Contest for document x was not paid for, needs payment of 20000000000 credits'))).toBe(true)
+    expect(depositChanged(new Error('DocumentContestMaximumContendersReached: the contest already has 300 contenders, the most a contest accepts'))).toBe(false)
+  })
+})

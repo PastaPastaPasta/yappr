@@ -20,6 +20,27 @@ import { formatCost } from '@/lib/moderation-charters/costs'
 export const PREORDER_FEE_FALLBACK = 25_000_000n
 export const DOMAIN_FEE_FALLBACK = 50_000_000n
 
+/**
+ * What deleting an expiring DPNS v3 preorder costs, rounded up (the SDK prices
+ * no deletes yet, platform#5265).
+ */
+export const PREORDER_DELETE_FEE = 20_000_000n
+
+/**
+ * The balance a DPNS v3 (protocol 15) domain create must find before Drive
+ * admits it, beyond what it is charged: its preorder reference reserves for
+ * the `chooseFirst` scan. Observed at about 232M credits (platform#6340); no
+ * SDK function reports it yet (platform#5265, #6337), so this is a
+ * conservative floor checked before the preorder is paid.
+ */
+export const DOMAIN_ADMISSION_FLOOR = 300_000_000n
+
+/** The paid steps besides the domain a quote counted, and so the only ones the registration may send. */
+export interface DpnsRegistrationPlan {
+  preorder: boolean
+  deletePreorder: boolean
+}
+
 /** What a contested name pays into its vote, on the index it contests. */
 export interface ContestFund {
   indexName: string
@@ -32,19 +53,40 @@ export interface DpnsNameQuote {
   contestFund: ContestFund | null
   /** Network fees still to pay for this name: the preorder (unless one already landed) and the domain. */
   fees: bigint
+  /** Balance the domain must find beyond its fees to be admitted (protocol 15), charged to no one. */
+  reserve?: bigint
+  /** The paid steps besides the domain this quote counted. */
+  plan?: DpnsRegistrationPlan
 }
 
 export interface DpnsQuote {
   names: DpnsNameQuote[]
   contestFunds: bigint
   fees: bigint
+  /** What the names are expected to cost. */
   total: bigint
+  /** The balance needed before anything is paid: the total, and the largest admission reserve. */
+  needed: bigint
 }
 
 export function totalQuote(names: DpnsNameQuote[]): DpnsQuote {
   const contestFunds = names.reduce((sum, name) => sum + (name.contestFund?.credits ?? 0n), 0n)
   const fees = names.reduce((sum, name) => sum + name.fees, 0n)
-  return { names, contestFunds, fees, total: contestFunds + fees }
+  const reserve = names.reduce((most, name) => ((name.reserve ?? 0n) > most ? (name.reserve ?? 0n) : most), 0n)
+  return { names, contestFunds, fees, total: contestFunds + fees, needed: contestFunds + fees + reserve }
+}
+
+/**
+ * Registering `label` now needs a paid step the review did not show (its
+ * preorder expired, say), so nothing was sent: quote it again.
+ */
+export class RegistrationPlanChangedError extends Error {
+  readonly label: string
+  constructor(label: string) {
+    super(`Registering ${label}.dash now needs another network fee that wasn't in your review, so nothing was charged. Review the new amount, then try again.`)
+    this.name = 'RegistrationPlanChangedError'
+    this.label = label
+  }
 }
 
 /** "0.1 DASH (about 600¢)". */
@@ -87,7 +129,8 @@ export function approvedContestFund(label: string, approved: bigint | null | und
 }
 
 /** The balance a name's registration needs before its next paid step: its deposit and the fees still to pay. */
-export const creditsNeeded = (quote: Pick<DpnsNameQuote, 'contestFund' | 'fees'>): bigint => (quote.contestFund?.credits ?? 0n) + quote.fees
+export const creditsNeeded = (quote: Pick<DpnsNameQuote, 'contestFund' | 'fees' | 'reserve'>): bigint =>
+  (quote.contestFund?.credits ?? 0n) + quote.fees + (quote.reserve ?? 0n)
 
 /** The balance does not pay the next paid step (its deposit and fees), so it was not sent. */
 export class BalanceTooLowError extends Error {

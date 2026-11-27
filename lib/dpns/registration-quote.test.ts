@@ -23,6 +23,16 @@ describe('the registration quote', () => {
     expect(formatDpnsCost(70_000_000n)).toBe('0.0007 DASH (about 4.2¢)')
   })
 
+  it('needs, before anything is paid, the total and the largest admission reserve', () => {
+    const quote = totalQuote([
+      { label: 'alex', contestFund: null, fees: 70_000_000n, reserve: 230_000_000n },
+      { label: 'bob22', contestFund: null, fees: 70_000_000n, reserve: 100_000_000n },
+    ])
+    expect(quote.total).toBe(140_000_000n)
+    expect(quote.needed).toBe(370_000_000n)
+    expect(creditsNeeded({ contestFund: null, fees: 70_000_000n, reserve: 230_000_000n })).toBe(300_000_000n)
+  })
+
   it('needs the deposit and the fees still to pay', () => {
     expect(creditsNeeded({ contestFund: FUND, fees: 70_000_000n })).toBe(10_070_000_000n)
     expect(creditsNeeded({ contestFund: null, fees: 70_000_000n })).toBe(70_000_000n)

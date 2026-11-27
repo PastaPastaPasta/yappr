@@ -39,13 +39,17 @@ import {
 } from '@/lib/dpns/registration-journal'
 import {
   BalanceTooLowError,
+  DOMAIN_ADMISSION_FLOOR,
   DOMAIN_FEE_FALLBACK,
+  PREORDER_DELETE_FEE,
   PREORDER_FEE_FALLBACK,
+  RegistrationPlanChangedError,
   approvedContestFund,
   creditsNeeded,
   shortBalanceMessage,
   type ContestFund,
   type DpnsNameQuote,
+  type DpnsRegistrationPlan,
 } from '@/lib/dpns/registration-quote'
 import { DPNS_CONTRACT_ID } from '../constants'
 import { getEvoSdk } from './evo-sdk-service'
@@ -109,6 +113,12 @@ export interface RegisterDpnsNameInput {
   signingKey: SigningKey
   /** The deposit the user approved for a contested name, in credits. */
   contestFund?: bigint | null
+  /**
+   * The paid steps besides the domain the user's review showed
+   * ({@link quoteDpnsName}): any other is not sent
+   * ({@link RegistrationPlanChangedError}). Absent: no review to hold to.
+   */
+  approvedPlan?: DpnsRegistrationPlan
   /**
    * Who owns `normalizedLabel.dash` now: an identity id, or null when DPNS
    * answered that nobody does. Rejects when the read fails.
@@ -190,12 +200,52 @@ export function preorderRevealable(createdAtMs: bigint | undefined, ttlSeconds: 
   return nowMs + PREORDER_REVEAL_MARGIN_MS < createdAtMs + BigInt(ttlSeconds) * 1000n
 }
 
+/** How many DPNS contract responses a registration reads for one proved at the version it was parsed under. */
+const DPNS_CONTRACT_FETCH_ATTEMPTS = 3
+
+/**
+ * The DPNS contract the network stores now: the first response proved at the
+ * protocol version the SDK parsed it under, the version unchanged across the
+ * fetch (rs-sdk `fetch_current_dpns_contract`). A node behind an upgrade
+ * proves the contract it replaced, whose preorder the domain cannot reveal.
+ */
+export async function fetchCurrentDpnsContract(sdk: ConnectedSdk) {
+  let last: [number, number] | null = null
+  for (let attempt = 0; attempt < DPNS_CONTRACT_FETCH_ATTEMPTS; attempt++) {
+    const parsedUnder = sdk.version()
+    const response = await sdk.contracts.fetchWithProof(DPNS_CONTRACT_ID)
+    if (response.metadata.protocolVersion === parsedUnder && sdk.version() === parsedUnder) {
+      if (!response.data) throw new Error('the DPNS contract could not be read')
+      return response.data
+    }
+    last = [response.metadata.protocolVersion, parsedUnder]
+  }
+  throw new Error(`no DPNS contract response was proved at the protocol version it was read under (last proved at ${last?.[0]}, read under ${last?.[1]})`)
+}
+
 /** The DPNS contract the network stores now, and how it takes a preorder. Rejects when it can't be read. */
 async function readDpnsContract(sdk: ConnectedSdk) {
-  const contract = await sdk.contracts.fetch(DPNS_CONTRACT_ID)
-  if (!contract) throw new Error('the DPNS contract could not be read')
+  const contract = await fetchCurrentDpnsContract(sdk)
   const w = await import('@dashevo/wasm-sdk')
   return { contract, layout: dpnsPreorderLayout(contract.toJSON(networkPlatformVersion(w.PlatformVersion, sdk)).documentSchemas) }
+}
+
+/** The balance a domain must find beyond its fee to be admitted: DPNS v3's floor ({@link DOMAIN_ADMISSION_FLOOR}). */
+export function admissionReserve(layout: DpnsPreorderLayout, domainFee: bigint): bigint {
+  return layout.scheme === 'nameHash' && DOMAIN_ADMISSION_FLOOR > domainFee ? DOMAIN_ADMISSION_FLOOR - domainFee : 0n
+}
+
+/**
+ * The paid steps besides the domain a registration of `normalizedLabel` takes
+ * from here, decided as {@link registerDpnsName} decides them: on v3 from the
+ * owner's preorder on chain and the journal; before it from the journal.
+ */
+async function plannedSteps(sdk: ConnectedSdk, layout: DpnsPreorderLayout, record: DpnsRegistrationRecord | null, ownerId: string, normalizedLabel: string): Promise<DpnsRegistrationPlan> {
+  if (layout.scheme === 'salted') return { preorder: !record?.preorderLanded, deletePreorder: false }
+  const pending = await pendingPreorder(sdk, layout.ttlSeconds, ownerId, normalizedLabel)
+  if (pending.state === 'revealable') return { preorder: false, deletePreorder: false }
+  if (pending.state === 'expiring') return { preorder: true, deletePreorder: true }
+  return { preorder: !(record?.preorderLanded && preorderStillLives(record.preorderLandedAt, layout.ttlSeconds)), deletePreorder: false }
 }
 
 type DpnsContract = NonNullable<Awaited<ReturnType<ConnectedSdk['contracts']['fetch']>>>
@@ -244,16 +294,20 @@ export async function readRegistrationFees(sdk: ConnectedSdk, contract: DpnsCont
  */
 export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: string, normalizedLabel: string): Promise<DpnsNameQuote> {
   const record = loadRegistration(ownerId, normalizedLabel)
-  if (record?.domain) return { label, contestFund: null, fees: 0n }
+  if (record?.domain) return { label, contestFund: null, fees: 0n, plan: { preorder: false, deletePreorder: false } }
   const { contract, layout } = await readDpnsContract(sdk)
-  const [contestFund, fees] = await Promise.all([
+  const [contestFund, fees, plan] = await Promise.all([
     readContestFund(sdk, ownerId, label, normalizedLabel, layout),
     readRegistrationFees(sdk, contract, label),
+    plannedSteps(sdk, layout, record, ownerId, normalizedLabel),
   ])
-  const preorderPaid = layout.scheme === 'nameHash'
-    ? (await pendingPreorder(sdk, layout.ttlSeconds, ownerId, normalizedLabel)).state === 'revealable'
-    : record?.preorderLanded === true || record?.preorder !== undefined
-  return { label, contestFund, fees: (preorderPaid ? 0n : fees.preorder) + fees.domain }
+  return {
+    label,
+    contestFund,
+    fees: (plan.preorder ? fees.preorder : 0n) + (plan.deletePreorder ? PREORDER_DELETE_FEE : 0n) + fees.domain,
+    reserve: admissionReserve(layout, fees.domain),
+    plan,
+  }
 }
 
 /**
@@ -507,7 +561,7 @@ async function registerLocked(input: RegisterDpnsNameInput): Promise<DpnsRegistr
 
   // The domain: the deposit read right before signing must be the approved one.
   const contestFund = await approvedFund(sdk, input, layout)
-  await requireBalance(sdk, ownerId, creditsNeeded({ contestFund, fees: fees.domain }))
+  await requireBalance(sdk, ownerId, creditsNeeded({ contestFund, fees: fees.domain, reserve: admissionReserve(layout, fees.domain) }))
   const domain = await sendStep(record, 'domain', domainDocumentData(record.label, normalizedLabel, ownerId, layout, record.salt), {
     signingKey,
     ...(contestFund ? { prefundedVotingBalance: contestFund } : {}),
@@ -547,8 +601,9 @@ async function settlePreorder(record: DpnsRegistrationRecord): Promise<{ replace
   const settled = await stateTransitionService.settleCreate(record.preorder)
   if (settled === null) return null
   if (settled === 'landed') {
+    // Proved by id, not when it was created: no lifetime is kept for it.
     record.preorderLanded = true
-    record.preorderLandedAt = Date.now()
+    delete record.preorderLandedAt
     return saveRegistration(record) ? { landedNow: true } : null
   }
   if (settled === 'stalled') return { replacesNonce: record.preorder.nonce }
@@ -574,10 +629,22 @@ async function sendPreorder(
   return record
 }
 
-/** Before paying a preorder: the deposit must be the approved one and the balance must pay it with both fees. */
-async function requirePreorderFunds(sdk: ConnectedSdk, input: RegisterDpnsNameInput, layout: DpnsPreorderLayout, fees: Fees): Promise<void> {
+/** Refuse a paid step the user's review did not show. */
+function requirePlanned(input: RegisterDpnsNameInput, step: keyof DpnsRegistrationPlan): void {
+  if (input.approvedPlan && !input.approvedPlan[step]) throw new DpnsNotSentError(new RegistrationPlanChangedError(input.label))
+}
+
+/**
+ * Before paying a preorder (and deleting an expiring one first): both must be
+ * in the review, the deposit must be the approved one, and the balance must
+ * pay them, the domain, and what the domain must find to be admitted.
+ */
+async function requirePreorderFunds(sdk: ConnectedSdk, input: RegisterDpnsNameInput, layout: DpnsPreorderLayout, fees: Fees, deletePreorder = false): Promise<void> {
+  requirePlanned(input, 'preorder')
+  if (deletePreorder) requirePlanned(input, 'deletePreorder')
   const contestFund = await approvedFund(sdk, input, layout)
-  await requireBalance(sdk, input.ownerId, creditsNeeded({ contestFund, fees: fees.preorder + fees.domain }))
+  const stepFees = fees.preorder + fees.domain + (deletePreorder ? PREORDER_DELETE_FEE : 0n)
+  await requireBalance(sdk, input.ownerId, creditsNeeded({ contestFund, fees: stepFees, reserve: admissionReserve(layout, fees.domain) }))
 }
 
 /**
@@ -644,7 +711,7 @@ async function prepareNamePreorder(
   // pay another, which the network would refuse while it stands. A domain refused for want of
   // it reads the chain again next time.
   if (pending.state === 'none' && record?.preorderLanded && (settled.landedNow || preorderStillLives(record.preorderLandedAt, ttlSeconds))) return record
-  await requirePreorderFunds(sdk, input, layout, fees)
+  await requirePreorderFunds(sdk, input, layout, fees, pending.state === 'expiring')
   const kept = record ?? await startRecord(input)
   if (pending.state === 'expiring') {
     const deleted = await stateTransitionService.deleteDocument(DPNS_CONTRACT_ID, 'preorder', pending.documentId, input.ownerId, undefined, { signingKey: input.signingKey })

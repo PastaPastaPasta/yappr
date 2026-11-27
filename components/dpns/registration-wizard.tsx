@@ -154,14 +154,15 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
   const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
 
-  // A deposit changed between the review and the signing: quote those names again, nothing else.
+  // What a name costs changed between the review and the signing: check every name that didn't
+  // register again (a pending one continues from what was sent), with a new quote.
   const handleRequote = useCallback(async () => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
     const entries = usernames
-      .filter((u) => u.requote)
+      .filter((u) => u.registered === false)
       .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
     useDpnsRegistration.setState({ usernames: entries, contestedAcknowledged: false })
     await checkNames(entries)
@@ -219,13 +220,17 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         return
       }
 
-      const approved = new Map(quote.quote.names.map((name) => [name.label, name.contestFund?.credits ?? null]))
-      const registrations = entries.map((u) => ({
-        label: u.label,
-        identityId,
-        privateKeyWif: privateKey,
-        contestFund: approved.get(u.label) ?? null,
-      }))
+      const approved = new Map(quote.quote.names.map((name) => [name.label, name]))
+      const registrations = entries.map((u) => {
+        const reviewed = approved.get(u.label)
+        return {
+          label: u.label,
+          identityId,
+          privateKeyWif: privateKey,
+          contestFund: reviewed?.contestFund?.credits ?? null,
+          approvedPlan: reviewed?.plan ?? { preorder: false, deletePreorder: false },
+        }
+      })
 
       const results = await dpnsService.registerUsernamesSequentially(
         registrations,
@@ -290,7 +295,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
       }
     }
 
-    await runRegistrations(availableUsernames, { needed: quote.status === 'ready' ? quote.quote.total : undefined, showProgress: true })
+    await runRegistrations(availableUsernames, { needed: quote.status === 'ready' ? quote.quote.needed : undefined, showProgress: true })
   }, [usernames, quote, runRegistrations, updateUsernameStatus, setStep])
 
   // Continues each registration still being confirmed: a step already sent is settled, never paid again.
