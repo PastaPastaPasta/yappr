@@ -35,7 +35,7 @@ export function UsernameModal({ isOpen, onClose, customIdentityId, hasExistingUs
 
   const handleSkip = () => {
     sessionStorage.setItem(scopedKey('yappr_skip_dpns'), 'true')
-    onClose()
+    close()
     router.push('/profile/create')
   }
 
