@@ -9,7 +9,7 @@ import { useAppStore } from '@/lib/store'
 import { bindCurrentIdentity } from '@/lib/auth/active-identity'
 import { storePrivateKey } from '@/lib/secure-storage'
 import { hasSkippedUsername } from '@/lib/username-skip'
-import { fixtureAuth, router, settleRegistration } from './mocks'
+import { fixtureAuth, gate, router, settleRegistration } from './mocks'
 import '@/app/globals.css'
 
 declare global {
@@ -19,10 +19,11 @@ declare global {
       settleRegistration: typeof settleRegistration
       hasSkippedUsername: typeof hasSkippedUsername
       pushed: string[]
+      gate: typeof gate
     }
   }
 }
-window.fixture = { auth: fixtureAuth, settleRegistration, hasSkippedUsername, pushed: router.pushed }
+window.fixture = { auth: fixtureAuth, settleRegistration, hasSkippedUsername, pushed: router.pushed, gate }
 
 // WIF for public scalar 1. Never use with an actual identity or funds.
 for (const id of ['fixture-alice', 'fixture-bob']) storePrivateKey(id, 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA')

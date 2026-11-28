@@ -9,7 +9,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   workers: 1,
   retries: 0,
-  timeout: 20_000,
+  // The first test pays for Vite's cold transforms of the wizard, composer and teams page.
+  timeout: 60_000,
   use: {
     ...devices['Desktop Chrome'],
     baseURL: `http://127.0.0.1:${port}`,

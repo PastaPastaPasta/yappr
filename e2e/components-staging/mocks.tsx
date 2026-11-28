@@ -17,6 +17,8 @@ const SCALAR_ONE_PUBLIC_KEY = Uint8Array.from(
 
 const params = new URLSearchParams(window.location.search)
 export const seatedTeam = params.get('seated') === '1'
+/** How often the composer's gate has been told whether a team is seated. */
+export const gate = { answers: 0 }
 
 function signedIn(identityId: string): AuthUser {
   return { identityId, balance: 1, publicKeys: [] }
