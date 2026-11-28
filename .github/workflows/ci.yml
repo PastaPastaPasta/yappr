@@ -98,6 +98,7 @@ jobs:
         run: |
           npx tsc --noEmit -p e2e/components/tsconfig.json
           npx tsc --noEmit -p e2e/components-qa-round1/tsconfig.json
+          npx tsc --noEmit -p e2e/components-staging/tsconfig.json
           npx tsc --noEmit -p e2e/qa/tsconfig.json
 
       # Isolated component fixtures simulate service failures; no live network
