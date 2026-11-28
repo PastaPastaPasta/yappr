@@ -47,12 +47,20 @@ describe('pendingRecoveryIdentity', () => {
     await requestRecordsFor('alice', true).save(recovery.record)
     expect(await pendingRecoveryIdentity(recovery.hash)).toBe('alice')
     expect(await pendingRecoveryIdentity(request('alice').hash)).toBeNull()
-    // Its own slot: neither a sign-in's nor a signed-in renewal's.
     expect(await requestRecordsFor(undefined).load()).toBeNull()
-    expect(await isPendingRenewal('alice', recovery.hash)).toBe(false)
   })
 
-  it('never finds a sign-in or a signed-in renewal', async () => {
+  it('a newer recovery for another identity leaves the older request in place', async () => {
+    const alice = request('alice')
+    const bob = request('bob')
+    await requestRecordsFor('alice', true).save(alice.record)
+    await requestRecordsFor('bob', true).save(bob.record)
+    expect(await pendingRecoveryIdentity(alice.hash)).toBeNull()
+    expect(await pendingRecoveryIdentity(bob.hash)).toBe('bob')
+    expect(await requestRecordsFor('alice').load()).toEqual(alice.record)
+  })
+
+  it('never finds a sign-in, or a renewal no signed-out recovery points at', async () => {
     const login = request()
     const renewal = request('bob')
     await requestRecordsFor(undefined).save(login.record)
