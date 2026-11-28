@@ -22,7 +22,7 @@ const decoder = new TextDecoder()
  * the browser has them, and an in-tab queue otherwise.
  */
 const RECORD_LOCK = scopedKey('yappr-app-connect-pending-request')
-/** The identity of the latest signed-out passkey renewal, whose request stays in that identity's own slot. */
+/** The identity of the latest signed-out passkey renewal, whose request stays in that identity's own recovery slot. */
 const RECOVERY_POINTER = 'pending-request:recovery'
 let recordWrites: Promise<unknown> = Promise.resolve()
 function inOrder<T>(operation: () => Promise<T>): Promise<T> {
@@ -36,14 +36,15 @@ function inOrder<T>(operation: () => Promise<T>): Promise<T> {
 /**
  * One slot per kind of request, so a sign-in and a renewal (which names its
  * identity) never overwrite each other's pending request. A signed-out
- * passkey's renewal (`recovery`) also points the wallet's callback tab, which
- * does not know the identity, at its slot.
+ * passkey's renewal (`recovery`) has a slot per identity apart from the
+ * signed-in renewal's, and points the wallet's callback tab, which does not
+ * know the identity, at it.
  */
 export function requestRecordsFor(identityHint: string | undefined, recovery = false): RequestRecordStore & {
   /** As `load`, but a failed read or unwrap throws rather than reading as no request. */
   loadStrict(): Promise<StoredAppConnectRequest | null>
 } {
-  const secretName = `pending-request:${identityHint ?? 'login'}`
+  const secretName = `pending-request:${recovery ? 'recovery:' : ''}${identityHint ?? 'login'}`
   // Read and (for a stale request) delete under the same lock, so a
   // request another tab saves meanwhile is never the one deleted.
   const read = (strict: boolean) => inOrder(async () => {
@@ -138,7 +139,8 @@ export async function pendingRecoveryIdentity(requestHash: string): Promise<stri
   const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), RECOVERY_POINTER).catch(() => null)
   if (!bytes) return null
   const identityId = decoder.decode(bytes)
-  return identityId && await isPendingRenewal(identityId, requestHash) ? identityId : null
+  const record = identityId ? await requestRecordsFor(identityId, true).load() : null
+  return record && hasRequestHash(record, requestHash) ? identityId : null
 }
 
 function hasRequestHash(record: StoredAppConnectRequest, requestHash: string): boolean {
