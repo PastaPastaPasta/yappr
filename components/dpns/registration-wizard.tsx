@@ -185,6 +185,9 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         step: 'complete',
       })
     })
+    if (useDpnsRegistration.getState().step === 'review') {
+      useDpnsRegistration.setState({ usernames: batch.reviewed(useDpnsRegistration.getState().usernames) })
+    }
   }, [isSdkReady, usernames, quote, checkNames])
 
   /**

@@ -17,13 +17,23 @@ const quote = totalQuote([
 describe('reviewing a new deposit', () => {
   it('quotes only the changed names and keeps a pending name bound to the approval it was sent with', () => {
     const batch = requoteBatch([changed, pending, done], quote)
-    expect(batch.requoted).toEqual([{ id: 'a', label: 'alex', status: 'pending', isContested: true }])
+    expect(batch.requoted).toEqual([{ id: 'a', label: 'alex', status: 'pending', isContested: true, registered: false, requote: true, registrationError: 'The vote deposit changed' }])
     expect(batch.review.map((u) => u.id)).toEqual(['a', 'b'])
     // Listed, but not registrable from the review: its deposit isn't in the new quote.
     expect(batch.review[1]).toMatchObject({ status: 'pending', pending: true, approval: { contestFund: FUND, plan: PLAN } })
     // A second re-quote keeps the first approval, though the quote no longer lists the name.
     const again = requoteBatch(batch.review.map((u) => (u.id === 'a' ? changed : u)), totalQuote([]))
     expect(again.review[1].approval).toEqual({ contestFund: FUND, plan: PLAN })
+  })
+
+  it('keeps a re-quoted name that turned out taken in the results when another one is still registrable', () => {
+    const other: UsernameEntry = { ...changed, id: 'd', label: 'dana' }
+    const batch = requoteBatch([changed, other, pending], quote)
+    const checked = batch.review.map((u) => (u.id === 'a' ? { ...u, status: 'taken' as const } : u.id === 'd' ? { ...u, status: 'contested' as const } : u))
+    const review = batch.reviewed(checked)
+    // Not sent from the review, so the results show it with its new reason, not offered again.
+    expect(review[0]).toMatchObject({ registered: false, requote: false, registrationError: 'alex.dash is taken now.' })
+    expect(review[1]).toMatchObject({ status: 'contested', registered: false, requote: true })
   })
 
   it('goes back to the results, pending names still continuable, when the new review has nothing to register', () => {
