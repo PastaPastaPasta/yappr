@@ -5,6 +5,7 @@ export * from '../types/notification'
 
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import type { ModerationMarks } from '@/lib/moderation-view'
+import type { DpnsNameQuote } from '@/lib/dpns/registration-quote'
 
 // V3 DM contract document types (raw from platform)
 // Decrypted message for UI display
@@ -60,6 +61,8 @@ export interface UsernameEntry {
   pending?: boolean
   /** Not registered because its vote deposit changed since the review: it needs a new quote. */
   requote?: boolean
+  /** The deposit and steps it was sent with, kept while it is still being confirmed. */
+  approval?: Pick<DpnsNameQuote, 'contestFund' | 'plan'>
 }
 
 export interface UsernameCheckResult {

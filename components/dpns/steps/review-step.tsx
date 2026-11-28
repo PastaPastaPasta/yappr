@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
-import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, XCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatDpnsCost, shortBalanceMessage, type DpnsQuote } from '@/lib/dpns/registration-quote'
 import type { UsernameEntry, UsernameStatus } from '@/lib/types'
@@ -82,11 +82,19 @@ function CostSummary({ quote, balance }: { quote: DpnsQuote; balance: bigint }):
       <div className="border-t border-gray-200 dark:border-gray-700 pt-2">
         <CostRow label="Total" value={formatDpnsCost(quote.total)} strong />
       </div>
+      {quote.resendFees > 0n && (
+        <>
+          <CostRow label="Possible re-send fees" value={`up to ${formatDpnsCost(quote.resendFees)}`} />
+          <p className="text-xs text-gray-500 dark:text-gray-400" data-testid="dpns-resend-fees">
+            A step you already sent hasn&apos;t been confirmed yet. If it has to be sent again, its network fee is charged again.
+          </p>
+        </>
+      )}
       {quote.needed > quote.total && (
         <>
           <CostRow label="Balance needed to start" value={formatDpnsCost(quote.needed)} />
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Yappr checks for this balance before starting. The extra balance is not a fee; the total above includes estimated network fees.
+            Yappr checks for this balance before starting. It covers the total{quote.resendFees > 0n ? ' and any re-send fees' : ''}; the rest is not a fee.
           </p>
         </>
       )}
@@ -171,6 +179,7 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
               .filter((u) => u.label.trim())
               .map((entry) => {
                 const deposit = entry.status === 'contested' ? depositOf(entry.label) : null
+                const confirming = entry.pending && entry.status === 'pending'
                 return (
                   <tr key={entry.id}>
                     <td className="px-4 py-3">
@@ -179,12 +188,19 @@ export function ReviewStep({ onBack, onRegister, hasExistingUsernames }: ReviewS
                       </code>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        {getStatusIcon(entry.status)}
-                        <span className={cn('text-sm', getStatusTextClass(entry.status))}>
-                          {getStatusText(entry.status)}
-                        </span>
-                      </div>
+                      {confirming ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-5 h-5 text-orange-500" />
+                          <span className="text-sm text-orange-600">Still being confirmed; continue it after this review</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          {getStatusIcon(entry.status)}
+                          <span className={cn('text-sm', getStatusTextClass(entry.status))}>
+                            {getStatusText(entry.status)}
+                          </span>
+                        </div>
+                      )}
                       {deposit !== null && (
                         <div className="text-xs text-orange-600 mt-1">{formatDpnsCost(deposit)} deposit</div>
                       )}

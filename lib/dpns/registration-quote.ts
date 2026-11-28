@@ -56,6 +56,8 @@ export interface DpnsNameQuote {
   fees: bigint
   /** Balance the domain must find beyond its fees to be admitted (protocol 15), charged to no one. */
   reserve?: bigint
+  /** The fee of re-sending a preorder that was sent and never confirmed: charged only if it has to be sent again. */
+  resendFee?: bigint
   /** The paid steps besides the domain this quote counted. */
   plan?: DpnsRegistrationPlan
 }
@@ -66,15 +68,19 @@ export interface DpnsQuote {
   fees: bigint
   /** What the names are expected to cost. */
   total: bigint
-  /** The balance needed before anything is paid: the total, and the largest admission reserve. */
+  /** Fees charged only if unconfirmed preorders have to be sent again: each name's can be. */
+  resendFees: bigint
+  /** The balance needed before anything is paid: the total, every possible re-send fee, and the largest admission reserve. */
   needed: bigint
 }
 
 export function totalQuote(names: DpnsNameQuote[]): DpnsQuote {
   const contestFunds = names.reduce((sum, name) => sum + (name.contestFund?.credits ?? 0n), 0n)
   const fees = names.reduce((sum, name) => sum + name.fees, 0n)
+  const resendFees = names.reduce((sum, name) => sum + (name.resendFee ?? 0n), 0n)
   const reserve = names.reduce((most, name) => ((name.reserve ?? 0n) > most ? (name.reserve ?? 0n) : most), 0n)
-  return { names, contestFunds, fees, total: contestFunds + fees, needed: contestFunds + fees + reserve }
+  const total = contestFunds + fees
+  return { names, contestFunds, fees, total, resendFees, needed: total + resendFees + reserve }
 }
 
 /**
@@ -129,9 +135,9 @@ export function approvedContestFund(label: string, approved: bigint | null | und
   return current
 }
 
-/** The balance a name's registration needs before its next paid step: its deposit and the fees still to pay. */
-export const creditsNeeded = (quote: Pick<DpnsNameQuote, 'contestFund' | 'fees' | 'reserve'>): bigint =>
-  (quote.contestFund?.credits ?? 0n) + quote.fees + (quote.reserve ?? 0n)
+/** The balance a name's registration needs before its next paid step: its deposit, the fees still to pay and any re-send fee. */
+export const creditsNeeded = (quote: Pick<DpnsNameQuote, 'contestFund' | 'fees' | 'reserve' | 'resendFee'>): bigint =>
+  (quote.contestFund?.credits ?? 0n) + quote.fees + (quote.resendFee ?? 0n) + (quote.reserve ?? 0n)
 
 /** The balance does not pay the next paid step (its deposit and fees), so it was not sent. */
 export class BalanceTooLowError extends Error {
