@@ -8,6 +8,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { useDpnsRegistration } from '@/hooks/use-dpns-registration'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { clearRegistration, registrationsInProgress } from '@/lib/dpns/registration-journal'
+import { requoteBatch } from '@/lib/dpns/requote'
 import type { UsernameEntry } from '@/lib/types'
 import { identityService } from '@/lib/services/identity-service'
 import { findDuplicateLabels } from '@/lib/utils/duplicate-labels'
@@ -77,8 +78,12 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
     })
   }, [unfinished])
 
-  /** Check `entries` and quote the registrable ones, then show the review. */
-  const checkNames = useCallback(async (entries: UsernameEntry[]) => {
+  /**
+   * Check `entries` and quote the registrable ones, then show the review.
+   * With `unreviewable`, a check that fails or leaves nothing to register
+   * calls it instead.
+   */
+  const checkNames = useCallback(async (entries: UsernameEntry[], unreviewable?: () => void) => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
@@ -135,45 +140,52 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
         const result = results.get(entry.label.toLowerCase())
         return result && !result.error && result.available
       })
+      let ready = false
       setQuote({ status: 'none' })
       if (registrable.length > 0 && identityId) {
         try {
           const { quote, balance } = await dpnsService.quoteRegistrations(registrable.map((u) => u.label), identityId)
           setQuote({ status: 'ready', quote, balance })
+          ready = true
         } catch (error) {
           logger.error('Failed to read the registration cost:', error)
           setQuote({ status: 'failed' })
         }
       }
 
-      setStep('review')
+      if (!ready && unreviewable) unreviewable()
+      else setStep('review')
     } catch (error) {
       logger.error('Failed to check availability:', error)
       toast.error('Failed to check availability. Please try again.')
-      setStep('username-entry')
+      if (unreviewable) unreviewable()
+      else setStep('username-entry')
     }
   }, [isSdkReady, identityId, setStep, updateUsernameStatus, setUsernameContested, setQuote])
 
   const handleCheckAvailability = useCallback(() => checkNames(usernames), [checkNames, usernames])
 
   // What a name costs changed between the review and the signing: quote those names again. A name
-  // still being confirmed is carried along as it is (continuing it settles what was sent); one that
-  // failed for good stays listed with its reason and is not offered again.
+  // still being confirmed is carried along with its own approval (continuing it settles what was
+  // sent); one that failed for good stays listed with its reason and is not offered again. A new
+  // review with nothing to register goes back to the results, where pending names can be continued.
   const handleRequote = useCallback(async () => {
     if (!isSdkReady) {
       toast.error('Service is initializing. Please try again.')
       return
     }
-    const requoted = usernames
-      .filter((u) => u.registered === false && u.requote)
-      .map((u): UsernameEntry => ({ id: u.id, label: u.label, status: 'pending', isContested: u.isContested }))
-    const carried = usernames.filter((u) => u.registered === false && u.pending)
-    const failed = usernames
-      .filter((u) => u.registered === false && !u.pending && !u.requote)
-      .map((u): UsernameEntry => ({ ...u, status: 'invalid', validationError: u.registrationError }))
-    useDpnsRegistration.setState({ usernames: [...requoted, ...carried, ...failed], contestedAcknowledged: false })
-    await checkNames(requoted)
-  }, [isSdkReady, usernames, checkNames])
+    const previousQuote = quote
+    const batch = requoteBatch(usernames, quote.status === 'ready' ? quote.quote : null)
+    useDpnsRegistration.setState({ usernames: batch.review, contestedAcknowledged: false })
+    await checkNames(batch.requoted, () => {
+      if (useDpnsRegistration.getState().quote.status === 'failed') toast.error("We couldn't read the new deposit. Please try again.")
+      useDpnsRegistration.setState({
+        usernames: batch.unreviewable(useDpnsRegistration.getState().usernames),
+        quote: previousQuote,
+        step: 'complete',
+      })
+    })
+  }, [isSdkReady, usernames, quote, checkNames])
 
   /**
    * Register `entries` (all available, or the ones still being confirmed) with
@@ -235,7 +247,7 @@ export function DpnsRegistrationWizard({ onComplete, onSkip, hasExistingUsername
 
       const approved = new Map(quote.quote.names.map((name) => [name.label, name]))
       const registrations = entries.map((u) => {
-        const reviewed = approved.get(u.label)
+        const reviewed = approved.get(u.label) ?? u.approval
         return {
           label: u.label,
           identityId,

@@ -91,7 +91,7 @@ vi.mock('@/lib/document-id', () => ({ identityContractNonceConsumed: (current: b
 vi.mock('@dashevo/wasm-sdk', () => ({ PlatformVersion: class { constructor(readonly version: number) {} } }))
 
 const { registerDpnsName, quoteDpnsName, DpnsNotSentError, preorderRevealable } = await import('./dpns-registration')
-const { RegistrationPlanChangedError, DOMAIN_ADMISSION_FLOOR, PREORDER_DELETE_FEE, creditsNeeded } = await import('@/lib/dpns/registration-quote')
+const { RegistrationPlanChangedError, DOMAIN_ADMISSION_FLOOR, PREORDER_DELETE_FEE, creditsNeeded, totalQuote } = await import('@/lib/dpns/registration-quote')
 const { getEvoSdk } = await import('./evo-sdk-service')
 const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils')
 const { ContestFundChangedError, BalanceTooLowError } = await import('@/lib/dpns/registration-quote')
@@ -711,8 +711,10 @@ describe('round 4: a continued v3 preorder and the admission floor', () => {
     creates('unconfirmed')
     expect(await register()).toEqual({ state: 'pending', step: 'preorder' })
     const quote = await quoteDpnsName(await getEvoSdk(), OWNER, 'Alice', 'a11ce')
-    // Continued, so not counted as a cost, but its fee stays in the balance needed.
+    // Continued, so not counted as a cost, but its fee stays in the balance needed as a possible re-send.
     expect(quote.plan?.preorder).toBe(false)
+    expect(quote.resendFee).toBeGreaterThan(0n)
+    expect(totalQuote([quote, { ...quote, label: 'Alice2' }]).resendFees).toBe(2n * (quote.resendFee ?? 0n))
     expect(creditsNeeded(quote)).toBeGreaterThan(DOMAIN_ADMISSION_FLOOR)
 
     m.balance = DOMAIN_ADMISSION_FLOOR - 1n

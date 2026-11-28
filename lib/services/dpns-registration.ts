@@ -312,12 +312,13 @@ export async function quoteDpnsName(sdk: ConnectedSdk, ownerId: string, label: s
     plannedSteps(sdk, layout, record, ownerId, normalizedLabel),
   ])
   // A v3 preorder sent without a verdict and not shown landed may be charged when re-sent on
-  // continuing: the balance must hold its fee too, though the quote doesn't count it as a cost.
+  // continuing: a possible charge, kept apart from the reusable admission reserve.
   return {
     label,
     contestFund,
     fees: (plan.preorder ? fees.preorder : 0n) + (plan.deletePreorder ? PREORDER_DELETE_FEE : 0n) + fees.domain,
-    reserve: admissionReserve(layout, fees.domain) + (mayResend ? fees.preorder : 0n),
+    reserve: admissionReserve(layout, fees.domain),
+    ...(mayResend ? { resendFee: fees.preorder } : {}),
     plan,
   }
 }

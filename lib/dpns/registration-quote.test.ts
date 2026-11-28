@@ -33,6 +33,18 @@ describe('the registration quote', () => {
     expect(creditsNeeded({ contestFund: null, fees: 70_000_000n, reserve: 230_000_000n })).toBe(300_000_000n)
   })
 
+  it('needs every possible re-send fee, not only the largest, and keeps them out of the total', () => {
+    const quote = totalQuote([
+      { label: 'alex22', contestFund: null, fees: 50_000_000n, reserve: 250_000_000n, resendFee: 25_000_000n },
+      { label: 'bob22', contestFund: null, fees: 50_000_000n, reserve: 250_000_000n, resendFee: 25_000_000n },
+    ])
+    expect(quote.total).toBe(100_000_000n)
+    expect(quote.resendFees).toBe(50_000_000n)
+    // Both re-sends can be charged; the admission reserve is reused.
+    expect(quote.needed).toBe(400_000_000n)
+    expect(creditsNeeded(quote.names[0])).toBe(325_000_000n)
+  })
+
   it('needs the deposit and the fees still to pay', () => {
     expect(creditsNeeded({ contestFund: FUND, fees: 70_000_000n })).toBe(10_070_000_000n)
     expect(creditsNeeded({ contestFund: null, fees: 70_000_000n })).toBe(70_000_000n)
