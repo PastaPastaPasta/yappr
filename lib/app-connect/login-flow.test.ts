@@ -40,6 +40,7 @@ function harness(options: {
   /** Shared with another harness: one browser's pending-request slot, seen from two tabs. */
   records?: { value: StoredAppConnectRequest | null }
   returnTo?: string
+  registerUsername?: boolean
   callbackRequestHash?: string
   onCarry?: (requestHashHex: string) => void
   /** Runs before the stored request is taken. */
@@ -77,6 +78,7 @@ function harness(options: {
     basePath: '/devnet',
     ...(options.beforeHandout ? { beforeHandout: options.beforeHandout } : {}),
     returnTo: options.returnTo,
+    registerUsername: options.registerUsername,
     callbackRequestHash: options.callbackRequestHash,
     onCarry: options.onCarry,
     now: () => clock.now,
@@ -656,6 +658,28 @@ describe('AppConnectLogin return page', () => {
     expectNoPage(await tab.login.acceptCarrying(ALICE))
   })
 
+  it('carries the username step with the request, separately from its page, and replacements keep it', async () => {
+    const h = harness({ returnTo: '/messages', registerUsername: true })
+    await h.login.start()
+    expect(h.records.value).toMatchObject({ returnTo: '/messages', registerUsername: true })
+    const tab = harness({ records: h.records, callbackRequestHash: h.login.requestHashHex() ?? '', registerUsername: false })
+    await tab.login.start()
+    await tab.login.start({ fresh: true })
+    expect(h.records.value).toMatchObject({ returnTo: '/messages', registerUsername: true })
+    await confirm(tab)
+    expect(await tab.login.acceptCarrying(ALICE)).toMatchObject({ returnTo: '/messages', registerUsername: true })
+
+    // The step alone, with no page to go on to, is carried too.
+    const bare = harness({ registerUsername: true })
+    await bare.login.start()
+    const bareTab = harness({ records: bare.records, callbackRequestHash: bare.login.requestHashHex() ?? '' })
+    await bareTab.login.start()
+    await confirm(bareTab)
+    const accepted = await bareTab.login.acceptCarrying(ALICE)
+    expect(accepted).toMatchObject({ registerUsername: true })
+    expect(accepted).not.toHaveProperty('returnTo')
+  })
+
   it('stops carrying once a retry resumes another tab\'s newer request', async () => {
     const { records, hash } = await origin('/messages')
     const tab = await callbackTab(records, hash)
@@ -683,6 +707,13 @@ describe('parseStoredRequest', () => {
     expect(parseStoredRequest({ ...record, returnTo: '/messages?tab=1' }, T0)).toEqual({ ...record, returnTo: '/messages?tab=1' })
     for (const returnTo of ['//evil.example', 'https://evil.example', '/login', 5]) {
       expect(parseStoredRequest({ ...record, returnTo }, T0)).toEqual(record)
+    }
+  })
+
+  it('keeps the username step only when it is exactly true', () => {
+    expect(parseStoredRequest({ ...record, registerUsername: true }, T0)).toEqual({ ...record, registerUsername: true })
+    for (const registerUsername of [false, 'true', 1, '/dpns/register']) {
+      expect(parseStoredRequest({ ...record, registerUsername }, T0)).toEqual(record)
     }
   })
 })

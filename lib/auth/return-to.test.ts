@@ -95,13 +95,20 @@ describe('returnToOrDefault', () => {
 
 describe('loginPageDestination', () => {
   it("prefers the page's own next, then the page a wallet sign-in carried, then the feed", () => {
-    expect(loginPageDestination('/settings/', '/messages/')).toBe('/settings/')
-    expect(loginPageDestination(null, '/messages/')).toBe('/messages/')
-    expect(loginPageDestination('//evil.example', '/messages/')).toBe('/messages/')
-    expect(loginPageDestination(null, '//evil.example')).toBe('/feed')
-    expect(loginPageDestination(null, '/login/')).toBe('/feed')
-    expect(loginPageDestination(null, '/connect/?r=ab&ac=declined')).toBe('/feed')
+    expect(loginPageDestination('/settings/', { returnTo: '/messages/' })).toBe('/settings/')
+    expect(loginPageDestination(null, { returnTo: '/messages/' })).toBe('/messages/')
+    expect(loginPageDestination('//evil.example', { returnTo: '/messages/' })).toBe('/messages/')
+    expect(loginPageDestination(null, { returnTo: '//evil.example' })).toBe('/feed')
+    expect(loginPageDestination(null, { returnTo: '/login/' })).toBe('/feed')
+    expect(loginPageDestination(null, { returnTo: '/connect/?r=ab&ac=declined' })).toBe('/feed')
     expect(loginPageDestination(null)).toBe('/feed')
+  })
+
+  it('goes to the username step first when the sign-in started there, carrying its page', () => {
+    expect(loginPageDestination(null, { returnTo: '/post?id=1#reply', registerUsername: true })).toBe('/dpns/register?next=%2Fpost%3Fid%3D1%23reply')
+    expect(loginPageDestination(null, { registerUsername: true })).toBe('/dpns/register')
+    expect(loginPageDestination(null, { returnTo: '//evil.example', registerUsername: true })).toBe('/dpns/register')
+    expect(loginPageDestination('/settings/', { returnTo: '/messages/', registerUsername: true })).toBe('/settings/')
   })
 })
 

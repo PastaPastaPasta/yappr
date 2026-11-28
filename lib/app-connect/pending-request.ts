@@ -22,6 +22,8 @@ const decoder = new TextDecoder()
  * the browser has them, and an in-tab queue otherwise.
  */
 const RECORD_LOCK = scopedKey('yappr-app-connect-pending-request')
+/** The identity of the latest signed-out passkey renewal, whose request stays in that identity's own recovery slot. */
+const RECOVERY_POINTER = 'pending-request:recovery'
 let recordWrites: Promise<unknown> = Promise.resolve()
 function inOrder<T>(operation: () => Promise<T>): Promise<T> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
@@ -33,13 +35,16 @@ function inOrder<T>(operation: () => Promise<T>): Promise<T> {
 
 /**
  * One slot per kind of request, so a sign-in and a renewal (which names its
- * identity) never overwrite each other's pending request.
+ * identity) never overwrite each other's pending request. A signed-out
+ * passkey's renewal (`recovery`) has a slot per identity apart from the
+ * signed-in renewal's, and points the wallet's callback tab, which does not
+ * know the identity, at it.
  */
-export function requestRecordsFor(identityHint: string | undefined): RequestRecordStore & {
+export function requestRecordsFor(identityHint: string | undefined, recovery = false): RequestRecordStore & {
   /** As `load`, but a failed read or unwrap throws rather than reading as no request. */
   loadStrict(): Promise<StoredAppConnectRequest | null>
 } {
-  const secretName = `pending-request:${identityHint ?? 'login'}`
+  const secretName = `pending-request:${recovery ? 'recovery:' : ''}${identityHint ?? 'login'}`
   // Read and (for a stale request) delete under the same lock, so a
   // request another tab saves meanwhile is never the one deleted.
   const read = (strict: boolean) => inOrder(async () => {
@@ -71,7 +76,11 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
     async save(record) {
       const bytes = encoder.encode(JSON.stringify(record))
       try {
-        await inOrder(() => appConnectSessions.keyStore().saveSecret(appConnectSessions.network(), secretName, bytes))
+        await inOrder(async () => {
+          const network = appConnectSessions.network()
+          await appConnectSessions.keyStore().saveSecret(network, secretName, bytes)
+          if (recovery && identityHint) await appConnectSessions.keyStore().saveSecret(network, RECOVERY_POINTER, encoder.encode(identityHint))
+        })
       } catch (error) {
         // Without storage the request only lives in this tab.
         logger.warn('App Connect: could not keep the pending request:', error)
@@ -118,7 +127,23 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
  */
 export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
   const record = await requestRecordsFor(identityId).load()
-  if (!record) return false
+  return record !== null && hasRequestHash(record, requestHash)
+}
+
+/**
+ * The identity of the latest signed-out passkey renewal, when its request is
+ * still the one the wallet returned for. A newer renewal for another identity
+ * only moves the pointer: this one then reads as none, and its request stays.
+ */
+export async function pendingRecoveryIdentity(requestHash: string): Promise<string | null> {
+  const bytes = await appConnectSessions.keyStore().loadSecret(appConnectSessions.network(), RECOVERY_POINTER).catch(() => null)
+  if (!bytes) return null
+  const identityId = decoder.decode(bytes)
+  const record = identityId ? await requestRecordsFor(identityId, true).load() : null
+  return record && hasRequestHash(record, requestHash) ? identityId : null
+}
+
+function hasRequestHash(record: StoredAppConnectRequest, requestHash: string): boolean {
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
     return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash

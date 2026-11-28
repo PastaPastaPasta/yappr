@@ -39,7 +39,7 @@ function DpnsFixture() {
       quote: {
         status: 'ready',
         balance: 10n ** 12n,
-        quote: { names: [{ label: 'contested-name', contestFund: null, fees: 0n }], contestFunds: 0n, fees: 0n, total: 0n, needed: 0n },
+        quote: { names: [{ label: 'contested-name', contestFund: null, fees: 0n }], contestFunds: 0n, fees: 0n, total: 0n, resendFees: 0n, needed: 0n },
       },
     })
   }, [])
