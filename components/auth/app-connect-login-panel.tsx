@@ -6,7 +6,7 @@ import type { AppConnectCarrier, AppConnectGrant } from 'platform-auth'
 import { logger } from '@/lib/logger'
 import { useAppConnectLogin } from '@/hooks/use-app-connect-login'
 import { selectCarrierUri } from '@/lib/app-connect/carrier'
-import type { AppConnectUnavailableReason, VerifiedCandidate } from '@/lib/app-connect/login-flow'
+import type { AppConnectUnavailableReason, CarriedPage, VerifiedCandidate } from '@/lib/app-connect/login-flow'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { CarrierSwitch } from './carrier-switch'
@@ -16,13 +16,15 @@ import { IdentityConfirmCard } from './identity-confirm-card'
 interface AppConnectLoginPanelProps {
   /**
    * Signs in (or renews) with the grant the user confirmed. The grant's keys are wiped by the callee.
-   * `returnTo`: the page the request carried to the wallet's callback tab, for this sign-in only.
+   * `carried`: what the request carried to the wallet's callback tab, for this sign-in only.
    */
-  onGrant: (grant: AppConnectGrant, returnTo?: string) => Promise<unknown>
+  onGrant: (grant: AppConnectGrant, carried?: CarriedPage) => Promise<unknown>
   /** Called once signed in and the panel is done. */
   onComplete: () => void
   /** Renewal: only this identity may answer, and it is accepted without asking. */
   identityHint?: string
+  /** A signed-out passkey's renewal, which signs in: see `useAppConnectLogin`. */
+  recovery?: boolean
 }
 
 const UNAVAILABLE_COPY: Record<AppConnectUnavailableReason, { title: string; description: string; retry: boolean }> = {
@@ -60,8 +62,8 @@ const UNAVAILABLE_COPY: Record<AppConnectUnavailableReason, { title: string; des
  * before anything is stored. No countdown is shown; when the request runs out
  * the panel offers "Check again".
  */
-export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppConnectLoginPanelProps) {
-  const { login, state } = useAppConnectLogin(identityHint)
+export function AppConnectLoginPanel({ onGrant, onComplete, identityHint, recovery = false }: AppConnectLoginPanelProps) {
+  const { login, state } = useAppConnectLogin(identityHint, recovery)
   const [signing, setSigning] = useState<'idle' | 'running' | 'done'>('idle')
   const [signInError, setSignInError] = useState<string | null>(null)
   const [restartedAfterRejection, setRestartedAfterRejection] = useState(false)
@@ -82,7 +84,8 @@ export function AppConnectLoginPanel({ onGrant, onComplete, identityHint }: AppC
         if (!accepted) return
         setSigning('running')
         setSignInError(null)
-        onGrant(accepted.grant, accepted.returnTo)
+        const { grant, ...carried } = accepted
+        onGrant(grant, carried)
           .then(() => {
             if (!mounted.current) return
             setSigning('done')

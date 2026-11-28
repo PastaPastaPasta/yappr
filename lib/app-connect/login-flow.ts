@@ -65,12 +65,16 @@ export interface StoredAppConnectRequest {
    * tab that resumes the request only reads it.
    */
   returnTo?: string
+  /** The sign-in started on the username step (/dpns/register), which it goes back to before `returnTo`. */
+  registerUsername?: true
 }
 
-/** A confirmed answer, and the page its sign-in returns to when this tab carries one. */
-export interface AppConnectAcceptance {
+/** What a request carries to the wallet's callback tab: its page, and whether the username step comes first. */
+export type CarriedPage = Pick<StoredAppConnectRequest, 'returnTo' | 'registerUsername'>
+
+/** A confirmed answer, and what its sign-in goes on to when this tab carries the request. */
+export interface AppConnectAcceptance extends CarriedPage {
   grant: AppConnectGrant
-  returnTo?: string
 }
 
 /**
@@ -110,6 +114,8 @@ export interface AppConnectLoginDeps {
    * requests: a replacement keeps exactly the replaced request's page, none included.
    */
   returnTo?: string
+  /** A new request starts on the username step; inherited like `returnTo`. */
+  registerUsername?: boolean
   /**
    * The request the wallet's callback named, when this tab came from /connect:
    * a sign-in applies the page of that request, resumed here, or of a request
@@ -143,14 +149,19 @@ const MAX_VERIFY_ATTEMPTS = 3
 export function parseStoredRequest(raw: unknown, now: number): StoredAppConnectRequest | null {
   if (!raw || typeof raw !== 'object') return null
   const record = raw as Record<string, unknown>
-  const { ephemeralPrivateKey, createdAt, connectionId, identityHint, returnTo } = record
+  const { ephemeralPrivateKey, createdAt, connectionId, identityHint, returnTo, registerUsername } = record
   if (typeof ephemeralPrivateKey !== 'string' || !/^[0-9a-f]{64}$/.test(ephemeralPrivateKey)) return null
   if (typeof connectionId !== 'string' || !/^[0-9a-f]{32}$/.test(connectionId)) return null
   if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt)) return null
   if (now - createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS || createdAt - now > 60_000) return null
   if (identityHint !== undefined && typeof identityHint !== 'string') return null
-  const page = typeof returnTo === 'string' ? sanitizeReturnTo(returnTo, '') : null
-  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}), ...(page ? { returnTo: page } : {}) }
+  return { ephemeralPrivateKey, createdAt, connectionId, ...(identityHint ? { identityHint } : {}), ...carriedFields({ returnTo, registerUsername }) }
+}
+
+/** `page` as stored: a sanitized `returnTo` and a `registerUsername` that is exactly true, each only when set. */
+function carriedFields(page: { returnTo?: unknown; registerUsername?: unknown }): CarriedPage {
+  const returnTo = typeof page.returnTo === 'string' ? sanitizeReturnTo(page.returnTo, '') : null
+  return { ...(returnTo ? { returnTo } : {}), ...(page.registerUsername === true ? { registerUsername: true } : {}) }
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -190,8 +201,8 @@ export class AppConnectLogin {
   /** Bumped by every start and by dispose, so an older start that is still awaiting stops where it is. */
   private generation = 0
   private disposed = false
-  /** The page of the request this tab activated last, which a replacement keeps (none included); null before the first. */
-  private lineage: { returnTo?: string } | null = null
+  /** What the request this tab activated last carries, which a replacement keeps (nothing included); null before the first. */
+  private lineage: CarriedPage | null = null
   /** The active request's hash while a sign-in from it applies its page (see `callbackRequestHash`). */
   private carriedHash: string | null = null
   private readonly now: () => number
@@ -282,13 +293,12 @@ export class AppConnectLogin {
    */
   private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
-    const returnTo = sanitizeReturnTo(this.lineage ? this.lineage.returnTo : this.deps.returnTo, '')
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
       createdAt: this.now(),
       connectionId: await this.deps.connectionId(),
       ...(identityHint ? { identityHint } : {}),
-      ...(returnTo ? { returnTo } : {}),
+      ...carriedFields(this.lineage ?? { returnTo: this.deps.returnTo, registerUsername: this.deps.registerUsername }),
     }
     clearSensitiveBytes(privateKey)
     if (!current()) return null
@@ -332,7 +342,7 @@ export class AppConnectLogin {
       : this.carriedHash !== null
     this.carriedHash = carried ? hashHex : null
     if (carried && hashHex !== this.deps.callbackRequestHash) this.deps.onCarry?.(hashHex)
-    this.lineage = { returnTo: record.returnTo }
+    this.lineage = carriedFields(record)
     this.progress = new Map()
     this.discardVerified()
     this.set({ phase: 'waiting', uri: first.uri, uris })
@@ -379,8 +389,8 @@ export class AppConnectLogin {
   async acceptCarrying(identityId: string): Promise<AppConnectAcceptance | null> {
     const active = this.active
     if (!active || !this.verified.some((candidate) => candidate.identityId === identityId)) return null
-    const page = this.carriedHash !== null ? active.record.returnTo : undefined
-    const live = page !== undefined
+    const page = this.carriedHash !== null ? carriedFields(active.record) : {}
+    const live = Object.keys(page).length > 0
       && this.now() - active.record.createdAt < APP_CONNECT_MAX_REQUEST_AGE_MS
       && await this.deps.records.take(active.record).catch((error: unknown) => {
         this.deps.onError?.('App Connect: could not take the request', error)
@@ -390,7 +400,7 @@ export class AppConnectLogin {
     if (this.active !== active) return null
     const grant = this.accept(identityId)
     if (!grant) return null
-    return { grant, ...(live ? { returnTo: page } : {}) }
+    return { grant, ...(live ? page : {}) }
   }
 
   /** "That's not me": drop everything, including the request someone else answered, and show a new code. */

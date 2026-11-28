@@ -86,11 +86,16 @@ export function returnToOrDefault(value: string | null | undefined, basePath?: s
 }
 
 /**
- * Where a sign-in made on /login goes: the page's own `next`, else the page
- * the committing wallet sign-in's request carried to its callback tab, else /feed.
+ * Where a sign-in made on /login goes: the page's own `next`, else what the
+ * committing wallet sign-in's request carried to its callback tab (the
+ * username step first, when it started there, carrying its page), else /feed.
  */
-export function loginPageDestination(next: string | null | undefined, carried?: string): string {
-  return sanitizeReturnTo(next) ?? sanitizeReturnTo(carried, '') ?? DEFAULT_RETURN_TO
+export function loginPageDestination(next: string | null | undefined, carried?: { returnTo?: string; registerUsername?: boolean }): string {
+  const own = sanitizeReturnTo(next)
+  if (own) return own
+  const page = sanitizeReturnTo(carried?.returnTo, '')
+  if (carried?.registerUsername === true) return page ? `${DPNS_REGISTER_ROUTE}?${RETURN_TO_PARAM}=${encodeURIComponent(page)}` : DPNS_REGISTER_ROUTE
+  return page ?? DEFAULT_RETURN_TO
 }
 
 /**

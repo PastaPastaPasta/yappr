@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { X, ArrowLeft, ChevronDown, Wallet, ScrollText, KeyRound } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
+import type { CarriedPage } from '@/lib/app-connect/login-flow'
 import { Wordmark } from '@/components/brand/brand'
 import { useAuth } from '@/contexts/auth-context'
 import { currentIdentityId } from '@/lib/auth/active-identity'
@@ -188,8 +189,8 @@ export function LoginModal() {
     }
   }, [close, pathname, router])
 
-  const signInWithGrant = useCallback(async (grant: AppConnectGrant, returnTo?: string) => {
-    await loginWithAppConnect(grant, returnTo)
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant, carried?: CarriedPage) => {
+    await loginWithAppConnect(grant, carried)
   }, [loginWithAppConnect])
 
   const walletOptions = (

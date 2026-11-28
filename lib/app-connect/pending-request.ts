@@ -33,13 +33,15 @@ function inOrder<T>(operation: () => Promise<T>): Promise<T> {
 
 /**
  * One slot per kind of request, so a sign-in and a renewal (which names its
- * identity) never overwrite each other's pending request.
+ * identity) never overwrite each other's pending request. A signed-out
+ * passkey's renewal (`recovery`) has one slot of its own, so the wallet's
+ * callback tab, which does not know the identity, can find it.
  */
-export function requestRecordsFor(identityHint: string | undefined): RequestRecordStore & {
+export function requestRecordsFor(identityHint: string | undefined, recovery = false): RequestRecordStore & {
   /** As `load`, but a failed read or unwrap throws rather than reading as no request. */
   loadStrict(): Promise<StoredAppConnectRequest | null>
 } {
-  const secretName = `pending-request:${identityHint ?? 'login'}`
+  const secretName = `pending-request:${recovery ? 'recovery' : identityHint ?? 'login'}`
   // Read and (for a stale request) delete under the same lock, so a
   // request another tab saves meanwhile is never the one deleted.
   const read = (strict: boolean) => inOrder(async () => {
@@ -118,7 +120,16 @@ export function requestRecordsFor(identityHint: string | undefined): RequestReco
  */
 export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
   const record = await requestRecordsFor(identityId).load()
-  if (!record) return false
+  return record !== null && hasRequestHash(record, requestHash)
+}
+
+/** The identity of the pending signed-out passkey renewal, when it is the request the wallet returned for. */
+export async function pendingRecoveryIdentity(requestHash: string): Promise<string | null> {
+  const record = await requestRecordsFor(undefined, true).load()
+  return record?.identityHint && hasRequestHash(record, requestHash) ? record.identityHint : null
+}
+
+function hasRequestHash(record: StoredAppConnectRequest, requestHash: string): boolean {
   const privateKey = hexToBytes(record.ephemeralPrivateKey)
   try {
     return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash

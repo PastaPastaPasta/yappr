@@ -7,12 +7,21 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import type { PasskeyRenewal } from '@/lib/auth/passkey-vault'
 import { usePasskeysOffered } from '@/hooks/use-passkey-prompts'
+import { callbackRequestHash } from '@/lib/app-connect/callback-channel'
+import { pendingRecoveryIdentity } from '@/lib/app-connect/pending-request'
+import { onLoginPage } from '@/lib/auth/return-to'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 import { RENEW_COPY, signInErrorCopy } from './passkey-copy'
 
 const SLOW_AFTER_MS = 3_000
+
+/** The wallet's callback tab picking up a renewal the passkey asked for in another tab. */
+const RESUMED_COPY = 'Finishing your sign-in with your Dash wallet.'
+
+/** A renewal the passkey asked for here, or (no reason) one the wallet's callback tab resumes. */
+type Renewal = { identityId: string; reason?: PasskeyRenewal['reason'] }
 
 /**
  * "Sign in with a passkey" in the sign-in dialog. One tap opens the browser's
@@ -41,7 +50,7 @@ export function PasskeySignIn({
   const offered = usePasskeysOffered()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [renewal, setRenewal] = useState<PasskeyRenewal | null>(null)
+  const [renewal, setRenewal] = useState<Renewal | null>(null)
   /** A sign-in still going after a few seconds says what it is waiting on. */
   const [slow, setSlow] = useState(false)
   const { isReady: connected } = useSdk()
@@ -54,6 +63,21 @@ export function PasskeySignIn({
   }, [busy])
 
   useEffect(() => onRenewalChange?.(renewal !== null), [onRenewalChange, renewal])
+
+  // The wallet returned for a signed-out passkey's renewal: resume it here, not a plain wallet sign-in.
+  useEffect(() => {
+    const requestHash = onLoginPage() ? callbackRequestHash(window.location.search) : undefined
+    if (!requestHash) return
+    let live = true
+    pendingRecoveryIdentity(requestHash)
+      .then((identityId) => {
+        if (live && identityId) setRenewal((current) => current ?? { identityId })
+      })
+      .catch((failure: unknown) => logger.warn('Passkey sign-in: could not read the pending renewal:', failure))
+    return () => {
+      live = false
+    }
+  }, [])
 
   const signIn = useCallback(() => {
     setBusy(true)
@@ -70,19 +94,19 @@ export function PasskeySignIn({
       .finally(() => setBusy(false))
   }, [loginWithPasskey, onComplete])
 
-  if (!offered) return null
-
-  const statusText = busy && slow ? (connected ? 'Opening your account…' : 'Connecting…') : ''
-
   if (renewal) {
     return (
       <div className="flex flex-col gap-3" data-testid="passkey-renew">
-        <p className="text-sm text-center text-gray-600 dark:text-gray-400">{RENEW_COPY[renewal.reason]}</p>
-        <AppConnectLoginPanel identityHint={renewal.identityId} onGrant={loginWithAppConnect} onComplete={onComplete} />
+        <p className="text-sm text-center text-gray-600 dark:text-gray-400">{renewal.reason ? RENEW_COPY[renewal.reason] : RESUMED_COPY}</p>
+        <AppConnectLoginPanel identityHint={renewal.identityId} recovery onGrant={loginWithAppConnect} onComplete={onComplete} />
         <Button variant="ghost" className="w-full" onClick={() => setRenewal(null)}>Back</Button>
       </div>
     )
   }
+
+  if (!offered) return null
+
+  const statusText = busy && slow ? (connected ? 'Opening your account…' : 'Connecting…') : ''
 
   return (
     <div className="flex flex-col gap-2">

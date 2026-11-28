@@ -8,7 +8,7 @@ import { requestRecordsFor } from '@/lib/app-connect/pending-request'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions } from '@/lib/app-connect/session-manager'
 import { APP_CONNECT_CHANNEL, CALLBACK_REQUEST_PARAM, callbackRequestHash, isConnectCallbackMessage } from '@/lib/app-connect/callback-channel'
-import { onLoginPage, signInReturnRoute } from '@/lib/auth/return-to'
+import { onLoginPage, onUsernameDetour, signInReturnRoute } from '@/lib/auth/return-to'
 
 /** The callback tab's sign-in now names `requestHash`, a replacement it made, so a reload keeps its page. */
 function nameCallbackRequest(requestHash: string): void {
@@ -18,9 +18,10 @@ function nameCallbackRequest(requestHash: string): void {
   window.history.replaceState(window.history.state, '', url)
 }
 
-function createLogin(identityHint: string | undefined): AppConnectLogin | null {
+function createLogin(identityHint: string | undefined, recovery: boolean): AppConnectLogin | null {
   const pins = appConnectPins()
   if (!pins || typeof window === 'undefined') return null
+  const signsIn = !identityHint || recovery
   return new AppConnectLogin({
     pins,
     network: appConnectSessions.network(),
@@ -28,9 +29,10 @@ function createLogin(identityHint: string | undefined): AppConnectLogin | null {
     // Proved again before every sign-in, so a group widened since page load blocks it.
     trust: () => appConnectSessions.trust({ fresh: true }),
     connectionId: () => appConnectSessions.connectionId(),
-    records: requestRecordsFor(identityHint),
-    // A sign-in request carries the page it started on, for the wallet's callback tab.
-    returnTo: identityHint ? undefined : signInReturnRoute() ?? undefined,
+    records: requestRecordsFor(identityHint, recovery),
+    // A sign-in request carries the page it started on, and the username step it started on, for the wallet's callback tab.
+    returnTo: signsIn ? signInReturnRoute() ?? undefined : undefined,
+    registerUsername: signsIn && onUsernameDetour(),
     callbackRequestHash: onLoginPage() ? callbackRequestHash(window.location.search) : undefined,
     onCarry: nameCallbackRequest,
     origin: window.location.origin,
@@ -43,9 +45,10 @@ function createLogin(identityHint: string | undefined): AppConnectLogin | null {
  * Runs an App Connect sign-in while mounted: starts (or resumes) a request,
  * polls immediately when the window regains focus or the wallet returns to
  * /connect in another tab, and wipes everything on unmount. `identityHint`
- * makes it a renewal that only that identity may answer.
+ * makes it a renewal that only that identity may answer; `recovery`, a signed-out
+ * passkey's renewal, which signs in and so carries its page like a sign-in.
  */
-export function useAppConnectLogin(identityHint?: string): { login: AppConnectLogin | null; state: AppConnectLoginState } {
+export function useAppConnectLogin(identityHint?: string, recovery = false): { login: AppConnectLogin | null; state: AppConnectLoginState } {
   // One instance per mount: a disposed instance never restarts, so React's
   // dev double-mount and a changed hint each get a fresh one.
   const [login, setLogin] = useState<AppConnectLogin | null>(null)
@@ -53,7 +56,7 @@ export function useAppConnectLogin(identityHint?: string): { login: AppConnectLo
     appConnectPins() ? { phase: 'checking' } : { phase: 'unavailable', reason: 'not-configured' })
 
   useEffect(() => {
-    const instance = createLogin(identityHint)
+    const instance = createLogin(identityHint, recovery)
     if (!instance) return
     setLogin(instance)
     const unsubscribe = instance.subscribe(setState)
@@ -77,7 +80,7 @@ export function useAppConnectLogin(identityHint?: string): { login: AppConnectLo
       instance.dispose()
       setLogin((current) => (current === instance ? null : current))
     }
-  }, [identityHint])
+  }, [identityHint, recovery])
 
   return { login, state }
 }
